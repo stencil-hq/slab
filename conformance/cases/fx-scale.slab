@@ -1,0 +1,6 @@
+// FX: scale is ink-only — layout rects stay authoritative while paint ops
+// wrap in ScalePush/ScalePop about each node's center.
+col w=200 pad=10 gap=10 {
+  rect w=80 h=40 bg=#4A90D9 scale=1.25
+  rect w=80 h=40 bg=#D94A4A scale=0.9,1.1
+}

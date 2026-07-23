@@ -1,0 +1,26 @@
+{
+  "name": "tree-sitter-slab",
+  "version": "0.1.0",
+  "description": "Tree-sitter grammar for the Slab design language",
+  "main": "bindings/node",
+  "types": "bindings/node",
+  "keywords": ["parser", "lexer", "slab", "tree-sitter"],
+  "license": "MIT",
+  "files": [
+    "grammar.js",
+    "tree-sitter.json",
+    "queries/*",
+    "src/**"
+  ],
+  "tree-sitter": [
+    {
+      "scope": "source.slab",
+      "file-types": ["slab"],
+      "injection-regex": "^slab$",
+      "highlights": "queries/highlights.scm"
+    }
+  ],
+  "devDependencies": {
+    "tree-sitter-cli": "^0.25.6"
+  }
+}

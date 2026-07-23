@@ -1,0 +1,7 @@
+// FX: the backdrop third slot multiplies backdrop RGB — Backdrop ops carry
+// blur, saturate, and brightness.
+col w=320 h=120 pad=16 bg=linear(180, #26314A 0%, #10141B 100%) {
+  col w=200 h=64 pad=12,8 radius=8 bg=#FFFFFF12 stroke=#FFFFFF3D backdrop=8,1.2,1.35 {
+    text "BRIGHT GLASS" size=12 color=#E6EDF3
+  }
+}

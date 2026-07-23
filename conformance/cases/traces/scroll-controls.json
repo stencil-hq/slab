@@ -1,0 +1,100 @@
+{
+  "doc": "scroll-controls",
+  "env": {
+    "vw": 240,
+    "vh": 104,
+    "client": "web",
+    "dark": false,
+    "coarse": false
+  },
+  "steps": [
+    {
+      "t": 0,
+      "scroll": {
+        "key": "col@0/#vlist",
+        "off": 10
+      }
+    },
+    {
+      "t": 16,
+      "event": {
+        "type": "wheel",
+        "x": 10,
+        "y": 10,
+        "dx": 15,
+        "dy": 999
+      }
+    },
+    {
+      "t": 32,
+      "event": {
+        "type": "pointer-down",
+        "x": 10,
+        "y": 10
+      }
+    },
+    {
+      "t": 40,
+      "event": {
+        "type": "pointer-up",
+        "x": 10,
+        "y": 10
+      }
+    },
+    {
+      "t": 48,
+      "event": {
+        "type": "key-down",
+        "key": "ArrowRight"
+      }
+    },
+    {
+      "t": 56,
+      "event": {
+        "type": "key-down",
+        "key": "ArrowLeft",
+        "mods": ["shift"]
+      }
+    },
+    {
+      "t": 64,
+      "event": {
+        "type": "pointer-down",
+        "x": 10,
+        "y": 50
+      }
+    },
+    {
+      "t": 72,
+      "event": {
+        "type": "pointer-up",
+        "x": 10,
+        "y": 50
+      }
+    },
+    {
+      "t": 80,
+      "event": {
+        "type": "key-down",
+        "key": "PageDown"
+      }
+    },
+    {
+      "t": 96
+    }
+  ],
+  "expect": {
+    "signals": [],
+    "focus_key": "col@0/#vlist",
+    "scroll": [
+      {
+        "key": "col@0/#hlist",
+        "off": 0
+      },
+      {
+        "key": "col@0/#vlist",
+        "off": 34
+      }
+    ]
+  }
+}

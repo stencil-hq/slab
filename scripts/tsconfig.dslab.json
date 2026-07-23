@@ -1,0 +1,17 @@
+{
+   "compilerOptions": {
+      "target": "es2022",
+      "module": "nodenext",
+      "moduleResolution": "nodenext",
+      "declaration": true,
+      "rewriteRelativeImportExtensions": true,
+      "allowImportingTsExtensions": true,
+      "strict": true,
+      "outDir": "../packages/dslab/dist",
+      "rootDir": "../packages/dslab/src",
+      "lib": ["esnext"],
+      "types": ["node"]
+   },
+   "include": ["../packages/dslab/src/*.ts"],
+   "exclude": ["../packages/dslab/dist"]
+}

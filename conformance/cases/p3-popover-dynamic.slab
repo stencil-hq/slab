@@ -1,0 +1,16 @@
+// P3: a Text param retargets an overlay between anchors inside a scroller.
+params {
+  target text = "#surface/#scroller/#first"
+}
+stack#surface w=240 h=140 bg=#111820 {
+  col#scroller w=120 h=96 self=top-start offset=12,12 scroll clip bg=#1b2632 {
+    spacer h=36
+    rect#first w=96 h=20 bg=#4879b4 radius=4
+    spacer h=52
+    rect#second w=96 h=20 bg=#5ca27f radius=4
+    spacer h=80
+  }
+  group#popup w=92 h=34 attach=param.target gravity=right-start collide=none offset=6,0 pad=6 bg=#f4f7fb radius=6 stroke=#8fa2b6 {
+    text "dynamic" size=11 color=#17212b nowrap
+  }
+}

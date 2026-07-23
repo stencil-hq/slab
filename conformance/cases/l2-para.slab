@@ -1,0 +1,10 @@
+// L2: para inline flow with styled spans wrapping as one paragraph.
+col w=260 pad=10 {
+  para size=13 color=#c8d2dc leading=1.5 {
+    "Deploy "
+    span "2026.7.18-r3" weight=700 color=#4fc7e0
+    " rolled to "
+    span "12/12" color=#3ddc84
+    " pods without incident across the fleet today"
+  }
+}

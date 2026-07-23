@@ -1,0 +1,15 @@
+{
+  "doc": "s3-sticky",
+  "env": {"vw": 120, "vh": 60, "client": "web", "dark": false, "coarse": false},
+  "steps": [
+    {"t": 0},
+    {"t": 16, "scroll": {"key": "#feed", "axis": 0, "off": 70}},
+    {"t": 32, "hit": [5, 5]},
+    {"t": 48, "scroll": {"key": "#feed", "axis": 0, "off": 85}},
+    {"t": 64, "hit": [5, 5]}
+  ],
+  "expect": {
+    "signals": [],
+    "scroll": [{"key": "#feed", "axis": 0, "off": 85}]
+  }
+}

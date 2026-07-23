@@ -1,0 +1,12 @@
+// P5 fixture: params as host inputs — a bool param drives a when cond
+// (prop-truthiness rule extended to params), a text param feeds content.
+params {
+  hot   bool = false
+  title text = "Hello"
+}
+col w=200 gap=4 {
+  text param.title size=14 nowrap
+  rect#p w=100 h=20 bg=#333333 {
+    when hot { bg=#ff0000 }
+  }
+}

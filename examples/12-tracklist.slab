@@ -1,0 +1,132 @@
+// A host-owned, typed playlist rendered through `each`. Selecting a row emits
+// `pick` with that item's stable key; the host can then toggle its `selected`
+// node state. The compact viewport deliberately overflows to show auto-scroll.
+tokens {
+  color {
+    canvas     #EDEBE5
+    glow       #A7A1FF33
+    panel      #FFFEFA
+    surface    #F5F3EE
+    ink        #181922
+    muted      #747783
+    faint      #A3A5AD
+    line       #18192218
+    accent     #5A54E8
+    accentSoft #5A54E817
+    focus      #5A54E8
+    scroll     #18192214
+  }
+  text {
+    eyebrow { size 10; weight 800; color #747783 }
+    title   { size 24; weight 800; color #181922 }
+    body    { size 13; weight 650; color #181922 }
+    meta    { size 11; weight 500; color #747783 }
+    mono    { size 11; weight 700; color #747783 }
+  }
+  fx {
+    card { bg #FFFEFA; stroke #18192218; stroke-w 1; radius 22 }
+  }
+  shadow {
+    card 0,22,60,#34324B24
+  }
+}
+
+// The same component reads named-theme token values without changing layout.
+theme dusk {
+  color {
+    canvas     #0D1020
+    glow       #7068FF40
+    panel      #171A2A
+    surface    #202438
+    ink        #F3F1FF
+    muted      #A6A9BC
+    faint      #70758E
+    line       #FFFFFF1C
+    accent     #8F88FF
+    accentSoft #8F88FF20
+    focus      #AAA5FF
+    scroll     #FFFFFF18
+  }
+  text {
+    eyebrow { size 10; weight 800; color #A6A9BC }
+    title   { size 24; weight 800; color #F3F1FF }
+    body    { size 13; weight 650; color #F3F1FF }
+    meta    { size 11; weight 500; color #A6A9BC }
+    mono    { size 11; weight 700; color #A6A9BC }
+  }
+  fx {
+    card { bg #171A2A; stroke #FFFFFF1C; stroke-w 1; radius 22 }
+  }
+  shadow {
+    card 0,22,60,#00000066
+  }
+}
+
+def TrackRow(title="", artist="", duration="", tone=#00000000) export {
+  row#track w=fill h=64 pad=8,10 gap=12 align=center radius=12 act=pick {
+    when hover { bg=color.surface }
+    when selected { bg=color.accentSoft }
+    when pressed { opacity=0.72 }
+    when focus-visible { stroke=color.focus stroke-w=2 }
+
+    stack w=46 h=46 radius=10 clip {
+      rect w=fill h=fill bg=tone
+      rect w=fill h=fill bg=linear(160, #FFFFFF38 0%, #FFFFFF00 48%, #00000026 100%)
+      text "♫" size=17 weight=700 color=#FFFFFFE8 self=center nowrap
+    }
+
+    col w=fill gap=4 self=center {
+      text title style=text.body w=fill nowrap ellipsis
+      text artist style=text.meta w=fill nowrap ellipsis
+    }
+
+    text duration style=text.mono nowrap self=center
+    text "›" size=18 color=color.faint nowrap self=center
+  }
+}
+
+params {
+  tracks list(TrackRow) = [
+    TrackRow(title="夜航 🌙", artist="Mina Sato", duration="3:42", tone=#625BE8),
+    TrackRow(title="Signal Bloom 🎧", artist="North Arcade", duration="4:08", tone=#DB6B52),
+    TrackRow(title="Glasshouse Radio", artist="June Static", duration="2:57", tone=#2F9B83),
+    TrackRow(title="Afterimage", artist="Low Meridian", duration="5:16", tone=#C58A36)
+  ]
+}
+
+stack w=fill h=fill bg=color.canvas clip {
+  rect w=420 h=420 radius=999 bg=color.glow self=top-end offset=150,-190
+  rect w=300 h=300 radius=999 bg=color.glow self=bottom-start offset=-120,170
+
+  col w=520 h=520 self=center pad=24 gap=18 style=fx.card shadow=shadow.card {
+    row align=center gap=14 {
+      col w=fill gap=5 {
+        text "LISTENING QUEUE" style=text.eyebrow tracking=2.1
+        text "Late-night rotation" style=text.title
+      }
+      row w=hug pad=5,10 radius=999 bg=color.accentSoft align=center {
+        text "04 TRACKS" size=10 weight=800 color=color.accent tracking=1.2 nowrap
+      }
+    }
+
+    row h=48 pad=9,12 gap=10 radius=12 bg=color.surface align=center {
+      rect w=8 h=8 radius=999 bg=color.accent
+      col w=fill gap=2 {
+        text "Curated for focus" size=12 weight=700 color=color.ink nowrap
+        text "A calm 16-minute sequence" size=10 color=color.muted nowrap
+      }
+      text "SELECT A TRACK" size=9 weight=800 color=color.muted tracking=1 nowrap
+    }
+
+    col#playlist w=fill h=246 gap=8 scroll scrollbar=auto scrollbar-w=4 \
+        scrollbar-fg=color.accent scrollbar-bg=color.scroll clip {
+      each param.tracks #tracks
+    }
+
+    row align=center {
+      text "ENTER TO PLAY  ·  ↑↓ TO BROWSE" size=9 weight=750 color=color.muted tracking=0.8 nowrap
+      spacer
+      text "1 / 4" style=text.mono color=color.accent nowrap
+    }
+  }
+}

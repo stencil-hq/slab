@@ -1,0 +1,389 @@
+slir 1.0
+STRS 128
+  0 ""
+  1 "#railyard"
+  2 "railyard"
+  3 "mono"
+  4 "#railyard/row@0"
+  5 "center"
+  6 "#railyard/row@0/text@0"
+  7 "RAILYARD v2.4.1 — Zürich HB"
+  8 "#railyard/row@0/spacer@0"
+  9 "#railyard/row@0/text@1"
+  10 "18:42:07 CEST"
+  11 "#railyard/stack@0"
+  12 "#railyard/stack@0/col@0"
+  13 "#railyard/stack@0/col@0/grid@0"
+  14 "#railyard/stack@0/col@0/grid@0/text@0"
+  15 "TIME"
+  16 "#railyard/stack@0/col@0/grid@0/text@1"
+  17 "DELAY"
+  18 "#railyard/stack@0/col@0/grid@0/text@2"
+  19 "TRAIN"
+  20 "#railyard/stack@0/col@0/grid@0/text@3"
+  21 "PLATFORM"
+  22 "#railyard/stack@0/col@0/grid@0/text@4"
+  23 "DESTINATION"
+  24 "#railyard/stack@0/col@0/grid@0/text@5"
+  25 "STATUS"
+  26 "#railyard/stack@0/col@0/grid@0/row@0"
+  27 "#railyard/stack@0/col@0/grid@0/row@0/rect@0"
+  28 "#railyard/stack@0/col@0/grid@0/Dep@0/text@0"
+  29 "18:47"
+  30 "#railyard/stack@0/col@0/grid@0/Dep@0/text@1"
+  31 "+3'"
+  32 "#railyard/stack@0/col@0/grid@0/Dep@0/text@2"
+  33 "IC 5 1528"
+  34 "#railyard/stack@0/col@0/grid@0/Dep@0/text@3"
+  35 "13"
+  36 "#railyard/stack@0/col@0/grid@0/Dep@0/row@0"
+  37 "#railyard/stack@0/col@0/grid@0/Dep@0/row@0/text@0"
+  38 "St. Gallen"
+  39 "#railyard/stack@0/col@0/grid@0/Dep@0/text@4"
+  40 "boarding"
+  41 "#railyard/stack@0/col@0/grid@0/Dep@1/text@0"
+  42 "18:51"
+  43 "#railyard/stack@0/col@0/grid@0/Dep@1/text@1"
+  44 "—"
+  45 "#railyard/stack@0/col@0/grid@0/Dep@1/text@2"
+  46 "S3 19342"
+  47 "#railyard/stack@0/col@0/grid@0/Dep@1/text@3"
+  48 "41/42"
+  49 "#railyard/stack@0/col@0/grid@0/Dep@1/row@0"
+  50 "#railyard/stack@0/col@0/grid@0/Dep@1/row@0/text@0"
+  51 "Hardbrücke–Dietikon–Aarau"
+  52 "#railyard/stack@0/col@0/grid@0/Dep@1/text@4"
+  53 "on time"
+  54 "#railyard/stack@0/col@0/grid@0/Dep@2/text@0"
+  55 "18:54"
+  56 "#railyard/stack@0/col@0/grid@0/Dep@2/text@1"
+  57 "#railyard/stack@0/col@0/grid@0/Dep@2/text@2"
+  58 "IR 36 2276"
+  59 "#railyard/stack@0/col@0/grid@0/Dep@2/text@3"
+  60 "8"
+  61 "#railyard/stack@0/col@0/grid@0/Dep@2/row@0"
+  62 "#railyard/stack@0/col@0/grid@0/Dep@2/row@0/text@0"
+  63 "Basel SBB"
+  64 "#railyard/stack@0/col@0/grid@0/Dep@2/text@4"
+  65 "#railyard/stack@0/col@0/grid@0/Dep@3/text@0"
+  66 "18:59"
+  67 "#railyard/stack@0/col@0/grid@0/Dep@3/text@1"
+  68 "+12'"
+  69 "#railyard/stack@0/col@0/grid@0/Dep@3/text@2"
+  70 "EC 307"
+  71 "#railyard/stack@0/col@0/grid@0/Dep@3/text@3"
+  72 "10"
+  73 "#railyard/stack@0/col@0/grid@0/Dep@3/row@0"
+  74 "#railyard/stack@0/col@0/grid@0/Dep@3/row@0/text@0"
+  75 "München-Hbf-über-St.Margrethen"
+  76 "#railyard/stack@0/col@0/grid@0/Dep@3/text@4"
+  77 "delayed"
+  78 "#railyard/stack@0/col@0/grid@0/Dep@4/text@0"
+  79 "19:02"
+  80 "#railyard/stack@0/col@0/grid@0/Dep@4/text@1"
+  81 "#railyard/stack@0/col@0/grid@0/Dep@4/text@2"
+  82 "IC 2 785"
+  83 "#railyard/stack@0/col@0/grid@0/Dep@4/text@3"
+  84 "31"
+  85 "#railyard/stack@0/col@0/grid@0/Dep@4/row@0"
+  86 "#railyard/stack@0/col@0/grid@0/Dep@4/row@0/text@0"
+  87 "Lugano"
+  88 "#railyard/stack@0/col@0/grid@0/Dep@4/text@4"
+  89 "#railyard/stack@0/col@0/spacer@0"
+  90 "#railyard/stack@0/col@0/text@0"
+  91 "showing 5 of 12 · next refresh in 18s"
+  92 "#railyard/stack@0/row@0"
+  93 "#railyard/stack@0/row@0/text@0"
+  94 "● LIVE"
+  95 "#railyard/stack@0/row@0/text@1"
+  96 "12 departures"
+  97 "#railyard/stack@0/row@0/text@2"
+  98 "2 delayed"
+  99 "#railyard/stack@0/row@0/text@3"
+  100 "filter: none"
+  101 "#railyard/row@1"
+  102 "#railyard/row@1/text@0"
+  103 "[j/k]"
+  104 "#railyard/row@1/text@1"
+  105 " scroll  "
+  106 "#railyard/row@1/text@2"
+  107 "[f]"
+  108 "#railyard/row@1/text@3"
+  109 " filter  "
+  110 "#railyard/row@1/text@4"
+  111 "[/]"
+  112 "#railyard/row@1/text@5"
+  113 " search  "
+  114 "#railyard/row@1/text@6"
+  115 "[p]"
+  116 "#railyard/row@1/text@7"
+  117 " platform view  "
+  118 "#railyard/row@1/text@8"
+  119 "[r]"
+  120 "#railyard/row@1/text@9"
+  121 " refresh  "
+  122 "#railyard/row@1/text@10"
+  123 "[q]"
+  124 "#railyard/row@1/text@11"
+  125 " quit"
+  126 "Inter"
+  127 "JetBrains Mono"
+NODE 71
+  0 Col flags=- parent=- child=1 sib=- key="#railyard" id="railyard" line=28
+  1 Row flags=- parent=0 child=2 sib=5 key="#railyard/row@0" id=- line=31
+  2 Text flags=nowrap parent=1 child=- sib=3 key="#railyard/row@0/text@0" id=- line=32
+  3 Spacer flags=- parent=1 child=- sib=4 key="#railyard/row@0/spacer@0" id=- line=33
+  4 Text flags=nowrap parent=1 child=- sib=- key="#railyard/row@0/text@1" id=- line=34
+  5 Stack flags=- parent=0 child=6 sib=58 key="#railyard/stack@0" id=- line=39
+  6 Col flags=- parent=5 child=7 sib=53 key="#railyard/stack@0/col@0" id=- line=40
+  7 Grid flags=- parent=6 child=8 sib=51 key="#railyard/stack@0/col@0/grid@0" id=- line=41
+  8 Text flags=nowrap parent=7 child=- sib=9 key="#railyard/stack@0/col@0/grid@0/text@0" id=- line=43
+  9 Text flags=nowrap parent=7 child=- sib=10 key="#railyard/stack@0/col@0/grid@0/text@1" id=- line=44
+  10 Text flags=nowrap parent=7 child=- sib=11 key="#railyard/stack@0/col@0/grid@0/text@2" id=- line=45
+  11 Text flags=nowrap parent=7 child=- sib=12 key="#railyard/stack@0/col@0/grid@0/text@3" id=- line=46
+  12 Text flags=nowrap parent=7 child=- sib=13 key="#railyard/stack@0/col@0/grid@0/text@4" id=- line=47
+  13 Text flags=nowrap parent=7 child=- sib=14 key="#railyard/stack@0/col@0/grid@0/text@5" id=- line=48
+  14 Row flags=- parent=7 child=15 sib=16 key="#railyard/stack@0/col@0/grid@0/row@0" id=- line=50
+  15 Rect flags=- parent=14 child=- sib=- key="#railyard/stack@0/col@0/grid@0/row@0/rect@0" id=- line=50
+  16 Text flags=nowrap parent=7 child=- sib=17 key="#railyard/stack@0/col@0/grid@0/Dep@0/text@0" id=- line=20
+  17 Text flags=nowrap parent=7 child=- sib=18 key="#railyard/stack@0/col@0/grid@0/Dep@0/text@1" id=- line=21
+  18 Text flags=nowrap parent=7 child=- sib=19 key="#railyard/stack@0/col@0/grid@0/Dep@0/text@2" id=- line=22
+  19 Text flags=nowrap parent=7 child=- sib=20 key="#railyard/stack@0/col@0/grid@0/Dep@0/text@3" id=- line=23
+  20 Row flags=- parent=7 child=21 sib=22 key="#railyard/stack@0/col@0/grid@0/Dep@0/row@0" id=- line=24
+  21 Text flags=nowrap+ellipsis parent=20 child=- sib=- key="#railyard/stack@0/col@0/grid@0/Dep@0/row@0/text@0" id=- line=24
+  22 Text flags=nowrap parent=7 child=- sib=23 key="#railyard/stack@0/col@0/grid@0/Dep@0/text@4" id=- line=25
+  23 Text flags=nowrap parent=7 child=- sib=24 key="#railyard/stack@0/col@0/grid@0/Dep@1/text@0" id=- line=20
+  24 Text flags=nowrap parent=7 child=- sib=25 key="#railyard/stack@0/col@0/grid@0/Dep@1/text@1" id=- line=21
+  25 Text flags=nowrap parent=7 child=- sib=26 key="#railyard/stack@0/col@0/grid@0/Dep@1/text@2" id=- line=22
+  26 Text flags=nowrap parent=7 child=- sib=27 key="#railyard/stack@0/col@0/grid@0/Dep@1/text@3" id=- line=23
+  27 Row flags=- parent=7 child=28 sib=29 key="#railyard/stack@0/col@0/grid@0/Dep@1/row@0" id=- line=24
+  28 Text flags=nowrap+ellipsis parent=27 child=- sib=- key="#railyard/stack@0/col@0/grid@0/Dep@1/row@0/text@0" id=- line=24
+  29 Text flags=nowrap parent=7 child=- sib=30 key="#railyard/stack@0/col@0/grid@0/Dep@1/text@4" id=- line=25
+  30 Text flags=nowrap parent=7 child=- sib=31 key="#railyard/stack@0/col@0/grid@0/Dep@2/text@0" id=- line=20
+  31 Text flags=nowrap parent=7 child=- sib=32 key="#railyard/stack@0/col@0/grid@0/Dep@2/text@1" id=- line=21
+  32 Text flags=nowrap parent=7 child=- sib=33 key="#railyard/stack@0/col@0/grid@0/Dep@2/text@2" id=- line=22
+  33 Text flags=nowrap parent=7 child=- sib=34 key="#railyard/stack@0/col@0/grid@0/Dep@2/text@3" id=- line=23
+  34 Row flags=- parent=7 child=35 sib=36 key="#railyard/stack@0/col@0/grid@0/Dep@2/row@0" id=- line=24
+  35 Text flags=nowrap+ellipsis parent=34 child=- sib=- key="#railyard/stack@0/col@0/grid@0/Dep@2/row@0/text@0" id=- line=24
+  36 Text flags=nowrap parent=7 child=- sib=37 key="#railyard/stack@0/col@0/grid@0/Dep@2/text@4" id=- line=25
+  37 Text flags=nowrap parent=7 child=- sib=38 key="#railyard/stack@0/col@0/grid@0/Dep@3/text@0" id=- line=20
+  38 Text flags=nowrap parent=7 child=- sib=39 key="#railyard/stack@0/col@0/grid@0/Dep@3/text@1" id=- line=21
+  39 Text flags=nowrap parent=7 child=- sib=40 key="#railyard/stack@0/col@0/grid@0/Dep@3/text@2" id=- line=22
+  40 Text flags=nowrap parent=7 child=- sib=41 key="#railyard/stack@0/col@0/grid@0/Dep@3/text@3" id=- line=23
+  41 Row flags=- parent=7 child=42 sib=43 key="#railyard/stack@0/col@0/grid@0/Dep@3/row@0" id=- line=24
+  42 Text flags=nowrap+ellipsis parent=41 child=- sib=- key="#railyard/stack@0/col@0/grid@0/Dep@3/row@0/text@0" id=- line=24
+  43 Text flags=nowrap parent=7 child=- sib=44 key="#railyard/stack@0/col@0/grid@0/Dep@3/text@4" id=- line=25
+  44 Text flags=nowrap parent=7 child=- sib=45 key="#railyard/stack@0/col@0/grid@0/Dep@4/text@0" id=- line=20
+  45 Text flags=nowrap parent=7 child=- sib=46 key="#railyard/stack@0/col@0/grid@0/Dep@4/text@1" id=- line=21
+  46 Text flags=nowrap parent=7 child=- sib=47 key="#railyard/stack@0/col@0/grid@0/Dep@4/text@2" id=- line=22
+  47 Text flags=nowrap parent=7 child=- sib=48 key="#railyard/stack@0/col@0/grid@0/Dep@4/text@3" id=- line=23
+  48 Row flags=- parent=7 child=49 sib=50 key="#railyard/stack@0/col@0/grid@0/Dep@4/row@0" id=- line=24
+  49 Text flags=nowrap+ellipsis parent=48 child=- sib=- key="#railyard/stack@0/col@0/grid@0/Dep@4/row@0/text@0" id=- line=24
+  50 Text flags=nowrap parent=7 child=- sib=- key="#railyard/stack@0/col@0/grid@0/Dep@4/text@4" id=- line=25
+  51 Spacer flags=- parent=6 child=- sib=52 key="#railyard/stack@0/col@0/spacer@0" id=- line=58
+  52 Text flags=nowrap parent=6 child=- sib=- key="#railyard/stack@0/col@0/text@0" id=- line=59
+  53 Row flags=- parent=5 child=54 sib=- key="#railyard/stack@0/row@0" id=- line=62
+  54 Text flags=nowrap parent=53 child=- sib=55 key="#railyard/stack@0/row@0/text@0" id=- line=63
+  55 Text flags=nowrap parent=53 child=- sib=56 key="#railyard/stack@0/row@0/text@1" id=- line=64
+  56 Text flags=nowrap parent=53 child=- sib=57 key="#railyard/stack@0/row@0/text@2" id=- line=65
+  57 Text flags=nowrap parent=53 child=- sib=- key="#railyard/stack@0/row@0/text@3" id=- line=66
+  58 Row flags=- parent=0 child=59 sib=- key="#railyard/row@1" id=- line=71
+  59 Text flags=nowrap parent=58 child=- sib=60 key="#railyard/row@1/text@0" id=- line=72
+  60 Text flags=nowrap parent=58 child=- sib=61 key="#railyard/row@1/text@1" id=- line=72
+  61 Text flags=nowrap parent=58 child=- sib=62 key="#railyard/row@1/text@2" id=- line=73
+  62 Text flags=nowrap parent=58 child=- sib=63 key="#railyard/row@1/text@3" id=- line=73
+  63 Text flags=nowrap parent=58 child=- sib=64 key="#railyard/row@1/text@4" id=- line=74
+  64 Text flags=nowrap parent=58 child=- sib=65 key="#railyard/row@1/text@5" id=- line=74
+  65 Text flags=nowrap parent=58 child=- sib=66 key="#railyard/row@1/text@6" id=- line=75
+  66 Text flags=nowrap parent=58 child=- sib=67 key="#railyard/row@1/text@7" id=- line=75
+  67 Text flags=nowrap parent=58 child=- sib=68 key="#railyard/row@1/text@8" id=- line=76
+  68 Text flags=nowrap parent=58 child=- sib=69 key="#railyard/row@1/text@9" id=- line=76
+  69 Text flags=nowrap parent=58 child=- sib=70 key="#railyard/row@1/text@10" id=- line=77
+  70 Text flags=nowrap parent=58 child=- sib=- key="#railyard/row@1/text@11" id=- line=77
+AVAL 75 f64s=26
+  0 SizeFixed 800
+  1 SizeFixed 512
+  2 PaintSolid #0d1117
+  3 EnumSym "mono"
+  4 Num 12
+  5 Num 1.333
+  6 Color #e6edf3
+  7 SizeFixed 16
+  8 EnumSym "center"
+  9 Str "RAILYARD v2.4.1 — Zürich HB"
+  10 Color #8b949e
+  11 Str "18:42:07 CEST"
+  12 SizeFill 1
+  13 PaintSolid #30363d
+  14 Tuple [32, 16, 32, 16]
+  15 Tuple [0, 80, 0, 72, 0, 128, 0, 112, 0, 224, 2, 1]
+  16 Str "TIME"
+  17 Str "DELAY"
+  18 Str "TRAIN"
+  19 Str "PLATFORM"
+  20 Str "DESTINATION"
+  21 Str "STATUS"
+  22 Num 6
+  23 SizeFixed 1
+  24 Str "18:47"
+  25 Color #ffb454
+  26 Str "+3'"
+  27 Str "IC 5 1528"
+  28 Color #56d4dd
+  29 Str "13"
+  30 Tuple [0, 16, 0, 0]
+  31 Str "St. Gallen"
+  32 Color #3fb950
+  33 Str "boarding"
+  34 Str "18:51"
+  35 Str "—"
+  36 Str "S3 19342"
+  37 Str "41/42"
+  38 Str "Hardbrücke–Dietikon–Aarau"
+  39 Str "on time"
+  40 Str "18:54"
+  41 Str "IR 36 2276"
+  42 Str "8"
+  43 Str "Basel SBB"
+  44 Str "18:59"
+  45 Str "+12'"
+  46 Str "EC 307"
+  47 Str "10"
+  48 Str "München-Hbf-über-St.Margrethen"
+  49 Str "delayed"
+  50 Str "19:02"
+  51 Str "IC 2 785"
+  52 Str "31"
+  53 Str "Lugano"
+  54 Str "showing 5 of 12 · next refresh in 18s"
+  55 Num 16
+  56 Tuple [16, 0]
+  57 SizeHug
+  58 Tuple [0, 8, 0, 8]
+  59 Str "● LIVE"
+  60 Str "12 departures"
+  61 Str "2 delayed"
+  62 Str "filter: none"
+  63 Str "[j/k]"
+  64 Str " scroll  "
+  65 Str "[f]"
+  66 Str " filter  "
+  67 Str "[/]"
+  68 Str " search  "
+  69 Str "[p]"
+  70 Str " platform view  "
+  71 Str "[r]"
+  72 Str " refresh  "
+  73 Str "[q]"
+  74 Str " quit"
+GRAD 0
+SHDW 0
+ATTR 125
+  0 w=@0 h=@1 bg=@2 color=@6 family=@3 size=@4 leading=@5
+  1 h=@7 align=@8
+  2 content=@9
+  3 -
+  4 color=@10 content=@11
+  5 w=@12 h=@12
+  6 w=@12 h=@12 pad=@14 stroke=@13
+  7 cols=@15
+  8 color=@10 content=@16
+  9 color=@10 content=@17
+  10 color=@10 content=@18
+  11 color=@10 content=@19
+  12 color=@10 content=@20
+  13 color=@10 content=@21
+  14 h=@7 align=@8 span=@22
+  15 w=@12 h=@23 bg=@13
+  16 content=@24
+  17 color=@25 content=@26
+  18 content=@27
+  19 color=@28 content=@29
+  20 pad=@30
+  21 content=@31
+  22 color=@32 content=@33
+  23 content=@34
+  24 color=@10 content=@35
+  25 content=@36
+  26 color=@28 content=@37
+  27 pad=@30
+  28 content=@38
+  29 color=@32 content=@39
+  30 content=@40
+  31 color=@10 content=@35
+  32 content=@41
+  33 color=@28 content=@42
+  34 pad=@30
+  35 content=@43
+  36 color=@32 content=@39
+  37 content=@44
+  38 color=@25 content=@45
+  39 content=@46
+  40 color=@28 content=@47
+  41 pad=@30
+  42 content=@48
+  43 color=@25 content=@49
+  44 content=@50
+  45 color=@10 content=@35
+  46 content=@51
+  47 color=@28 content=@52
+  48 pad=@30
+  49 content=@53
+  50 color=@32 content=@39
+  51 -
+  52 color=@10 content=@54
+  53 w=@57 h=@7 pad=@58 gap=@55 align=@8 offset=@56 bg=@2
+  54 color=@32 content=@59
+  55 content=@60
+  56 color=@25 content=@61
+  57 color=@10 content=@62
+  58 h=@7 pad=@58 align=@8 bg=@13
+  59 color=@28 content=@63
+  60 content=@64
+  61 color=@28 content=@65
+  62 content=@66
+  63 color=@28 content=@67
+  64 content=@68
+  65 color=@28 content=@69
+  66 content=@70
+  67 color=@28 content=@71
+  68 content=@72
+  69 color=@28 content=@73
+  70 content=@74
+PATH 0
+FONT 2
+  0 family="Inter" class=sans weight=400 upem=2048 ascent=1984 descent=-494 line_gap=0 default_advance=1344 blob=@0+411640
+    cmap 32:1777:576 33:1427:589 34:1485:954 35:1453:1297 36:1309:1314 37:1744:2011 38:1425:1319 39:1484:614
+    cmap 40:1437:747 41:1438:747 42:1547:1026 43:1522:1355 44:1501:590 45:1459:942 46:1502:590 47:1455:738
+    cmap 48:1341:1292 49:1342:833 50:1343:1249 51:1345:1265 52:1346:1323 53:1347:1215 54:1349:1270 55:1350:1159
+    cmap 56:1351:1267 57:1352:1270 58:1505:590 59:1508:618 60:1516:1355 61:1520:1355 62:1517:1355 63:1431:1047
+    cmap 64:1445:1978 65:2:1413 66:65:1340 67:73:1496 68:84:1478 69:95:1231 70:137:1209 71:141:1528
+    cmap 72:161:1522 73:197:550 74:266:1169 75:271:1376 76:281:1158 77:292:1850 78:300:1543 79:321:1566
+    cmap 80:375:1308 81:382:1566 82:384:1318 83:397:1314 84:411:1322 85:424:1524 86:456:1413 87:459:2018
+    cmap 88:466:1397 89:472:1390 90:496:1288 91:1439:747 92:1458:738 93:1441:747 94:1546:965 95:1543:934
+    cmap 96:1754:661 97:507:1150 98:578:1254 99:586:1170 100:597:1254 101:614:1194 102:647:758 103:658:1256
+    cmap 104:670:1211 105:689:496 106:719:496 107:727:1124 108:736:496 109:766:1794 110:773:1210 111:790:1228
+    cmap 112:843:1254 113:849:1254 114:852:771 115:871:1081 116:889:670 117:915:1211 118:980:1151 119:984:1676
+    cmap 120:993:1118 121:998:1151 122:1022:1131 123:1443:873 124:1456:681 125:1444:873 126:1528:1355 183:1509:590
+    cmap 252:916:1211 8211:1460:1024 8212:1462:2048 9679:1853:1872
+  1 family="JetBrains Mono" class=mono weight=400 upem=1000 ascent=1020 descent=-300 line_gap=0 default_advance=600 blob=@411640+273900
+    cmap 32:958:600 33:814:600 34:874:600 35:826:600 36:965:600 37:1080:600 38:1461:600 39:875:600
+    cmap 40:835:600 41:836:600 42:820:600 43:1045:600 44:810:600 45:855:600 46:809:600 47:829:600
+    cmap 48:724:600 49:725:600 50:726:600 51:727:600 52:728:600 53:729:600 54:730:600 55:731:600
+    cmap 56:732:600 57:733:600 58:811:600 59:812:600 60:1052:600 61:1049:600 62:1051:600 63:816:600
+    cmap 64:1460:600 65:1:600 66:26:600 67:27:600 68:33:600 69:37:600 70:56:600 71:57:600
+    cmap 72:64:600 73:67:600 74:79:600 75:81:600 76:83:600 77:89:600 78:90:600 79:96:600
+    cmap 80:122:600 81:124:600 82:125:600 83:129:600 84:137:600 85:142:600 86:161:600 87:162:600
+    cmap 88:167:600 89:168:600 90:177:600 91:839:600 92:830:600 93:840:600 94:1059:600 95:860:600
+    cmap 96:1666:600 97:189:600 98:214:600 99:215:600 100:221:600 101:225:600 102:244:600 103:245:600
+    cmap 104:252:600 105:255:600 106:269:600 107:272:600 108:275:600 109:282:600 110:283:600 111:290:600
+    cmap 112:317:600 113:319:600 114:320:600 115:324:600 116:332:600 117:337:600 118:361:600 119:362:600
+    cmap 120:367:600 121:368:600 122:377:600 123:837:600 124:1470:600 125:838:600 126:1058:600 183:818:600
+    cmap 252:342:600 8211:857:600 8212:858:600 9679:1210:600
+WHEN conds=0 patches=0 attrs=0 children=0
+ANIM anims=0 attrs=0 binds=0 trans=0
+PARM 0 enums=0 sites=0
+HOLE 0
+SIGN 0
+IMGS 0
+BLOB 685540 fnv1a64=d6d777162ccb9f29

@@ -1,0 +1,30 @@
+{
+   "name": "@stencil-hq/dslab",
+   "version": "1.0.0",
+   "type": "module",
+   "license": "MIT",
+   "repository": {
+      "type": "git",
+      "url": "https://github.com/stencil-hq/slab"
+   },
+   "publishConfig": {
+      "access": "public"
+   },
+   "bin": {
+      "dslab": "./bin/dslab.js"
+   },
+   "files": [
+      "bin",
+      "dist",
+      "LICENSE"
+   ],
+   "engines": {
+      "node": ">=22"
+   },
+   "exports": {
+      ".": {
+         "types": "./dist/index.d.ts",
+         "default": "./dist/index.js"
+      }
+   }
+}

@@ -1,0 +1,102 @@
+==============================
+top-level when with tokens override
+==============================
+
+when tui {
+  tokens { color { bg #000000 } }
+}
+
+---
+
+(source_file
+  (when_top
+    (condition
+      (identifier))
+    (tokens_declaration
+      (token_group
+        (identifier)
+        (token_entry
+          (identifier)
+          (hex_color))))))
+
+==============================
+when with negated condition
+==============================
+
+col {
+  when !hover { bg=#2B3547 }
+}
+
+---
+
+(source_file
+  (node
+    (identifier)
+    (block
+      (when_block
+        (condition
+          (identifier))
+        (attribute
+          (identifier)
+          (hex_color))))))
+
+==============================
+when with comparison
+==============================
+
+col {
+  when w<420 { gap=4 }
+  when h >= 200 { pad=8 }
+}
+
+---
+
+(source_file
+  (node
+    (identifier)
+    (block
+      (when_block
+        (condition
+          (comparison
+            (identifier)
+            (number)))
+        (attribute
+          (identifier)
+          (number)))
+      (when_block
+        (condition
+          (comparison
+            (identifier)
+            (number)))
+        (attribute
+          (identifier)
+          (number))))))
+
+==============================
+when with flags nodes and strings
+==============================
+
+row {
+  when hover { bg=color.moss; nowrap; rect w=6; "hi" }
+}
+
+---
+
+(source_file
+  (node
+    (identifier)
+    (block
+      (when_block
+        (condition
+          (identifier))
+        (attribute
+          (identifier)
+          (reference))
+        (flag
+          (identifier))
+        (node
+          (identifier)
+          (attribute
+            (identifier)
+            (number)))
+        (string)))))

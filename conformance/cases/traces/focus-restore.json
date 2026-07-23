@@ -1,0 +1,63 @@
+{
+  "doc": "i1-restore",
+  "env": {
+    "vw": 200,
+    "vh": 400,
+    "client": "web",
+    "dark": false,
+    "coarse": false
+  },
+  "steps": [
+    {
+      "t": 0,
+      "state": {
+        "name": "show",
+        "on": true
+      }
+    },
+    {
+      "t": 16
+    },
+    {
+      "t": 32,
+      "event": {
+        "type": "key-down",
+        "key": "Tab"
+      }
+    },
+    {
+      "t": 48,
+      "event": {
+        "type": "key-down",
+        "key": "Tab"
+      }
+    },
+    {
+      "t": 64,
+      "event": {
+        "type": "key-down",
+        "key": "Tab"
+      }
+    },
+    {
+      "t": 80
+    },
+    {
+      "t": 96,
+      "state": {
+        "name": "show",
+        "on": false
+      }
+    },
+    {
+      "t": 112
+    },
+    {
+      "t": 128
+    }
+  ],
+  "expect": {
+    "signals": [],
+    "focus_key": "col@0/#r3"
+  }
+}

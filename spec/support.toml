@@ -1,0 +1,300 @@
+# Platform × feature support chart — single source of truth (audited against
+# the drivers as built: clients/web painter.ts/element.ts,
+# crates/slab-native renderer.rs/demo.rs, crates/slab-kernel/src/cells.rs +
+# crates/slab-tui, and crates/slab-compile svg.rs/raster.rs).
+# Values: "full" | "degraded:<one concrete sentence>" | "none:<cap-* diag code>"
+# Columns: web gpu tui svg png (= kernel client codes 0..4)
+# Rendered into spec/SPEC.md §"Platform support" by `xtask support-md`;
+# `xtask gen-caps` emits crates/slab-kernel/src/caps.rs.
+
+[feature.radius]
+web = "full"
+gpu = "full"
+tui = "degraded:corner radius collapses to single arc glyphs (radius >= 4u draws ╭ ╮ ╰ ╯, smaller radii draw square corners)"
+svg = "full"
+png = "full"
+
+[feature.shadow]
+web = "full"
+gpu = "degraded:outset shadows use blurred-SDF approximations"
+tui = "none:cap-shadow"
+svg = "degraded:the shadow spread field is ignored by the SVG filters (research parity; the raster honors it)"
+png = "full"
+
+[feature.blur]
+web = "full"
+gpu = "full"
+tui = "none:cap-blur"
+svg = "full"
+png = "full"
+
+[feature.backdrop]
+web = "full"
+gpu = "full"
+tui = "none:cap-backdrop"
+svg = "degraded:approximated by re-emitting the ops beneath the panel, clipped and blurred, behind it"
+png = "full"
+
+[feature.gradient]
+web = "degraded:dashed or per-side gradient strokes fall back to their first stop"
+gpu = "degraded:gradients sample at most 8 stops (cap-gradient-stops)"
+tui = "degraded:sampled per cell (linear angle, radial farthest-corner, conic sweep), alpha-composited"
+svg = "full"
+png = "full"
+
+[feature.gradient-conic]
+web = "full"
+gpu = "degraded:gradients sample at most 8 stops (cap-gradient-stops)"
+tui = "degraded:sampled per cell over the paint box"
+svg = "degraded:approximated by a 90-wedge fan, each wedge solid at its center sample"
+png = "full"
+
+[feature.gradient-text]
+web = "full"
+gpu = "degraded:gradients sample at most 8 stops (cap-gradient-stops)"
+tui = "degraded:sampled per cell over the text node's content box"
+svg = "full"
+png = "full"
+
+[feature.path]
+web = "full"
+gpu = "full"
+tui = "degraded:strokes as slope-charred cell runs, fills as even-odd scanline at cell centers"
+svg = "full"
+png = "full"
+
+[feature.path-runtime]
+web = "full"
+gpu = "full"
+tui = "degraded:uses the same cell-center path approximation as compiled path data"
+svg = "full"
+png = "full"
+
+[feature.icon]
+web = "full"
+gpu = "full"
+tui = "degraded:scale transforms are ignored and icon paths render in design-box coordinates"
+svg = "full"
+png = "full"
+
+[feature.image]
+web = "full"
+gpu = "full"
+tui = "degraded:drawn as a shaded placeholder block labeled with the source basename"
+svg = "full"
+png = "full"
+
+[feature.img-runtime]
+web = "full"
+gpu = "full"
+tui = "degraded:drawn as the same shaded placeholder block used for compiled images"
+svg = "full"
+png = "full"
+
+[feature.rotation]
+web = "full"
+gpu = "full"
+tui = "none:cap-transform"
+svg = "full"
+png = "full"
+
+[feature.scale]
+web = "full"
+gpu = "full"
+tui = "none:cap-transform"
+svg = "full"
+png = "full"
+
+[feature.tilt]
+web = "full"
+gpu = "full"
+tui = "none:cap-transform"
+svg = "degraded:affine three-corner fit (no foreshortening)"
+png = "full"
+
+[feature.smooth]
+web = "degraded:inset shadows and shadow spread keep circular corners"
+gpu = "degraded:shadows and clips keep circular corners"
+tui = "degraded:same arc glyphs as radius"
+svg = "full"
+png = "full"
+
+[feature.grain]
+web = "full"
+gpu = "full"
+tui = "none:cap-grain"
+svg = "degraded:feTurbulence approximation (different noise realization)"
+png = "full"
+
+[feature.mask]
+web = "full"
+gpu = "full"
+tui = "degraded:mask alpha sampled per cell over the box"
+svg = "full"
+png = "full"
+
+[feature.backdrop-fade]
+web = "degraded:6-band blur approximation"
+gpu = "degraded:6-band blur approximation"
+tui = "none:cap-backdrop"
+svg = "degraded:3-band blur approximation"
+png = "degraded:6-band blur approximation"
+
+[feature.animation]
+web = "full"
+gpu = "full"
+tui = "full"
+svg = "degraded:animates paint attributes; text content and layout-affecting keyframes freeze at authored base (cap-anim-content)"
+png = "degraded:re-solved per frame and encoded as APNG at the requested --dur/--fps"
+
+[feature.text-keyframes]
+web = "full"
+gpu = "full"
+tui = "full"
+svg = "degraded:content keyframes freeze at the authored base (cap-anim-content)"
+png = "full"
+
+[feature.transition]
+web = "full"
+gpu = "full"
+tui = "full"
+svg = "none:cap-transition"
+png = "none:cap-transition"
+
+[feature.themes]
+web = "full"
+gpu = "full"
+tui = "full"
+svg = "full"
+png = "full"
+
+[feature.input]
+web = "full"
+gpu = "full"
+tui = "degraded:pointer positions are quantized to character-cell centers"
+svg = "none:cap-input"
+png = "none:cap-input"
+
+[feature.ime]
+web = "full"
+gpu = "degraded:an Esc-cancelled composition stays open until the next commit and dead-key commits arrive as plain text events"
+tui = "none:cap-ime"
+svg = "none:cap-ime"
+png = "none:cap-ime"
+
+[feature.scroll]
+web = "full"
+gpu = "full"
+tui = "full"
+# Static exporters do not scroll; scrollbar=always still paints every active
+# axis's track and thumb at offset zero before reporting cap-scroll.
+svg = "none:cap-scroll"
+png = "none:cap-scroll"
+
+[feature.scroll-cross]
+web = "full"
+gpu = "full"
+tui = "full"
+svg = "none:cap-scroll"
+png = "none:cap-scroll"
+
+[feature.scroll-reveal]
+web = "full"
+gpu = "full"
+tui = "full"
+svg = "none:cap-scroll"
+png = "none:cap-scroll"
+
+[feature.sticky]
+web = "full"
+gpu = "full"
+tui = "full"
+svg = "none:cap-scroll"
+png = "none:cap-scroll"
+
+[feature.divider]
+web = "full"
+gpu = "full"
+tui = "full"
+svg = "degraded:renders authored or host-preset divider geometry; interactive resizing has no static dispatch loop"
+png = "degraded:renders authored or host-preset divider geometry; interactive resizing has no static dispatch loop"
+
+[feature.holes]
+# Web slots and GPU/native HoleContent report natural content size for hug
+# axes. Hostless TUI and static SVG/PNG make no report, so hug starts at zero
+# and then uses the ordinary min/max clamps.
+web = "full"
+gpu = "full"
+tui = "none:cap-hole"
+svg = "degraded:the hole box renders empty; a hug axis has no host report, so it uses zero before ordinary min/max clamps"
+png = "degraded:the hole box renders empty; a hug axis has no host report, so it uses zero before ordinary min/max clamps"
+
+[feature.lists]
+web = "full"
+gpu = "full"
+tui = "full"
+svg = "full"
+png = "full"
+
+[feature.lists-nested]
+web = "full"
+gpu = "full"
+tui = "full"
+svg = "full"
+png = "full"
+
+[feature.para-runs]
+web = "full"
+gpu = "full"
+tui = "full"
+svg = "full"
+png = "full"
+
+[feature.lists-virtual]
+web = "full"
+gpu = "full"
+tui = "full"
+svg = "full"
+png = "full"
+
+[feature.popover]
+web = "full"
+gpu = "full"
+tui = "full"
+svg = "full"
+png = "full"
+
+# Includes Activate/Change/Submit plus Press, Context, Dblclick, DragStart,
+# Drop, Resize, PointerMove, PointerUp, DragUpdate, and DragEnd with the shared
+# typed SignalMeta payload. `drag-ghost` is a paint-only 0.72-opacity duplicate
+# emitted through ordinary Group/draw ops; it adds no scene, hit, or a11y node.
+[feature.signals]
+web = "full"
+gpu = "full"
+tui = "full"
+svg = "none:cap-signal"
+png = "none:cap-signal"
+
+# Web maps the retained hierarchy to ARIA; native GPU windows publish it through
+# AccessKit. TUI and static visual exports retain kernel scene metadata for
+# programmatic consumers but do not expose a platform accessibility tree.
+[feature.a11y]
+web = "full"
+gpu = "full"
+tui = "none:cap-a11y"
+svg = "none:cap-a11y"
+png = "none:cap-a11y"
+
+[feature.text-edit]
+web = "full"
+gpu = "degraded:cut/copy/paste do not reach the system clipboard (winit has no clipboard API)"
+tui = "full"
+svg = "none:cap-edit"
+png = "none:cap-edit"
+
+[feature.text-raster]
+web = "degraded:browser-rasterized glyphs; kernel line breaks and advances are authoritative"
+gpu = "full"
+tui = "degraded:wide clusters (EAW W/F, emoji presentation) occupy two cells; runs re-quantize to columns under the real font metrics"
+svg = "degraded:viewer-rasterized glyphs; textLength force-fits each run to the kernel-measured width"
+png = "full"

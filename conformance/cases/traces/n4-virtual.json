@@ -1,0 +1,47 @@
+{
+  "doc": "n4-virtual",
+  "env": {
+    "vw": 160,
+    "vh": 100,
+    "client": "web",
+    "dark": false,
+    "coarse": false
+  },
+  "steps": [
+    {
+      "t": 0,
+      "list": {"param": "rows", "path": "", "op": "len", "n": 10000}
+    },
+    {"t": 16},
+    {
+      "t": 32,
+      "window": {"each": "#viewport/rows"}
+    },
+    {
+      "t": 48,
+      "list": {"param": "rows", "path": "", "op": "field", "index": 9999, "field": "label", "kind": "text", "value": "Last row"}
+    },
+    {
+      "t": 64,
+      "event": {"type": "wheel", "x": 80, "y": 50, "dx": 0, "dy": 1000}
+    },
+    {
+      "t": 80,
+      "window": {"each": "#viewport/rows"}
+    },
+    {
+      "t": 96,
+      "reveal_item": {"each": "#viewport/rows", "index": 9999, "align": 2}
+    },
+    {
+      "t": 112,
+      "window": {"each": "#viewport/rows"}
+    }
+  ],
+  "expect": {
+    "signals": [],
+    "scroll": [
+      {"key": "#viewport", "axis": 0, "off": 199900}
+    ]
+  }
+}

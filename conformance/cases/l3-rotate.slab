@@ -1,0 +1,11 @@
+// L3: quarter-turn rotation is layout-aware (swapped constraints, rotated
+// bbox, payload centered); arbitrary angle is ink-only.
+row w=300 h=140 pad=10 gap=10 bg=#0e1116 {
+  col w=24 h=fill bg=#181c22 pack=center align=center {
+    text "SPINE" size=11 color=#8a97a8 rotate=90 tracking=2
+  }
+  col gap=8 w=fill {
+    rect w=60 h=60 bg=#4fc7e0 rotate=45
+    rect w=80 h=20 bg=#e0564a rotate=270
+  }
+}

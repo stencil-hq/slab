@@ -1,0 +1,34 @@
+{
+  "doc": "v1-path-param",
+  "env": {
+    "vw": 80,
+    "vh": 32,
+    "client": "web",
+    "dark": false,
+    "coarse": false
+  },
+  "steps": [
+    {
+      "t": 0
+    },
+    {
+      "t": 16,
+      "param": {
+        "name": "route",
+        "kind": "text",
+        "value": "m2 2 h28 v18"
+      }
+    },
+    {
+      "t": 32,
+      "param": {
+        "name": "route",
+        "kind": "text",
+        "value": "not path data"
+      }
+    }
+  ],
+  "expect": {
+    "signals": []
+  }
+}

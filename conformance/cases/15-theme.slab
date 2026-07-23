@@ -1,0 +1,13 @@
+// Theme selection changes token-backed paint while preserving geometry.
+tokens {
+  color { surface #102030; ink #f4f7fb; accent #36c2b4 }
+}
+
+theme dusk {
+  color { surface #382040; ink #fff1d6; accent #f29a52 }
+}
+
+col w=240 h=96 pad=16 gap=10 bg=color.surface {
+  text "Theme preview" size=16 weight=600 color=color.ink
+  rect w=88 h=8 radius=4 bg=color.accent
+}

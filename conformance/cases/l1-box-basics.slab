@@ -1,0 +1,21 @@
+// L1: row/col nesting, pad, gap, fixed/hug/fill weights, spacer,
+// min/max clamps, pack, align, self.
+col w=400 pad=16 gap=8 bg=#101418 {
+  row gap=8 pack=between align=center h=40 bg=#1a2028 {
+    rect w=24 h=24 bg=#ff0000
+    rect w=24 h=12 bg=#00ff00 self=end
+    rect w=24 h=24 bg=#0000ff
+  }
+  row gap=4 h=30 {
+    rect w=fill h=fill bg=#333333
+    rect w=fill:3 h=fill bg=#444444
+    rect w=60 h=fill bg=#555555
+  }
+  row h=20 {
+    rect w=200 max-w=120 h=fill bg=#666666
+    spacer
+    rect w=10 min-w=40 h=fill bg=#777777
+  }
+  rect h=1 bg=#ffffff40
+  row pack=center gap=6 h=24 { rect w=20 h=20 bg=#888888; rect w=20 h=20 bg=#999999 }
+}

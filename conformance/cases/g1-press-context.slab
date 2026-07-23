@@ -1,0 +1,10 @@
+// Gesture conformance: primary Press, side-effect-free Context, and uncaptured pointer signals.
+col key=board w=240 h=96 gap=8 {
+  box key=surface w=120 h=40 press=pressed context=context bg=#243247 {
+    when pressed { bg=#3f5a7a }
+    text "surface" color=#ffffff size=14
+  }
+  box key=passive w=120 h=40 pointer-move=moved pointer-up=released bg=#263044 {
+    text "passive" color=#ffffff size=14
+  }
+}

@@ -1,0 +1,79 @@
+<!doctype html>
+<!--
+  Avatar source. Serve the repo root (e.g. `python3 -m http.server`), open
+  /assets/brand/avatar.html, and screenshot the #card element at 800x800 to
+  regenerate avatar.png. White monochrome slab mark (logo-mono.svg) on the
+  official #09090b dark plate with Cyanotype page grain; the mark sits inside
+  the inscribed circle so round crops never clip it.
+-->
+<html lang="en">
+   <head>
+      <meta charset="utf-8" />
+      <style>
+         * {
+            box-sizing: border-box;
+            margin: 0;
+         }
+         html,
+         body {
+            background: #101014;
+         }
+
+         #card {
+            position: relative;
+            width: 800px;
+            height: 800px;
+            background: #09090b;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+         }
+
+         /* Cyanotype page grain: 2px conic checker at 3% white. */
+         #card::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background: conic-gradient(
+               rgba(255, 255, 255, 0.03) 90deg,
+               transparent 90deg 180deg,
+               rgba(255, 255, 255, 0.03) 180deg 270deg,
+               transparent 270deg
+            );
+            background-size: 2px 2px;
+         }
+
+         svg {
+            position: relative;
+            width: 576px; /* 72% of frame: circle-crop safe with breathing room */
+            height: 576px;
+            color: #ffffff;
+         }
+      </style>
+   </head>
+   <body>
+      <div id="card">
+         <svg viewBox="0 0 200 200" aria-hidden="true">
+            <polygon
+               points="100,57 166,90 100,123 34,90"
+               fill="none"
+               stroke="currentColor"
+               stroke-width="8"
+               stroke-linejoin="round"
+            />
+            <polygon points="100,82 116,90 100,98 84,90" fill="currentColor" />
+            <polygon points="34,90 100,123 100,143 34,110" fill="currentColor" />
+            <polygon points="100,123 166,90 166,110 100,143" fill="currentColor" />
+            <path
+               d="M34 90 L34 110 L100 143 L166 110 L166 90"
+               fill="none"
+               stroke="currentColor"
+               stroke-width="8"
+               stroke-linejoin="round"
+               stroke-linecap="round"
+            />
+         </svg>
+      </div>
+   </body>
+</html>

@@ -1,0 +1,276 @@
+================================================================================
+params block with all types
+================================================================================
+params {
+  title  text = "Settings"
+  count  num = 3
+  ratio  pct = 50%
+  accent color = #4FC7E0
+  compact bool = false
+  tone   enum(info, warn, error) = info
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (params_declaration
+    (param_declaration
+      (identifier)
+      (param_type)
+      (string))
+    (param_declaration
+      (identifier)
+      (param_type)
+      (number))
+    (param_declaration
+      (identifier)
+      (param_type)
+      (percent))
+    (param_declaration
+      (identifier)
+      (param_type)
+      (hex_color))
+    (param_declaration
+      (identifier)
+      (param_type)
+      (identifier))
+    (param_declaration
+      (identifier)
+      (param_type
+        (identifier)
+        (identifier)
+        (identifier))
+      (identifier))))
+
+================================================================================
+enum member list with trailing comma
+================================================================================
+params {
+  side enum(left, right,) = left
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (params_declaration
+    (param_declaration
+      (identifier)
+      (param_type
+        (identifier)
+        (identifier))
+      (identifier))))
+
+================================================================================
+exported def
+================================================================================
+def Row(label, tone) export {
+  text label size=12
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (def_declaration
+    (identifier)
+    (parameter
+      (identifier))
+    (parameter
+      (identifier))
+    (export_flag)
+    (block
+      (node
+        (identifier)
+        (identifier)
+        (attribute
+          (identifier)
+          (number))))))
+
+================================================================================
+hole node with attrs and flags
+================================================================================
+col {
+  hole rows w=fill h=336 scroll
+  hole content min-h=120 w=fill
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (node
+    (identifier)
+    (block
+      (node
+        (identifier)
+        (identifier)
+        (attribute
+          (identifier)
+          (fill_size))
+        (attribute
+          (identifier)
+          (number))
+        (flag
+          (identifier)))
+      (node
+        (identifier)
+        (identifier)
+        (attribute
+          (identifier)
+          (number))
+        (attribute
+          (identifier)
+          (fill_size))))))
+
+================================================================================
+param refs and act/field attrs
+================================================================================
+params {
+  hot   bool = false
+  title text = "Hello"
+}
+col w=200 gap=4 {
+  text param.title size=14 nowrap
+  row focusable act=save field=draft {
+    when hot { bg=#ff0000 }
+  }
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (params_declaration
+    (param_declaration
+      (identifier)
+      (param_type)
+      (identifier))
+    (param_declaration
+      (identifier)
+      (param_type)
+      (string)))
+  (node
+    (identifier)
+    (attribute
+      (identifier)
+      (number))
+    (attribute
+      (identifier)
+      (number))
+    (block
+      (node
+        (identifier)
+        (reference)
+        (attribute
+          (identifier)
+          (number))
+        (flag
+          (identifier)))
+      (node
+        (identifier)
+        (flag
+          (identifier))
+        (attribute
+          (identifier)
+          (identifier))
+        (attribute
+          (identifier)
+          (identifier))
+        (block
+          (when_block
+            (condition
+              (identifier))
+            (attribute
+              (identifier)
+              (hex_color))))))))
+
+================================================================================
+env and renderer-class when conditions
+================================================================================
+rect w=100 h=20 {
+  when portrait { bg=#00cc66 }
+  when landscape { bg=#0066cc }
+  when dark { stroke=#ffffff stroke-w=2 }
+  when coarse { h=44 }
+  when web { radius=4 }
+  when gpu { radius=6 }
+  when tui { radius=0 }
+  when svg { radius=2 }
+  when png { radius=2 }
+  when w<600 { h=40 }
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (node
+    (identifier)
+    (attribute
+      (identifier)
+      (number))
+    (attribute
+      (identifier)
+      (number))
+    (block
+      (when_block
+        (condition
+          (identifier))
+        (attribute
+          (identifier)
+          (hex_color)))
+      (when_block
+        (condition
+          (identifier))
+        (attribute
+          (identifier)
+          (hex_color)))
+      (when_block
+        (condition
+          (identifier))
+        (attribute
+          (identifier)
+          (hex_color))
+        (attribute
+          (identifier)
+          (number)))
+      (when_block
+        (condition
+          (identifier))
+        (attribute
+          (identifier)
+          (number)))
+      (when_block
+        (condition
+          (identifier))
+        (attribute
+          (identifier)
+          (number)))
+      (when_block
+        (condition
+          (identifier))
+        (attribute
+          (identifier)
+          (number)))
+      (when_block
+        (condition
+          (identifier))
+        (attribute
+          (identifier)
+          (number)))
+      (when_block
+        (condition
+          (identifier))
+        (attribute
+          (identifier)
+          (number)))
+      (when_block
+        (condition
+          (identifier))
+        (attribute
+          (identifier)
+          (number)))
+      (when_block
+        (condition
+          (comparison
+            (identifier)
+            (number)))
+        (attribute
+          (identifier)
+          (number))))))

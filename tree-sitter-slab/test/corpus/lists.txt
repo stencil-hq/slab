@@ -1,0 +1,292 @@
+==============================
+empty typed list default
+==============================
+
+params {
+  tracks list(TrackRow) = []
+}
+
+---
+
+(source_file
+  (params_declaration
+    (param_declaration
+      (identifier)
+      (param_type
+        (identifier))
+      (list_literal))))
+
+==============================
+list item defaults and each
+==============================
+
+params {
+  tracks list(TrackRow) = [
+    TrackRow(title="A", tone=#f00),
+    TrackRow(title="B"),
+  ]
+}
+col {
+  each param.tracks #tracks key=title
+}
+
+---
+
+(source_file
+  (params_declaration
+    (param_declaration
+      (identifier)
+      (param_type
+        (identifier))
+      (list_literal
+        (list_item
+          (identifier)
+          (list_field
+            (identifier)
+            (string))
+          (list_field
+            (identifier)
+            (hex_color)))
+        (list_item
+          (identifier)
+          (list_field
+            (identifier)
+            (string))))))
+  (node
+    (identifier)
+    (block
+      (each_statement
+        (reference)
+        (node_id)
+        (attribute
+          (identifier)
+          (identifier))))))
+
+==============================
+scalar defaults remain scalar
+==============================
+
+params {
+  title text = "Now playing"
+  density enum(compact, cozy) = compact
+}
+
+---
+
+(source_file
+  (params_declaration
+    (param_declaration
+      (identifier)
+      (param_type)
+      (string))
+    (param_declaration
+      (identifier)
+      (param_type
+        (identifier)
+        (identifier))
+      (identifier))))
+
+==============================
+recursive schemas, nested defaults, and nested each
+==============================
+
+def Tree(label="", children=list(Tree)) export {
+  col {
+    text label
+    each children
+  }
+}
+params {
+  roots list(Tree) = [
+    Tree(
+      label="root",
+      children=[
+        Tree(label="child", children=[]),
+      ],
+    ),
+  ]
+}
+col scroll {
+  each param.roots #tree virtual item-extent=20 overscan=2
+}
+
+---
+
+(source_file
+  (def_declaration
+    (identifier)
+    (parameter
+      (identifier)
+      (string))
+    (parameter
+      (identifier)
+      (list_schema
+        (identifier)))
+    (export_flag)
+    (block
+      (node
+        (identifier)
+        (block
+          (node
+            (identifier)
+            (identifier))
+          (each_statement
+            (identifier))))))
+  (params_declaration
+    (param_declaration
+      (identifier)
+      (param_type
+        (identifier))
+      (list_literal
+        (list_item
+          (identifier)
+          (list_field
+            (identifier)
+            (string))
+          (list_field
+            (identifier)
+            (list_literal
+              (list_item
+                (identifier)
+                (list_field
+                  (identifier)
+                  (string))
+                (list_field
+                  (identifier)
+                  (list_literal)))))))))
+  (node
+    (identifier)
+    (flag
+      (identifier))
+    (block
+      (each_statement
+        (reference)
+        (node_id)
+        (each_flag)
+        (attribute
+          (identifier)
+          (number))
+        (attribute
+          (identifier)
+          (number))))))
+
+==============================
+para rich runs from each
+==============================
+
+def Run(text="", tone=#000000, point-size=13) export {
+  span text color=tone size=point-size
+}
+params {
+  runs list(Run) = [
+    Run(text="let ", tone=#8B5CF6, point-size=13),
+    Run(text="value", tone=#E2E8F0, point-size=13),
+  ]
+}
+para {
+  each param.runs key=text
+}
+
+---
+
+(source_file
+  (def_declaration
+    (identifier)
+    (parameter
+      (identifier)
+      (string))
+    (parameter
+      (identifier)
+      (hex_color))
+    (parameter
+      (identifier)
+      (number))
+    (export_flag)
+    (block
+      (node
+        (identifier)
+        (identifier)
+        (attribute
+          (identifier)
+          (identifier))
+        (attribute
+          (identifier)
+          (identifier)))))
+  (params_declaration
+    (param_declaration
+      (identifier)
+      (param_type
+        (identifier))
+      (list_literal
+        (list_item
+          (identifier)
+          (list_field
+            (identifier)
+            (string))
+          (list_field
+            (identifier)
+            (hex_color))
+          (list_field
+            (identifier)
+            (number)))
+        (list_item
+          (identifier)
+          (list_field
+            (identifier)
+            (string))
+          (list_field
+            (identifier)
+            (hex_color))
+          (list_field
+            (identifier)
+            (number))))))
+  (node
+    (identifier)
+    (block
+      (each_statement
+        (reference)
+        (attribute
+          (identifier)
+          (identifier))))))
+
+==============================
+semantic-invalid nested each contexts remain structured
+==============================
+
+def Invalid(label="", children=list(Tree)) export {
+  para {
+    each children
+  }
+}
+col {
+  each param.rows virtual overscan=4
+}
+
+---
+
+(source_file
+  (def_declaration
+    (identifier)
+    (parameter
+      (identifier)
+      (string))
+    (parameter
+      (identifier)
+      (list_schema
+        (identifier)))
+    (export_flag)
+    (block
+      (node
+        (identifier)
+        (block
+          (each_statement
+            (identifier))))))
+  (node
+    (identifier)
+    (block
+      (each_statement
+        (reference)
+        (each_flag)
+        (attribute
+          (identifier)
+          (number))))))

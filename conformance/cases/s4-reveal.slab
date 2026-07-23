@@ -1,0 +1,9 @@
+// Reveal moves both axes of the inner row, then applies the translated target
+// rectangle to both axes of the outer column.
+col#outer w=100 h=100 scroll=both {
+  rect w=250 h=150 bg=#1a2633
+  row#inner w=100 h=100 offset=150,0 scroll=both {
+    rect w=150 h=200 bg=#24394d
+    rect#target w=20 h=20 offset=0,150 bg=#f4c95d
+  }
+}

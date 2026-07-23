@@ -1,0 +1,8 @@
+[package]
+name = "slab-fonts"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+ttf-parser = { workspace = true }

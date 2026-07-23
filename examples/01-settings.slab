@@ -1,0 +1,144 @@
+// Iteration 2 — "Nautilus NR-7" reef controller settings (800x1120).
+// Deep-ocean gradient scene, glass section cards, aligned mono value
+// columns, amber calibration callout riding over the lighting card.
+tokens {
+  color {
+    abyss #030B14
+    ink   #EAF4F8
+    muted #8BA6B5
+    faint #5D7684
+    cyan  #46E0EA
+    teal  oklch(78% 0.12 200)
+    amber #F2B24C
+    sand  #F6E3BC
+    hair  #FFFFFF14
+    hair2 #FFFFFF24
+  }
+  text {
+    h1    { size 30; weight 800 }
+    sub   { size 13; color #8BA6B5 }
+    sect  { size 12; weight 800; tracking 2 }
+    label { size 13; weight 500; color #8BA6B5 }
+    value { family "SF Mono"; size 13.5; color #EAF4F8 }
+    small { family "SF Mono"; size 11; color #5D7684 }
+  }
+  fx {
+    card { backdrop 14,1.2; bg #0C2233A6; stroke #FFFFFF14; stroke-w 1; radius 18 }
+  }
+  shadow {
+    ambient 0,28,64,#00000073
+    contact 0,3,10,#00000059
+    lift    inset,0,1,0,#FFFFFF26
+    glow    0,2,18,#F2B24C33
+  }
+}
+
+anim pulse {
+  0%   { opacity=1 }
+  100% { opacity=0.25 }
+}
+
+// A label/value pair: expands to TWO grid cells so columns stay aligned.
+def Row(label, value) {
+  text label style=text.label
+  text value style=text.value align-text=end nowrap ellipsis
+}
+
+def Section(title, meta) {
+  col style=fx.card pad=26,30 gap=18 shadow=shadow.ambient,shadow.contact,shadow.lift {
+    col gap=14 {
+      row align=center gap=10 {
+        rect w=18 h=3 radius=2 bg=linear(90, #46E0EA 0%, #46E0EA00 100%)
+        text title style=text.sect color=color.cyan
+        spacer
+        text meta style=text.small nowrap
+      }
+      rect h=1 stroke=color.hair stroke-sides=b
+    }
+    grid cols=300,fill gap=14,15 {
+      slot
+    }
+  }
+}
+
+def Button(label, fg, tone=none, border=none, raised=false) {
+  row pad=9,18 radius=999 stroke=border bg=tone align=center w=hug {
+    text label size=12.5 weight=700 color=fg nowrap
+    when raised { shadow=shadow.contact }
+  }
+}
+
+stack w=800 h=1120 clip {
+  // ---- deep-ocean scene ------------------------------------------------
+  rect w=fill h=fill bg=linear(180, #02070E 0%, #06202F 46%, #0B3A46 88%, #14535A 100%)
+  // bioluminescent glow, upper-left
+  rect w=680 h=520 radius=999 offset=-160,-220 bg=radial(#46E0EA2E 0%, #46E0EA00 100%)
+  // warm haze behind the callout zone
+  rect w=560 h=420 radius=999 self=bottom offset=180,60 bg=radial(#F2B24C1C 0%, #F2B24C00 100%)
+  // faint light shafts
+  rect w=2 h=420 offset=560,0 bg=linear(180, #46E0EA1A 0%, #46E0EA00 100%)
+  rect w=2 h=300 offset=628,0 bg=linear(180, #46E0EA0F 0%, #46E0EA00 100%)
+
+  // ---- content ----------------------------------------------------------
+  col pad=44,48 gap=24 w=fill h=fill {
+
+    // header
+    col gap=9 pad=0,0,10,0 {
+      row align=center gap=10 {
+        text "NAUTILUS MARINE SYSTEMS" style=text.sect size=11 color=color.teal
+        spacer
+        row pad=6,12 gap=7 radius=999 bg=#46E0EA12 stroke=#46E0EA33 align=center w=hug {
+          rect w=7 h=7 radius=999 bg=color.cyan animate=pulse,1600,alternate,ease-in-out
+          text "ONLINE" size=10.5 weight=800 tracking=1.5 color=color.cyan nowrap
+        }
+      }
+      text "NR-7 Reef Controller" style=text.h1 color=color.ink
+      text "Tank: 340 L Mixed Reef — Firmware 4.2.1" style=text.sub
+    }
+
+    Section title="WATER CHEMISTRY" meta="5 PARAMETERS" {
+      Row label="Temperature Setpoint" value="25.4 °C"
+      Row label="Heater Hysteresis" value="±0.3 °C"
+      Row label="Salinity Target" value="35 ppt (1.0264 SG)"
+      Row label="pH Alarm Band" value="7.9–8.4"
+      Row label="ORP Floor" value="320 mV"
+    }
+
+    Section title="DOSING PUMPS" meta="3 CHANNELS" {
+      Row label="Pump A (Alkalinity)" value="42 mL/day in 12 doses"
+      Row label="Pump B (Calcium)" value="38 mL/day in 12 doses"
+      Row label="Pump C (Trace: Strontium-Iodide-Mix)" value="3.5 mL/day"
+      Row label="Reservoir Low Alert" value="250 mL"
+    }
+
+    Section title="LIGHTING" meta="PHOTOPERIOD 14 H" {
+      Row label="Sunrise Ramp" value="09:00–10:30"
+      Row label="Peak PAR" value="285 µmol at 60% blue / 22% white"
+      Row label="Moonlight" value="21:45–23:00 at 3%"
+    }
+
+    // Callout deliberately rides up over the lighting card: offset is the
+    // sanctioned overlap opt-in for flow children.
+    row bg=linear(135, #3B2A10 0%, #2A1D0A 100%) stroke=#F2B24C4D radius=14 \
+        pad=18,20 gap=14 align=center offset=0,-42 \
+        shadow=shadow.ambient,shadow.glow,shadow.lift {
+      col w=34 h=34 radius=999 bg=#F2B24C1F stroke=#F2B24C40 pack=center align=center {
+        text "!" size=16 weight=800 color=color.amber
+      }
+      col gap=3 w=fill {
+        text "Calibration overdue" size=13.5 weight=700 color=color.sand
+        text "pH probe last calibrated 47 days ago. Dosing auto-suspends at 60 days." size=12 color=#D8B87E
+      }
+      Button label="Calibrate Now" fg=#1E1403 \
+          tone=linear(180, #F8C86E 0%, #E89F33 100%) raised=true
+      Button label="Snooze 7 Days" fg=color.amber border=#F2B24C40
+    }
+
+    spacer
+    row align=center gap=12 {
+      rect w=fill h=1 stroke=color.hair stroke-sides=b
+      text "LAST SYNC 2026-07-18 06:12 UTC · PROBE NR7-PH-00981-B" style=text.small tracking=1 nowrap
+      rect w=fill h=1 stroke=color.hair stroke-sides=b
+    }
+  }
+}

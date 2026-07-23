@@ -1,0 +1,6 @@
+// Multiline editing fixture: newline insertion, visual-line navigation, kills,
+// undo/redo, and an explicit Submit signal on the second field.
+col w=220 gap=8 {
+  text "" key=draft field=draft multiline size=14 w=120 h=56
+  text "" key=message field=message submit=send multiline size=14 w=120 h=32
+}

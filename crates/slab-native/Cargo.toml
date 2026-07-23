@@ -1,0 +1,28 @@
+[package]
+name = "slab-native"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "slab_native"
+path = "src/lib.rs"
+
+[[bin]]
+name = "slab-native"
+path = "src/main.rs"
+
+[dependencies]
+slab-kernel = { path = "../slab-kernel" }
+slab-compile = { path = "../slab-compile" }
+slab-slir = { path = "../slab-slir" }
+slab-fonts = { path = "../slab-fonts" }
+winit = { workspace = true }
+wgpu = { workspace = true }
+accesskit = { workspace = true }
+accesskit_winit = { workspace = true }
+ab_glyph = { workspace = true }
+lyon = { workspace = true }
+png = { workspace = true }
+bytemuck = { workspace = true }
+pollster = { workspace = true }

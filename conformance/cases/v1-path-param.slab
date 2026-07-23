@@ -1,0 +1,7 @@
+params {
+  route text = "M0 4 L24 4 L36 16"
+}
+
+canvas w=80 h=32 {
+  path#route param.route bg=none stroke=#2563EB stroke-w=3
+}

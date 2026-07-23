@@ -1,0 +1,9 @@
+// P5 fixture: an editable field (field= binds an EditState, emits Change
+// signals with the full new text) and an act= button (Enter on the FIELD
+// must never activate anything).
+col w=300 gap=8 {
+  text "hi" field=name size=14 w=200 nowrap
+  box#go focusable act=go w=100 h=24 bg=#333333 {
+    when focus-visible { stroke=#ffffff stroke-w=2 }
+  }
+}

@@ -1,0 +1,14 @@
+// CX4 fixture: the caret-anchored popover recipe (SPEC §15.6) — the host
+// reads Effects caret geometry, writes it into two num params, and toggles
+// a bool; the canvas overlay follows at=param.pop-x,param.pop-y.
+params {
+  pop   bool = false
+  pop-x num = 0
+  pop-y num = 0
+}
+canvas w=240 h=120 {
+  text#q "hi" field=q size=14 w=200 nowrap
+  rect#pop at=param.pop-x,param.pop-y w=80 h=24 bg=#333333 opacity=0 inert {
+    when pop { opacity=1 }
+  }
+}

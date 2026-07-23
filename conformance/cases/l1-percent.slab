@@ -1,0 +1,9 @@
+// L1: % against a determinate axis; % against hug degrades to hug
+// (pct-unbounded); fill inside fixed track.
+col w=320 pad=10 gap=10 {
+  row h=12 bg=#222222 clip { rect w=75% h=fill bg=#4fc7e0 }
+  col bg=#181818 pad=6 { // hug height: child h=50% degrades to hug
+    rect w=40% h=50% bg=#e0564a
+  }
+  row h=20 { rect w=25% h=fill bg=#aaaaaa; rect w=25% h=fill bg=#bbbbbb }
+}

@@ -1,0 +1,71 @@
+// The 1.0 vertical slice: params, signal buttons, a kernel-edited field, and
+// a host-filled hole. Drives the generated web component (slab gen wc), the
+// native wgpu demo (slab-native --demo settings), and the interactive TUI
+// (slab-tui). Still renders statically via svg/png/tui.
+tokens {
+  color {
+    bg     #10141B
+    panel  #171C26
+    inset  #0C1018
+    ink    #E8EEF6
+    mut    #8A97A8
+    accent #4FC7E0
+    line   #FFFFFF1A
+  }
+}
+
+params {
+  title   text = "Settings"
+  status  text = "ready"
+  draft   text = ""
+  compact bool = false
+}
+
+def Button(label, action) {
+  row focusable act=action pad=8,16 radius=8 bg=#222A38 align=center w=hug {
+    when hover { bg=#2B3547 }
+    when pressed { bg=#1B2230 }
+    when focus-visible { stroke=#4FC7E0 stroke-w=2 }
+    when disabled { opacity=0.35 }
+    text label size=13 weight=600 color=color.ink nowrap
+  }
+}
+
+def Row(label, tone) export {
+  row pad=6,12 gap=8 align=center h=28 {
+    rect w=8 h=8 radius=4 bg=tone
+    text label size=12 color=color.ink nowrap
+  }
+}
+
+col w=fill h=fill bg=color.bg pad=24 gap=16 {
+  when w<600 { pad=12 gap=10 }
+  when dark { bg=#05070B }
+  when compact { gap=8 }
+
+  col gap=4 {
+    text param.title size=22 weight=600 color=color.ink
+    text "slab application runtime — 1.0" size=12 color=color.mut
+  }
+
+  row gap=10 align=center {
+    Button#save "Save" "save"
+    Button#reset "Reset" "reset"
+    Button#sort "Sort" "sort"
+    spacer
+    text#status param.status size=12 color=color.accent nowrap
+  }
+
+  // kernel-owned editing: caret, selection, and composition render from
+  // EditState; every change emits the `draft` signal with the new text.
+  text#field param.draft field=draft size=13 color=color.ink nowrap w=300 h=32 pad=6,10 radius=8 bg=color.inset stroke=color.line clip {
+    when focus-visible { stroke=#4FC7E0 }
+  }
+
+  // host-filled list: web slots exported <slab-row> elements in, native
+  // mounts a child instance. Radius rides on the outer panel; the hole
+  // viewport keeps radius=0 so the wgpu scissor stays exact.
+  col#panel radius=12 bg=color.panel stroke=color.line clip pad=2 {
+    hole rows w=fill h=336 scroll
+  }
+}

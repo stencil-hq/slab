@@ -1,0 +1,115 @@
+{
+  "doc": "x1-showcase",
+  "env": {
+    "vw": 800,
+    "vh": 600,
+    "client": "web",
+    "dark": true,
+    "coarse": false
+  },
+  "steps": [
+    { "t": 0 },
+    {
+      "t": 16,
+      "list": {"param": "commits", "path": "", "op": "len", "n": 4}
+    },
+    {
+      "t": 32,
+      "list": {"param": "commits", "path": "", "op": "field", "index": 3, "field": "hash", "kind": "text", "value": "n4o5p6q"}
+    },
+    {
+      "t": 48,
+      "list": {"param": "commits", "path": "", "op": "field", "index": 3, "field": "msg", "kind": "text", "value": "Test trace list op"}
+    },
+    {
+      "t": 64,
+      "scroll": {"key": "#graph", "axis": 0, "off": 40}
+    },
+    {
+      "t": 80,
+      "event": {
+        "type": "pointer-move",
+        "x": 519,
+        "y": 300
+      }
+    },
+    {
+      "t": 96,
+      "event": {
+        "type": "pointer-down",
+        "x": 519,
+        "y": 300,
+        "clicks": 1
+      }
+    },
+    {
+      "t": 112,
+      "event": {
+        "type": "pointer-move",
+        "x": 480,
+        "y": 300
+      }
+    },
+    {
+      "t": 128,
+      "event": {
+        "type": "pointer-up",
+        "x": 480,
+        "y": 300,
+        "clicks": 1
+      }
+    },
+    {
+      "t": 144,
+      "param": {
+        "name": "popover_target",
+        "kind": "text",
+        "value": "#graph/commits~1/#more"
+      }
+    },
+    {
+      "t": 160,
+      "event": {
+        "type": "pointer-down",
+        "x": 380,
+        "y": 16,
+        "button": 0,
+        "clicks": 1
+      }
+    },
+    {
+      "t": 176,
+      "event": {
+        "type": "pointer-move",
+        "x": 390,
+        "y": 16
+      }
+    },
+    {
+      "t": 192,
+      "event": {
+        "type": "pointer-move",
+        "x": 250,
+        "y": 48
+      }
+    },
+    {
+      "t": 208,
+      "event": {
+        "type": "pointer-up",
+        "x": 250,
+        "y": 48,
+        "button": 0
+      }
+    },
+    { "t": 224 }
+  ],
+  "expect": {
+    "signals": [
+      { "name": "split_drag", "text": "480", "item": "" },
+      { "name": "tag_drag", "text": "", "item": "1" },
+      { "name": "commit_drop", "text": "", "item": "1" }
+    ],
+    "focus_key": "#app/row@0/#graph/commits~0/commit/row@0/tags~1/tag"
+  }
+}

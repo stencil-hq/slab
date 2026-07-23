@@ -1,0 +1,29 @@
+{
+  "doc": "i1-hit-clip",
+  "env": {
+    "vw": 200,
+    "vh": 100,
+    "client": "web",
+    "dark": false,
+    "coarse": false
+  },
+  "steps": [
+    {
+      "t": 0,
+      "hit": [
+        50,
+        25
+      ]
+    },
+    {
+      "t": 16,
+      "hit": [
+        150,
+        25
+      ]
+    }
+  ],
+  "expect": {
+    "signals": []
+  }
+}

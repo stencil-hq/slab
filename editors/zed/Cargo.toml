@@ -1,0 +1,17 @@
+[package]
+name = "zed_slab"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+# standalone: not a member of the slab-lang cargo workspace (built by Zed
+# against the wasm32-wasip2 target)
+[workspace]
+
+[lib]
+path = "src/lib.rs"
+crate-type = ["cdylib"]
+
+[dependencies]
+zed_extension_api = "0.7.0"

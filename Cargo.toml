@@ -1,0 +1,51 @@
+[workspace]
+resolver = "3"
+members = [
+   "crates/slab-syntax",
+   "crates/slab-slir",
+   "crates/slab-fonts",
+   "crates/slab-compile",
+   "crates/slab-cli",
+   "crates/slab-wasm",
+   "crates/slab-lsp",
+   "crates/slab-native",
+   "crates/slab-tui",
+   "crates/xtask",
+   "crates/slab-kernel",
+   "crates/slab-kernel-wasm",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[workspace.dependencies]
+logos = "0.15"
+ttf-parser = "0.25"
+tiny-skia = "0.11"
+png = "0.18"
+lyon = "1"
+winit = "0.30"
+wgpu = "25"
+accesskit = "0.24.1"
+accesskit_winit = "0.33.2"
+ab_glyph = "0.2"
+bytemuck = { version = "1", features = ["derive"] }
+pollster = "0.4"
+crossterm = "0.29"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+
+prost = "0.13"
+snap = "1"
+prost-build = "0.13"
+protox = "0.7"
+[profile.release]
+lto = "thin"
+
+[profile.wasm-release]
+inherits = "release"
+opt-level = "z"
+lto = "fat"

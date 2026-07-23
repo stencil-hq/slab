@@ -1,0 +1,38 @@
+==============================
+line and block comments
+==============================
+
+// leading comment
+col { /* inner */ spacer } // trailing
+
+---
+
+(source_file
+  (comment)
+  (node
+    (identifier)
+    (block
+      (comment)
+      (node
+        (identifier))))
+  (comment))
+
+==============================
+block comment hides newline
+==============================
+
+rect w=4 /*
+*/ h=6
+
+---
+
+(source_file
+  (node
+    (identifier)
+    (attribute
+      (identifier)
+      (number))
+    (comment)
+    (attribute
+      (identifier)
+      (number))))

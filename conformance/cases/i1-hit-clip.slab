@@ -1,0 +1,7 @@
+// P5 hit fixture: a point outside a clipping ancestor cannot hit
+// descendants (#inner extends to x=180 but the clip stops at 100).
+stack w=200 h=100 {
+  box#viewport w=100 h=100 clip {
+    rect#inner w=180 h=50 bg=#333333
+  }
+}

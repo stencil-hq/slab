@@ -1,0 +1,48 @@
+==============================
+theme declaration with token groups
+==============================
+
+theme dusk {
+  color { bg #121826; ink #e6edf3 }
+  space { md 12 }
+}
+
+---
+
+(source_file
+  (theme_declaration
+    (identifier)
+    (token_group
+      (identifier)
+      (token_entry
+        (identifier)
+        (hex_color))
+      (token_entry
+        (identifier)
+        (hex_color)))
+    (token_group
+      (identifier)
+      (token_entry
+        (identifier)
+        (number)))))
+
+==============================
+theme condition on node
+==============================
+
+col {
+  when theme(dusk) { bg=color.bg }
+}
+
+---
+
+(source_file
+  (node
+    (identifier)
+    (block
+      (when_block
+        (condition
+          (identifier))
+        (attribute
+          (identifier)
+          (reference))))))

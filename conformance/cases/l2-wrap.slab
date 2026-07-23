@@ -1,0 +1,11 @@
+// L2: wrap line filling, cross gap, fill takes its line's remainder.
+col w=300 pad=10 {
+  wrap gap=8,4 {
+    rect w=90 h=20 bg=#aa0000
+    rect w=90 h=20 bg=#00aa00
+    rect w=90 h=28 bg=#0000aa
+    rect w=140 h=20 bg=#aaaa00
+    rect w=fill h=20 bg=#aa00aa
+    rect w=90 h=20 bg=#00aaaa
+  }
+}

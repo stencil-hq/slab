@@ -1,0 +1,55 @@
+==============================
+def with params and defaults
+==============================
+
+def Chip(label, tone=color.accent, playing=false) {
+  row pad=4,10 { text label color=tone }
+}
+
+---
+
+(source_file
+  (def_declaration
+    (identifier)
+    (parameter
+      (identifier))
+    (parameter
+      (identifier)
+      (reference))
+    (parameter
+      (identifier)
+      (identifier))
+    (block
+      (node
+        (identifier)
+        (attribute
+          (identifier)
+          (tuple
+            (number)
+            (number)))
+        (block
+          (node
+            (identifier)
+            (identifier)
+            (attribute
+              (identifier)
+              (identifier))))))))
+
+==============================
+def with empty params
+==============================
+
+def Card() {
+  col { slot }
+}
+
+---
+
+(source_file
+  (def_declaration
+    (identifier)
+    (block
+      (node
+        (identifier)
+        (block
+          (node))))))

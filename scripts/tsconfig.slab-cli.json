@@ -1,0 +1,18 @@
+{
+   "compilerOptions": {
+      "target": "es2022",
+      "module": "nodenext",
+      "moduleResolution": "nodenext",
+      "declaration": true,
+      "rewriteRelativeImportExtensions": true,
+      "allowImportingTsExtensions": true,
+      "noCheck": true,
+      "outDir": "../packages/slab/dist",
+      "rootDir": "../packages/slab/src",
+      "lib": ["es2022"],
+      "types": ["node"],
+      "esModuleInterop": true
+   },
+   "include": ["../packages/slab/src/*.ts"],
+   "exclude": ["../packages/slab/dist", "../packages/slab/wasm"]
+}

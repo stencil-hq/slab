@@ -1,0 +1,7 @@
+// P1: static below-start attachment uses the anchor's full scene key.
+stack#surface w=240 h=140 bg=#111820 {
+  rect#button w=96 h=32 self=top-start offset=24,20 bg=#3d73b9 radius=6
+  group#popover w=160 h=56 attach="#surface/#button" gravity=below-start collide=none offset=0,6 pad=10 bg=#f4f7fb radius=8 stroke=#9aacbf {
+    text "Attached menu" size=13 color=#17212b nowrap
+  }
+}

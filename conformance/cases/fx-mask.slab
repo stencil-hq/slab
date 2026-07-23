@@ -1,0 +1,8 @@
+// FX: mask=<paint> wraps the node in a GroupPush carrying the mask paint and
+// the border box — the classic list edge fade.
+col w=200 h=120 pad=8 gap=8 mask=linear(180, #FFFFFF 70%, #FFFFFF00 100%) {
+  rect w=160 h=24 bg=#4A90D9
+  rect w=160 h=24 bg=#9B59B6
+  rect w=160 h=24 bg=#E8865E
+  rect w=160 h=24 bg=#38EF7D
+}

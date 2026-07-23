@@ -1,0 +1,136 @@
+// Immediate-mode template: a host app injects state each frame by selector
+// (see examples/app_monitor.py). Ids mark the injection points.
+tokens {
+  color {
+    bg    #06090F
+    ink   #EAF2FF
+    muted #8CA0BE
+    faint #5F7292
+    hair  #FFFFFF14
+    track #FFFFFF16
+    green #4ADE9B
+    amber #F0A84B
+    red   #F55B4E
+    cyan  #55D4F2
+  }
+  text {
+    h1    { size 17; weight 800 }
+    label { size 10; weight 700; color #8CA0BE }
+    mono  { size 12; color #EAF2FF }
+  }
+  fx {
+    card  { bg #131F3899; stroke #FFFFFF1A; stroke-w 1; radius 14 }
+    panel { bg #0F182E7A; stroke #FFFFFF14; stroke-w 1; radius 14 }
+  }
+  shadow {
+    soft   0,18,40,#00000059
+    lift   inset,0,1,0,#FFFFFF26
+    sunken inset,0,2,5,#00000073
+    alarm  0,8,24,#F55B4E26
+  }
+}
+
+anim pulse {
+  0%   { opacity=1 }
+  100% { opacity=0.2 }
+}
+
+anim spin {
+  0%   { content="⠋" }
+  25%  { content="⠙" }
+  50%  { content="⠹" }
+  75%  { content="⠸" }
+  100% { content="⠋" }
+}
+
+def Gauge(label, val, pct, tone) {
+  col w=fill gap=12 pad=16,18 style=fx.card shadow=shadow.soft,shadow.lift {
+    row align=baseline {
+      text label style=text.label tracking=2.2
+      spacer
+      text val style=text.mono size=16 weight=700 nowrap
+    }
+    row h=8 radius=4 bg=color.track clip shadow=shadow.sunken {
+      stack w=pct h=fill {
+        rect w=fill h=fill radius=4 bg=tone
+        rect w=fill h=fill radius=4 bg=linear(180, #FFFFFF4D 0%, #FFFFFF00 55%, #00000026 100%)
+      }
+    }
+  }
+}
+
+def LogRow(t, lvl, msg, tone) {
+  row gap=10 align=center {
+    text t style=text.mono size=11 color=color.faint nowrap
+    text lvl style=text.mono size=11 weight=700 color=tone w=52 nowrap
+    text msg size=12 color=color.ink w=fill nowrap ellipsis
+  }
+}
+
+stack w=fill h=fill clip {
+  // atmosphere: night wash + soft instrument glows
+  rect w=fill h=fill bg=linear(165, #05070E 0%, #0A1122 46%, #0E1B36 78%, #12254A 100%)
+  rect w=620 h=420 radius=999 offset=320,-200 bg=radial(#2A9AC442 0%, #2A9AC400 100%)
+  rect w=560 h=400 radius=999 offset=-240,330 bg=radial(#6A4FD436 0%, #6A4FD400 100%)
+  rect w=fill h=1 self=top offset=0,64 bg=#FFFFFF0A
+
+  col w=fill h=fill pad=24 gap=14 {
+    row align=center gap=12 {
+      rect w=9 h=9 radius=999 bg=color.green self=center shadow=0,0,10,#4ADE9BB3 \
+          animate=pulse,1100,alternate,ease-in-out
+      text "SYSMON" style=text.h1 color=color.ink tracking=3
+      row pad=3,10 radius=999 bg=#FFFFFF0A stroke=color.hair align=center w=hug {
+        text "⠋" size=11 color=color.cyan nowrap animate=spin,800
+        text "staging-3 · uptime 41d" size=11 color=color.muted nowrap
+      }
+      spacer
+      row pad=5,14 radius=999 bg=#55D4F214 stroke=#55D4F23D align=center w=hug shadow=shadow.lift {
+        text #clock "18:42:07" style=text.mono size=14 weight=700 color=color.cyan nowrap tracking=1
+      }
+    }
+
+    row gap=14 {
+      Gauge #cpu label="CPU" val="62%" pct=62% tone=color.green
+      Gauge #mem label="MEM" val="21.4GB" pct=71% tone=color.amber
+      Gauge #net label="NET" val="48MB/s" pct=48% tone=color.green
+    }
+
+    col style=fx.panel pad=16,26 gap=10 shadow=shadow.soft,shadow.lift {
+      row align=baseline {
+        text "THROUGHPUT — LAST 40 TICKS" style=text.label tracking=2.2
+        spacer
+        text #peak "peak 77MB/s" style=text.mono size=11 color=color.muted nowrap
+      }
+      canvas #spark w=fill h=56 clip {
+        path "M0 14 L660 14" stroke=#FFFFFF0A stroke-w=1
+        path "M0 28 L660 28" stroke=#FFFFFF0A stroke-w=1
+        path "M0 42 L660 42" stroke=#FFFFFF0A stroke-w=1 stroke-dash=4,6
+        path #sparkfill "M0 34.3 L27.5 19.3 L55.0 12.3 L82.5 15.0 L110.0 26.7 L137.5 44.7 L165.0 39.5 L192.5 22.8 L220.0 13.3 L247.5 13.2 L275.0 22.6 L302.5 39.2 L330.0 45.0 L357.5 27.0 L385.0 15.1 L412.5 12.2 L440.0 19.1 L467.5 34.0 L495.0 50.7 L522.5 31.7 L550.0 17.6 L577.5 12.0 L605.0 16.2 L632.5 29.2 L660.0 47.7 L660 56 L0 56 Z" bg=linear(180, #55D4F24F 0%, #55D4F200 100%)
+        path #sparkline "M0 34.3 L27.5 19.3 L55.0 12.3 L82.5 15.0 L110.0 26.7 L137.5 44.7 L165.0 39.5 L192.5 22.8 L220.0 13.3 L247.5 13.2 L275.0 22.6 L302.5 39.2 L330.0 45.0 L357.5 27.0 L385.0 15.1 L412.5 12.2 L440.0 19.1 L467.5 34.0 L495.0 50.7 L522.5 31.7 L550.0 17.6 L577.5 12.0 L605.0 16.2 L632.5 29.2 L660.0 47.7" stroke=color.cyan stroke-w=2
+      }
+    }
+
+    col #log style=fx.panel pad=18,26 gap=9 h=fill shadow=shadow.soft,shadow.lift {
+      text "RECENT EVENTS" style=text.label tracking=2.2
+      LogRow t="18:42:07" lvl="INFO" msg="deploy 2026.7.18-r3 rolled to 12/12 pods" tone=color.muted
+      LogRow t="18:42:08" lvl="WARN" msg="p99 latency 412ms on /search" tone=color.amber
+      LogRow t="18:42:09" lvl="INFO" msg="autoscaler added 2 replicas" tone=color.muted
+      LogRow t="18:42:10" lvl="WARN" msg="redis connection pool at 81%" tone=color.amber
+      LogRow t="18:42:11" lvl="CRIT" msg="kafka lag 12k msgs on ingest.events" tone=color.red
+    }
+
+    row #alert radius=10 pad=10,16 gap=12 align=center \
+        bg=linear(90, #46150E9C 0%, #2A0D1266 100%) stroke=#F55B4E59 \
+        shadow=shadow.alarm,shadow.lift {
+      rect w=8 h=8 radius=999 bg=color.red self=center shadow=0,0,10,#F55B4ECC \
+          animate=pulse,700,alternate,ease-in-out
+      text #alertmsg "CPU saturation 91% — shedding load" size=12 weight=700 color=#FFD2CC w=fill nowrap ellipsis tracking=0.3
+    }
+
+    row align=center {
+      text "q quit · p pause · f filter · g grafana" size=10 color=color.faint tracking=0.6
+      spacer
+      text #frameno "t=0.00s" size=10 color=color.faint nowrap
+    }
+  }
+}

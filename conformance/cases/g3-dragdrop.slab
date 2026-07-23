@@ -1,0 +1,11 @@
+// Gesture conformance: continuous pointer/drag signals, Drop outcome, and drag ghost opt-in.
+row key=board w=300 h=64 gap=40 {
+  box key=source w=80 h=64 act=activate drag=drag-start pointer-move=source-move pointer-up=source-up drag-update=drag-update drag-end=drag-end drag-ghost bg=#314158 {
+    when dragging { bg=#7660a8 }
+    text "source" color=#ffffff size=14
+  }
+  box key=target w=100 h=64 drop=dropped bg=#234738 {
+    when drop { bg=#3d8a62 stroke=#b7ffd3 stroke-w=2 }
+    text "target" color=#ffffff size=14
+  }
+}

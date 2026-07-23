@@ -1,0 +1,2 @@
+chart none input: cap-input
+chart none signals: cap-signal

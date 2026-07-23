@@ -1,0 +1,19 @@
+params {
+  rows list(GraphRow) = [
+    GraphRow(route="M4 4 L28 4 C36 4 36 20 44 20 L72 20", tone=#2563EB),
+    GraphRow(route="M4 20 L24 20 Q32 20 32 12 L32 4 L72 4", tone=#DC2626),
+    GraphRow(route="M4 12 L72 12", tone=#16A34A)
+  ]
+}
+
+def GraphRow(route="", tone=#64748B) export {
+  row key=row w=160 h=28 {
+    canvas w=80 h=24 {
+      path route bg=none stroke=tone stroke-w=3
+    }
+  }
+}
+
+col w=160 gap=2 {
+  each param.rows key=rows
+}

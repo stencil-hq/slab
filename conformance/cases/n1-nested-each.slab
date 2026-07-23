@@ -1,0 +1,33 @@
+// Lists v2: two schema levels materialize without compile-time unrolling.
+def Chip(label="", tone=#315A8A) export {
+  row key=chip h=22 pad=2,6 radius=8 bg=tone align=center {
+    text label size=11 color=#FFFFFFFF nowrap
+  }
+}
+
+def Row(label="", chips=list(Chip)) export {
+  col key=row w=180 gap=4 pad=4 bg=#101820 {
+    text label h=18 size=12 weight=650 color=#E8EEF4
+    row key=chip-line gap=4 {
+      each chips key=chips
+    }
+  }
+}
+
+params {
+  rows list(Row) = [
+    Row(label="Languages", chips=[
+        Chip(label="Rust", tone=#A54820),
+        Chip(label="TypeScript", tone=#285A9E)
+    ]),
+    Row(label="Targets", chips=[
+        Chip(label="GPU", tone=#375D3A),
+        Chip(label="Web", tone=#65417A),
+        Chip(label="TUI", tone=#6D5426)
+    ])
+  ]
+}
+
+col w=180 gap=6 bg=#091016 {
+  each param.rows key=rows
+}

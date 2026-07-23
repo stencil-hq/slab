@@ -1,0 +1,1209 @@
+/* slab vibeviewer — Cyanotype (stencil design system).
+   Square everything, pure black chassis, cyan interaction prime,
+   mono microlabels, dither as state material. */
+
+:root {
+   --bg-base: #000000;
+   --bg-sunken: #050508;
+   --surface-1: #0a0a0c;
+   --surface-2: #121216;
+   --surface-3: #1a1a20;
+   --border-subtle: #15151a;
+   --border-default: #2a2a35;
+   --border-strong: #444455;
+   --text-primary: #f5f5f6;
+   --text-secondary: #a3a3ac;
+   --text-tertiary: #63636d;
+   --text-disabled: #3d3d45;
+   --accent: #44cfff;
+   --accent-hover: #75deff;
+   --accent-active: #20a6d8;
+   --accent-muted: #0b2833;
+   --accent-subtle: rgba(68, 207, 255, 0.1);
+   --on-accent: #000000;
+   --success: #4ade80;
+   --warning: #f5b04a;
+   --danger: #f4644a;
+   --dither-cyan: conic-gradient(
+      rgba(68, 207, 255, 0.25) 90deg,
+      transparent 90deg 180deg,
+      rgba(68, 207, 255, 0.25) 180deg 270deg,
+      transparent 270deg
+   );
+   --dither-cyan-strong: conic-gradient(
+      rgba(68, 207, 255, 0.6) 90deg,
+      transparent 90deg 180deg,
+      rgba(68, 207, 255, 0.6) 180deg 270deg,
+      transparent 270deg
+   );
+   --dither-bg: conic-gradient(
+      rgba(255, 255, 255, 0.03) 90deg,
+      transparent 90deg 180deg,
+      rgba(255, 255, 255, 0.03) 180deg 270deg,
+      transparent 270deg
+   );
+   --mono: "Berkeley Mono", ui-monospace, "JetBrains Mono", "SF Mono", SFMono-Regular, monospace;
+   --human: Inter, system-ui, sans-serif;
+}
+
+* {
+   box-sizing: border-box;
+   border-radius: 0;
+}
+
+html,
+body {
+   height: 100%;
+}
+
+body {
+   margin: 0;
+   display: flex;
+   flex-direction: column;
+   background: var(--bg-base);
+   color: var(--text-primary);
+   font: 13px / 1.5 var(--human);
+   overflow: hidden;
+}
+
+/* page grain */
+body::before {
+   content: "";
+   position: fixed;
+   inset: 0;
+   background: var(--dither-bg);
+   background-size: 2px 2px;
+   pointer-events: none;
+   z-index: 0;
+}
+
+body > * {
+   position: relative;
+   z-index: 1;
+}
+
+/* ── nav ─────────────────────────────────────────────────────────── */
+
+.nav {
+   display: flex;
+   align-items: center;
+   gap: 10px;
+   padding: 0 16px;
+   height: 40px;
+   border-bottom: 1px solid var(--border-subtle);
+   flex: none;
+}
+
+.logo-mark {
+   width: 18px;
+   height: 18px;
+   color: var(--accent);
+   flex: none;
+}
+
+.wordmark {
+   font: 600 15px / 1 var(--human);
+   letter-spacing: -0.02em;
+}
+
+.eyebrow {
+   font: 500 11px / 1 var(--mono);
+   letter-spacing: 0.08em;
+   color: var(--accent);
+   margin-left: 2px;
+}
+
+.nav nav {
+   margin-left: auto;
+   display: flex;
+   gap: 16px;
+}
+
+.nav nav a {
+   font: 500 11px / 1 var(--mono);
+   letter-spacing: 0.06em;
+   color: var(--text-secondary);
+   text-decoration: none;
+}
+
+.nav nav a:hover {
+   color: var(--text-primary);
+}
+
+/* ── workbench ───────────────────────────────────────────────────── */
+
+#workbench {
+   flex: 1;
+   display: flex;
+   flex-direction: column;
+   min-height: 0;
+}
+
+#split {
+   flex: 1;
+   display: grid;
+   grid-template-columns: var(--split, 44%) 6px minmax(0, 1fr) var(--inspect-w, 300px);
+   min-height: 0;
+}
+
+body.inspect-collapsed #split {
+   --inspect-w: 0px;
+}
+
+.pane {
+   display: flex;
+   flex-direction: column;
+   min-width: 0;
+   min-height: 0;
+   background: var(--bg-base);
+}
+
+.pane-bar {
+   display: flex;
+   align-items: center;
+   gap: 12px;
+   height: 32px;
+   padding: 0 12px;
+   border-bottom: 1px solid var(--border-subtle);
+   flex: none;
+}
+
+.pane-label {
+   font: 500 11px / 1 var(--mono);
+   letter-spacing: 0.08em;
+   color: var(--text-tertiary);
+}
+
+.pane-meta {
+   font: 500 11px / 1 var(--mono);
+   letter-spacing: 0.04em;
+   color: var(--text-tertiary);
+   margin-left: auto;
+   white-space: nowrap;
+   overflow: hidden;
+   text-overflow: ellipsis;
+}
+
+/* select — input spec: sunken fill, hairline, custom chevron */
+#example-select {
+   margin-left: auto;
+   height: 24px;
+   padding: 0 22px 0 8px;
+   background: var(--bg-sunken)
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%2363636D' fill='none'/%3E%3C/svg%3E")
+      no-repeat right 6px center;
+   border: 1px solid var(--border-default);
+   color: var(--text-secondary);
+   font: 500 11px / 1 var(--mono);
+   letter-spacing: 0.04em;
+   appearance: none;
+   cursor: pointer;
+}
+
+#example-select:hover {
+   border-color: var(--border-strong);
+   color: var(--text-primary);
+}
+
+#example-select:focus-visible {
+   outline: 2px solid var(--accent);
+   outline-offset: 2px;
+}
+
+/* ── segmented control (DESIGN | INTERACT) ───────────────────────── */
+
+.seg {
+   display: inline-flex;
+   border: 1px solid var(--border-default);
+   background: var(--bg-sunken);
+   height: 22px;
+}
+
+.seg button {
+   height: 100%;
+   padding: 0 10px;
+   background: none;
+   border: none;
+   color: var(--text-tertiary);
+   font: 500 10px / 1 var(--mono);
+   letter-spacing: 0.08em;
+   cursor: pointer;
+}
+
+.seg button + button {
+   border-left: 1px solid var(--border-default);
+}
+
+.seg button:hover {
+   color: var(--text-primary);
+}
+
+.seg button.on {
+   background: var(--dither-cyan);
+   background-size: 2px 2px;
+   color: var(--accent);
+}
+
+.seg button:focus-visible {
+   outline: 2px solid var(--accent);
+   outline-offset: -2px;
+}
+
+/* ── ADD button + palette menu ───────────────────────────────────── */
+
+#add-btn {
+   height: 22px;
+   padding: 0 10px;
+   background: var(--accent);
+   border: none;
+   color: var(--on-accent);
+   font: 600 10px / 1 var(--mono);
+   letter-spacing: 0.08em;
+   cursor: pointer;
+   position: relative;
+}
+
+#add-btn::before {
+   content: "";
+   position: absolute;
+   inset: 0;
+   background: var(--dither-cyan-strong);
+   background-size: 2px 2px;
+   opacity: 0;
+   transition: opacity 120ms;
+}
+
+#add-btn:hover::before {
+   opacity: 1;
+}
+
+#add-btn:focus-visible {
+   outline: 2px solid var(--accent);
+   outline-offset: 2px;
+}
+
+#add-menu {
+   position: absolute;
+   top: 6px;
+   right: 8px;
+   z-index: 40;
+   min-width: 200px;
+   max-height: 70%;
+   overflow: auto;
+   background: var(--surface-1);
+   border: 1px solid var(--border-default);
+   padding: 4px 0;
+}
+
+.menu-sec {
+   padding: 6px 10px 4px;
+   font: 500 9px / 1 var(--mono);
+   letter-spacing: 0.1em;
+   color: var(--text-tertiary);
+}
+
+.menu-item {
+   display: flex;
+   align-items: center;
+   justify-content: space-between;
+   gap: 12px;
+   width: 100%;
+   height: 26px;
+   padding: 0 10px;
+   background: none;
+   border: none;
+   color: var(--text-secondary);
+   font: 500 11px / 1 var(--mono);
+   letter-spacing: 0.05em;
+   cursor: pointer;
+   text-align: left;
+}
+
+.menu-item:hover {
+   background: var(--surface-2);
+   color: var(--text-primary);
+}
+
+.menu-hint {
+   font: 400 9px / 1 var(--mono);
+   color: var(--text-tertiary);
+   white-space: nowrap;
+   overflow: hidden;
+   text-overflow: ellipsis;
+   max-width: 90px;
+}
+
+/* ── editor ──────────────────────────────────────────────────────── */
+
+#editor {
+   flex: 1;
+   min-height: 0;
+   overflow: hidden;
+   background: var(--bg-sunken);
+}
+
+#editor .cm-editor {
+   height: 100%;
+}
+
+/* ── canvas stage ────────────────────────────────────────────────── */
+
+#stage-wrap {
+   flex: 1;
+   min-height: 0;
+   background: var(--bg-sunken);
+   position: relative;
+   overflow: hidden;
+}
+
+#stage {
+   position: absolute;
+   inset: 0;
+   overflow: hidden;
+}
+
+#stage slab-view {
+   display: block;
+   width: 100%;
+   height: 100%;
+}
+
+/* Ghostty VT canvas over the stage: it hides the painted canvas but passes
+   every pointer event through to the design overlay and the live element,
+   so cell (c, r) and document coordinates stay the same surface. */
+#tui {
+   position: absolute;
+   inset: 0;
+   z-index: 5;
+   background: var(--bg-sunken);
+   overflow: hidden;
+   pointer-events: none;
+}
+
+/* One VT cell scaled onto the kernel's 8×16 layout cell (vars from tui.ts). */
+#tui canvas {
+   transform-origin: 0 0;
+   transform: scale(var(--tui-sx, 1), var(--tui-sy, 1));
+}
+
+/* ── design overlay ──────────────────────────────────────────────── */
+
+#overlay {
+   position: absolute;
+   inset: 0;
+   z-index: 10;
+   touch-action: none;
+   overflow: hidden;
+}
+
+#overlay.off {
+   pointer-events: none;
+}
+
+.vv-box {
+   position: absolute;
+   left: 0;
+   top: 0;
+   pointer-events: none;
+   will-change: transform;
+}
+
+.vv-hover {
+   border: 1px solid rgba(68, 207, 255, 0.55);
+}
+
+.vv-sel {
+   border: 1px solid var(--accent);
+}
+
+.vv-target {
+   border: 1px solid var(--accent);
+   background: var(--dither-cyan);
+   background-size: 2px 2px;
+   opacity: 0.5;
+}
+
+.vv-ghost {
+   border: 1px solid var(--accent-hover);
+   background: var(--dither-cyan);
+   background-size: 2px 2px;
+   opacity: 0.9;
+}
+
+.vv-marker {
+   position: absolute;
+   left: 0;
+   top: 0;
+   background: var(--accent);
+   pointer-events: none;
+   will-change: transform;
+}
+
+.vv-marker::before,
+.vv-marker::after {
+   content: "";
+   position: absolute;
+   width: 6px;
+   height: 6px;
+   background: var(--accent);
+}
+
+.vv-marker::before {
+   left: -2px;
+   top: -2px;
+}
+
+.vv-marker::after {
+   right: -2px;
+   bottom: -2px;
+}
+
+/* resize handles: square pixels on the selection frame */
+.vv-h {
+   position: absolute;
+   width: 7px;
+   height: 7px;
+   background: var(--accent);
+   border: 1px solid var(--on-accent);
+   pointer-events: auto;
+}
+
+.vv-h-nw {
+   left: -4px;
+   top: -4px;
+   cursor: nwse-resize;
+}
+.vv-h-n {
+   left: calc(50% - 4px);
+   top: -4px;
+   cursor: ns-resize;
+}
+.vv-h-ne {
+   right: -4px;
+   top: -4px;
+   cursor: nesw-resize;
+}
+.vv-h-e {
+   right: -4px;
+   top: calc(50% - 4px);
+   cursor: ew-resize;
+}
+.vv-h-se {
+   right: -4px;
+   bottom: -4px;
+   cursor: nwse-resize;
+}
+.vv-h-s {
+   left: calc(50% - 4px);
+   bottom: -4px;
+   cursor: ns-resize;
+}
+.vv-h-sw {
+   left: -4px;
+   bottom: -4px;
+   cursor: nesw-resize;
+}
+.vv-h-w {
+   left: -4px;
+   top: calc(50% - 4px);
+   cursor: ew-resize;
+}
+
+.vv-chip {
+   position: absolute;
+   left: 0;
+   top: 0;
+   pointer-events: none;
+   font: 500 9px / 1 var(--mono);
+   letter-spacing: 0.08em;
+   padding: 3px 6px;
+   white-space: nowrap;
+   will-change: transform;
+}
+
+.vv-chip-hover {
+   background: var(--bg-base);
+   color: var(--accent);
+   border: 1px solid rgba(68, 207, 255, 0.4);
+}
+
+.vv-chip-size {
+   background: var(--accent);
+   color: var(--on-accent);
+   font-weight: 600;
+}
+
+.vv-note {
+   position: absolute;
+   top: 8px;
+   left: 50%;
+   transform: translateX(-50%);
+   background: var(--bg-base);
+   border: 1px solid var(--warning);
+   color: var(--warning);
+   font: 500 10px / 1 var(--mono);
+   letter-spacing: 0.08em;
+   padding: 5px 10px;
+   pointer-events: none;
+}
+
+.vv-inline {
+   position: absolute;
+   left: 0;
+   top: 0;
+   z-index: 20;
+   background: var(--bg-base);
+   border: 1px solid var(--accent);
+   color: var(--text-primary);
+   font: 500 12px / 1 var(--mono);
+   padding: 2px 6px;
+   outline: none;
+}
+
+/* stale source: outlines drop to disabled tone, gestures pause */
+#overlay.stale .vv-box,
+#overlay.stale .vv-h {
+   border-color: var(--text-disabled);
+   background: transparent;
+}
+
+/* ── inspector ───────────────────────────────────────────────────── */
+
+#inspect-pane {
+   border-left: 1px solid var(--border-subtle);
+   overflow: hidden;
+}
+
+body.inspect-collapsed #inspect-pane {
+   display: none;
+}
+
+#crumbs {
+   display: flex;
+   flex-wrap: wrap;
+   align-items: center;
+   gap: 2px;
+   padding: 6px 10px;
+   border-bottom: 1px solid var(--border-subtle);
+   flex: none;
+}
+
+.crumb {
+   background: none;
+   border: none;
+   padding: 2px 3px;
+   font: 500 10px / 1 var(--mono);
+   letter-spacing: 0.04em;
+   color: var(--text-tertiary);
+   cursor: pointer;
+}
+
+.crumb:hover {
+   color: var(--text-primary);
+   background: var(--surface-2);
+}
+
+.crumb.on {
+   color: var(--accent);
+}
+
+.crumb-sep {
+   color: var(--text-disabled);
+   font: 400 10px / 1 var(--mono);
+}
+
+#inspect-body {
+   flex: 1;
+   min-height: 0;
+   overflow-y: auto;
+   overflow-x: hidden;
+}
+
+.insp-head {
+   display: flex;
+   align-items: center;
+   gap: 6px;
+   padding: 10px 12px;
+   border-bottom: 1px solid var(--border-subtle);
+}
+
+.insp-kind {
+   font: 600 11px / 1 var(--mono);
+   letter-spacing: 0.08em;
+   color: var(--accent);
+   padding: 4px 6px;
+   border: 1px solid var(--accent-muted);
+   background: var(--accent-subtle);
+}
+
+.insp-hash {
+   font: 500 12px / 1 var(--mono);
+   color: var(--text-tertiary);
+   margin-left: auto;
+}
+
+.insp-id {
+   width: 110px;
+   flex: none;
+}
+
+.insp-banner {
+   margin: 8px 12px 0;
+   padding: 6px 8px;
+   border-left: 2px solid var(--accent);
+   background: var(--surface-1);
+   font: 500 9px / 1.4 var(--mono);
+   letter-spacing: 0.06em;
+   color: var(--text-secondary);
+}
+
+.insp-sec {
+   padding: 10px 12px 12px;
+   border-bottom: 1px solid var(--border-subtle);
+}
+
+.insp-eyebrow {
+   font: 500 9px / 1 var(--mono);
+   letter-spacing: 0.12em;
+   color: var(--text-tertiary);
+   margin-bottom: 8px;
+}
+
+.insp-grid {
+   display: flex;
+   flex-direction: column;
+   gap: 4px;
+}
+
+.insp-row {
+   display: grid;
+   grid-template-columns: 86px minmax(0, 1fr);
+   align-items: center;
+   gap: 8px;
+   min-height: 26px;
+}
+
+.insp-label {
+   font: 500 10px / 1 var(--mono);
+   letter-spacing: 0.06em;
+   color: var(--text-tertiary);
+   white-space: nowrap;
+   overflow: hidden;
+   text-overflow: ellipsis;
+}
+
+.insp-label.scrub {
+   cursor: ew-resize;
+   touch-action: none;
+}
+
+.insp-label.scrub:hover {
+   color: var(--accent);
+}
+
+.insp-field {
+   min-width: 0;
+   display: flex;
+   gap: 4px;
+}
+
+.insp-input,
+select.insp-input {
+   width: 100%;
+   min-width: 0;
+   height: 26px;
+   padding: 0 7px;
+   background: var(--bg-sunken);
+   border: 1px solid var(--border-default);
+   color: var(--text-primary);
+   font: 500 11px / 1 var(--mono);
+   letter-spacing: 0.02em;
+   outline: none;
+}
+
+.insp-input::placeholder {
+   color: var(--text-disabled);
+}
+
+.insp-input:hover {
+   border-color: var(--border-strong);
+}
+
+.insp-input:focus {
+   border-color: var(--accent);
+}
+
+select.insp-input {
+   appearance: none;
+   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%2363636D' fill='none'/%3E%3C/svg%3E");
+   background-repeat: no-repeat;
+   background-position: right 6px center;
+   padding-right: 20px;
+   cursor: pointer;
+}
+
+textarea.insp-list {
+   height: 58px;
+   min-height: 42px;
+   padding: 6px 7px;
+   line-height: 1.45;
+   resize: vertical;
+   white-space: pre;
+}
+
+.insp-list-row {
+   align-items: start;
+}
+
+.insp-list-row .insp-label {
+   padding-top: 8px;
+}
+
+.insp-input.invalid {
+   border-color: var(--danger);
+}
+
+.insp-seg {
+   height: 26px;
+   width: 100%;
+}
+
+.insp-seg button {
+   flex: 1;
+   padding: 0 4px;
+   font-size: 9px;
+}
+
+.insp-color {
+   display: flex;
+   gap: 4px;
+   width: 100%;
+   min-width: 0;
+}
+
+.insp-swatch {
+   width: 26px;
+   height: 26px;
+   flex: none;
+   border: 1px solid var(--border-default);
+   background:
+      linear-gradient(45deg, #26262e 25%, transparent 25%, transparent 75%, #26262e 75%),
+      linear-gradient(45deg, #26262e 25%, #0a0a0c 25%, #0a0a0c 75%, #26262e 75%);
+   background-size: 8px 8px;
+   background-position:
+      0 0,
+      4px 4px;
+   cursor: pointer;
+   position: relative;
+   overflow: hidden;
+}
+
+.insp-swatch.token::after {
+   content: "·";
+   position: absolute;
+   inset: 0;
+   display: grid;
+   place-items: center;
+   color: var(--accent);
+   font: 700 14px / 1 var(--mono);
+}
+
+.insp-swatch input[type="color"] {
+   position: absolute;
+   inset: -8px;
+   opacity: 0;
+   cursor: pointer;
+}
+
+.insp-ro {
+   font: 500 11px / 26px var(--mono);
+   color: var(--text-secondary);
+   white-space: nowrap;
+   overflow: hidden;
+   text-overflow: ellipsis;
+}
+
+.insp-flags {
+   display: flex;
+   flex-wrap: wrap;
+   gap: 4px;
+}
+
+.insp-flag {
+   height: 20px;
+   padding: 0 6px;
+   background: none;
+   border: 1px solid var(--border-default);
+   color: var(--text-secondary);
+   font: 500 9px / 1 var(--mono);
+   letter-spacing: 0.08em;
+   cursor: pointer;
+}
+
+.insp-flag:hover {
+   border-color: var(--border-strong);
+   color: var(--text-primary);
+}
+
+.insp-flag.on {
+   background: var(--dither-cyan);
+   background-size: 2px 2px;
+   border-color: var(--accent);
+   color: var(--accent);
+}
+
+.insp-add {
+   display: grid;
+   grid-template-columns: 1fr 1fr 40px;
+   gap: 4px;
+}
+
+.insp-set {
+   height: 26px;
+   background: var(--surface-1);
+   border: 1px solid var(--border-default);
+   color: var(--text-secondary);
+   font: 600 9px / 1 var(--mono);
+   letter-spacing: 0.08em;
+   cursor: pointer;
+}
+
+.insp-set:hover {
+   background: var(--surface-2);
+   border-color: var(--border-strong);
+   color: var(--text-primary);
+}
+
+.insp-actions {
+   display: flex;
+   gap: 6px;
+   padding: 12px;
+}
+
+.insp-btn {
+   flex: 1;
+   height: 28px;
+   background: var(--surface-1);
+   border: 1px solid var(--border-default);
+   color: var(--text-secondary);
+   font: 500 10px / 1 var(--mono);
+   letter-spacing: 0.08em;
+   cursor: pointer;
+}
+
+.insp-btn:hover {
+   background: var(--surface-2);
+   border-color: var(--border-strong);
+   color: var(--text-primary);
+}
+
+.insp-btn.danger:hover {
+   border-color: var(--danger);
+   color: var(--danger);
+}
+
+.insp-btn:focus-visible,
+.insp-flag:focus-visible,
+.insp-set:focus-visible,
+.crumb:focus-visible {
+   outline: 2px solid var(--accent);
+   outline-offset: -2px;
+}
+/* 3×3 placement matrix — pixel dots on a sunken instrument plate */
+.insp-align {
+   display: flex;
+   align-items: flex-start;
+   gap: 10px;
+}
+
+.align-grid {
+   display: grid;
+   grid-template-columns: repeat(3, 18px);
+   grid-auto-rows: 18px;
+   border: 1px solid var(--border-default);
+   background: var(--bg-sunken);
+}
+
+.align-cell {
+   position: relative;
+   background: none;
+   border: none;
+   cursor: pointer;
+   padding: 0;
+}
+
+.align-cell::after {
+   content: "";
+   position: absolute;
+   left: calc(50% - 2px);
+   top: calc(50% - 2px);
+   width: 4px;
+   height: 4px;
+   background: var(--text-disabled);
+}
+
+.align-cell:hover::after {
+   background: var(--text-primary);
+}
+
+.align-cell.on {
+   background: var(--dither-cyan);
+   background-size: 2px 2px;
+}
+
+.align-cell.on::after {
+   background: var(--accent);
+   box-shadow: 0 0 0 1px var(--on-accent);
+}
+
+.align-cell:focus-visible {
+   outline: 2px solid var(--accent);
+   outline-offset: -2px;
+}
+
+.insp-narrow {
+   width: 64px;
+   flex: none;
+}
+
+/* anim designer rows */
+.anim-head {
+   display: flex;
+   align-items: center;
+   justify-content: space-between;
+   gap: 8px;
+   margin: 10px 0 6px;
+}
+
+.anim-head:first-of-type {
+   margin-top: 0;
+}
+
+.anim-name {
+   background: none;
+   border: none;
+   padding: 2px 0;
+   font: 600 10px / 1 var(--mono);
+   letter-spacing: 0.08em;
+   color: var(--accent);
+   cursor: pointer;
+}
+
+.anim-name:hover {
+   color: var(--accent-hover);
+}
+
+.anim-kf {
+   display: grid;
+   grid-template-columns: 52px minmax(0, 1fr) 24px;
+   gap: 4px;
+   margin-bottom: 4px;
+}
+
+.anim-kf .insp-narrow {
+   width: 100%;
+}
+
+.insp-hint {
+   padding: 16px 12px;
+   font: 500 9px / 1.8 var(--mono);
+   letter-spacing: 0.08em;
+   color: var(--text-tertiary);
+}
+
+.insp-stats {
+   padding: 10px 12px;
+   font: 500 9px / 1 var(--mono);
+   letter-spacing: 0.08em;
+   color: var(--text-disabled);
+}
+
+/* ── gutters (splitters) ─────────────────────────────────────────── */
+
+.gutter {
+   background: var(--bg-base);
+   position: relative;
+   flex: none;
+   touch-action: none;
+}
+
+.gutter-v {
+   cursor: col-resize;
+}
+
+.gutter-v::before {
+   content: "";
+   position: absolute;
+   left: 2px;
+   top: 0;
+   bottom: 0;
+   width: 1px;
+   background: var(--border-subtle);
+}
+
+.gutter-h {
+   height: 6px;
+   cursor: row-resize;
+}
+
+.gutter-h::before {
+   content: "";
+   position: absolute;
+   top: 2px;
+   left: 0;
+   right: 0;
+   height: 1px;
+   background: var(--border-subtle);
+}
+
+.gutter:hover {
+   background: var(--dither-cyan);
+   background-size: 2px 2px;
+}
+
+.gutter.active,
+.gutter.snapped {
+   background: var(--accent);
+}
+
+/* drag state: freeze selection while splitting */
+body.dragging {
+   user-select: none;
+}
+
+body.dragging-col {
+   cursor: col-resize;
+}
+
+body.dragging-row {
+   cursor: row-resize;
+}
+
+body.dragging #overlay,
+body.dragging #stage slab-view {
+   pointer-events: none;
+}
+
+#stage-wrap.fixed-frame #stage,
+#stage-wrap.fixed-frame #tui,
+#stage-wrap.fixed-frame #overlay {
+   inset: auto;
+   left: 0;
+   top: 0;
+   width: var(--stage-width);
+   height: var(--stage-height);
+   transform: translate(var(--stage-left), var(--stage-top)) scale(var(--stage-scale));
+   transform-origin: 0 0;
+}
+
+/* ── problems panel ──────────────────────────────────────────────── */
+
+#panel {
+   height: var(--panel-h, 140px);
+   display: flex;
+   flex-direction: column;
+   min-height: 0;
+   flex: none;
+   background: var(--bg-base);
+}
+
+body.panel-collapsed #gutter-h,
+body.panel-collapsed #panel {
+   display: none;
+}
+
+#diags {
+   flex: 1;
+   margin: 0;
+   padding: 8px 12px;
+   overflow: auto;
+   font: 12px / 1.6 var(--mono);
+   color: var(--text-secondary);
+   white-space: pre-wrap;
+}
+
+#diags .err {
+   color: var(--danger);
+}
+
+#diags .warn {
+   color: var(--warning);
+}
+
+#diags .sig {
+   color: var(--accent);
+}
+
+/* ── status bar ──────────────────────────────────────────────────── */
+
+#status {
+   display: flex;
+   align-items: center;
+   gap: 16px;
+   height: 24px;
+   padding: 0 12px;
+   border-top: 1px solid var(--border-subtle);
+   font: 500 11px / 1 var(--mono);
+   letter-spacing: 0.05em;
+   color: var(--text-secondary);
+   flex: none;
+}
+
+.status-pixel {
+   display: inline-block;
+   width: 6px;
+   height: 6px;
+   margin-right: 6px;
+   vertical-align: 0;
+   background: var(--text-tertiary);
+}
+
+.status-pixel.ok {
+   background: var(--accent);
+}
+
+.status-pixel.err {
+   background: var(--danger);
+}
+
+#status-sel {
+   color: var(--accent);
+   font-size: 10px;
+   white-space: nowrap;
+   overflow: hidden;
+   text-overflow: ellipsis;
+   max-width: 40%;
+}
+
+#status-dims {
+   color: var(--text-tertiary);
+}
+
+.bar-toggle {
+   height: 24px;
+   padding: 0 8px;
+   background: none;
+   border: none;
+   color: var(--text-secondary);
+   font: 500 11px / 1 var(--mono);
+   letter-spacing: 0.05em;
+   cursor: pointer;
+}
+
+#inspect-toggle {
+   margin-left: auto;
+}
+
+.bar-toggle:hover {
+   background: var(--surface-2);
+   color: var(--text-primary);
+}
+
+.bar-toggle.on {
+   color: var(--accent);
+}
+
+.bar-toggle:focus-visible {
+   outline: 2px solid var(--accent);
+   outline-offset: -2px;
+}

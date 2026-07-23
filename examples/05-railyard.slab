@@ -1,0 +1,79 @@
+// railyard — Zürich HB departure board, fixed 100x32-cell terminal screen.
+// TUI mapping: 1 cell = 8u x 16u, so the screen is 800u x 512u.
+tokens {
+  color {
+    bg     #0D1117
+    ink    #E6EDF3
+    muted  #8B949E
+    amber  #FFB454
+    green  #3FB950
+    cyan   #56D4DD
+    border #30363D
+  }
+  text { mono { family "Berkeley Mono"; size 12; leading 1.333 } }
+}
+
+// One departure = one grid row (defs splice all six cells as siblings).
+// The destination sits in a padded wrapper so its right gutter survives
+// ellipsis truncation and STATUS never shifts.
+def Dep(t, d, tr, p, dest, s, dtone=color.muted, stone=color.green) {
+  text t nowrap
+  text d color=dtone nowrap
+  text tr nowrap
+  text p color=color.cyan nowrap
+  row pad=0,16,0,0 { text dest nowrap ellipsis }
+  text s color=stone nowrap
+}
+
+col #railyard w=800 h=512 bg=color.bg family="Berkeley Mono" size=12 leading=1.333 color=color.ink {
+
+  // ── header line 1: app name left, clock right, justified to full width
+  row h=16 align=center {
+    text "RAILYARD v2.4.1 — Zürich HB" nowrap
+    spacer
+    text "18:42:07 CEST" nowrap color=color.muted
+  }
+
+  // ── table area: bordered box filling the middle; the status-chip line
+  //    overlaps the top border rule (stack = declared overlap).
+  stack w=fill h=fill {
+    col w=fill h=fill stroke=color.border pad=32,16 {
+      grid cols=80,72,128,112,224,fill {
+        // all-caps column headers
+        text "TIME" color=color.muted nowrap
+        text "DELAY" color=color.muted nowrap
+        text "TRAIN" color=color.muted nowrap
+        text "PLATFORM" color=color.muted nowrap
+        text "DESTINATION" color=color.muted nowrap
+        text "STATUS" color=color.muted nowrap
+        // hairline rule under the header row (1u rect -> ─ cells in TUI)
+        row span=6 h=16 align=center { rect w=fill h=1 bg=color.border }
+        // departures
+        Dep t="18:47" d="+3'" tr="IC 5 1528" p="13" dest="St. Gallen" s="boarding" dtone=color.amber
+        Dep t="18:51" d="—" tr="S3 19342" p="41/42" dest="Hardbrücke–Dietikon–Aarau" s="on time"
+        Dep t="18:54" d="—" tr="IR 36 2276" p="8" dest="Basel SBB" s="on time"
+        Dep t="18:59" d="+12'" tr="EC 307" p="10" dest="München-Hbf-über-St.Margrethen" s="delayed" dtone=color.amber stone=color.amber
+        Dep t="19:02" d="—" tr="IC 2 785" p="31" dest="Lugano" s="on time"
+      }
+      spacer
+      text "showing 5 of 12 · next refresh in 18s" color=color.muted nowrap
+    }
+    // header line 2: status chips, sitting on the border rule
+    row gap=16 offset=16,0 h=16 w=hug bg=color.bg pad=0,8 align=center {
+      text "● LIVE" color=color.green nowrap
+      text "12 departures" nowrap
+      text "2 delayed" color=color.amber nowrap
+      text "filter: none" color=color.muted nowrap
+    }
+  }
+
+  // ── footer keybinding bar pinned to the bottom row
+  row h=16 bg=color.border pad=0,8 align=center {
+    text "[j/k]" color=color.cyan nowrap; text " scroll  " nowrap
+    text "[f]" color=color.cyan nowrap; text " filter  " nowrap
+    text "[/]" color=color.cyan nowrap; text " search  " nowrap
+    text "[p]" color=color.cyan nowrap; text " platform view  " nowrap
+    text "[r]" color=color.cyan nowrap; text " refresh  " nowrap
+    text "[q]" color=color.cyan nowrap; text " quit" nowrap
+  }
+}

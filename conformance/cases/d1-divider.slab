@@ -1,0 +1,6 @@
+// Interactive split pane: live drag, bounds, keyboard resize, cursor, and reset.
+row#root w=300 h=80 {
+  rect#before w=fill min-w=80 max-w=220 bg=#17324d
+  divider#split w=6 h=fill bg=#5ea9e6 resize=split_resized dblclick=split_reset
+  rect#after w=fill min-w=70 bg=#26384a
+}

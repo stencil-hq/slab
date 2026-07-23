@@ -1,0 +1,8 @@
+// FX degradations on the tui client: scale and tilt skip with cap-transform,
+// grain skips with cap-grain, conic samples per cell, and the mask fade
+// multiplies cell alpha — the chart lines freeze all new tui notes at once.
+col w=320 pad=8 gap=8 mask=linear(180, #FFFFFF 60%, #FFFFFF00 100%) {
+  rect w=160 h=48 bg=conic(0, #4A90D9 0%, #E8865E 50%, #4A90D9 100%) grain=0.2
+  rect w=120 h=40 bg=#9B59B6 scale=1.2
+  rect w=120 h=40 bg=#38EF7D tilt=10
+}

@@ -1,0 +1,14 @@
+// Runtime image fixture: Text params and item props resolve exact registered names.
+params {
+  avatar text = "runtime-avatar"
+  cards  list(Card) = [Card(source="runtime-live")]
+}
+
+def Card(source) export {
+  img source w=20 h=20 fit=stretch radius=3
+}
+
+row w=52 h=24 gap=4 pad=2 {
+  img param.avatar w=20 h=20 fit=stretch
+  each param.cards
+}

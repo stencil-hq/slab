@@ -1,0 +1,10 @@
+// Wide grapheme clusters: CJK, emoji, combining accents, and flags.
+col #wide w=320 h=128 pad=16,8 gap=8 bg=#10141b stroke=#4fc7e0 radius=6 color=#e6edf3 {
+  text "中央駅 STATUS" size=14 weight=700 nowrap
+  row w=fill h=24 gap=24 align=center {
+    text "👍 ready" color=#3ddc84 nowrap
+    text "🇨🇭 Zürich" color=#ffb454 nowrap
+  }
+  text "café · 東京 · 中文" size=12 nowrap
+  text "text presentation: 👍︎" size=12 color=#8b949e nowrap
+}

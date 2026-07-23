@@ -1,0 +1,24 @@
+// Lists v2: the trace resizes this list to 10k. A frame must retain only the
+// uniform viewport window; focused traversal sees only those materialized rows.
+def VirtualRow(label="") export {
+  row key=row w=160 h=20 pad=2,6 bg=#111923 align=center {
+    text label size=11 color=#DCE6F0 nowrap
+  }
+}
+
+params {
+  rows list(VirtualRow) = [
+    VirtualRow(label="0"),
+    VirtualRow(label="1"),
+    VirtualRow(label="2"),
+    VirtualRow(label="3"),
+    VirtualRow(label="4"),
+    VirtualRow(label="5"),
+    VirtualRow(label="6"),
+    VirtualRow(label="7")
+  ]
+}
+
+col #viewport w=160 h=100 scroll scrollbar=always bg=#080D13 {
+  each param.rows key=rows virtual item-extent=20 overscan=4
+}

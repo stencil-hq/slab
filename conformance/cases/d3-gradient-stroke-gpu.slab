@@ -1,0 +1,7 @@
+// D3 (P9 degradation): gradient stroke on the gpu client. Chart-level
+// assertion: the native driver reports cap-gradient-stroke at render time
+// (needs a GPU; crates/slab-native renderer.rs note()), so conformance
+// freezes the support-chart line for the gradient row instead.
+col w=200 h=80 pad=16 {
+  rect w=120 h=40 stroke=linear(90, #4fc7e0 0%, #e0564a 100%) stroke-w=3
+}

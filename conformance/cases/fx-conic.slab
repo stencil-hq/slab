@@ -1,0 +1,7 @@
+// FX: conic(from, stops…) — grad kind 2 sweeps clockwise from up; the
+// knocked-out inner circle also exercises the radius clip.
+stack w=160 h=160 {
+  rect w=120 h=120 radius=full at=20,20 \
+      bg=conic(0, #4A90D9 0%, #9B59B6 40%, #E8865E 75%, #4A90D9 100%)
+  rect w=84 h=84 radius=full at=38,38 bg=#10141B
+}

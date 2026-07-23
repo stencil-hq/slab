@@ -1,0 +1,18 @@
+[package]
+name = "slab-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "slab"
+path = "src/main.rs"
+
+[dependencies]
+slab-syntax = { path = "../slab-syntax" }
+slab-slir = { path = "../slab-slir" }
+slab-compile = { path = "../slab-compile" }
+slab-fonts = { path = "../slab-fonts" }
+slab-kernel = { path = "../slab-kernel" }
+slab-lsp = { path = "../slab-lsp" }
+serde_json.workspace = true

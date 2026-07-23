@@ -1,0 +1,90 @@
+==============================
+tokens block with entries
+==============================
+
+tokens {
+  bg #0e1116
+  ink #e6edf3
+}
+
+---
+
+(source_file
+  (tokens_declaration
+    (token_entry
+      (identifier)
+      (hex_color))
+    (token_entry
+      (identifier)
+      (hex_color))))
+
+==============================
+nested groups and semicolon separators
+==============================
+
+tokens {
+  color { bg #0e1116; ink #e6edf3 }
+  fx { glass { backdrop 22,1.35; stroke-w 1 } }
+}
+
+---
+
+(source_file
+  (tokens_declaration
+    (token_group
+      (identifier)
+      (token_entry
+        (identifier)
+        (hex_color))
+      (token_entry
+        (identifier)
+        (hex_color)))
+    (token_group
+      (identifier)
+      (token_group
+        (identifier)
+        (token_entry
+          (identifier)
+          (tuple
+            (number)
+            (number)))
+        (token_entry
+          (identifier)
+          (number))))))
+
+==============================
+token entry with color function and tuple
+==============================
+
+tokens {
+  accent oklch(72% 0.16 250)
+  soft 0,18,44,#00000073
+  lift inset,0,1,0,#FFFFFF33
+}
+
+---
+
+(source_file
+  (tokens_declaration
+    (token_entry
+      (identifier)
+      (color_function
+        (identifier)
+        (percent)
+        (number)
+        (number)))
+    (token_entry
+      (identifier)
+      (tuple
+        (number)
+        (number)
+        (number)
+        (hex_color)))
+    (token_entry
+      (identifier)
+      (tuple
+        (identifier)
+        (number)
+        (number)
+        (number)
+        (hex_color)))))

@@ -1,0 +1,137 @@
+// 1.1 demo — the modern FX kit: squircle glass, conic rings, shimmer
+// borders, gradient type, grain, edge fades, progressive blur, and tilt.
+// Render:  slab render examples/13-modern.slab --width 900 --height 640 -o out/modern.png --scale 2
+// Animate: slab render examples/13-modern.slab --width 900 --height 640 --dur 3 --fps 12 -o out/modern.apng
+tokens {
+  color {
+    ink   #F2F5FB
+    dim   #A9B3C9
+    faint #6B7690
+    iris  #7C8CFF
+    rose  #FF7CB8
+    amber #FFC37C
+    mint  #7CFFC3
+  }
+  fx {
+    glass { backdrop 18,1.25,1.12; bg #FFFFFF10; stroke #FFFFFF33; stroke-w 1; radius 24; smooth 0.6 }
+  }
+  shadow {
+    soft 0,24,64,#00000073
+    edge inset,0,1,1,#FFFFFF40
+  }
+}
+
+anim spin {
+  0%   { rotate=0 }
+  100% { rotate=360 }
+}
+
+stack w=900 h=640 clip bg=#0B0E17 {
+
+  // ---- aurora backdrop: stacked radials + grain ---------------------------
+  canvas w=900 h=640 {
+    rect at=0,0 w=900 h=640 bg=linear(160, #141A2E 0%, #0B0E17 70%)
+    rect at=140,-160 w=680 h=520 radius=999 bg=radial(#7C8CFF38 0%, #7C8CFF00 70%)
+    rect at=-220,240 w=640 h=640 radius=999 bg=radial(#FF7CB826 0%, #FF7CB800 70%)
+    rect at=520,320 w=560 h=560 radius=999 bg=radial(#7CFFC31C 0%, #7CFFC300 70%)
+    rect at=0,0 w=900 h=640 grain=0.07,1.5
+  }
+
+  // ---- positioned foreground: glass card, mockup, blur strip --------------
+  canvas w=900 h=640 {
+
+    // ---- squircle glass card with shimmer border ----------------------------
+    stack #hero at=64,72 w=384 h=460 {
+      // shimmer ring: oversized conic sweeping under a knocked-out center
+      stack w=384 h=460 radius=26 smooth=0.6 clip {
+        rect at=-192,-230 w=768 h=920 animate=spin,6000,loop,linear \
+            bg=conic(0, #7C8CFF00 0%, #7C8CFF 18%, #FF7CB8 32%, #7C8CFF00 55%)
+        rect at=2,2 w=380 h=456 radius=24 smooth=0.6 bg=#0D1120F0
+      }
+
+      col at=2,2 w=380 h=456 pad=24 gap=18 style=fx.glass grain=0.05 \
+          shadow=shadow.soft,shadow.edge transition=180,ease-out {
+        when hover { scale=1.02 }
+
+        text "SLAB AUDIO" size=11 weight=800 tracking=2 color=color.faint
+        text "Neon Meridian" size=30 weight=800 \
+            color=linear(90, #7C8CFF 0%, #FF7CB8 55%, #FFC37C 100%)
+        text "Volumetric Drift — Late Static" size=13 color=color.dim
+
+        // conic progress ring
+        row gap=16 align=center {
+          stack w=96 h=96 {
+            rect w=96 h=96 radius=full \
+                bg=conic(0, #7CFFC3 0%, #7C8CFF 62%, #FFFFFF14 62%, #FFFFFF14 100%)
+            rect at=10,10 w=76 h=76 radius=full bg=#0D1120
+            col at=10,10 w=76 h=76 pack=center align=center {
+              text "62%" size=18 weight=800 color=color.ink
+            }
+          }
+          col gap=6 w=fill {
+            text "Rendering master" size=13 color=color.ink
+            text "4 of 7 stems bounced" size=11 color=color.dim
+            row h=6 radius=3 bg=#FFFFFF14 clip {
+              rect w=62% h=fill radius=3 bg=linear(90, #7CFFC3 0%, #7C8CFF 100%)
+            }
+          }
+        }
+
+        // edge-fade tracklist
+        col h=120 gap=6 mask=linear(180, #FFFFFF 62%, #FFFFFF00 100%) {
+          row pad=6,10 gap=10 radius=10 bg=#FFFFFF0A align=center {
+            text "01" size=11 color=color.faint
+            text "Meridian Rise" size=12 color=color.ink
+            spacer
+            text "4:12" size=11 color=color.dim
+          }
+          row pad=6,10 gap=10 radius=10 bg=#FFFFFF0A align=center {
+            text "02" size=11 color=color.faint
+            text "Chromatic Sleep" size=12 color=color.ink
+            spacer
+            text "3:41" size=11 color=color.dim
+          }
+          row pad=6,10 gap=10 radius=10 bg=#FFFFFF0A align=center {
+            text "03" size=11 color=color.faint
+            text "Vapor Column" size=12 color=color.ink
+            spacer
+            text "5:03" size=11 color=color.dim
+          }
+          row pad=6,10 gap=10 radius=10 bg=#FFFFFF0A align=center {
+            text "04" size=11 color=color.faint
+            text "Static Bloom" size=12 color=color.ink
+            spacer
+            text "2:58" size=11 color=color.dim
+          }
+        }
+      }
+    }
+
+    // ---- tilted mini-mockup --------------------------------------------------
+    col #mock at=520,110 w=300 pad=16 gap=10 radius=18 smooth=0.5 bg=#131A2C \
+        stroke=linear(135, #7C8CFF66 0%, #FF7CB833 100%) stroke-w=1.5 \
+        shadow=shadow.soft tilt=8,-14 transition=220,ease-out {
+      when hover { tilt=6,-9 }
+      row gap=6 {
+        rect w=10 h=10 radius=5 bg=#FF7CB8
+        rect w=10 h=10 radius=5 bg=#FFC37C
+        rect w=10 h=10 radius=5 bg=#7CFFC3
+      }
+      rect h=8 radius=4 bg=#FFFFFF1A w=70%
+      rect h=8 radius=4 bg=#FFFFFF12 w=90%
+      rect h=8 radius=4 bg=#FFFFFF12 w=55%
+      rect h=64 radius=10 bg=conic(45, #1B2440 0%, #2A3660 50%, #1B2440 100%) grain=0.12,2
+      rect h=8 radius=4 bg=#FFFFFF12 w=80%
+    }
+
+    // ---- bottom progressive-blur strip ---------------------------------------
+    rect at=0,512 w=900 h=128 backdrop=16,1.15,1.08 \
+        backdrop-mask=linear(180, #FFFFFF00 0%, #FFFFFF 78%)
+    row at=0,568 w=900 pad=12,64 align=center gap=12 {
+      rect w=8 h=8 radius=4 bg=color.mint
+      text "playing on studio monitors" size=12 color=color.ink
+      spacer
+      text "48kHz · 24bit · spatial" size=11 color=color.dim
+    }
+  }
+}

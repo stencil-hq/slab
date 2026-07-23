@@ -1,0 +1,13 @@
+{
+  "doc": "s1-scroll-cross",
+  "env": {"vw": 120, "vh": 60, "client": "web", "dark": false, "coarse": false},
+  "steps": [
+    {"t": 0},
+    {"t": 16, "event": {"type": "wheel", "x": 30, "y": 30, "dx": 24, "dy": 0}},
+    {"t": 32}
+  ],
+  "expect": {
+    "signals": [],
+    "scroll": [{"key": "#cross", "axis": 1, "off": 24}]
+  }
+}

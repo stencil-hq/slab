@@ -1,0 +1,25 @@
+// Lists v2: path-addressed trace writes reach chips, whose signal keeps the
+// innermost item key while SigMeta.key disambiguates the complete nested path.
+def Chip(label="") export {
+  row key=chip w=160 h=24 pad=2,8 bg=#23415B focusable act=choose align=center {
+    when pressed { bg=#315F82 }
+    text label size=12 color=#FFFFFFFF nowrap
+  }
+}
+
+def Row(label="", chips=list(Chip)) export {
+  col key=row w=160 {
+    text label key=label w=160 h=20 pad=2,6 bg=#101820 color=#B8C7D6 size=11
+    each chips key=chips
+  }
+}
+
+params {
+  rows list(Row) = [
+    Row(label="Initial row", chips=[Chip(label="Initial chip")])
+  ]
+}
+
+col #surface w=160 bg=#080D13 {
+  each param.rows key=rows
+}

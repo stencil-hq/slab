@@ -1,0 +1,5 @@
+{"tick":true}
+{"set":"param","ok":true}
+{"set":"param","ok":true}
+{"focus":null,"edits":[],"scroll":[]}
+{"width":80,"height":32,"ops":[],"scene":[{"node":0,"parent":-1,"kind":5,"x":0,"y":0,"w":80,"h":32,"radius":0,"rot":0,"cx":0,"cy":0,"flags":0,"content_main":0,"scroll_off":0,"line":5,"scroll_cross":0,"content_cross":0,"role":0,"label":0,"desc":0,"checked":0,"expanded":0,"selected":0,"active_descendant":0,"controls":0,"value_now":null,"value_min":null,"value_max":null,"value_text":0,"modal":0,"live":0,"live_atomic":0,"level":null,"pos_in_set":null,"set_size":null,"disabled":false,"focused":false},{"node":1,"parent":0,"kind":12,"x":0,"y":0,"w":0,"h":0,"radius":0,"rot":0,"cx":0,"cy":0,"flags":0,"content_main":0,"scroll_off":0,"line":6,"scroll_cross":0,"content_cross":0,"role":0,"label":0,"desc":0,"checked":0,"expanded":0,"selected":0,"active_descendant":0,"controls":0,"value_now":null,"value_min":null,"value_max":null,"value_text":0,"modal":0,"live":0,"live_atomic":0,"level":null,"pos_in_set":null,"set_size":null,"disabled":false,"focused":false}],"strings":[],"paths_rt":[],"diags":[{"code":"attr","line":6,"msg":"invalid runtime path data 'not path data'"}]}

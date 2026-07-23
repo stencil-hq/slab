@@ -1,0 +1,17 @@
+// L2: radius clamp, stroke align/sides/dash, layered + inset shadows,
+// opacity group, self blur, backdrop op ordering, clip radius.
+tokens { shadow { deep 0,8,24,#00000080; rim inset,0,1,0,#ffffff40 } }
+col w=300 pad=14 gap=12 bg=#0e1116 {
+  rect w=120 h=40 radius=999 bg=#1a2028 stroke=#4fc7e0 stroke-w=2 stroke-align=inside
+  rect w=120 h=30 stroke=#8a97a8 stroke-sides=t,b stroke-dash=6,4
+  rect w=120 h=40 radius=10 bg=#20262e shadow=shadow.deep,shadow.rim
+  col opacity=0.5 gap=4 {
+    rect w=80 h=14 bg=#e0564a
+    text "faded group" size=11 color=#e6edf3
+  }
+  rect w=90 h=20 bg=#f2b24c blur=3
+  stack w=220 h=70 clip radius=12 {
+    rect w=220 h=70 bg=#26314a
+    rect w=100 h=50 radius=8 backdrop=10,1.3 bg=#ffffff14 self=center
+  }
+}

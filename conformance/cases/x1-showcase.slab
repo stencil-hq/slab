@@ -1,0 +1,116 @@
+// 13-vcs.slab
+
+params {
+  commits list(Commit) = [
+    Commit(hash="a1b2c3d", msg="Add virtual each support", author="alice", active=true, tags=[Tag(tag_label="HEAD", tone=#4ade80), Tag(tag_label="main", tone=#60a5fa)], lines=[Lane(route="M12 0 L12 32", tone=#4ade80)]),
+    Commit(hash="e4f5g6h", msg="Plumb nested list APIs", author="bob", active=false, tags=[Tag(tag_label="t1-lists", tone=#9ca3af)], lines=[Lane(route="M12 0 L12 32", tone=#4ade80), Lane(route="M32 0 L32 16 C32 24 24 32 12 32", tone=#f472b6)]),
+    Commit(hash="j7k8l9m", msg="Implement icon nodes", author="charlie", active=false, tags=[], lines=[Lane(route="M12 0 L12 32", tone=#4ade80), Lane(route="M32 0 L32 32", tone=#f472b6)])
+  ]
+  popover_target text = ""
+}
+
+def Tag(tag_label="", tone=#9ca3af) export {
+  row key=tag act=tag_click drag=tag_drag bg=tone h=18 radius=4 pad=4,0 gap=2 {
+    icon tag_icon size=12 color=#ffffff
+    text tag_label size=11 color=#ffffff weight=500
+  }
+}
+
+def Lane(route="", tone=#64748B) export {
+  path route bg=none stroke=tone stroke-w=2
+}
+
+def Commit(hash="", msg="", author="", active=false, tags=list(Tag), lines=list(Lane)) export {
+  row key=commit w=fill h=32 drop=commit_drop act=commit_act bg=#0f141a pad=0,8 gap=12 {
+    when active { bg=#1e293b }
+    when drop { bg=#2a3a4c stroke=#3b82f6 stroke-w=1 }
+    when hover { bg=#17202d }
+
+    // Graph canvas
+    canvas w=48 h=32 {
+      each lines key=lines
+      icon commit_dot size=12 color=#4ade80 offset=6,10
+    }
+
+    // Hash
+    text hash size=13 color=#64748b weight=500 w=60 family="monospace"
+
+    // Message
+    text msg size=13 color=#cbd5e1 weight=500 w=fill truncate
+
+    // Tags
+    row w=120 h=fill self=center gap=4 {
+      each tags key=tags
+    }
+
+    // Actions menu button
+    row key=more w=24 h=24 self=center radius=4 act=show_menu bg=#1e293b {
+      when hover { bg=#334155 }
+      icon more_vert size=16 color=#94a3b8 offset=4,4
+    }
+  }
+}
+
+icon commit_dot viewbox=24 { path "M12 4 A8 8 0 1 0 12 20 A8 8 0 1 0 12 4" }
+icon tag_icon viewbox=24 { path "M12 2 L22 12 L12 22 L2 12 Z" }
+icon more_vert viewbox=24 { path "M12 8 A2 2 0 1 0 12 4 A2 2 0 1 0 12 8 M12 14 A2 2 0 1 0 12 10 A2 2 0 1 0 12 14 M12 20 A2 2 0 1 0 12 16 A2 2 0 1 0 12 20" }
+icon author_avatar viewbox=24 { path "M12 12 A4 4 0 1 0 12 4 A4 4 0 1 0 12 12 M4 20 C4 16 7 14 12 14 C17 14 20 16 20 20" bg=none stroke=current stroke-w=2 }
+icon file_code viewbox=24 { path "M10 8 L6 12 L10 16 M14 8 L18 12 L14 16 M14 4 L10 20" bg=none stroke=current stroke-w=2 }
+
+stack#app w=800 h=600 bg=#0a0e14 family="system-ui, sans-serif" {
+  row w=fill h=fill {
+    // Left: Graph / Commits
+    col#graph w=fill min-w=300 h=fill scroll {
+      each param.commits key=commits virtual item-extent=32 overscan=4
+    }
+
+    divider#split w=1 h=fill bg=#1e293b resize=split_drag
+
+    // Right: Detail
+    col#detail w=280 min-w=200 h=fill bg=#0f141a pad=16 gap=12 {
+      row gap=8 {
+        icon author_avatar size=32 color=#64748b
+        col gap=2 {
+          text "alice" size=13 color=#e2e8f0 weight=500
+          text "committed 2 hours ago" size=11 color=#64748b
+        }
+      }
+
+      text "Add virtual each support" size=14 color=#f8fafc weight=500
+
+      text "Implements virtual rendering for main-axis scroll containers using item-extent and overscan." size=13 color=#cbd5e1
+
+      row h=1 bg=#1e293b w=fill offset=0,8
+
+      col gap=4 offset=0,16 {
+        text "2 files changed" size=12 color=#94a3b8 weight=500 pad=0,0,8,0
+        row gap=8 {
+          icon file_code size=14 color=#64748b
+          text "crates/slab-kernel/src/list.rs" size=13 color=#cbd5e1
+        }
+        row gap=8 {
+          icon file_code size=14 color=#64748b
+          text "crates/slab-compile/src/expand.rs" size=13 color=#cbd5e1
+        }
+      }
+    }
+  }
+
+  // Popover menu
+  col#menu w=140 h=80 attach=param.popover_target gravity=below-end collide=auto bg=#1e293b radius=4 stroke=#334155 stroke-w=1 pad=4 {
+    when active { opacity=1.0 }
+
+    row w=fill h=24 pad=4,8 radius=2 act=menu_cherry_pick {
+      when hover { bg=#334155 }
+      text "Cherry-pick" size=13 color=#e2e8f0
+    }
+    row w=fill h=24 pad=4,8 radius=2 act=menu_revert {
+      when hover { bg=#334155 }
+      text "Revert" size=13 color=#e2e8f0
+    }
+    row w=fill h=24 pad=4,8 radius=2 act=menu_drop {
+      when hover { bg=#334155 }
+      text "Drop commit" size=13 color=#ef4444
+    }
+  }
+}

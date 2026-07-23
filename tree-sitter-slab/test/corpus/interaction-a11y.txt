@@ -1,0 +1,158 @@
+==============================
+extended gesture bindings, drag ghost, and accessibility state
+==============================
+
+box#gesture pointer-move=moved pointer-up=released drag=started drag-update=updated drag-end=ended drag-ghost
+box#widget checked=mixed expanded=true selected=true active-descendant="#widget/#item" controls="#panel" {
+  box#item
+}
+box#panel
+box#range value-now=4 value-min=0 value-max=10 value-text="4 of 10"
+box#dialog modal=true live=polite live-atomic=false
+box#treeitem level=2 pos-in-set=1 set-size=10
+box#unchecked checked=false live=off
+box#checked checked=true live=assertive
+
+---
+
+(source_file
+  (node
+    (identifier)
+    (node_id)
+    (attribute
+      (identifier)
+      (identifier))
+    (attribute
+      (identifier)
+      (identifier))
+    (attribute
+      (identifier)
+      (identifier))
+    (attribute
+      (identifier)
+      (identifier))
+    (attribute
+      (identifier)
+      (identifier))
+    (flag
+      (identifier)))
+  (node
+    (identifier)
+    (node_id)
+    (attribute
+      (identifier)
+      (identifier))
+    (attribute
+      (identifier)
+      (identifier))
+    (attribute
+      (identifier)
+      (identifier))
+    (attribute
+      (identifier)
+      (string))
+    (attribute
+      (identifier)
+      (string))
+    (block
+      (node
+        (identifier)
+        (node_id))))
+  (node
+    (identifier)
+    (node_id))
+  (node
+    (identifier)
+    (node_id)
+    (attribute
+      (identifier)
+      (number))
+    (attribute
+      (identifier)
+      (number))
+    (attribute
+      (identifier)
+      (number))
+    (attribute
+      (identifier)
+      (string)))
+  (node
+    (identifier)
+    (node_id)
+    (attribute
+      (identifier)
+      (identifier))
+    (attribute
+      (identifier)
+      (identifier))
+    (attribute
+      (identifier)
+      (identifier)))
+  (node
+    (identifier)
+    (node_id)
+    (attribute
+      (identifier)
+      (number))
+    (attribute
+      (identifier)
+      (number))
+    (attribute
+      (identifier)
+      (number)))
+  (node
+    (identifier)
+    (node_id)
+    (attribute
+      (identifier)
+      (identifier))
+    (attribute
+      (identifier)
+      (identifier)))
+  (node
+    (identifier)
+    (node_id)
+    (attribute
+      (identifier)
+      (identifier))
+    (attribute
+      (identifier)
+      (identifier))))
+
+==============================
+semantic-invalid gesture and accessibility values stay parseable
+==============================
+
+box checked=maybe live=loud expanded=mixed value-now="four" controls=4
+box drag-update=orphaned drag-end=orphaned drag-ghost
+
+---
+
+(source_file
+  (node
+    (identifier)
+    (attribute
+      (identifier)
+      (identifier))
+    (attribute
+      (identifier)
+      (identifier))
+    (attribute
+      (identifier)
+      (identifier))
+    (attribute
+      (identifier)
+      (string))
+    (attribute
+      (identifier)
+      (number)))
+  (node
+    (identifier)
+    (attribute
+      (identifier)
+      (identifier))
+    (attribute
+      (identifier)
+      (identifier))
+    (flag
+      (identifier))))

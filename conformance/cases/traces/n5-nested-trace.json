@@ -1,0 +1,59 @@
+{
+  "doc": "n5-nested-trace",
+  "env": {
+    "vw": 160,
+    "vh": 68,
+    "client": "web",
+    "dark": false,
+    "coarse": false
+  },
+  "steps": [
+    {
+      "t": 0,
+      "list": {"param": "rows", "path": "", "op": "len", "n": 1}
+    },
+    {
+      "t": 16,
+      "list": {"param": "rows", "path": "", "op": "field", "index": 0, "field": "label", "kind": "text", "value": "Updated row"}
+    },
+    {
+      "t": 32,
+      "list": {"param": "rows", "path": "", "op": "key", "index": 0, "key": "outer"}
+    },
+    {
+      "t": 48,
+      "list": {"param": "rows", "path": "0.chips", "op": "len", "n": 2}
+    },
+    {
+      "t": 64,
+      "list": {"param": "rows", "path": "0.chips", "op": "field", "index": 0, "field": "label", "kind": "text", "value": "First chip"}
+    },
+    {
+      "t": 80,
+      "list": {"param": "rows", "path": "0.chips", "op": "key", "index": 0, "key": "inner"}
+    },
+    {
+      "t": 96,
+      "list": {"param": "rows", "path": "0.chips", "op": "field", "index": 1, "field": "label", "kind": "text", "value": "Second chip"}
+    },
+    {
+      "t": 112,
+      "list": {"param": "rows", "path": "0.chips", "op": "key", "index": 1, "key": "inner-2"}
+    },
+    {"t": 128},
+    {
+      "t": 144,
+      "event": {"type": "pointer-down", "x": 40, "y": 30, "button": 0}
+    },
+    {
+      "t": 160,
+      "event": {"type": "pointer-up", "x": 40, "y": 30, "button": 0}
+    }
+  ],
+  "expect": {
+    "signals": [
+      {"name": "choose", "text": "", "item": "inner"}
+    ],
+    "focus_key": "#surface/rows~outer/row/chips~inner/chip"
+  }
+}

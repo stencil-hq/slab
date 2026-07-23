@@ -1,0 +1,2 @@
+// A focused single-line field with wide and combining grapheme clusters.
+text "中é" field=draft size=14 color=#FFFFFFFF w=120 h=24 nowrap

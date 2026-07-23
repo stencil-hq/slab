@@ -1,0 +1,223 @@
+// "How Coffee Gets Made" — subway-style transit map poster.
+// Brief: examples/briefs/4-poster.md. Render at --width 1000 --height 1500.
+//
+// Print direction: warm letterpress cream lit by a soft radial paper-light,
+// deep espresso ink, Vignelli spacing. Lines get depth from a soft under-glow
+// plus a darker casing stroke (double-stroke registration, not glass).
+//
+// Geometry (unchanged from 0.1.x): every segment runs at exactly 45/90 deg
+// and meets station centers:
+//   Harvest (160,1240)  Wet Mill (400,1000)  Roastery (620,620)
+//   Grinder (800,440)   Your Cup (880,200)
+
+tokens {
+  color {
+    paper    #F2EBDC
+    paperhi  #FBF6E9
+    ink      #262019
+    muted    #7A6E5A
+    hair     #26201929
+    origin   #B23A26
+    origindk #7E2818
+    brew     #1F5F4C
+    brewdk   #123E31
+    gold     #C3922E
+  }
+  text {
+    kicker  { family "Futura"; size 15; weight 700; tracking 4 }
+    display { family "Futura"; size 66; weight 800; tracking 1 }
+    sub     { family "Futura"; size 16; weight 500 }
+    name    { family "Futura"; size 17; weight 800; tracking 1.5 }
+    caption { family "Futura"; size 11; weight 600; tracking 1.5 }
+    body    { family "Futura"; size 15; weight 400; leading 1.65 }
+    legend  { family "Futura"; size 12; weight 700; tracking 2 }
+    credit  { family "Futura"; size 10; weight 600; tracking 2 }
+  }
+  shadow {
+    dot   0,3,7,#3A2A1440
+    badge 0,2,6,#3A2A1426
+  }
+}
+
+canvas #poster w=1000 h=1500 bg=color.paper {
+
+  // ---- paper light: top-biased radial glow + gentle vignette -----------
+  rect at=0,0 w=1000 h=1200 bg=radial(#FDF8EB99 0%, #FDF8EB00 100%)
+  rect at=0,0 w=1000 h=1500 bg=radial(#00000000 0%, #00000000 62%, #33251312 100%)
+
+  // registration crosses, corners (print cue)
+  path "M36 24 L36 48" stroke=#26201936 stroke-w=1
+  path "M24 36 L48 36" stroke=#26201936 stroke-w=1
+  path "M964 24 L964 48" stroke=#26201936 stroke-w=1
+  path "M952 36 L976 36" stroke=#26201936 stroke-w=1
+  path "M36 1452 L36 1476" stroke=#26201936 stroke-w=1
+  path "M24 1464 L48 1464" stroke=#26201936 stroke-w=1
+  path "M964 1452 L964 1476" stroke=#26201936 stroke-w=1
+  path "M952 1464 L976 1464" stroke=#26201936 stroke-w=1
+
+  // ---- Title lockup, top-left ------------------------------------------
+  group at=84,84 {
+    col gap=18 {
+      row gap=12 align=center w=hug {
+        rect w=28 h=2 bg=color.gold
+        text "THE BEAN TRANSIT AUTHORITY" style=text.kicker color=color.muted nowrap
+      }
+      col gap=2 {
+        text "HOW COFFEE" style=text.display color=color.ink nowrap
+        text "GETS MADE" style=text.display color=color.ink nowrap
+      }
+      row w=hug {
+        rect w=150 h=8 bg=color.origin
+        rect w=48 h=8 bg=color.gold
+        rect w=30 h=8 bg=color.brew
+      }
+      text "Two lines, one express, five stops — field to cup." \
+          style=text.sub color=color.muted nowrap
+    }
+  }
+
+  // ---- Rider notes: editorial block in the mid-left quiet zone ----------
+  group at=84,470 {
+    row gap=18 {
+      rect w=3 h=fill bg=color.gold
+      col w=300 gap=12 {
+        text "NOTES FOR RIDERS" style=text.caption color=color.muted nowrap
+        text "Every bean rides this network. Most take the local — picked at peak red, washed at the wet mill, then dried on raised beds for fourteen unhurried days. A few catch the natural-process express and skip the wash entirely, trading clean lines for wild fruit. Every service terminates at Your Cup: ninety-four degrees, the only arrival that matters." \
+            style=text.body color=color.ink
+      }
+    }
+  }
+
+  // ---- Connector lines (drawn first: stations paint on top) -------------
+  // Soft ink-bleed glow beneath each trunk line.
+  path "M160 1240 L400 1000 L400 840 L620 620" stroke=#B23A2624 stroke-w=32 blur=10
+  path "M620 620 L800 440 L880 360 L880 200" stroke=#1F5F4C24 stroke-w=32 blur=10
+
+  // Express bypass Harvest -> Roastery, dashed.
+  path "M160 1240 L620 1240 L620 620" stroke=color.origin stroke-w=5 stroke-dash=18,12
+
+  // Trunk lines are drawn as straight segments (solid strokes have round
+  // caps, so overlapping caps form clean elbows — polyline joins tessellate
+  // badly at 135 deg). All casings first, then all live strokes.
+
+  // Origin Line: Harvest -> Wet Mill -> (dogleg) -> Roastery
+  path "M160 1240 L400 1000" stroke=color.origindk stroke-w=18
+  path "M400 1000 L400 840" stroke=color.origindk stroke-w=18
+  path "M400 840 L620 620" stroke=color.origindk stroke-w=18
+  // Brew Line: Roastery -> Grinder -> (dogleg) -> Your Cup
+  path "M620 620 L800 440" stroke=color.brewdk stroke-w=18
+  path "M800 440 L880 360" stroke=color.brewdk stroke-w=18
+  path "M880 360 L880 200" stroke=color.brewdk stroke-w=18
+  // elbow cover dots: casing-colored discs smooth the two bare doglegs
+  rect at=400,840 anchor=center w=20 h=20 radius=999 bg=color.origindk
+  rect at=880,360 anchor=center w=20 h=20 radius=999 bg=color.brewdk
+
+  path "M160 1240 L400 1000" stroke=color.origin stroke-w=12
+  path "M400 1000 L400 840" stroke=color.origin stroke-w=12
+  path "M400 840 L620 620" stroke=color.origin stroke-w=12
+  path "M620 620 L800 440" stroke=color.brew stroke-w=12
+  path "M800 440 L880 360" stroke=color.brew stroke-w=12
+  path "M880 360 L880 200" stroke=color.brew stroke-w=12
+  rect at=400,840 anchor=center w=12 h=12 radius=999 bg=color.origin
+  rect at=880,360 anchor=center w=12 h=12 radius=999 bg=color.brew
+
+  // ---- Stations ----------------------------------------------------------
+  Station x=160 y=1240 // Harvest
+  Station x=400 y=1000 // Wet Mill
+  Station x=800 y=440 // Grinder
+  Station x=880 y=200 // Your Cup
+
+  // Roastery interchange: gold outer ring around a larger ink-ringed dot.
+  rect at=620,620 anchor=center w=64 h=64 radius=999 stroke=color.gold stroke-w=3
+  rect at=620,620 anchor=center w=44 h=44 radius=999 bg=color.paperhi \
+      stroke=color.ink stroke-w=7 shadow=shadow.dot
+
+  // ---- Station labels: bold tracked name + muted service caption --------
+  text "HARVEST" at=190,1270 anchor=start style=text.name color=color.ink nowrap
+  text "CHERRY PICKED AT 1900 M" at=190,1294 anchor=start style=text.caption color=color.muted nowrap
+
+  text "WET MILL" at=362,984 anchor=end style=text.name color=color.ink nowrap
+  text "WASHED · DRIED 14 DAYS" at=362,1008 anchor=end style=text.caption color=color.muted nowrap
+
+  text "ROASTERY" at=668,596 anchor=start style=text.name color=color.ink nowrap
+
+  text "GRINDER" at=754,432 anchor=end style=text.name color=color.ink nowrap
+  text "BURR SET TO 28 CLICKS" at=754,456 anchor=end style=text.caption color=color.muted nowrap
+
+  text "YOUR CUP" at=880,148 anchor=center style=text.name color=color.ink nowrap
+  text "TERMINUS · 94°C" at=880,172 anchor=center style=text.caption color=color.muted nowrap
+
+  // Interchange badge at Roastery
+  group at=668,616 {
+    row pad=6,14 gap=8 radius=999 bg=color.paperhi stroke=color.gold stroke-w=1.5 \
+        align=center w=hug shadow=shadow.badge {
+      rect w=8 h=8 radius=4 bg=color.gold
+      text "TRANSFER · LIGHT / MEDIUM / DARK" style=text.caption color=color.ink nowrap
+    }
+  }
+
+  // ---- Fare stamp, bottom-right quiet zone -------------------------------
+  group at=648,1072 {
+    row pad=14,20 gap=16 radius=10 stroke=color.muted stroke-w=1.5 stroke-dash=7,6 \
+        align=center w=hug {
+      col gap=4 {
+        text "SINGLE ORIGIN FARE" style=text.caption color=color.ink nowrap
+        text "Valid for one brew · no return service" size=11 color=color.muted nowrap
+      }
+      rect w=1 h=30 bg=color.hair
+      text "NO. 7" family="Futura" size=24 weight=800 color=color.gold nowrap
+    }
+  }
+
+  // ---- Legend footer strip -----------------------------------------------
+  group at=0,1352 {
+    col w=1000 h=142 pad=30,84 gap=20 stroke=color.hair stroke-w=1 stroke-sides=t \
+        bg=linear(180, #EFE6D1 0%, #E7DCC3 100%) {
+      row align=center {
+        row gap=12 align=center w=hug {
+          rect w=44 h=8 radius=4 bg=color.origin
+          text "ORIGIN LINE" style=text.legend color=color.ink nowrap
+        }
+        spacer
+        row gap=12 align=center w=hug {
+          rect w=44 h=8 radius=4 bg=color.brew
+          text "BREW LINE" style=text.legend color=color.ink nowrap
+        }
+        spacer
+        row gap=12 align=center w=hug {
+          row gap=5 align=center w=hug {
+            rect w=12 h=5 radius=2 bg=color.origin
+            rect w=12 h=5 radius=2 bg=color.origin
+            rect w=12 h=5 radius=2 bg=color.origin
+          }
+          text "EXPRESS SERVICE" style=text.legend color=color.ink nowrap
+        }
+        spacer
+        row gap=12 align=center w=hug {
+          rect w=16 h=16 radius=999 bg=color.paperhi stroke=color.gold stroke-w=3
+          text "INTERCHANGE" style=text.legend color=color.ink nowrap
+        }
+      }
+      row align=center {
+        text "BEAN TRANSIT AUTHORITY — FIELD DIVISION" style=text.credit color=color.muted nowrap
+        spacer
+        text "MAP NO. 7 · REV. 2026 · NOT TO SCALE" style=text.credit color=color.muted nowrap
+      }
+    }
+  }
+
+  // tricolor press bar at the trim edge
+  group at=0,1494 {
+    row w=1000 h=6 {
+      rect w=500 h=6 bg=color.origin
+      rect w=200 h=6 bg=color.gold
+      rect w=300 h=6 bg=color.brew
+    }
+  }
+}
+
+// A station dot, anchored on its center: callers pass the LINE coordinate.
+def Station(x, y) {
+  rect at=x,y anchor=center w=30 h=30 radius=999 bg=color.paperhi \
+      stroke=color.ink stroke-w=6 shadow=shadow.dot
+}

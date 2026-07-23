@@ -1,0 +1,1 @@
+chart degraded path: strokes as slope-charred cell runs, fills as even-odd scanline at cell centers

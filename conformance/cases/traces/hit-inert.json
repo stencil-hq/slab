@@ -1,0 +1,22 @@
+{
+  "doc": "i1-hit-inert",
+  "env": {
+    "vw": 100,
+    "vh": 100,
+    "client": "web",
+    "dark": false,
+    "coarse": false
+  },
+  "steps": [
+    {
+      "t": 0,
+      "hit": [
+        50,
+        50
+      ]
+    }
+  ],
+  "expect": {
+    "signals": []
+  }
+}

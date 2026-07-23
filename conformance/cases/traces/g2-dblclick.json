@@ -1,0 +1,16 @@
+{
+  "doc": "g2-dblclick",
+  "env": { "vw": 240, "vh": 96, "client": "web", "dark": false, "coarse": false },
+  "steps": [
+    { "t": 0, "event": { "type": "pointer-down", "x": 24, "y": 24, "button": 0, "clicks": 2, "mods": ["shift"] } },
+    { "t": 1, "event": { "type": "pointer-up", "x": 24, "y": 24, "button": 0 } },
+    { "t": 2 }
+  ],
+  "expect": {
+    "signals": [
+      { "name": "double", "text": "", "item": "" },
+      { "name": "released", "text": "", "item": "" }
+    ],
+    "focus_key": "button"
+  }
+}

@@ -1,0 +1,23 @@
+// Accessibility scene export from scalar list fields: text, bool, and numeric
+// props resolve per materialized item and retain their stable synthetic keys.
+def A11yItem(label="", check="false", chosen=false, open=false, now=0, announcement="off", position=1, total=1) export {
+  row key=item role=option label=label desc=label checked=check selected=chosen expanded=open focusable act=choose \
+      value-now=now value-min=0 value-max=10 value-text=label live=announcement \
+      live-atomic=open level=1 pos-in-set=position set-size=total w=180 h=28 {
+    text label
+  }
+}
+
+params {
+  active text = "#list/items~alpha/item"
+  items  list(A11yItem) = [
+    A11yItem(label="Alpha", check="mixed", chosen=true, open=true, now=4, announcement="polite", position=1, total=2),
+    A11yItem(label="Beta", check="false", chosen=false, open=false, now=8, announcement="off", position=2, total=2)
+  ]
+}
+
+col #list role=listbox label="Dynamic records" desc="Runtime list semantics" w=180 rotate=12 \
+    active-descendant=param.active controls="#detail" {
+  each param.items key=items
+}
+rect #detail role="region" label="List details" modal=true w=180 h=20

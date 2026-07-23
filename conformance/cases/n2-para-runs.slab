@@ -1,0 +1,18 @@
+// Lists v2: each directly under para contributes one styled span per item.
+def Run(text="", tone=#D8DEE9, size=14, weight=400, family="Inter", tracking=0) export {
+  span text color=tone size=size weight=weight family=family tracking=tracking
+}
+
+params {
+  runs list(Run) = [
+    Run(text="fn", tone=#C678DD, weight=700),
+    Run(text="render", tone=#61AFEF, weight=650),
+    Run(text="(rows)", tone=#E5C07B, family="JetBrains Mono"),
+    Run(text="returns", tone=#98C379),
+    Run(text="Frame", tone=#56B6C2, size=16, tracking=0.5)
+  ]
+}
+
+para w=220 pad=8 radius=6 bg=#151B24 leading=1.3 {
+  each param.runs key=runs
+}

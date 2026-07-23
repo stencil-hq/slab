@@ -1,0 +1,8 @@
+[package]
+name = "slab-syntax"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+logos = { workspace = true }

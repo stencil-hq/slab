@@ -1,0 +1,35 @@
+{
+  "doc": "g4-drag-cancel",
+  "env": { "vw": 300, "vh": 96, "client": "web", "dark": false, "coarse": false },
+  "steps": [
+    { "t": 0, "event": { "type": "pointer-down", "x": 20, "y": 20, "button": 0, "clicks": 1 } },
+    { "t": 1, "event": { "type": "pointer-move", "x": 28, "y": 20, "dx": 8, "dy": 0 } },
+    { "t": 2, "event": { "type": "pointer-move", "x": 270, "y": 20, "dx": 242, "dy": 0 } },
+    { "t": 3, "event": { "type": "pointer-up", "x": 270, "y": 20, "button": 0 } },
+
+    { "t": 4, "event": { "type": "pointer-down", "x": 20, "y": 20, "button": 0, "clicks": 1 } },
+    { "t": 5, "event": { "type": "pointer-move", "x": 30, "y": 20, "dx": 10, "dy": 0, "mods": ["ctrl"] } },
+    { "t": 6, "event": { "type": "pointer-move", "x": 150, "y": 20, "dx": 120, "dy": 0, "mods": ["ctrl"] } },
+    { "t": 7, "event": { "type": "blur" } },
+
+    { "t": 8, "event": { "type": "pointer-down", "x": 20, "y": 20, "button": 0, "clicks": 1 } },
+    { "t": 9, "event": { "type": "pointer-move", "x": 30, "y": 20, "dx": 10, "dy": 0, "mods": ["meta"] } },
+    { "t": 10, "event": { "type": "close" } }
+  ],
+  "expect": {
+    "signals": [
+      { "name": "drag-start", "text": "", "item": "" },
+      { "name": "drag-update", "text": "", "item": "" },
+      { "name": "drag-update", "text": "", "item": "" },
+      { "name": "drag-end", "text": "", "item": "" },
+      { "name": "drag-start", "text": "", "item": "" },
+      { "name": "drag-update", "text": "", "item": "" },
+      { "name": "drag-update", "text": "", "item": "" },
+      { "name": "drag-end", "text": "", "item": "" },
+      { "name": "drag-start", "text": "", "item": "" },
+      { "name": "drag-update", "text": "", "item": "" },
+      { "name": "drag-end", "text": "", "item": "" }
+    ],
+    "focus_key": "board/source"
+  }
+}

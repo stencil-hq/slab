@@ -1,0 +1,6 @@
+// FX: gradient text — the Text ops carry grad references plus one shared
+// grad_box (the node's content box), proving cross-line continuity.
+col w=220 pad=10 {
+  text "Gradient headlines wrap across lines" size=24 weight=700 \
+      color=linear(90, #F12711 0%, #F5AF19 100%)
+}

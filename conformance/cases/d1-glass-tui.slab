@@ -1,0 +1,8 @@
+// D1 (P9 degradation): glass card on the tui client — the backdrop panel
+// paints flat and slab_kernel::cells accumulates ONE cap-backdrop grid note; the
+// support chart adds the radius/gradient/text-raster tui degradations.
+col w=320 h=120 pad=16 gap=8 bg=linear(180, #26314a 0%, #10141b 100%) {
+  col w=200 h=64 pad=12,8 radius=8 bg=#ffffff12 stroke=#ffffff3d backdrop=8,1.2 {
+    text "GLASS" size=12 color=#e6edf3
+  }
+}

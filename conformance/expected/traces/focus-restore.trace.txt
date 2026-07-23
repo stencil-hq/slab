@@ -1,0 +1,11 @@
+{"set":"state"}
+{"tick":true}
+{"repaint":true,"signals":[],"caret":null,"ime":null,"cursor":0,"focus":"col@0/#r1","scrolls":[]}
+{"repaint":true,"signals":[],"caret":null,"ime":null,"cursor":0,"focus":"col@0/#r3","scrolls":[]}
+{"repaint":true,"signals":[],"caret":null,"ime":null,"cursor":0,"focus":"col@0/#r2","scrolls":[]}
+{"tick":true}
+{"set":"state"}
+{"tick":true}
+{"tick":true}
+{"focus":"col@0/#r3","edits":[],"scroll":[]}
+{"width":200,"height":44,"ops":[{"op":"Rect","node":1,"x":0,"y":0,"w":100,"h":20,"radius":0,"bg":"#333333ff","stroke":null,"stroke_w":1,"stroke_align":0,"stroke_sides":15,"dash":null,"shadows":[],"opacity":1},{"op":"Rect","node":2,"x":0,"y":24,"w":100,"h":20,"radius":0,"bg":"#555555ff","stroke":"#ffffffff","stroke_w":1,"stroke_align":0,"stroke_sides":15,"dash":null,"shadows":[],"opacity":1}],"scene":[{"node":0,"parent":-1,"kind":1,"x":0,"y":0,"w":200,"h":44,"radius":0,"rot":0,"cx":0,"cy":0,"flags":0,"content_main":44,"scroll_off":0,"line":7,"scroll_cross":0,"content_cross":100,"role":0,"label":0,"desc":0,"checked":0,"expanded":0,"selected":0,"active_descendant":0,"controls":0,"value_now":null,"value_min":null,"value_max":null,"value_text":0,"modal":0,"live":0,"live_atomic":0,"level":null,"pos_in_set":null,"set_size":null,"disabled":false,"focused":false},{"node":1,"parent":0,"kind":10,"x":0,"y":0,"w":100,"h":20,"radius":0,"rot":0,"cx":0,"cy":0,"flags":64,"content_main":0,"scroll_off":0,"line":8,"scroll_cross":0,"content_cross":0,"role":0,"label":0,"desc":0,"checked":0,"expanded":0,"selected":0,"active_descendant":0,"controls":0,"value_now":null,"value_min":null,"value_max":null,"value_text":0,"modal":0,"live":0,"live_atomic":0,"level":null,"pos_in_set":null,"set_size":null,"disabled":false,"focused":false},{"node":2,"parent":0,"kind":10,"x":0,"y":24,"w":100,"h":20,"radius":0,"rot":0,"cx":0,"cy":0,"flags":64,"content_main":0,"scroll_off":0,"line":11,"scroll_cross":0,"content_cross":0,"role":0,"label":0,"desc":0,"checked":0,"expanded":0,"selected":0,"active_descendant":0,"controls":0,"value_now":null,"value_min":null,"value_max":null,"value_text":0,"modal":0,"live":0,"live_atomic":0,"level":null,"pos_in_set":null,"set_size":null,"disabled":false,"focused":true}],"strings":[],"paths_rt":[],"diags":[]}

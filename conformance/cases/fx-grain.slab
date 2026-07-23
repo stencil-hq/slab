@@ -1,0 +1,7 @@
+// FX: grain rides Rect ops as (amount, size); a grain-only chip still emits
+// a Rect over bg=none (the overlay idiom).
+col w=280 pad=12 gap=12 {
+  rect w=240 h=100 radius=16 grain=0.18 \
+      bg=linear(135, #241A4E 0%, #E8865E 100%)
+  rect w=120 h=40 grain=0.3,2
+}

@@ -1,0 +1,16 @@
+{
+  "doc": "g5-drag-ghost",
+  "env": { "vw": 300, "vh": 96, "client": "web", "dark": false, "coarse": false },
+  "steps": [
+    { "t": 0, "event": { "type": "pointer-down", "x": 20, "y": 20, "button": 0, "clicks": 1 } },
+    { "t": 1, "event": { "type": "pointer-move", "x": 28, "y": 20, "dx": 8, "dy": 0 } },
+    { "t": 2, "event": { "type": "pointer-move", "x": 150, "y": 24, "dx": 122, "dy": 4 } },
+    { "t": 3 }
+  ],
+  "expect": {
+    "signals": [
+      { "name": "drag-start", "text": "", "item": "" }
+    ],
+    "focus_key": "board/source"
+  }
+}

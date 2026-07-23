@@ -1,0 +1,13 @@
+// L1: wrapping, hard-break, nowrap+ellipsis truncation, align-text,
+// leading, tracking, bold width factor, NBSP glue, inheritance.
+col w=300 pad=12 gap=8 color=#e6edf3 {
+  text "The quick brown fox jumps over the lazy dog near the riverbank" size=14
+  text "Antidisestablishmentarianismandthensomemore breaks hard" size=13 w=180
+  text "This line will not wrap and truncates with an ellipsis marker" size=13 nowrap ellipsis
+  text "centered line" size=12 align-text=center
+  text "end aligned" size=12 align-text=end
+  text "tracked out" size=12 tracking=2.5
+  text "loose leading over two lines when narrow" size=12 leading=2 w=160
+  text "bold weight is wider" size=14 weight=700
+  text "42\u00a0km stays glued" size=12
+}

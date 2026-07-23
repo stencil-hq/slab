@@ -1,0 +1,50 @@
+{
+  "doc": "i1-buttons",
+  "env": {
+    "vw": 300,
+    "vh": 600,
+    "client": "web",
+    "dark": false,
+    "coarse": false
+  },
+  "steps": [
+    {
+      "t": 0,
+      "event": {
+        "type": "pointer-down",
+        "x": 50,
+        "y": 16
+      }
+    },
+    {
+      "t": 16,
+      "event": {
+        "type": "pointer-up",
+        "x": 50,
+        "y": 16
+      }
+    },
+    {
+      "t": 32
+    },
+    {
+      "t": 48,
+      "event": {
+        "type": "key-down",
+        "key": "Tab"
+      }
+    },
+    {
+      "t": 64
+    }
+  ],
+  "expect": {
+    "signals": [
+      {
+        "name": "save",
+        "text": ""
+      }
+    ],
+    "focus_key": "col@0/b/box@0"
+  }
+}

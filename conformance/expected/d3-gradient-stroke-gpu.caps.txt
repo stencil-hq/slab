@@ -1,0 +1,1 @@
+chart degraded gradient: gradients sample at most 8 stops (cap-gradient-stops)

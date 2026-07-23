@@ -1,0 +1,95 @@
+// 0.3.0 demo — glassmorphism + motion over a synthwave poolside.
+// Render:  slab render examples/08-glass.slab --width 900 --height 560 -o out/glass.png --scale 2
+// Animate: slab render examples/08-glass.slab --width 900 --height 560 --dur 3200 --fps 20 -o out/glass.apng
+tokens {
+  color {
+    ink   #F4EFFa
+    dim   #C9BFE8
+    mint  #7CFFB2
+    cyan  #4FC7E0
+    peach #FFB37C
+  }
+  fx {
+    glass { backdrop 22,1.35; bg #FFFFFF12; stroke #FFFFFF3D; stroke-w 1; radius 20 }
+  }
+  shadow {
+    soft  0,24,64,#00000066
+    crisp 0,2,8,#00000040
+    edge  inset,0,1,1,#FFFFFF4D
+  }
+}
+
+anim breathe {
+  0%   { opacity=0.3 }
+  100% { opacity=1 }
+}
+anim floaty {
+  0%   { offset=0,0 }
+  50%  { offset=0,-12 }
+  100% { offset=0,0 }
+}
+
+stack w=900 h=560 clip {
+
+  // ---- scene: gradient dusk, sun, drained pool --------------------------
+  canvas w=900 h=560 {
+    rect at=0,0 w=900 h=560 bg=linear(180, #241A4E 0%, #7B2E63 48%, #E8865E 100%)
+    rect at=640,180 anchor=center w=300 h=300 radius=999 \
+        bg=radial(#FFE0B0 0%, #FFB37C 55%, #FFB37C00 100%)
+    rect at=490,196 w=310 h=10 bg=#7B2E63
+    rect at=470,222 w=350 h=14 bg=#5E2557
+    path "M60 560 L240 380 L700 380 L860 560 Z" bg=#1B1440
+    path "M300 420 L620 420" stroke=#4FC7E0 stroke-w=3 stroke-dash=14,10
+    path "M330 470 L590 470" stroke=#4FC7E066 stroke-w=3
+  }
+
+  // ---- the glass card ----------------------------------------------------
+  col #card self=center w=420 pad=24 gap=16 style=fx.glass \
+      shadow=shadow.soft,shadow.edge animate=floaty,3200,loop,ease-in-out {
+
+    row align=baseline gap=10 {
+      col pad=0,0,4,0 stroke=color.mint stroke-w=2 stroke-sides=b w=hug {
+        text "NOW PLAYING" size=11 weight=800 tracking=1.5 color=color.ink
+      }
+      spacer
+      text "FLAC · 24bit" size=11 color=color.dim nowrap
+    }
+
+    col gap=4 {
+      text "Chrome Lagoon" size=26 weight=800 color=color.ink
+      text "Motel Ghost Radio — Peach Static Tapes" size=13 color=color.dim
+    }
+
+    // progress: gradient fill inside a translucent track
+    col gap=6 {
+      row h=8 radius=4 bg=#FFFFFF1F clip {
+        rect w=64% h=fill radius=4 bg=linear(90, #7CFFB2 0%, #4FC7E0 100%)
+      }
+      row {
+        text "4:07" size=11 color=color.dim
+        spacer
+        text "6:31" size=11 color=color.dim
+      }
+    }
+
+    row gap=12 align=center {
+      row #play w=44 h=44 radius=999 bg=color.mint pack=center align=center \
+          shadow=shadow.crisp {
+        text "|>" size=15 weight=800 color=#0E0A24
+      }
+      col gap=2 w=fill {
+        text "Side B — Chlorine Dusk up next" size=12 color=color.ink
+        text "cassette autoreverse on" size=11 color=color.dim
+      }
+      rect w=10 h=10 radius=999 bg=color.mint \
+          animate=breathe,1400,alternate,ease-in-out
+    }
+  }
+
+  // frosted footer chip: self blur demo on its own layer
+  row self=bottom offset=0,-18 pad=8,18 gap=8 radius=999 bg=#FFFFFF14 \
+      stroke=#FFFFFF2E align=center w=hug {
+    rect w=6 h=6 radius=3 bg=color.peach
+    text "recorded at the drained lagoon, 1987" size=11 color=color.ink nowrap
+  }
+}

@@ -1,0 +1,34 @@
+{
+  "doc": "hole-hug",
+  "env": {
+    "vw": 160,
+    "vh": 100,
+    "client": "web",
+    "dark": false,
+    "coarse": false
+  },
+  "steps": [
+    {
+      "t": 0,
+      "hit": [80, 50]
+    },
+    {
+      "t": 16,
+      "hole": {
+        "hole": 0,
+        "w": 120,
+        "h": 90
+      }
+    },
+    {
+      "t": 32,
+      "hit": [80, 50]
+    },
+    {
+      "t": 48
+    }
+  ],
+  "expect": {
+    "signals": []
+  }
+}

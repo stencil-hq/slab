@@ -1,0 +1,319 @@
+// Iteration 3 — "Kelp & Kettle" sourdough boarding dashboard (1920x1080).
+// Mission-control dark theme: atmospheric gradient wash, vitals as accent-bar
+// cards, refined ledger rhythm, glass alert rail riding the table edge, plus
+// fermentation sparkline / rack occupancy gauges / station tiles below.
+// Render: slab render examples/02-ops.slab --width 1920 --height 1080 -o out/02-ops.png
+
+tokens {
+  color {
+    ink   #F2ECDF
+    muted #97A1B5
+    dim   #5F6A80
+    line  #FFFFFF12
+    faint #FFFFFF0A
+    amber #F0A63F
+    gold  #FFCF7A
+    green #5BC98D
+    red   #E5624E
+    slate #8E99AF
+  }
+  text {
+    display { size 38; weight 800 }
+    label   { size 11; weight 700; tracking 1.6; color #97A1B5 }
+    cell    { size 16 }
+    mono    { family "SF Mono"; size 16 }
+    big     { family "SF Mono"; size 30; weight 700 }
+    micro   { size 11; color #5F6A80 }
+  }
+  surface {
+    panel { bg linear(180, #141C30 0%, #0E1421 100%); stroke #FFFFFF12; stroke-w 1; radius 16 }
+  }
+  fx {
+    glass { backdrop 18,1.3; bg #10182BB8; stroke #FFFFFF1F; stroke-w 1; radius 16 }
+  }
+  shadow {
+    ambient 0,28,72,#00000080
+    contact 0,3,12,#00000059
+    lift    inset,0,1,0,#FFFFFF14
+  }
+}
+
+anim breathe {
+  0%   { opacity=1 }
+  100% { opacity=0.25 }
+}
+
+// ── components ──────────────────────────────────────────────────────────
+
+def Vital(label, value, sub, tone, bar) {
+  col w=234 style=surface.panel pad=14,20,16,20 gap=12 \
+      shadow=shadow.contact,shadow.lift {
+    rect h=3 radius=2 bg=bar
+    col gap=7 {
+      text label style=text.label
+      text value style=text.big color=tone nowrap
+      text sub style=text.micro nowrap
+    }
+  }
+}
+
+def Th(label, end=false) {
+  text label style=text.label nowrap
+  when end { align-text=end }
+}
+
+def Chip(status, tone, tint) {
+  row pad=4,12 gap=7 radius=999 bg=tint stroke=tone stroke-w=1 w=hug \
+      align=center self=start {
+    rect w=6 h=6 radius=999 bg=tone
+    text status size=11 weight=700 tracking=0.8 color=tone nowrap
+  }
+}
+
+def Entry(name, age, rise, ph, fed, status, tone, tint) {
+  text name style=text.cell color=color.ink nowrap ellipsis
+  rect w=1 h=1
+  text age style=text.mono color=color.muted align-text=end nowrap
+  text rise style=text.mono color=color.ink align-text=end nowrap
+  text ph style=text.mono color=color.ink align-text=end nowrap
+  text fed style=text.mono color=color.muted align-text=end nowrap
+  Chip status=status tone=tone tint=tint
+  rect h=1 bg=color.faint span=7
+}
+
+def Alert(icon, msg, sub, tone, tint) {
+  row gap=14 pad=13,14 radius=12 bg=#FFFFFF07 stroke=#FFFFFF0F align=center {
+    col w=38 h=38 radius=10 bg=tint pack=center align=center {
+      text icon size=16 color=tone
+    }
+    col gap=3 w=fill {
+      text msg size=14 weight=600 color=color.ink nowrap ellipsis
+      text sub size=11 color=color.muted nowrap
+    }
+  }
+}
+
+def Gauge(name, count, pct, paint) {
+  col gap=7 {
+    row align=baseline {
+      text name size=12 weight=700 tracking=1 color=color.muted nowrap
+      spacer
+      text count style=text.mono size=12 color=color.ink nowrap
+    }
+    row h=8 radius=4 bg=#FFFFFF0D clip {
+      rect w=pct h=fill radius=4 bg=paint
+    }
+  }
+}
+
+def Tile(name, meta, tone) {
+  col pad=12,14 radius=12 bg=#FFFFFF06 stroke=#FFFFFF0E gap=5 w=fill {
+    row gap=8 align=center {
+      rect w=7 h=7 radius=999 bg=tone
+      text name size=12 weight=700 tracking=1 color=color.ink nowrap
+    }
+    text meta size=11 color=color.muted nowrap
+  }
+}
+
+// ── scene ───────────────────────────────────────────────────────────────
+
+stack w=1920 h=1080 clip {
+
+  // atmospheric wash: cool deep base + warm ferment glow + cold green drift
+  rect w=fill h=fill bg=linear(160, #05070D 0%, #0A1120 52%, #101A2C 100%)
+  rect w=1400 h=920 radius=999 offset=-340,-400 \
+      bg=radial(#F0A63F1F 0%, #F0A63F00 100%)
+  rect w=1200 h=820 radius=999 self=bottom offset=580,320 \
+      bg=radial(#5BC98D16 0%, #5BC98D00 100%)
+  rect w=fill h=1 offset=0,132 bg=#FFFFFF08
+
+  col pad=40,48 gap=24 w=fill h=fill {
+
+    // ── header: identity + vitals as accent-bar cards ──────────────────
+    row gap=16 align=center {
+      col gap=6 w=fill {
+        row gap=9 align=center w=hug {
+          rect w=8 h=8 radius=999 bg=color.green \
+              animate=breathe,1600,alternate,ease-in-out
+          text "FERMENTATION MISSION CONTROL · LIVE" style=text.label color=color.green
+        }
+        text "KELP & KETTLE — STARTER WARD B" style=text.display color=color.ink nowrap
+        text "Shift 03 · Attendant: M. Okonkwo" size=15 color=color.muted
+      }
+      Vital label="AMBIENT" value="24.1°C" sub="target 24.0 ± 0.5" tone=color.ink \
+          bar=linear(90, #5BC98D 0%, #5BC98D00 100%)
+      Vital label="HUMIDITY" value="68%" sub="band 65 – 75%" tone=color.ink \
+          bar=linear(90, #5BC98D 0%, #5BC98D00 100%)
+      Vital label="OCCUPANCY" value="287/300" sub="13 jars free" tone=color.amber \
+          bar=linear(90, #FFCF7A 0%, #F0A63F 45%, #F0A63F00 100%)
+      Vital label="FEEDINGS DUE" value="14" sub="next window 08:00" tone=color.amber \
+          bar=linear(90, #FFCF7A 0%, #F0A63F 45%, #F0A63F00 100%)
+    }
+
+    // ── ledger + glass alert rail riding 28u over the table edge ───────
+    row gap=0 align=start h=fill {
+      col style=surface.panel pad=26,28 gap=16 w=fill h=fill clip \
+          shadow=shadow.contact,shadow.lift {
+        row align=baseline {
+          text "ACTIVE CULTURE LEDGER" style=text.label color=color.ink
+          spacer
+          text "6 CULTURES · SORTED BY INTAKE" style=text.label
+        }
+        grid cols=250,fill,120,110,96,120,170 gap=18,15 {
+          Th label="STARTER"
+          rect w=1 h=1
+          Th label="AGE" end=true
+          Th label="RISE %" end=true
+          Th label="PH" end=true
+          Th label="LAST FED" end=true
+          Th label="STATUS"
+          rect h=1 bg=color.line span=7
+
+          Entry name="Bartholomew-VII" age="9y 2m" rise="182%" ph="3.9" fed="06:40" \
+              status="THRIVING" tone=color.green tint=#5BC98D14
+          Entry name="Doughvid Bowie" age="3y 11m" rise="141%" ph="4.2" fed="05:15" \
+              status="STABLE" tone=color.slate tint=#8E99AF12
+          Entry name="Pretzel Foucault" age="14y 6m" rise="96%" ph="4.8" fed="02:30" \
+              status="SLUGGISH" tone=color.amber tint=#F0A63F14
+          Entry name="Clint Yeastwood" age="1y 1m" rise="210%" ph="3.7" fed="07:05" \
+              status="OVERACTIVE" tone=color.amber tint=#F0A63F14
+          Entry name="Gluten Tag" age="6y 0m" rise="158%" ph="4.1" fed="06:55" \
+              status="THRIVING" tone=color.green tint=#5BC98D14
+          Entry name="Mother-of-Vinegar-Anne-Elizabeth-III" age="22y 8m" rise="67%" \
+              ph="5.1" fed="23:50" status="CRITICAL" tone=color.red tint=#E5624E1A
+        }
+        spacer
+        row align=center pad=0,36,0,0 {
+          text "INTAKE PAUSED UNTIL RACK C FEED CYCLE CLEARS" style=text.micro tracking=1
+          spacer
+          text "LEDGER 07:12:44" style=text.micro tracking=1
+        }
+      }
+
+      col w=420 h=hug style=fx.glass pad=22 gap=12 offset=-28,44 \
+          shadow=shadow.ambient,shadow.lift {
+        row align=center {
+          text "ALERT RAIL" style=text.label color=color.ink
+          spacer
+          row pad=3,10 gap=6 radius=999 bg=#E5624E1C stroke=#E5624E55 w=hug align=center {
+            rect w=6 h=6 radius=999 bg=color.red \
+                animate=breathe,1200,alternate,ease-in-out
+            text "2 OPEN" size=11 weight=700 tracking=1 color=color.red nowrap
+          }
+        }
+        Alert icon="!" msg="Hooch detected — Jar 114" sub="Rack A · shelf 3 · 06:58" \
+            tone=color.amber tint=#F0A63F1A
+        Alert icon="!" msg="pH drift — Jar 007" sub="Rack B · shelf 1 · 07:04" \
+            tone=color.amber tint=#F0A63F1A
+        Alert icon="OK" msg="Batch feed complete — Rack C" sub="43 jars · finished 06:55" \
+            tone=color.green tint=#5BC98D1A
+        rect h=1 bg=#FFFFFF10
+        row gap=10 {
+          row pad=9,0 w=fill radius=10 bg=#FFFFFF0D stroke=#FFFFFF14 pack=center {
+            text "ACK ALL" size=12 weight=700 tracking=1.2 color=color.ink nowrap
+          }
+          row pad=9,0 w=fill radius=10 bg=#E5624E14 stroke=#E5624E40 pack=center {
+            text "ESCALATE" size=12 weight=700 tracking=1.2 color=color.red nowrap
+          }
+        }
+      }
+    }
+
+    // ── bottom band: activity sparkline · rack gauges · station tiles ──
+    row gap=28 h=296 {
+
+      col w=860 style=surface.panel pad=22,28 gap=14 h=fill clip \
+          shadow=shadow.contact,shadow.lift {
+        row align=center gap=18 {
+          text "FERMENTATION ACTIVITY — MEAN RISE, 24H" style=text.label color=color.ink
+          spacer
+          row gap=7 align=center w=hug {
+            rect w=14 h=3 radius=2 bg=color.amber
+            text "WARD MEAN" style=text.micro
+          }
+          row gap=7 align=center w=hug {
+            rect w=14 h=1 bg=color.slate
+            text "FEED THRESHOLD" style=text.micro
+          }
+        }
+        canvas w=804 h=158 {
+          path "M48 24 L804 24" stroke=#FFFFFF08
+          path "M48 68 L804 68" stroke=#FFFFFF08
+          path "M48 112 L804 112" stroke=#FFFFFF08
+          path "M0 156 L804 156" stroke=#FFFFFF0D
+          text "200%" at=0,24 anchor=start size=10 color=#5F6A80
+          text "150%" at=0,68 anchor=start size=10 color=#5F6A80
+          text "100%" at=0,112 anchor=start size=10 color=#5F6A80
+          path "M48 90 L804 90" stroke=#8E99AF55 stroke-dash=6,6
+          // renderer strokes notch at polyline joints, so the mean line is a
+          // filled ribbon: forward curve, then the same curve reversed +2.8u.
+          path "M48 118 C88 112 108 98 148 94 C188 90 208 108 248 104 C288 100 302 72 342 62 C382 52 400 68 440 60 C480 52 494 40 534 46 C574 52 590 78 630 70 C670 62 686 46 726 36 C756 28 774 26 792 28 L792 158 L48 158 Z" \
+              bg=#F0A63F12
+          path "M48 118 C88 112 108 98 148 94 C188 90 208 108 248 104 C288 100 302 72 342 62 C382 52 400 68 440 60 C480 52 494 40 534 46 C574 52 590 78 630 70 C670 62 686 46 726 36 C756 28 774 26 792 28 L792 30.8 C774 28.8 756 30.8 726 38.8 C686 48.8 670 64.8 630 72.8 C590 80.8 574 54.8 534 48.8 C494 42.8 480 54.8 440 62.8 C400 70.8 382 54.8 342 64.8 C302 74.8 288 102.8 248 106.8 C208 110.8 188 92.8 148 96.8 C108 100.8 88 114.8 48 120.8 Z" \
+              bg=color.amber
+          rect at=792,28 anchor=center w=22 h=22 radius=999 bg=#F0A63F2B
+          rect at=792,28 anchor=center w=9 h=9 radius=999 bg=color.gold
+        }
+        row pad=0,0,0,48 {
+          text "00:00" style=text.micro
+          spacer
+          text "04:00" style=text.micro
+          spacer
+          text "08:00" style=text.micro
+          spacer
+          text "12:00" style=text.micro
+          spacer
+          text "16:00" style=text.micro
+          spacer
+          text "20:00" style=text.micro
+          spacer
+          text "NOW" style=text.micro color=color.amber
+        }
+      }
+
+      col w=470 style=surface.panel pad=22,28 gap=15 h=fill clip \
+          shadow=shadow.contact,shadow.lift {
+        row align=baseline {
+          text "RACK OCCUPANCY" style=text.label color=color.ink
+          spacer
+          text "287/300" style=text.mono size=14 color=color.amber nowrap
+        }
+        Gauge name="RACK A" count="98/100" pct=98% \
+            paint=linear(90, #5BC98D 0%, #8FE0B4 100%)
+        Gauge name="RACK B" count="96/100" pct=96% \
+            paint=linear(90, #5BC98D 0%, #8FE0B4 100%)
+        Gauge name="RACK C" count="93/100" pct=93% \
+            paint=linear(90, #F0A63F 0%, #FFCF7A 100%)
+        Gauge name="QUARANTINE" count="3/12" pct=25% \
+            paint=linear(90, #E5624E 0%, #F08D7E 100%)
+        spacer
+        text "4.3% headroom · intake queue holds 9" style=text.micro
+      }
+
+      col w=fill style=surface.panel pad=22,28 gap=14 h=fill clip \
+          shadow=shadow.contact,shadow.lift {
+        row align=baseline {
+          text "STATION STATUS" style=text.label color=color.ink
+          spacer
+          text "6 NOMINAL" style=text.label color=color.green
+        }
+        grid cols=fill,fill gap=12,12 {
+          Tile name="KETTLE" meta="68.0°C · steady" tone=color.green
+          Tile name="PROOF BOX" meta="27.5°C · 82% rh" tone=color.green
+          Tile name="COLD STORE" meta="4.2°C · door shut" tone=color.green
+          Tile name="MILL" meta="idle · hopper 40%" tone=color.slate
+          Tile name="WASH LINE" meta="cycle 3 of 4" tone=color.amber
+          Tile name="BENCH 2" meta="sanitizing · 12m" tone=color.amber
+        }
+      }
+    }
+
+    // ── footer strip ────────────────────────────────────────────────────
+    row align=center {
+      text "KELP & KETTLE FERMENTATION CO. — WARD B CONSOLE" style=text.micro tracking=1.4
+      spacer
+      text "SENSOR MESH NOMINAL · LAST SYNC 07:12:44 · SLAB OPS 0.3.0" style=text.micro tracking=1.4
+    }
+  }
+}

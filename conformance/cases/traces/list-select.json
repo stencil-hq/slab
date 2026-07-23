@@ -1,0 +1,49 @@
+{
+  "doc": "16-list",
+  "env": {
+    "vw": 180,
+    "vh": 84,
+    "client": "web",
+    "dark": false,
+    "coarse": false
+  },
+  "steps": [
+    {
+      "t": 0,
+      "event": {
+        "type": "pointer-down",
+        "x": 80,
+        "y": 42
+      }
+    },
+    {
+      "t": 16,
+      "event": {
+        "type": "pointer-up",
+        "x": 80,
+        "y": 42
+      }
+    },
+    {
+      "t": 32,
+      "state": {
+        "key": "col@0/list~1/row",
+        "name": "selected",
+        "on": true
+      }
+    },
+    {
+      "t": 48
+    }
+  ],
+  "expect": {
+    "signals": [
+      {
+        "name": "pick",
+        "text": "",
+        "item": "1"
+      }
+    ],
+    "focus_key": "col@0/list~1/row"
+  }
+}

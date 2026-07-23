@@ -1,0 +1,5 @@
+// Gesture conformance: Dblclick fires on down, PointerUp still fires, Activate stays suppressed.
+box key=button w=120 h=48 act=activate dblclick=double pointer-up=released bg=#243247 {
+  when pressed { bg=#3f5a7a }
+  text "double" color=#ffffff size=14
+}

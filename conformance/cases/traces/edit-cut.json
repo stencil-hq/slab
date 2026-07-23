@@ -1,0 +1,61 @@
+{
+  "doc": "i1-words",
+  "env": {
+    "vw": 320,
+    "vh": 600,
+    "client": "web",
+    "dark": false,
+    "coarse": false
+  },
+  "steps": [
+    {
+      "t": 0,
+      "event": {
+        "type": "pointer-down",
+        "x": 50,
+        "y": 8
+      }
+    },
+    {
+      "t": 16,
+      "event": {
+        "type": "key-down",
+        "key": "Home"
+      }
+    },
+    {
+      "t": 32,
+      "event": {
+        "type": "key-down",
+        "key": "End",
+        "mods": [
+          "shift"
+        ]
+      }
+    },
+    {
+      "t": 48,
+      "event": {
+        "type": "cut"
+      }
+    },
+    {
+      "t": 64
+    }
+  ],
+  "expect": {
+    "signals": [
+      {
+        "name": "words",
+        "text": ""
+      }
+    ],
+    "focus_key": "col@0/text@0",
+    "edits": [
+      {
+        "name": "words",
+        "text": ""
+      }
+    ]
+  }
+}

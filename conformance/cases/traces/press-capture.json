@@ -1,0 +1,46 @@
+{
+  "doc": "i1-buttons",
+  "env": {
+    "vw": 300,
+    "vh": 600,
+    "client": "web",
+    "dark": false,
+    "coarse": false
+  },
+  "steps": [
+    {
+      "t": 0,
+      "event": {
+        "type": "pointer-down",
+        "x": 50,
+        "y": 48
+      }
+    },
+    {
+      "t": 16
+    },
+    {
+      "t": 32,
+      "event": {
+        "type": "pointer-move",
+        "x": 150,
+        "y": 290
+      }
+    },
+    {
+      "t": 48,
+      "event": {
+        "type": "pointer-up",
+        "x": 150,
+        "y": 290
+      }
+    },
+    {
+      "t": 64
+    }
+  ],
+  "expect": {
+    "signals": [],
+    "focus_key": "col@0/b/box@0"
+  }
+}

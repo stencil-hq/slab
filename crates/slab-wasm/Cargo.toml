@@ -1,0 +1,17 @@
+[package]
+name = "slab-wasm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+slab-syntax = { path = "../slab-syntax" }
+slab-slir = { path = "../slab-slir" }
+slab-compile = { path = "../slab-compile" }
+slab-kernel = { path = "../slab-kernel" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+wasm-bindgen = "0.2"

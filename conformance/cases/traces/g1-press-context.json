@@ -1,0 +1,21 @@
+{
+  "doc": "g1-press-context",
+  "env": { "vw": 240, "vh": 96, "client": "web", "dark": false, "coarse": false },
+  "steps": [
+    { "t": 0, "event": { "type": "pointer-down", "x": 24, "y": 20, "button": 0, "clicks": 1, "mods": ["ctrl"] } },
+    { "t": 1, "event": { "type": "pointer-up", "x": 24, "y": 20, "button": 0 } },
+    { "t": 2, "event": { "type": "pointer-move", "x": 24, "y": 66, "dx": 3, "dy": 2, "mods": ["alt"] } },
+    { "t": 3, "event": { "type": "pointer-up", "x": 24, "y": 66, "button": 1, "mods": ["meta"] } },
+    { "t": 4, "event": { "type": "pointer-down", "x": 24, "y": 20, "button": 2, "clicks": 1 } },
+    { "t": 5, "event": { "type": "pointer-up", "x": 24, "y": 20, "button": 2 } }
+  ],
+  "expect": {
+    "signals": [
+      { "name": "pressed", "text": "", "item": "" },
+      { "name": "moved", "text": "", "item": "" },
+      { "name": "released", "text": "", "item": "" },
+      { "name": "context", "text": "", "item": "" }
+    ],
+    "focus_key": "board/surface"
+  }
+}

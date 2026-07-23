@@ -1,0 +1,165 @@
+==============================
+node with id attrs flags and body
+==============================
+
+col#card w=360 bg=color.bg radius=12 clip {
+  text "Title" size=18
+}
+
+---
+
+(source_file
+  (node
+    (identifier)
+    (node_id)
+    (attribute
+      (identifier)
+      (number))
+    (attribute
+      (identifier)
+      (reference))
+    (attribute
+      (identifier)
+      (number))
+    (flag
+      (identifier))
+    (block
+      (node
+        (identifier)
+        (string)
+        (attribute
+          (identifier)
+          (number))))))
+
+==============================
+node id after space
+==============================
+
+col #player w=360 { spacer }
+
+---
+
+(source_file
+  (node
+    (identifier)
+    (node_id)
+    (attribute
+      (identifier)
+      (number))
+    (block
+      (node
+        (identifier)))))
+
+==============================
+component call with id and args
+==============================
+
+row {
+  Chip#a label="FLAC" tone=color.accent; spacer
+}
+
+---
+
+(source_file
+  (node
+    (identifier)
+    (block
+      (node
+        (identifier)
+        (node_id)
+        (attribute
+          (identifier)
+          (string))
+        (attribute
+          (identifier)
+          (reference)))
+      (node
+        (identifier)))))
+
+==============================
+positional args
+==============================
+
+text "2:37" size=12
+path "M0 0 L10 10" stroke-w=2
+
+---
+
+(source_file
+  (node
+    (identifier)
+    (string)
+    (attribute
+      (identifier)
+      (number)))
+  (node
+    (identifier)
+    (string)
+    (attribute
+      (identifier)
+      (number))))
+
+==============================
+line continuation in header
+==============================
+
+rect at=258,58 anchor=center w=34 \
+  bg=#F4F1DD
+
+---
+
+(source_file
+  (node
+    (identifier)
+    (attribute
+      (identifier)
+      (tuple
+        (number)
+        (number)))
+    (attribute
+      (identifier)
+      (identifier))
+    (attribute
+      (identifier)
+      (number))
+    (attribute
+      (identifier)
+      (hex_color))))
+
+==============================
+para with bare strings
+==============================
+
+para {
+  "one line"
+  "another line"
+}
+
+---
+
+(source_file
+  (node
+    (identifier)
+    (block
+      (string)
+      (string))))
+
+==============================
+multiline field with submit
+==============================
+
+text field=draft multiline submit=send
+
+---
+
+(source_file
+  (node
+    (identifier)
+    (attribute
+      (identifier)
+      (identifier))
+    (flag
+      (identifier))
+    (attribute
+      (identifier)
+      (identifier))))

@@ -1,0 +1,16 @@
+{
+  "doc": "s2-scroll-both",
+  "env": {"vw": 100, "vh": 60, "client": "web", "dark": false, "coarse": false},
+  "steps": [
+    {"t": 0, "event": {"type": "wheel", "x": 40, "y": 30, "dx": 15, "dy": 20}},
+    {"t": 16, "event": {"type": "wheel", "x": 40, "y": 30, "dx": 7, "dy": 9, "mods": ["shift"]}},
+    {"t": 32}
+  ],
+  "expect": {
+    "signals": [],
+    "scroll": [
+      {"key": "#both", "axis": 0, "off": 27},
+      {"key": "#both", "axis": 1, "off": 24}
+    ]
+  }
+}

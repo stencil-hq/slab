@@ -1,0 +1,7 @@
+// P5 hit fixture: rotation-aware hit testing. #r is arbitrary-angle
+// (ink-only, box stays 100x20 at 20,90, rotated 45° about its center);
+// #q is a quarter turn (participates in layout: bbox 20x120 at 200,40).
+canvas w=300 h=200 {
+  rect#r w=100 h=20 rotate=45 at=20,90 bg=#111111
+  rect#q w=120 h=20 rotate=90 at=200,40 bg=#222222
+}

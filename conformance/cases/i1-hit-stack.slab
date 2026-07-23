@@ -1,0 +1,5 @@
+// P5 hit fixture: topmost (last painted) wins in stack overlap.
+stack w=100 h=100 {
+  rect#under w=100 h=100 bg=#111111
+  rect#over w=50 h=50 bg=#222222
+}

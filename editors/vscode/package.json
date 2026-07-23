@@ -1,0 +1,115 @@
+{
+  "name": "slab-lang",
+  "displayName": "Slab",
+  "description": "Language support for Slab, a design language for agents: syntax highlighting, snippets, and LSP integration.",
+  "version": "0.1.0",
+  "publisher": "slab-lang",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/stencil-hq/slab.git",
+    "directory": "editors/vscode"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Snippets"
+  ],
+  "keywords": [
+    "slab",
+    "design",
+    "layout",
+    "lsp"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onLanguage:slab"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "slab",
+        "aliases": [
+          "Slab",
+          "slab"
+        ],
+        "extensions": [
+          ".slab"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "slab",
+        "scopeName": "source.slab",
+        "path": "./syntaxes/slab.tmLanguage.json"
+      }
+    ],
+    "snippets": [
+      {
+        "language": "slab",
+        "path": "./snippets/slab.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "slab.restartLsp",
+        "title": "Slab: Restart Language Server"
+      },
+      {
+        "command": "slab.preview",
+        "title": "Slab: Open Preview",
+        "icon": "$(open-preview)"
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "slab.preview",
+          "when": "resourceLangId == slab",
+          "group": "navigation"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Slab",
+      "properties": {
+        "slab.lsp.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Start the Slab language server for diagnostics and language features."
+        },
+        "slab.lsp.command": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "slab",
+            "lsp"
+          ],
+          "description": "Command (argv) used to launch the Slab language server over stdio."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "bun build src/extension.ts --external vscode --format cjs --target node --outfile dist/extension.js",
+    "check": "bunx tsc --noEmit",
+    "check-grammar": "bun scripts/check-grammar.mjs"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^3.9.2",
+    "typescript": "^5.4.0",
+    "vscode-oniguruma": "^2.0.1",
+    "vscode-textmate": "^9.0.0"
+  }
+}

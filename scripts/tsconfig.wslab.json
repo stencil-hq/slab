@@ -1,0 +1,17 @@
+{
+   "compilerOptions": {
+      "target": "es2022",
+      "module": "esnext",
+      "moduleResolution": "bundler",
+      "declaration": true,
+      "rewriteRelativeImportExtensions": true,
+      "allowImportingTsExtensions": true,
+      "noCheck": false,
+      "outDir": "../clients/web/dist",
+      "rootDir": "../clients/web",
+      "lib": ["esnext", "dom", "dom.iterable"],
+      "types": []
+   },
+   "include": ["../clients/web/*.ts"],
+   "exclude": ["../clients/web/dist"]
+}

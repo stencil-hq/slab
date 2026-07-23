@@ -1,0 +1,73 @@
+slir 1.0
+STRS 10
+  0 ""
+  1 "col@0"
+  2 "col@0/rect@0"
+  3 "col@0/rect@1"
+  4 "col@0/rect@2"
+  5 "col@0/rect@3"
+  6 "col@0/rect@4"
+  7 "col@0/rect@5"
+  8 "col@0/rect@6"
+  9 "Inter"
+NODE 8
+  0 Col flags=- parent=- child=1 sib=- key="col@0" id=- line=3
+  1 Rect flags=- parent=0 child=- sib=2 key="col@0/rect@0" id=- line=4
+  2 Rect flags=- parent=0 child=- sib=3 key="col@0/rect@1" id=- line=5
+  3 Rect flags=- parent=0 child=- sib=4 key="col@0/rect@2" id=- line=6
+  4 Rect flags=- parent=0 child=- sib=5 key="col@0/rect@3" id=- line=7
+  5 Rect flags=- parent=0 child=- sib=6 key="col@0/rect@4" id=- line=8
+  6 Rect flags=- parent=0 child=- sib=7 key="col@0/rect@5" id=- line=9
+  7 Rect flags=- parent=0 child=- sib=- key="col@0/rect@6" id=- line=10
+AVAL 15 f64s=4
+  0 SizeFixed 280
+  1 Tuple [10, 10, 10, 10]
+  2 Num 8
+  3 SizeFixed 240
+  4 SizeFixed 30
+  5 PaintGradient 0
+  6 PaintGradient 1
+  7 PaintGradient 2
+  8 SizeFixed 100
+  9 SizeFixed 20
+  10 PaintSolid #ffffff88
+  11 PaintSolid #4080ff
+  12 PaintSolid #49a9ff
+  13 PaintSolid #ffffff
+  14 PaintSolid #000000
+GRAD 3
+  0 linear angle=135 stops [0:#241a4e 1:#e8865e]
+  1 radial angle=0 stops [0:#ffe0b0 1:#ffb37c00]
+  2 linear angle=90 stops [0:#49a9ff 1:#10141b]
+SHDW 0
+ATTR 25
+  0 w=@0 pad=@1 gap=@2
+  1 w=@3 h=@4 bg=@5
+  2 w=@3 h=@4 bg=@6
+  3 w=@3 h=@4 bg=@7
+  4 w=@8 h=@9 bg=@10
+  5 w=@8 h=@9 bg=@11
+  6 w=@8 h=@9 bg=@12
+  7 w=@8 h=@9 bg=@13 stroke=@14
+PATH 0
+FONT 1
+  0 family="Inter" class=sans weight=400 upem=2048 ascent=1984 descent=-494 line_gap=0 default_advance=1344 blob=@0+411640
+    cmap 32:1777:576 33:1427:589 34:1485:954 35:1453:1297 36:1309:1314 37:1744:2011 38:1425:1319 39:1484:614
+    cmap 40:1437:747 41:1438:747 42:1547:1026 43:1522:1355 44:1501:590 45:1459:942 46:1502:590 47:1455:738
+    cmap 48:1341:1292 49:1342:833 50:1343:1249 51:1345:1265 52:1346:1323 53:1347:1215 54:1349:1270 55:1350:1159
+    cmap 56:1351:1267 57:1352:1270 58:1505:590 59:1508:618 60:1516:1355 61:1520:1355 62:1517:1355 63:1431:1047
+    cmap 64:1445:1978 65:2:1413 66:65:1340 67:73:1496 68:84:1478 69:95:1231 70:137:1209 71:141:1528
+    cmap 72:161:1522 73:197:550 74:266:1169 75:271:1376 76:281:1158 77:292:1850 78:300:1543 79:321:1566
+    cmap 80:375:1308 81:382:1566 82:384:1318 83:397:1314 84:411:1322 85:424:1524 86:456:1413 87:459:2018
+    cmap 88:466:1397 89:472:1390 90:496:1288 91:1439:747 92:1458:738 93:1441:747 94:1546:965 95:1543:934
+    cmap 96:1754:661 97:507:1150 98:578:1254 99:586:1170 100:597:1254 101:614:1194 102:647:758 103:658:1256
+    cmap 104:670:1211 105:689:496 106:719:496 107:727:1124 108:736:496 109:766:1794 110:773:1210 111:790:1228
+    cmap 112:843:1254 113:849:1254 114:852:771 115:871:1081 116:889:670 117:915:1211 118:980:1151 119:984:1676
+    cmap 120:993:1118 121:998:1151 122:1022:1131 123:1443:873 124:1456:681 125:1444:873 126:1528:1355
+WHEN conds=0 patches=0 attrs=0 children=0
+ANIM anims=0 attrs=0 binds=0 trans=0
+PARM 0 enums=0 sites=0
+HOLE 0
+SIGN 0
+IMGS 0
+BLOB 411640 fnv1a64=c97b49922f93865a

@@ -1,0 +1,5 @@
+// P5 hit fixture: rounded-rect containment — corners outside the arc
+// reject, edge midpoints hit.
+stack w=100 h=100 {
+  rect#r w=100 h=100 radius=40 bg=#111111
+}

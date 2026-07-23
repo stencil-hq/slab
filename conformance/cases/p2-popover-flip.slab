@@ -1,0 +1,11 @@
+// P2: bottom overflow flips above; right-edge alignment slides left.
+canvas#surface w=240 h=140 bg=#10161e clip {
+  rect#bottom w=44 h=16 at=20,118 bg=#4e82c4 radius=4
+  group#flipped w=88 h=32 attach="#surface/#bottom" gravity=below-start collide=auto pad=6 bg=#f5d27a radius=5 {
+    text "flipped" size=11 color=#241d0b nowrap
+  }
+  rect#right w=16 h=20 at=220,22 bg=#64ad8b radius=4
+  group#slid w=72 h=30 attach="#surface/#right" gravity=below-start collide=auto pad=5 bg=#d4f1e4 radius=5 {
+    text "slid" size=11 color=#10251c nowrap
+  }
+}

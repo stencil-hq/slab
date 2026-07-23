@@ -1,0 +1,4 @@
+// Both axes share one clipped viewport and retain independent offsets.
+row#both w=100 h=60 scroll=both scrollbar=always scrollbar-w=4 scrollbar-fg=#f0b65b scrollbar-bg=#49351b {
+  rect#content w=180 h=140 bg=#533b74
+}

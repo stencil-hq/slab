@@ -1,0 +1,131 @@
+==============================
+tuples
+==============================
+
+row pad=8,12 gap=12 animate=breathe,1400,alternate,ease-in-out
+
+---
+
+(source_file
+  (node
+    (identifier)
+    (attribute
+      (identifier)
+      (tuple
+        (number)
+        (number)))
+    (attribute
+      (identifier)
+      (number))
+    (attribute
+      (identifier)
+      (tuple
+        (identifier)
+        (number)
+        (identifier)
+        (identifier)))))
+
+==============================
+fill sizes
+==============================
+
+row w=fill {
+  spacer h=fill:2
+  text "x" w=hug
+}
+
+---
+
+(source_file
+  (node
+    (identifier)
+    (attribute
+      (identifier)
+      (fill_size))
+    (block
+      (node
+        (identifier)
+        (attribute
+          (identifier)
+          (fill_size
+            (number))))
+      (node
+        (identifier)
+        (string)
+        (attribute
+          (identifier)
+          (identifier))))))
+
+==============================
+color functions with nested args
+==============================
+
+rect bg=linear(90, #7FE0A824 0%, #7FE0A805 100%) stroke=radial(#F2EFD8CC 0%, #E8C07C00 100%)
+
+---
+
+(source_file
+  (node
+    (identifier)
+    (attribute
+      (identifier)
+      (color_function
+        (identifier)
+        (number)
+        (hex_color)
+        (percent)
+        (hex_color)
+        (percent)))
+    (attribute
+      (identifier)
+      (color_function
+        (identifier)
+        (hex_color)
+        (percent)
+        (hex_color)
+        (percent)))))
+
+==============================
+references and percents
+==============================
+
+text "t" color=color.ink w=50% style=text.body
+
+---
+
+(source_file
+  (node
+    (identifier)
+    (string)
+    (attribute
+      (identifier)
+      (reference))
+    (attribute
+      (identifier)
+      (percent))
+    (attribute
+      (identifier)
+      (reference))))
+
+==============================
+negative and fractional numbers
+==============================
+
+rect at=-4,.5 w=1.5 opacity=0.65
+
+---
+
+(source_file
+  (node
+    (identifier)
+    (attribute
+      (identifier)
+      (tuple
+        (number)
+        (number)))
+    (attribute
+      (identifier)
+      (number))
+    (attribute
+      (identifier)
+      (number))))

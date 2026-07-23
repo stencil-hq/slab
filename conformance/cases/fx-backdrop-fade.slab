@@ -1,0 +1,10 @@
+// FX: backdrop-mask=<paint> rides the Backdrop op — progressive blur ramping
+// toward the strip's bottom edge.
+stack w=320 h=160 {
+  col w=320 h=160 pad=12 gap=8 bg=linear(135, #26314A 0%, #E8865E 100%) {
+    text "UNDERLAY" size=18 color=#E6EDF3
+    rect w=120 h=40 radius=8 bg=#38EF7D
+  }
+  rect w=320 h=64 at=0,96 backdrop=12,1.1,1.05 \
+      backdrop-mask=linear(180, #FFFFFF00 0%, #FFFFFF 100%)
+}

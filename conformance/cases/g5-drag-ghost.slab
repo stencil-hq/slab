@@ -1,0 +1,10 @@
+// Gesture conformance: an active opted-in drag appends paint-only ghost ops.
+row key=board w=300 h=64 gap=40 {
+  box key=source w=80 h=64 drag=drag-start drag-ghost bg=#314158 {
+    text "source" color=#ffffff size=14
+  }
+  box key=target w=100 h=64 drop=dropped bg=#234738 {
+    when drop { bg=#3d8a62 }
+    text "target" color=#ffffff size=14
+  }
+}

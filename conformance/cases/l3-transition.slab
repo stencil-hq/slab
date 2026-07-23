@@ -1,0 +1,11 @@
+// L3: transition tween midway through a state flip (manifest:
+// states={hot}, states_prev={}, state_age=100; dur=200 linear -> p=0.5).
+// Colors lerp in OKLab; numbers lerp linearly.
+col w=200 pad=10 gap=8 {
+  rect#warm w=100 h=24 bg=#102030 transition=200,linear {
+    when hot { bg=#e0564a; h=40 }
+  }
+  rect#stepper w=60 h=10 transition=200,linear bg=#333333 {
+    when hot { radius=8 }
+  }
+}

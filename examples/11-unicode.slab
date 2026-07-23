@@ -1,0 +1,17 @@
+// Text-kernel fixture: caret geometry must treat each grapheme cluster as
+// one stop. Latin + combining marks, NBSP glue, emoji (incl. one ZWJ
+// sequence), curly quotes. Arabic/RTL is deliberately EXCLUDED: shaping
+// stays per-codepoint advances (`cap-shaping`, SPEC §12) — reordering and
+// contextual forms are out of scope for the stdlib kernel.
+tokens {
+  color { bg #10141B; ink #E8EEF6; mut #8A97A8 }
+}
+
+col w=fill bg=color.bg pad=24 gap=10 {
+  text "Unicode caret fixture" size=18 weight=600 color=color.ink
+  text#latin "Café naïve — résumé" size=14 color=color.ink
+  text#marks "é ä ô ñ" size=14 color=color.ink
+  text#nbsp "42 km 7 m" size=14 color=color.ink
+  text#emoji "ok 👍 team 👩‍👩‍👧 done" size=14 color=color.ink
+  text#quotes "“curly” and ‘single’" size=14 color=color.mut
+}

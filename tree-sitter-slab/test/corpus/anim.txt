@@ -1,0 +1,46 @@
+==============================
+anim with keyframes
+==============================
+
+anim pulse {
+  0% { opacity=0.4 }
+  100% { opacity=1 }
+}
+
+---
+
+(source_file
+  (anim_declaration
+    (identifier)
+    (keyframe
+      (percent)
+      (attribute
+        (identifier)
+        (number)))
+    (keyframe
+      (percent)
+      (attribute
+        (identifier)
+        (number)))))
+
+==============================
+anim keyframes on one line
+==============================
+
+anim breathe { 0% { opacity=0.35 } 100% { opacity=1 } }
+
+---
+
+(source_file
+  (anim_declaration
+    (identifier)
+    (keyframe
+      (percent)
+      (attribute
+        (identifier)
+        (number)))
+    (keyframe
+      (percent)
+      (attribute
+        (identifier)
+        (number)))))

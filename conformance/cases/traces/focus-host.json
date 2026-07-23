@@ -1,0 +1,72 @@
+{
+  "doc": "keys-escape",
+  "env": {
+    "vw": 160,
+    "vh": 80,
+    "client": "web",
+    "dark": false,
+    "coarse": false
+  },
+  "steps": [
+    {
+      "t": 0,
+      "focus": {
+        "key": "col@0/#dialog/#field",
+        "visible": true
+      }
+    },
+    {
+      "t": 16,
+      "event": {
+        "type": "text",
+        "text": "!"
+      }
+    },
+    {
+      "t": 32,
+      "focus": {
+        "key": "col@0/nope",
+        "visible": true
+      }
+    },
+    {
+      "t": 48,
+      "focus": {
+        "key": "col@0",
+        "visible": true
+      }
+    },
+    {
+      "t": 64,
+      "focus": {
+        "key": "",
+        "visible": false
+      }
+    },
+    {
+      "t": 80,
+      "focus": {
+        "key": "col@0/#dialog/#field",
+        "visible": false
+      }
+    },
+    {
+      "t": 96
+    }
+  ],
+  "expect": {
+    "signals": [
+      {
+        "name": "value",
+        "text": "draft!"
+      }
+    ],
+    "focus_key": "col@0/#dialog/#field",
+    "edits": [
+      {
+        "name": "value",
+        "text": "draft!"
+      }
+    ]
+  }
+}

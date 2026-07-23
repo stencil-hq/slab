@@ -1,0 +1,26 @@
+// L1: when renderer class, when width (incoming constraint), when state,
+// negation, extra children from an active when. Built at width=400 with
+// states={compact} — see manifest.
+tokens { color { on #3ddc84; off #555555 } }
+col w=fill pad=10 gap=6 {
+  row#bar gap=8 h=28 bg=#181c22 {
+    when w<600 { axis=col; bg=#20262e }
+    rect w=20 h=20 bg=#888888
+    rect w=20 h=20 bg=#999999
+  }
+  rect#lamp w=16 h=16 radius=8 bg=color.off {
+    when compact { bg=color.on }
+  }
+  text#mode "wide" size=12 color=#e6edf3 {
+    when compact { size=10 }
+  }
+  rect#never w=10 h=10 bg=#111111 {
+    when !compact { bg=#ffffff }
+  }
+  col#extra gap=2 {
+    when compact {
+      text "compact extras" size=10 color=#8a97a8
+    }
+  }
+  when svg { rect#svgonly w=30 h=4 bg=#4fc7e0 }
+}

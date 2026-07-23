@@ -1,0 +1,18 @@
+params {
+  glyph text = "alert"
+}
+
+icon check viewbox=24 {
+  path "M3 12 L8 17 L21 5 L18 3 L8 13 L6 10 Z"
+}
+
+icon alert viewbox=24 {
+  path "M12 3 L22 21 L2 21 Z" bg=none stroke=current stroke-w=2
+  path "M12 9 L12 14" bg=none stroke=current stroke-w=2
+}
+
+row w=112 h=32 gap=8 color=#2563EB {
+  icon check size=20
+  icon param.glyph size=20 color=#DC2626
+  icon missing size=20
+}

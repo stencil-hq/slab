@@ -1,0 +1,32 @@
+==============================
+string escapes
+==============================
+
+text "a\n b\t c\" d\\ e\_ f\x"
+
+---
+
+(source_file
+  (node
+    (identifier)
+    (string
+      (escape_sequence)
+      (escape_sequence)
+      (escape_sequence)
+      (escape_sequence)
+      (escape_sequence)
+      (escape_sequence))))
+
+==============================
+string with raw newline
+==============================
+
+text "line one
+line two"
+
+---
+
+(source_file
+  (node
+    (identifier)
+    (string)))

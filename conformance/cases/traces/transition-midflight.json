@@ -1,0 +1,44 @@
+{
+  "doc": "l3-transition",
+  "env": {
+    "vw": 800,
+    "vh": 0,
+    "client": "svg",
+    "dark": false,
+    "coarse": false
+  },
+  "steps": [
+    {
+      "t": 0
+    },
+    {
+      "t": 0,
+      "state": {
+        "name": "hot",
+        "on": true
+      }
+    },
+    {
+      "t": 0
+    },
+    {
+      "t": 100
+    },
+    {
+      "t": 100,
+      "state": {
+        "name": "hot",
+        "on": false
+      }
+    },
+    {
+      "t": 100
+    },
+    {
+      "t": 150
+    }
+  ],
+  "expect": {
+    "signals": []
+  }
+}

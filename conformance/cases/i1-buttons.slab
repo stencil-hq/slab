@@ -1,0 +1,39 @@
+// P5 interaction fixture: two act= buttons + a keyed scroll list
+// (research tests/test_app.py TPL, ported to 1.0 signals — injection is
+// gone, the 20 rows are authored). Fixed sizes keep trace coordinates
+// stable: A y 0..32, B y 32..64, #list y 64..164 (content 20*20 = 400).
+def Button(label, sig) {
+  box focusable act=sig w=100 h=32 pad=6 bg=#333333 {
+    when hover { bg=#444444 }
+    when pressed { bg=#555555 }
+    when focus-visible { stroke=#ffffff stroke-w=2 }
+    when disabled { bg=#111111 }
+    text label size=12 nowrap
+  }
+}
+col w=300 gap=0 {
+  Button "A" key=a sig=save
+  Button "B" key=b sig=reset
+  col#list scroll clip h=100 gap=0 {
+    box key=r0 h=20 focusable { text "r0" size=10 }
+    box key=r1 h=20 focusable { text "r1" size=10 }
+    box key=r2 h=20 focusable { text "r2" size=10 }
+    box key=r3 h=20 focusable { text "r3" size=10 }
+    box key=r4 h=20 focusable { text "r4" size=10 }
+    box key=r5 h=20 focusable { text "r5" size=10 }
+    box key=r6 h=20 focusable { text "r6" size=10 }
+    box key=r7 h=20 focusable { text "r7" size=10 }
+    box key=r8 h=20 focusable { text "r8" size=10 }
+    box key=r9 h=20 focusable { text "r9" size=10 }
+    box key=r10 h=20 focusable { text "r10" size=10 }
+    box key=r11 h=20 focusable { text "r11" size=10 }
+    box key=r12 h=20 focusable { text "r12" size=10 }
+    box key=r13 h=20 focusable { text "r13" size=10 }
+    box key=r14 h=20 focusable { text "r14" size=10 }
+    box key=r15 h=20 focusable { text "r15" size=10 }
+    box key=r16 h=20 focusable { text "r16" size=10 }
+    box key=r17 h=20 focusable { text "r17" size=10 }
+    box key=r18 h=20 focusable { text "r18" size=10 }
+    box key=r19 h=20 focusable { text "r19" size=10 }
+  }
+}

@@ -1,0 +1,27 @@
+// Lists v2: a self-recursive schema renders a finite, data-bounded depth-3 tree.
+def Tree(label="", children=list(Tree)) export {
+  col key=branch pad=0,0,0,10 {
+    row key=line h=20 gap=5 align=center {
+      rect w=5 h=5 radius=2.5 bg=#70A5D8
+      text label size=12 color=#E6EDF3 nowrap
+    }
+    each children key=children
+  }
+}
+
+params {
+  roots list(Tree) = [
+    Tree(label="src", children=[
+        Tree(label="ui", children=[
+            Tree(label="panel.rs"),
+            Tree(label="list.rs")
+        ]),
+        Tree(label="lib.rs")
+    ]),
+    Tree(label="Cargo.toml")
+  ]
+}
+
+col w=180 pad=6 bg=#0D141C {
+  each param.roots key=tree
+}

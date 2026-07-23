@@ -1,0 +1,61 @@
+{
+  "doc": "i1-field",
+  "env": {
+    "vw": 300,
+    "vh": 600,
+    "client": "web",
+    "dark": false,
+    "coarse": false
+  },
+  "steps": [
+    {
+      "t": 0,
+      "event": {
+        "type": "pointer-down",
+        "x": 50,
+        "y": 8
+      }
+    },
+    {
+      "t": 16,
+      "event": {
+        "type": "composition-start"
+      }
+    },
+    {
+      "t": 32,
+      "event": {
+        "type": "composition-update",
+        "text": "か"
+      }
+    },
+    {
+      "t": 48
+    },
+    {
+      "t": 64,
+      "event": {
+        "type": "composition-end",
+        "text": "漢字"
+      }
+    },
+    {
+      "t": 80
+    }
+  ],
+  "expect": {
+    "signals": [
+      {
+        "name": "name",
+        "text": "hi漢字"
+      }
+    ],
+    "focus_key": "col@0/text@0",
+    "edits": [
+      {
+        "name": "name",
+        "text": "hi漢字"
+      }
+    ]
+  }
+}

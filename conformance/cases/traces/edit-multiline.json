@@ -1,0 +1,158 @@
+{
+  "doc": "edit-multiline",
+  "env": {
+    "vw": 220,
+    "vh": 160,
+    "client": "web",
+    "dark": false,
+    "coarse": false
+  },
+  "steps": [
+    {
+      "t": 0,
+      "event": {
+        "type": "pointer-down",
+        "x": 40,
+        "y": 12
+      }
+    },
+    {
+      "t": 16,
+      "event": {
+        "type": "text",
+        "text": "hello"
+      }
+    },
+    {
+      "t": 32,
+      "event": {
+        "type": "key-down",
+        "key": "Enter"
+      }
+    },
+    {
+      "t": 48,
+      "event": {
+        "type": "text",
+        "text": "world"
+      }
+    },
+    {
+      "t": 64,
+      "event": {
+        "type": "key-down",
+        "key": "ArrowUp"
+      }
+    },
+    {
+      "t": 80,
+      "event": {
+        "type": "key-down",
+        "key": "Home"
+      }
+    },
+    {
+      "t": 96,
+      "event": {
+        "type": "key-down",
+        "key": "k",
+        "mods": [
+          "ctrl"
+        ]
+      }
+    },
+    {
+      "t": 112,
+      "event": {
+        "type": "key-down",
+        "key": "z",
+        "mods": [
+          "ctrl"
+        ]
+      }
+    },
+    {
+      "t": 128,
+      "event": {
+        "type": "key-down",
+        "key": "z",
+        "mods": [
+          "ctrl",
+          "shift"
+        ]
+      }
+    },
+    {
+      "t": 144,
+      "event": {
+        "type": "pointer-down",
+        "x": 40,
+        "y": 72
+      }
+    },
+    {
+      "t": 160,
+      "event": {
+        "type": "text",
+        "text": "ready"
+      }
+    },
+    {
+      "t": 176,
+      "event": {
+        "type": "key-down",
+        "key": "Enter"
+      }
+    },
+    {
+      "t": 192
+    }
+  ],
+  "expect": {
+    "signals": [
+      {
+        "name": "draft",
+        "text": "hello"
+      },
+      {
+        "name": "draft",
+        "text": "hello\n"
+      },
+      {
+        "name": "draft",
+        "text": "hello\nworld"
+      },
+      {
+        "name": "draft",
+        "text": "\nworld"
+      },
+      {
+        "name": "draft",
+        "text": "hello\nworld"
+      },
+      {
+        "name": "draft",
+        "text": "\nworld"
+      },
+      {
+        "name": "message",
+        "text": "ready"
+      },
+      {
+        "name": "send",
+        "text": "ready"
+      }
+    ],
+    "focus_key": "col@0/message",
+    "edits": [
+      {
+        "name": "draft",
+        "text": "\nworld"
+      },
+      {
+        "name": "message",
+        "text": "ready"
+      }
+    ]
+  }
+}

@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" aria-hidden="true">
+  <!--
+    Slab mark: one layer lifted from the Stencil stack and given mass — an
+    isometric slab whose top face is carved with a layout aperture holding a
+    single placed pixel. Same 2:1 iso grid, 8px stroke, and monochrome
+    construction as the Stencil pen-and-layers mark. Inherits `currentColor`.
+  -->
+  <polygon points="100,57 166,90 100,123 34,90" fill="none" stroke="currentColor" stroke-width="8" stroke-linejoin="round"/>
+  <polygon points="100,82 116,90 100,98 84,90" fill="currentColor"/>
+  <polygon points="34,90 100,123 100,143 34,110" fill="currentColor"/>
+  <polygon points="100,123 166,90 166,110 100,143" fill="currentColor"/>
+  <path d="M34 90 L34 110 L100 143 L166 110 L166 90" fill="none" stroke="currentColor" stroke-width="8" stroke-linejoin="round" stroke-linecap="round"/>
+</svg>

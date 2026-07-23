@@ -1,0 +1,123 @@
+// Aurora weather widget — flexibly sized (fills the invocation viewport;
+// min 560x420 keeps the card breathing). Exercises 0.3.0 effects & motion:
+// gradient paints, glass recipe, layered/inset shadows, stroke-sides,
+// dashed strokes, anim/animate/transition.
+
+tokens {
+  color {
+    night  #060A18
+    ink    #EAF2FF
+    muted  #9DB0CE
+    faint  #6B7C9A
+    mint   oklch(85% 0.14 170)
+    violet oklch(70% 0.16 300)
+    hair   #FFFFFF2E
+  }
+  text {
+    hero  { family "Inter"; size 64; weight 250 }
+    title { family "Inter"; size 20; weight 600 }
+    body  { family "Inter"; size 14 }
+    label { family "Inter"; size 11; weight 600; tracking 1.5 }
+  }
+  fx {
+    glass {
+      backdrop 22,1.35
+      bg       #101A3020
+      stroke   #FFFFFF3D
+      stroke-w 1
+      radius   20
+    }
+  }
+  shadow {
+    float 0,24,64,#00000073
+    edge  0,2,6,#00000059
+    lift  inset,0,1,0,#FFFFFF40
+  }
+}
+
+// ── motion ────────────────────────────────────────────────────────────
+anim drift {
+  0%   { offset=0,0; opacity=0.85 }
+  100% { offset=90,26; opacity=0.55 }
+}
+anim breathe {
+  0%   { opacity=1 }
+  100% { opacity=0.25 }
+}
+
+// ── forecast row ──────────────────────────────────────────────────────
+def Day(name, hi, lo, wet=false) {
+  col gap=6 align=center w=fill pad=10,0 radius=10 {
+    text name style=text.label color=color.faint
+    text hi style=text.title color=color.ink
+    text lo size=12 color=color.muted
+    rect w=18 h=3 radius=2 bg=color.violet
+    when wet { rect w=18 h=3 radius=2 bg=color.mint offset=0,-9 }
+  }
+}
+
+stack w=fill h=fill min-w=560 min-h=420 clip {
+  // sky: aurora ramp
+  rect w=fill h=fill bg=linear(160, #060A18 0%, #12275A 42%, #1E5F5A 74%, #7BE3B8 100%)
+
+  // drifting radial glow — animated via offset (alternate)
+  rect w=520 h=340 radius=999 offset=40,-60 \
+      bg=radial(#7BE3B866 0%, #7BE3B800 100%) \
+      animate=drift,3800,alternate,ease-in-out
+  // second, violet halo behind the card
+  rect w=640 h=420 radius=999 self=center offset=0,40 \
+      bg=radial(#8A5CF544 0%, #8A5CF500 100%)
+
+  // faint horizon ridge
+  rect w=fill h=1 self=bottom offset=0,-72 bg=color.hair
+
+  // ── glass forecast card ─────────────────────────────────────────────
+  col w=560 self=center style=fx.glass pad=28,32 gap=18 \
+      shadow=shadow.float,shadow.edge,shadow.lift {
+
+    // header
+    row gap=10 align=center {
+      col gap=2 {
+        text "TROMSØ, NORWAY" style=text.label color=color.muted
+        text "Aurora Watch" style=text.title color=color.ink
+      }
+      spacer
+      // live dot: breathing opacity (loop)
+      row gap=6 align=center w=hug {
+        rect w=8 h=8 radius=999 bg=color.mint animate=breathe,1400,loop,ease-in-out
+        text "LIVE" style=text.label color=color.mint
+      }
+    }
+
+    // current conditions
+    row gap=20 align=baseline {
+      text "-7°" style=text.hero color=color.ink
+      col gap=4 {
+        text "Clear · aurora likely" style=text.body color=color.ink
+        text "Feels like -12° · wind 14 km/h NE" size=12 color=color.muted
+      }
+    }
+
+    // Kp-index chip: dashed stroke + hover transition
+    row #kp w=hug pad=8,14 gap=8 radius=999 align=center \
+        stroke=color.mint stroke-w=1 stroke-dash=6,5 transition=220,ease-out {
+      rect w=6 h=6 radius=3 bg=color.mint
+      text "Kp 6 · geomagnetic storm" size=12 color=color.mint
+      when hover { bg=#7BE3B81F; offset=0,-2 }
+    }
+
+    // divider: stroke-sides underline
+    rect h=10 stroke=color.hair stroke-sides=b
+
+    // 4-day strip with dividers between days
+    row gap=0 {
+      Day name="THU" hi="-7°" lo="-13°" wet=true
+      rect w=1 h=fill stroke=color.hair stroke-sides=l
+      Day name="FRI" hi="-4°" lo="-9°"
+      rect w=1 h=fill stroke=color.hair stroke-sides=l
+      Day name="SAT" hi="-2°" lo="-8°" wet=true
+      rect w=1 h=fill stroke=color.hair stroke-sides=l
+      Day name="SUN" hi="-6°" lo="-14°"
+    }
+  }
+}

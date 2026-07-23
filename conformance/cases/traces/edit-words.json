@@ -1,0 +1,234 @@
+{
+  "doc": "i1-words",
+  "env": {
+    "vw": 320,
+    "vh": 600,
+    "client": "web",
+    "dark": false,
+    "coarse": false
+  },
+  "steps": [
+    {
+      "t": 0,
+      "event": {
+        "type": "pointer-down",
+        "x": 50,
+        "y": 8
+      }
+    },
+    {
+      "t": 16,
+      "event": {
+        "type": "key-down",
+        "key": "Home"
+      }
+    },
+    {
+      "t": 32,
+      "event": {
+        "type": "key-down",
+        "key": "ArrowRight",
+        "mods": [
+          "alt"
+        ]
+      }
+    },
+    {
+      "t": 48,
+      "event": {
+        "type": "key-down",
+        "key": "End",
+        "mods": [
+          "shift"
+        ]
+      }
+    },
+    {
+      "t": 64,
+      "event": {
+        "type": "text",
+        "text": "!"
+      }
+    },
+    {
+      "t": 80,
+      "event": {
+        "type": "key-down",
+        "key": "Home"
+      }
+    },
+    {
+      "t": 96,
+      "event": {
+        "type": "key-down",
+        "key": "k",
+        "mods": [
+          "ctrl"
+        ]
+      }
+    },
+    {
+      "t": 112,
+      "event": {
+        "type": "key-down",
+        "key": "z",
+        "mods": [
+          "ctrl"
+        ]
+      }
+    },
+    {
+      "t": 128,
+      "event": {
+        "type": "key-down",
+        "key": "z",
+        "mods": [
+          "ctrl",
+          "shift"
+        ]
+      }
+    },
+    {
+      "t": 144,
+      "event": {
+        "type": "key-down",
+        "key": "z",
+        "mods": [
+          "ctrl"
+        ]
+      }
+    },
+    {
+      "t": 160,
+      "event": {
+        "type": "key-down",
+        "key": "Home"
+      }
+    },
+    {
+      "t": 176,
+      "event": {
+        "type": "key-down",
+        "key": "Delete",
+        "mods": [
+          "ctrl"
+        ]
+      }
+    },
+    {
+      "t": 192,
+      "event": {
+        "type": "key-down",
+        "key": "z",
+        "mods": [
+          "ctrl"
+        ]
+      }
+    },
+    {
+      "t": 208,
+      "event": {
+        "type": "key-down",
+        "key": "End"
+      }
+    },
+    {
+      "t": 224,
+      "event": {
+        "type": "key-down",
+        "key": "Backspace",
+        "mods": [
+          "ctrl"
+        ]
+      }
+    },
+    {
+      "t": 240,
+      "event": {
+        "type": "key-down",
+        "key": "z",
+        "mods": [
+          "ctrl"
+        ]
+      }
+    },
+    {
+      "t": 256,
+      "event": {
+        "type": "key-down",
+        "key": "u",
+        "mods": [
+          "ctrl"
+        ]
+      }
+    },
+    {
+      "t": 272,
+      "event": {
+        "type": "key-down",
+        "key": "z",
+        "mods": [
+          "ctrl"
+        ]
+      }
+    },
+    {
+      "t": 288
+    }
+  ],
+  "expect": {
+    "signals": [
+      {
+        "name": "words",
+        "text": "hello !"
+      },
+      {
+        "name": "words",
+        "text": ""
+      },
+      {
+        "name": "words",
+        "text": "hello !"
+      },
+      {
+        "name": "words",
+        "text": ""
+      },
+      {
+        "name": "words",
+        "text": "hello !"
+      },
+      {
+        "name": "words",
+        "text": "!"
+      },
+      {
+        "name": "words",
+        "text": "hello !"
+      },
+      {
+        "name": "words",
+        "text": "hello "
+      },
+      {
+        "name": "words",
+        "text": "hello !"
+      },
+      {
+        "name": "words",
+        "text": ""
+      },
+      {
+        "name": "words",
+        "text": "hello !"
+      }
+    ],
+    "focus_key": "col@0/text@0",
+    "edits": [
+      {
+        "name": "words",
+        "text": "hello !"
+      }
+    ]
+  }
+}

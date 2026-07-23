@@ -1,0 +1,29 @@
+{
+   "$schema": "https://biomejs.dev/schemas/2.0.0/schema.json",
+   "formatter": {
+      "enabled": true,
+      "indentStyle": "space",
+      "indentWidth": 3,
+      "lineWidth": 100
+   },
+   "javascript": {
+      "formatter": {
+         "quoteStyle": "single"
+      }
+   },
+   "linter": {
+      "enabled": true,
+      "rules": {
+         "recommended": true,
+         "style": {
+            "useNamingConvention": "off"
+         },
+         "suspicious": {
+            "noConsole": "off"
+         }
+      }
+   },
+   "files": {
+      "includes": ["clients/**", "tools/**", "packages/**", "scripts/**", "site/**", "!**/dist/**", "!**/wasm/**", "!packages/slab/bin/**"]
+   }
+}

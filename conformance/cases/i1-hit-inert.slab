@@ -1,0 +1,5 @@
+// P5 hit fixture: an inert overlay never hits — the veiled base wins.
+stack w=100 h=100 {
+  rect#base w=100 h=100 bg=#111111
+  rect#veil w=100 h=100 bg=#22222280 inert
+}

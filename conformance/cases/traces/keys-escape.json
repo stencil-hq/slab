@@ -1,0 +1,87 @@
+{
+  "doc": "keys-escape",
+  "env": {
+    "vw": 160,
+    "vh": 80,
+    "client": "web",
+    "dark": false,
+    "coarse": false
+  },
+  "steps": [
+    {
+      "t": 0,
+      "event": {
+        "type": "pointer-down",
+        "x": 16,
+        "y": 16
+      }
+    },
+    {
+      "t": 16,
+      "event": {
+        "type": "pointer-up",
+        "x": 16,
+        "y": 16
+      }
+    },
+    {
+      "t": 32,
+      "event": {
+        "type": "key-down",
+        "key": "Escape"
+      }
+    },
+    {
+      "t": 48,
+      "state": {
+        "key": "col@0/#dialog",
+        "name": "disabled",
+        "on": true
+      }
+    },
+    {
+      "t": 64,
+      "event": {
+        "type": "key-down",
+        "key": "Escape"
+      }
+    },
+    {
+      "t": 80,
+      "state": {
+        "key": "col@0/#dialog",
+        "name": "disabled",
+        "on": false
+      }
+    },
+    {
+      "t": 96,
+      "event": {
+        "type": "key-down",
+        "key": "F2"
+      }
+    },
+    {
+      "t": 112
+    }
+  ],
+  "expect": {
+    "signals": [
+      {
+        "name": "cancel",
+        "text": ""
+      },
+      {
+        "name": "cancel",
+        "text": ""
+      }
+    ],
+    "focus_key": "col@0/#dialog/#field",
+    "edits": [
+      {
+        "name": "value",
+        "text": "draft"
+      }
+    ]
+  }
+}

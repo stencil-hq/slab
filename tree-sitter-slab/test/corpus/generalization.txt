@@ -1,0 +1,458 @@
+==============================
+icons, dynamic paths, and current paint
+==============================
+
+icon check viewbox=24 {
+  path "M4 12 L9 17 L20 6" bg=current stroke=current
+}
+def IconRow(glyph="", route="") export {
+  row {
+    icon glyph size=16 color=#2563EB
+    canvas w=80 h=24 {
+      path d=route stroke=#64748B
+    }
+  }
+}
+params {
+  glyph text = "check"
+  route text = "M0 12 L80 12"
+}
+row {
+  icon check size=16
+  icon param.glyph size=20
+  canvas w=80 h=24 { path d=param.route stroke=#64748B }
+}
+
+---
+
+(source_file
+  (icon_declaration
+    (identifier)
+    (icon_viewbox
+      (number))
+    (block
+      (node
+        (identifier)
+        (string)
+        (attribute
+          (identifier)
+          (identifier))
+        (attribute
+          (identifier)
+          (identifier)))))
+  (def_declaration
+    (identifier)
+    (parameter
+      (identifier)
+      (string))
+    (parameter
+      (identifier)
+      (string))
+    (export_flag)
+    (block
+      (node
+        (identifier)
+        (block
+          (node
+            (identifier)
+            (identifier)
+            (attribute
+              (identifier)
+              (number))
+            (attribute
+              (identifier)
+              (hex_color)))
+          (node
+            (identifier)
+            (attribute
+              (identifier)
+              (number))
+            (attribute
+              (identifier)
+              (number))
+            (block
+              (node
+                (identifier)
+                (attribute
+                  (identifier)
+                  (identifier))
+                (attribute
+                  (identifier)
+                  (hex_color)))))))))
+  (params_declaration
+    (param_declaration
+      (identifier)
+      (param_type)
+      (string))
+    (param_declaration
+      (identifier)
+      (param_type)
+      (string)))
+  (node
+    (identifier)
+    (block
+      (node
+        (identifier)
+        (identifier)
+        (attribute
+          (identifier)
+          (number)))
+      (node
+        (identifier)
+        (reference)
+        (attribute
+          (identifier)
+          (number)))
+      (node
+        (identifier)
+        (attribute
+          (identifier)
+          (number))
+        (attribute
+          (identifier)
+          (number))
+        (block
+          (node
+            (identifier)
+            (attribute
+              (identifier)
+              (reference))
+            (attribute
+              (identifier)
+              (hex_color))))))))
+
+==============================
+divider, gestures, and accessibility metadata
+==============================
+
+row role=group label="Repository workspace" desc=param.description {
+  box#source w=240 press=selected context=menu dblclick=open drag=dragged drop=dropped role=treeitem label="Source pane" desc="Draggable source" {
+    when dragging { opacity=0.5 }
+    when drop { stroke=#2563EB }
+  }
+  divider#split w=4 resize=resized dblclick=reset label="Resize source and detail" role="separator"
+  box#detail w=fill role=region label=param.detail_label
+}
+
+---
+
+(source_file
+  (node
+    (identifier)
+    (attribute
+      (identifier)
+      (identifier))
+    (attribute
+      (identifier)
+      (string))
+    (attribute
+      (identifier)
+      (reference))
+    (block
+      (node
+        (identifier)
+        (node_id)
+        (attribute
+          (identifier)
+          (number))
+        (attribute
+          (identifier)
+          (identifier))
+        (attribute
+          (identifier)
+          (identifier))
+        (attribute
+          (identifier)
+          (identifier))
+        (attribute
+          (identifier)
+          (identifier))
+        (attribute
+          (identifier)
+          (identifier))
+        (attribute
+          (identifier)
+          (identifier))
+        (attribute
+          (identifier)
+          (string))
+        (attribute
+          (identifier)
+          (string))
+        (block
+          (when_block
+            (condition
+              (identifier))
+            (attribute
+              (identifier)
+              (number)))
+          (when_block
+            (condition
+              (identifier))
+            (attribute
+              (identifier)
+              (hex_color)))))
+      (node
+        (identifier)
+        (node_id)
+        (attribute
+          (identifier)
+          (number))
+        (attribute
+          (identifier)
+          (identifier))
+        (attribute
+          (identifier)
+          (identifier))
+        (attribute
+          (identifier)
+          (string))
+        (attribute
+          (identifier)
+          (string)))
+      (node
+        (identifier)
+        (node_id)
+        (attribute
+          (identifier)
+          (fill_size))
+        (attribute
+          (identifier)
+          (identifier))
+        (attribute
+          (identifier)
+          (reference))))))
+
+==============================
+two-axis scroll, sticky, and virtual each
+==============================
+
+col#viewport w=320 h=240 scroll=both {
+  row#heading sticky { text "Heading" }
+  row scroll=cross {
+    each param.rows #rows item-extent=20 virtual overscan=8
+  }
+}
+col w=240 h=120 scroll=cross { rect w=480 h=40 }
+
+---
+
+(source_file
+  (node
+    (identifier)
+    (node_id)
+    (attribute
+      (identifier)
+      (number))
+    (attribute
+      (identifier)
+      (number))
+    (attribute
+      (identifier)
+      (identifier))
+    (block
+      (node
+        (identifier)
+        (node_id)
+        (flag
+          (identifier))
+        (block
+          (node
+            (identifier)
+            (string))))
+      (node
+        (identifier)
+        (attribute
+          (identifier)
+          (identifier))
+        (block
+          (each_statement
+            (reference)
+            (node_id)
+            (attribute
+              (identifier)
+              (number))
+            (each_flag)
+            (attribute
+              (identifier)
+              (number)))))))
+  (node
+    (identifier)
+    (attribute
+      (identifier)
+      (number))
+    (attribute
+      (identifier)
+      (number))
+    (attribute
+      (identifier)
+      (identifier))
+    (block
+      (node
+        (identifier)
+        (attribute
+          (identifier)
+          (number))
+        (attribute
+          (identifier)
+          (number))))))
+
+==============================
+anchored overlay enum values
+==============================
+
+stack#surface {
+  rect#anchor w=20 h=20
+  group attach="#surface/#anchor" gravity=below-start collide=auto
+  rect gravity=below-center
+  rect gravity=below-end
+  rect gravity=above-start
+  rect gravity=above-center
+  rect gravity=above-end
+  rect gravity=left-start
+  rect gravity=left-center
+  rect gravity=left-end
+  rect gravity=right-start
+  rect gravity=right-center
+  rect gravity=right-end collide=none
+}
+
+---
+
+(source_file
+  (node
+    (identifier)
+    (node_id)
+    (block
+      (node
+        (identifier)
+        (node_id)
+        (attribute
+          (identifier)
+          (number))
+        (attribute
+          (identifier)
+          (number)))
+      (node
+        (identifier)
+        (attribute
+          (identifier)
+          (string))
+        (attribute
+          (identifier)
+          (identifier))
+        (attribute
+          (identifier)
+          (identifier)))
+      (node
+        (identifier)
+        (attribute
+          (identifier)
+          (identifier)))
+      (node
+        (identifier)
+        (attribute
+          (identifier)
+          (identifier)))
+      (node
+        (identifier)
+        (attribute
+          (identifier)
+          (identifier)))
+      (node
+        (identifier)
+        (attribute
+          (identifier)
+          (identifier)))
+      (node
+        (identifier)
+        (attribute
+          (identifier)
+          (identifier)))
+      (node
+        (identifier)
+        (attribute
+          (identifier)
+          (identifier)))
+      (node
+        (identifier)
+        (attribute
+          (identifier)
+          (identifier)))
+      (node
+        (identifier)
+        (attribute
+          (identifier)
+          (identifier)))
+      (node
+        (identifier)
+        (attribute
+          (identifier)
+          (identifier)))
+      (node
+        (identifier)
+        (attribute
+          (identifier)
+          (identifier)))
+      (node
+        (identifier)
+        (attribute
+          (identifier)
+          (identifier))
+        (attribute
+          (identifier)
+          (identifier))))))
+
+==============================
+semantic-invalid placement stays parseable for compiler diagnostics
+==============================
+
+icon invalid-body {
+  rect bg=current
+}
+divider resize=orphaned
+rect bg=current
+col {
+  rect sticky
+  group attach="#missing" gravity=below-start collide=auto
+}
+
+---
+
+(source_file
+  (icon_declaration
+    (identifier)
+    (block
+      (node
+        (identifier)
+        (attribute
+          (identifier)
+          (identifier)))))
+  (node
+    (identifier)
+    (attribute
+      (identifier)
+      (identifier)))
+  (node
+    (identifier)
+    (attribute
+      (identifier)
+      (identifier)))
+  (node
+    (identifier)
+    (block
+      (node
+        (identifier)
+        (flag
+          (identifier)))
+      (node
+        (identifier)
+        (attribute
+          (identifier)
+          (string))
+        (attribute
+          (identifier)
+          (identifier))
+        (attribute
+          (identifier)
+          (identifier))))))

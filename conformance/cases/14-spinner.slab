@@ -1,0 +1,12 @@
+// Discrete text keyframes hold each glyph until the following stop.
+anim spin {
+  0%   { content="⠋" }
+  25%  { content="⠙" }
+  50%  { content="⠹" }
+  75%  { content="⠸" }
+  100% { content="⠋" }
+}
+
+col w=160 h=32 {
+  text "idle" w=64 h=24 size=16 animate=spin,1000
+}

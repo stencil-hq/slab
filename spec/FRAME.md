@@ -1,0 +1,587 @@
+# Kernel public API, Event, Effects, and Frame contract
+
+The hand-maintained Rust crate `crates/slab-kernel` is the normative kernel
+implementation and public API. Its modules expose ordinary Rust structs,
+enums, and functions; native clients decode SLIR into `slir::Doc`, initialize
+`frame::Instance`, and call this API directly. The browser and Node runtimes
+use the wasm-bindgen bridge in `crates/slab-kernel-wasm`, which owns the same
+Rust `Instance` and preserves the contract across the WebAssembly boundary.
+
+## Instance API
+
+The native Rust surface uses borrowed documents, instances, events, and frame
+values in the usual way. Native clients normally call `slab_slir::instance`
+and receive an initialized `Instance`. Its decoder performs the low-level
+construction contract exposed by the kernel: create an empty instance, assign
+the decoded public `Doc`, then initialize it:
+
+```rust
+fn inst_shell() -> Instance
+    // Returns an empty instance. The host assigns i.doc to its decoded Doc.
+fn inst_init(i: &mut Instance)
+    // Initializes persistent param state after the host assigned i.doc.
+fn inst_font_register(i: &mut Instance, family: &str, weight: u32, upem: u32,
+                      ascent: i32, descent: i32, line_gap: i32,
+                      default_adv: u32, cmap_cp: &[u32], cmap_gid: &[u32],
+                      adv: &[u32]) -> i32
+    // Appends a runtime metric table, marks i dirty, and returns its FONT index.
+    // Equal-name candidates override compiled tables by their later index.
+fn inst_img_register(i: &mut Instance, name: &str, w: u32, h: u32,
+                     format: u32, data: &[u8]) -> i32
+    // Register or replace a runtime image and return its unified image index.
+    // format: 0 PNG | 1 straight-alpha sRGB RGBA8. Invalid input returns -1.
+fn inst_img_unregister(i: &mut Instance, name: &str) -> bool
+    // Deactivate a runtime image by name while reserving its index.
+fn inst_img_info(i: &Instance, img: i32) -> Option<(u32, u32, u32, u32)>
+    // (width, height, format, generation); None = unknown or inactive.
+fn inst_img_bytes(i: &Instance, img: i32) -> &[u8]
+    // Immutable compiled or active-runtime payload; unknown/inactive = empty.
+fn inst_set_env(i: &mut Instance, vw: f64, vh: f64, client: u32,
+                dark: bool, coarse: bool)
+    // client: 0 web | 1 gpu | 2 tui | 3 svg | 4 png (SLIR Client syms).
+    // portrait/landscape derive from vw < vh. vh <= 0 = unbounded height
+    // (static render invocation). Env starts unset; vw/vh are 0 until the
+    // host calls this — the first frame after it solves.
+fn inst_set_state(i: &mut Instance, name: &str, on: bool)
+    // Global state set (drives State(sym) when-conds; dispatch feeds the
+    // per-node overlay). Unknown names are no-ops (they cannot affect any
+    // cond).
+fn inst_set_theme(i: &mut Instance, name: &str) -> bool
+    // Select a compiled theme. Empty selects the authored base. An unknown
+    // non-empty name returns false and leaves the current theme unchanged.
+fn inst_theme(i: &Instance) -> String
+    // Current selected theme; empty means the authored base.
+fn inst_set_node_state(i: &mut Instance, key: &str, name: &str, on: bool) -> bool
+    // Toggle a named state on ONE node addressed by its full key path.
+    // Dispatch owns hover/pressed/focus/focus-visible/composing; hosts
+    // drive app states (disabled, selected, …) here. false = unknown key.
+fn inst_set_focus(i: &mut Instance, key: &str, visible: bool) -> bool
+    // Move focus to a keyed node; an empty key clears focus. The node must
+    // be focusable in the CURRENT scene (present, not inert) — false =
+    // unknown, absent, or non-focusable key, with no side effects. visible
+    // selects the keyboard-grade focus ring exactly as Tab does; a field=
+    // target binds its EditState on focus (§15.6).
+fn inst_set_scroll(i: &mut Instance, key: &str, axis: u32, off: f64) -> bool
+    // Set a keyed active scroll axis: 0 main | 1 cross. The offset clamps to
+    // retained geometry when available. false = unknown key/axis/inactive axis.
+fn inst_get_scroll(i: &Instance, key: &str, axis: u32) -> f64
+    // Stored offset for axis 0 or 1; unknown keys/axes read as 0.
+fn inst_reveal(i: &mut Instance, key: &str, margin: f64) -> bool
+    // Minimally scroll every main-axis ancestor in the retained scene so the
+    // target plus margin is visible. false = target absent from current scene.
+fn inst_reveal_item(i: &mut Instance, each_key: &str, index: i32,
+                    align: u32) -> bool
+    // Virtual item alignment: 0 start | 1 center | 2 end | 3 nearest.
+    // false = unknown/non-virtual each, invalid index, or invalid alignment.
+fn inst_each_window(i: &Instance, each_key: &str) -> (i32, i32)
+    // Half-open materialized virtual range; (-1, -1) for unknown/non-virtual.
+fn inst_set_param(i: &mut Instance, param: u32, v: &ParamValue) -> bool
+    // false = unknown param, type mismatch, or unknown enum member.
+fn inst_list_len(i: &Instance, param: u32, path: &str) -> i32
+    // Selected list length; -1 when the param or path cannot be resolved.
+fn inst_set_list_len(i: &mut Instance, param: u32, path: &str, n: i32) -> bool
+    // false for an unresolved list or n < 0. Extending seeds schema defaults;
+    // truncating drops descendant values and identities.
+fn inst_set_list_field(i: &mut Instance, param: u32, path: &str, index: i32,
+                       field: &str, v: &ParamValue) -> bool
+    // Typed scalar write. false for unresolved list/item/field, type mismatch,
+    // a list-typed field, or an unknown enum member.
+fn inst_set_list_key(i: &mut Instance, param: u32, path: &str, index: i32,
+                     key: &str) -> bool
+    // Set stable item identity; default identity is decimal index. Empty keys
+    // and unresolved items fail. Equal successful writes do not dirty.
+fn inst_set_divider(i: &mut Instance, key: &str, extent: f64) -> bool
+    // Store a finite extent overlay for a structurally valid keyed divider.
+fn inst_get_divider(i: &Instance, key: &str) -> f64
+    // Stored overlay, or -1 for an unknown, invalid, or unset divider.
+fn inst_set_hole_size(i: &mut Instance, hole: u32, w: f64, h: f64)
+    // Persist the host content's reported natural width and height. Invalid
+    // hole indices are ignored. Mark dirty iff either stored float changes;
+    // an equal re-report is a no-op. A Hole node consults the corresponding
+    // dimension only on a hug axis, starting from 0 before the first report,
+    // then applies the ordinary min/max and layout-constraint clamps.
+fn inst_frame(i: &mut Instance, t_ms: f64) -> Frame
+    // Solves iff needed: dirty (env/param/state/scroll/edit/focus change),
+    // or the clock moved while the doc has ANIM binds / transitions
+    // ("interpolate inputs, re-solve" — an animating instance stays live,
+    // an idle one solves once). Post-solve, matching research App.build():
+    // scroll offsets re-clamp against the fresh scene and vanished focus
+    // restores (§15.3) — both mark the instance dirty for the NEXT frame.
+fn inst_holes(i: &mut Instance) -> Vec<HoleRect>
+    // Last-solved host viewports. For a hug hole, the sanctioned host loop is:
+    // solve -> read viewport -> measure natural host content -> report with
+    // inst_set_hole_size -> re-solve once. The reported size is a persistent
+    // input, and an equal subsequent report does not dirty the instance, so
+    // stable natural content converges without another demand frame.
+fn inst_hit(i: &Instance, x: f64, y: f64) -> Vec<u32>
+    // Node path root -> target against the retained scene (§15.2):
+    // reverse paint order, rotation transform (deterministic kernel
+    // sin/cos — quadrant reduction + fixed Taylor polynomial), rounded
+    // rects, clip chains; inert subtrees never hit.
+fn inst_dispatch(i: &mut Instance, ev: &dispatch::Event) -> dispatch::Effects
+    // §15.4 dispatch (see below). Effects.repaint doubles as the dirty
+    // mark: the next inst_frame re-solves.
+fn inst_take_signals(i: &mut Instance) -> dispatch::Effects
+    // Destructively drains signals queued by settled-frame gesture
+    // cancellation. Live hosts call once immediately after inst_frame.
+fn text_glyphs(i: &Instance, fr: &Frame, op: i32) -> Vec<GlyphPos>
+    // Per-codepoint advance walk for fr.ops[op] (must be a Text op):
+    // gid from the FONT cmap, x advances by advance(gid)·size/upem +
+    // tracking. For GPU drivers (P7).
+```
+
+### Browser and Node WebAssembly surface
+
+`KInst` is the wasm-bindgen owner of a decoded and initialized Rust
+`Instance`. Its constructor accepts SLIR bytes and returns an error if Rust
+cannot decode them. The bridge mirrors the native contract with
+JavaScript-safe arguments. List methods (`list_len`, `set_list_len`,
+`set_list_key`, `set_list_field`) include `path`; `set_scroll` and `get_scroll`
+include `axis`. It also exposes `reveal`, `reveal_item`, `each_window_json`,
+`set_divider`, `get_divider`, `img_register`, `img_unregister`,
+`image_info_json`, and unified-index `image_data`, in addition to the existing
+environment, parameter, state, focus, theme, font, and hole methods.
+
+Cold structured results cross the boundary as JSON: `holes_json`,
+`dispatch_json`, `caret_effects_json`, `statics_json`, `scene_json`, and
+`chain_json`; retained-scene queries use `hit_contains`. `dispatch_json` takes
+all ten `Event` fields as flat arguments and returns the complete `Effects`
+object described below. In `scene_json`, accessibility references are resolved
+to strings rather than exposing the native scene-string pool.
+
+The paint hot path is `frame(t_ms) -> FrameBuf`, not frame JSON. `FrameBuf`
+provides an operation-tag/payload `u32s()` stream, an `f64s()` stream beginning
+with frame width and height, the frame-local text pool through `strs_json()`,
+runtime paths through `rt_paths_json()`, and the `dirty()` and
+`motion_active()` liveness flags. ScalePush and ScalePop use tags 11 and 12;
+ScalePush contributes four floats (`cx, cy, sx, sy`) and ScalePop contributes
+none. TiltPush and TiltPop use tags 13 and 14; TiltPush contributes five
+floats (`cx, cy, rx, ry, depth`) and TiltPop contributes none. The FX-kit
+fields extend existing payloads at the END of each op's record: RECT appends
+`smooth, grain_amount, grain_size` (floats); TEXT appends `color_kind` (u32)
+and `gx, gy, gw, gh` (floats); IMAGE and CLIP_PUSH append `smooth`;
+GROUP_PUSH appends `mask_kind, mask` (u32s) and `mx, my, mw, mh` (floats);
+BACKDROP appends `mask_kind, mask` (u32s) and `brightness, smooth` (floats).
+Every operation tag otherwise retains its fixed integer and float arity
+and decodes to the `FrameOp` payload fields below. Canonical `frame_json`,
+dispatch/hit/trace dumps, `cells_text`, capability reports, and self-test
+counts are exported for the Node conformance runner.
+
+Layout-time diagnostics accumulate per solve in `Instance.st.diag_code` /
+`diag_msg` / `diag_line` (parallel arrays): `squeeze`, `clipped`,
+`pct-unbounded`, `fill-unbounded`, `attr` — research wording, numbers
+rendered with the canonical `fmt3` formatter.
+
+```rust
+struct ParamValue { kind: u32, num: f64, s: String, rgba: u32, sym: String }
+    // kind mirrors the scalar PARM/List-field type it must match:
+    // 0 Text(s) | 1 Num(num) | 2 Pct(num) | 3 Color(rgba) |
+    // 4 Bool(num 0|1) | 5 Enum(sym — must name a declared member).
+    // PARM type 6 List is replaced only through the list API above.
+    // All setters are total, atomic, and dirty only on an actual value change.
+struct HoleRect { hole: u32, x: f64, y: f64, w: f64, h: f64, clip: bool }
+struct GlyphPos { font: i32, gid: u32, x: f64, y: f64, size: f64 }
+```
+
+The unified image index space contains every compiled `IMGS` row first,
+followed by append-only runtime slots. A runtime name keeps its slot when
+replaced, unregistered, or registered again. Compiled rows report generation
+zero; a new runtime row starts at one, and replacement, unregister, and
+re-registration each advance its generation. Re-registering an active image
+with identical dimensions, format, and bytes is a no-op: its generation and
+instance dirty bit do not change. RGBA8 requires exactly `w * h * 4` bytes
+with checked arithmetic. Any rejected registration is atomic.
+
+Scroll axis 0 requires effective `F_SCROLL`, uses `content_main`, and has
+viewport width for a row or height for a column. Axis 1 requires
+`F_SCROLL_CROSS`, uses `content_cross`, and takes the opposite viewport
+dimension. A retained write clamps to
+`[0, max(0, content - viewport)]`. A write before the first solve is retained
+and re-clamped against the newly solved scene; either axis may therefore mark
+the instance dirty for one settling frame.
+
+`inst_reveal` operates only on the current retained scene. Negative or
+non-finite margin is treated as zero. It processes scroll ancestors from inner
+to outer, carrying each inner displacement into the next calculation, so every
+write is the minimal main-axis move. A known already-visible target still
+returns `true`. `inst_reveal_item` and `inst_each_window` apply only to a
+virtual `each`; a non-virtual or unknown key returns `false` / `(-1, -1)`
+without mutation.
+
+A divider key is valid only when its base node is a non-first, non-last direct
+child of a row or column. The divider API stores a finite keyed extent overlay;
+it does not treat an arbitrary keyed node as a divider. An unset or invalid
+divider reads as `-1`, rejected writes are atomic, and an equal valid write
+does not dirty.
+
+List `path` is `""` for the root list. A nonempty path is a dot-separated
+sequence of `<index>.<field>` pairs selecting descendant list fields:
+`3.segments` and `3.segments.0.points` are examples. Indices are nonnegative
+decimal item indices; each field must be list-typed in the selected schema.
+Malformed paths, scalar fields, missing schemas, and out-of-range items fail
+atomically (`-1` from `inst_list_len`, `false` from setters). The separate
+`index` argument to field/key setters addresses an item in the list selected
+by `path`.
+
+List values, keys, and the synthetic-node registry are persistent Instance
+state. Synthetic ids are stable by `(Each node, template node, item key)`;
+state maps retain that synthetic id while every SLIR/document read uses its
+template base node. The public descendant key is
+`<each-key>~<item-key>/<template-relative-key>`. Truncation prunes values,
+keys, registry entries, and keyed state for removed identities.
+
+## Event (module `dispatch`)
+
+```rust
+struct Event {
+    etype: u32,
+    x: f64,
+    y: f64,
+    dx: f64,
+    dy: f64,
+    button: u32,
+    clicks: u32,
+    key: String,
+    text: String,
+    mods: u32,
+}
+```
+
+- `etype`: 0 pointer-move | 1 pointer-down | 2 pointer-up | 3 wheel |
+  4 key-down | 5 text | 6 paste | 7 copy | 8 cut | 9 composition-start |
+  10 composition-update | 11 composition-end | 12 blur | 13 resize |
+  14 close | 15 inspect | 16 activate (synthesized internally; ignored
+  from outside).
+- `x`/`y` are document-space pointer coordinates. `dx`/`dy` are wheel deltas
+  for type 3 and the new viewport width/height for type 13.
+- `button` is the host pointer-button code. `clicks` is the host-computed click
+  count on pointer-down; 0 and 1 are single clicks, 2 is a double click.
+- `key` is the host named key (`"Tab"`, `"Enter"`, `" "`, `"ArrowLeft"`,
+  `"Backspace"`, `"Home"`, `"End"`, `"a"`, …), not a document STRS reference.
+  `text` carries text, paste, and composition payloads.
+- `mods` bitset: 1 shift | 2 alt | 4 ctrl | 8 meta.
+
+Dispatch is kernel-owned: no capture/bubble (the kernel routes internally and
+reports Effects); pointer capture lasts from pointer-down until release;
+`pressed` lands on the nearest focusable in the hit path, else the raw target;
+hover enter/leave states cover the whole hit path. Pointer-up over the
+still-pressed focusable, or Enter/Space on a focused non-edit node, synthesizes
+Activate; `disabled` suppresses it. Wheel scrolls the deepest `scroll` node in
+the path with the retained-scene clamp. `resize` (dx/dy > 0) updates env;
+`blur` clears hover + pressed; `copy` / `inspect` are host territory.
+
+Signal trigger codes (SPEC §13) are `0 Activate`, `1 Change`, `2 Submit`,
+`3 Press`, `4 Context`, `5 Dblclick`, `6 DragStart`, `7 Drop`, `8 Resize`,
+`9 PointerMove`, `10 PointerUp`, `11 DragUpdate`, and `12 DragEnd`.
+`sig_text` carries committed text for Change/Submit and the canonical final
+extent for Resize; other triggers use `""`. Every signal carries the innermost
+synthetic item key of its emitting node (or `""`) and the `SigMeta` below.
+
+Focusing a field binds an EditState seeded from CONTENT. Backspace/Delete
+delete grapheme clusters; Ctrl/Meta/Alt word deletion and Ctrl-K/U kills use
+the visual line; Ctrl/Meta-Z and Ctrl/Meta-Shift-Z traverse bounded grouped
+undo/redo. Multiline ArrowUp/Down and Home/End use visual-line source offsets
+from the retained TextLayout with goal-x preservation. Enter inserts or
+submits by SPEC §15.6's modifier/flag matrix. Text, paste, cut, kill, word
+delete, undo/redo, and composition all flow through the same committed-change
+path. Single-line display text owns horizontal scroll; multiline caret follow
+may adjust the nearest scroll ancestor.
+
+## Effects (module `dispatch`)
+
+```rust
+struct SigMeta {
+  x: f64,
+  y: f64,
+  dx: f64,
+  dy: f64,
+  drag_dx: f64,
+  drag_dy: f64,
+  mods: u32,
+  button: u32,
+  clicks: u32,
+  key: String,
+  src_key: String,
+  src_item: String,
+  cancelled: bool,
+  dropped: bool,
+}
+struct ScrollChange { key: String, axis: u32, off: f64 }
+struct Effects {
+  repaint: bool,         // document state changed; next inst_frame re-solves
+  sig_name: Vec<u32>,    // document STRS refs
+  sig_text: Vec<String>, // committed text/extent where defined; else ""
+  sig_item: Vec<String>, // innermost list item key; "" for a real node
+  sig_meta: Vec<SigMeta>,
+  scrolls: Vec<ScrollChange>,
+  has_caret: bool, caret_x: f64, caret_y: f64, caret_w: f64, caret_h: f64,
+  has_ime: bool, ime_x: f64, ime_y: f64, ime_w: f64, ime_h: f64,
+  cursor: u32,           // 0 default | 1 pointer | 2 text |
+                         // 3 col-resize | 4 row-resize
+  focus: u32,            // node id; 0xFFFFFFFF = none
+}
+```
+
+`sig_name`, `sig_text`, `sig_item`, and `sig_meta` always have equal length
+and matching order. `SigMeta.key` is the full key path of the emitting node.
+For pointer-originated dispatch it carries document-space `x`/`y`; keyboard
+and direct helper emissions use `(-1, -1)`. `dx`/`dy` are the originating
+event deltas; `drag_dx`/`drag_dy` are cumulative displacement from the armed
+pointer-down origin while a drag is active. `mods`, `button`, and `clicks`
+come from the current event. `src_key` and `src_item` identify a drag source
+only for Drop and are otherwise empty. `cancelled` marks abnormal DragEnd;
+`dropped` marks Drop and the corresponding successful DragEnd.
+
+`scrolls` is ordered by dispatch execution and contains one entry for each
+offset actually changed by wheel, scroll-key, or caret-follow handling.
+`axis` is 0 main or 1 cross and `off` is the stored clamped offset. Direct host
+calls to `inst_set_scroll` do not synthesize an `Effects` value.
+
+Caret/IME rects are emitted whenever the focused node is a bound field and
+are geometry of the LAST solve. The kernel finds the caret's visual line from
+that TextLayout's source offsets; x is the measured line-prefix width minus
+the field's horizontal edit scroll, y is the line origin, h is line height,
+and w is 1. Hosts refresh after the next frame. Web uses a hidden textarea for
+every focused field and prevents its own Enter insertion after forwarding one
+key event; native forwards the same line-aware rect to its IME candidate API.
+Focus state names exposed to `when` are `focus` and `focus-visible`
+(keyboard-driven focus only; restoration and pointer focus are ring-free,
+research §15.3).
+
+## Frame
+
+```rust
+struct RtPath {
+    verbs: Vec<u8>,
+    coords: Vec<f64>,
+}
+struct Frame {
+    width: f64,
+    height: f64,
+    ops: Vec<FrameOp>,
+    scene: Vec<SceneNode>,
+    strings: Vec<String>,
+    paths_rt: Vec<RtPath>,
+}
+```
+
+`width`/`height` are the solved root box. `strings` is the per-frame text pool
+addressed by `OpText.str_ref`. `paths_rt` contains only runtime paths referenced
+by this frame. `FrameOp` is the Rust enum in `slab_kernel::flatten`, with these
+payload structs:
+
+```
+Rect(OpRect)         { node, x, y, w, h, radius,
+                       bg_kind, bg, stroke_kind, stroke,   // Paint, see below
+                       stroke_w, stroke_align (0 center|1 inside|2 outside),
+                       stroke_sides (bitmask t1 r2 b4 l8; 15 = all),
+                       dash_on, dash_off, has_dash,
+                       shadow_off, shadow_len,             // SLIR SHDW run
+                       opacity,
+                       smooth (0 = off),
+                       grain_amount (0 = off), grain_size }
+Text(OpText)         { node, x, y_baseline, str_ref, measured_w,
+                       font (FONT table index, -1 none), size,
+                       weight (the selected table's weight),
+                       tracking, color, opacity,           // one op PER LINE
+                       color_kind (1 solid: color = rgba8 |
+                                   2 gradient: color = GRAD index),
+                       gx, gy, gw, gh }   // gradient box = the text NODE's
+                                          // content box, shared by every
+                                          // line; all 0 when solid
+Image(OpImage)       { node, x, y, w, h,
+                       img (unified image index, -1 unresolved),
+                       fit, radius, opacity, smooth }
+PathDraw(OpPath)     { node, dx, dy, path (signed path reference),
+                       bg_kind, bg, stroke_kind, stroke, stroke_w,
+                       dash_on, dash_off, has_dash, opacity }
+ClipPush(OpClip)     { x, y, w, h, radius, smooth } · ClipPop
+GroupPush(OpGroup)   { opacity, blur,
+                       mask_kind (0 none|1 solid|2 gradient), mask,
+                       mx, my, mw, mh }    · GroupPop
+RotatePush(OpRotate) { cx, cy, deg }       · RotatePop
+ScalePush(OpScale)   { cx, cy, sx, sy }    · ScalePop
+TiltPush(OpTilt)     { cx, cy, rx, ry, depth } · TiltPop
+Backdrop(OpBackdrop) { x, y, w, h, radius, blur, saturate,
+                       brightness (default 1.0), smooth,
+                       mask_kind, mask }
+
+SceneNode { node, parent_ix (scene index, -1 root), kind (SLIR kind),
+            x, y, w, h, radius, rot_deg, rot_cx, rot_cy,
+            flags, content_main, scroll_off,
+            scroll_cross, content_cross, is_row, src_line,
+            role, label, desc,
+            checked, expanded, selected, active_descendant, controls,
+            value_now, value_min, value_max, value_text,
+            modal, live, live_atomic, level, pos_in_set, set_size,
+            disabled, focused }
+```
+
+- **Paint** is a `(kind, handle)` pair instead of a nested enum:
+  `0 none | 1 solid (handle = rgba8) | 2 gradient (handle = GRAD index)`.
+- `OpPath.path >= 0` indexes the document PATH table. A negative value indexes
+  `Frame.paths_rt` as `!path as usize`: runtime entry 0 is encoded as `-1`,
+  entry 1 as `-2`, and so on. Each runtime entry uses the same normalized path
+  verb/coordinate grammar as a compiled path and is local to this frame.
+- Scale, rotation, and tilt commands are balanced, nested painter-stack
+  operations. Scale transforms a point around `(cx, cy)` as
+  `c + (point - c) * (sx, sy)` until the matching `ScalePop`. Until the
+  matching `TiltPop`, the tilted subtree flattens into one plane and warps
+  by CSS `perspective(depth)·rotateX(rx)·rotateY(ry)` about `(cx, cy)` —
+  ink-only, like scale; hit testing keeps the layout rects.
+- `OpGroup.mask_kind`/`mask`, `OpBackdrop.mask_kind`/`mask`, and a gradient
+  `OpText.color_kind`/`color` reuse the Paint `(kind, handle)` convention
+  above. A group mask multiplies the layer's alpha by the paint's alpha
+  mapped over the mask box `(mx, my, mw, mh)`; a backdrop mask scales the
+  backdrop effect strength (progressive blur, banded per the support chart).
+- Every paint op carries `node` (retained-DOM diffing key for the web driver;
+  GPU/TUI may ignore it). Node opacity composites through `GroupPush`.
+- `SceneNode.flags` are the node's *effective* flags: `F_CLIP` is set iff this
+  frame clips (authored clip/scroll or boundary-forced), and `F_INERT` is set
+  for self-or-ancestor inert. Quarter-turned nodes contribute one scene entry
+  carrying `rot_*`.
+- `content_main` and `content_cross` are child extents including trailing pad,
+  or zero for childless nodes. `scroll_off` and `scroll_cross` are the current
+  offsets. `is_row` selects horizontal main/vertical cross when true and
+  vertical main/horizontal cross when false; it is retained for dispatch but
+  omitted from canonical `frame.json`.
+- `role`, `label`, `desc`, `active_descendant`, `controls`, and `value_text`
+  index the instance's append-only, deduplicated `St::scene_strs`; zero is
+  always empty/absent. References remain stable across solves and dynamic
+  value changes. Native hosts resolve numeric refs from that pool; wasm
+  `scene_json` resolves them to strings.
+- `checked` uses `0 absent | 1 false | 2 true | 3 mixed`.
+  `expanded`, `selected`, `modal`, and `live_atomic` use
+  `0 absent | 1 false | 2 true`; `live` uses
+  `0 absent | 1 off | 2 polite | 3 assertive`. WASM exposes these as nullable
+  booleans/string unions rather than numeric codes.
+- `value_now`, `value_min`, `value_max`, `level`, `pos_in_set`, and `set_size`
+  are `Option<f64>`; WASM and canonical frame JSON emit `null` when absent.
+  `disabled` is the resolved per-node `disabled` state and `focused` is exact
+  kernel focus ownership for this frame.
+
+## Text metrics (normative for goldens)
+
+Measurement uses SLIR FONT tables only: `advance(gid)·size/upem + tracking`
+per codepoint (gid 0 → `default_advance`), `line_h = size·leading`, and the
+baseline sits at CSS half-leading over the hhea box:
+
+```
+ascent_in_line = asc·size/upem + (line_h − (asc − desc)·size/upem) / 2
+```
+
+(research 0.5 centered a fictional 0.76-em box; the real box keeps kernel
+baselines aligned with browser-painted glyphs in the web driver). The wrap
+algorithm is the research metrics.py port verbatim: greedy break on spaces
+(NBSP glues), hard-break of over-long words, ellipsis cut/append with
+rstrip, `max_lines` from the height budget.
+
+## Motion (as built in `motion`)
+
+"Interpolate inputs, re-solve" (§14): before every solve, motion.apply
+writes interpolated attribute INPUTS into the style overlay (attr_val
+consults it ahead of patches and base), then layout runs normally — the
+containment invariant holds at every instant for free.
+
+- **Keyframes**: per ANIM bind, `p = ease(easing, cycle_progress(t, dur,
+  mode, delay))` (research motion.py: once clamps and holds, loop wraps,
+  alternate reverses odd cycles; whole-cycle easing); each attribute the
+  anim mentions takes `keyframe_value` at p (clamps outside its first/last
+  stop; segment-local lerp between stops).
+- **Interpolation** (research lerp_raw): numbers/percents lerp; colors
+  lerp in OKLab via the target `cbrt` intrinsic (alpha linear; SLIR r-low
+  packing byte-swapped at the color-module boundary); equal-length tuples lerp
+  elementwise; everything else — mismatched kinds, enum keywords,
+  gradients — steps at the midpoint. Gradient STOP ramps stay sRGB
+  (a render-time rule; gradients do not tween).
+- **Transitions** run on kernel-tracked per-PATCH clocks: when a
+  State-cond patch's activity flips between solves, the flip is stamped
+  with that solve's `t_ms`; while `age = t − flip − delay < dur` the
+  patch's attrs apply as `lerp(base, target, w)` with `w = ease(p)`
+  entering and `1 − p` leaving (research resolver.py); attrs with no
+  authored base step at the midpoint; flags and extra `when` children
+  never tween. Env/Client/W-H conds re-solve without tweening (research
+  parity: its prev-env kept renderer + viewport fixed).
+- **Liveness**: motion.apply reports "still animating" (running binds,
+  in-flight tweens); inst_frame then re-solves whenever the clock moves.
+  The manifest's `states_prev`/`state_age` cases realize the research
+  build(states, states_prev, state_age) contract as a sequence: solve
+  under states_prev at t=0, flip to states (stamped at t=0), sample at
+  t=state_age.
+
+## Trace conformance (P5)
+
+`conformance/cases/traces/*.json` replay scripted interaction against both the
+native Rust kernel (`slab conformance`) and the same Rust kernel compiled to
+Node-bound WebAssembly (`bun tools/conformance-wasm.ts`). Every step first
+runs `inst_frame(t)`, then applies exactly one action:
+
+- `event` dispatches an `Event` and dumps one complete `Effects` line;
+- `state`, `env`, and `param` call the corresponding host setter;
+- `hit` dumps keyed scene ancestry and a bare `tick` performs no mutation;
+- `img` registers `name,w,h,format` plus `rgba` or `png_b64`;
+- `scroll` sets `key,axis,off`;
+- `list` selects `param,path` and performs `op: "len" | "field" | "key"`;
+- `divider` sets a keyed extent;
+- `reveal` supplies `key,margin`;
+- `reveal_item` supplies `each,index,align`; and
+- `window` dumps `inst_each_window(each)`.
+
+The output ends with `dumpjson.dump_trace_summary` and the final frame JSON.
+The summary contains the focus key, committed field text keyed by Change-signal
+name, and key-addressed scroll offsets with an explicit axis. Scroll rows use
+scene/document order and main axis before cross axis for the same node.
+Everything variable is formatted by the Rust kernel, so native and wasm output
+is byte-identical against `conformance/expected/traces/*.trace.txt`.
+
+Dumped signals serialize `name`, `text`, `item`, and the full `meta` object in
+the field order specified above. Dumped Effects also serialize `scrolls` after
+focus. Embedded signal expectations may select the signal triple, while the
+shared golden defends metadata, scroll notifications, and final state.
+
+## frame.json (conformance canonicalization)
+
+`dumpjson::dump(&doc, &st, &frame) -> String` emits one line with no
+whitespace and canonical key order:
+
+```
+{"width":W,"height":H,"ops":[…],"scene":[…],"strings":[…],"paths_rt":[…],"diags":[…]}
+```
+
+- ops use `{"op":"Rect",…}` with payload field order. Paints render as
+  `null` | `"#rrggbbaa"` | `"grad:N"`; dash as `null` | `[on,off]`; shadows
+  expand inline as `{"x","y","blur","spread","color","inset"}` objects.
+  Scale operations serialize as `ScalePush`/`ScalePop`; tilt as
+  `{"op":"TiltPush","cx":…,"cy":…,"rx":…,"ry":…,"depth":…}` and
+  `{"op":"TiltPop"}`. A negative path
+  reference serializes as `"path":"rt:N"` where `N = !path`.
+- FX-kit keys are conditional so pre-FX goldens stay stable: Rect appends
+  `"smooth":S` after `"opacity"` iff smooth > 0, then `"grain":[amount,size]`
+  iff amount > 0. Text `"color"` uses the paint convention above (solid
+  `"#rrggbbaa"`, gradient `"grad:N"`) and appends `"grad_box":[gx,gy,gw,gh]`
+  after `"opacity"` iff the color is a gradient. Image appends `"smooth"`
+  after `"opacity"` and ClipPush after `"radius"`, each iff smooth > 0.
+  GroupPush appends `"mask":<paint>,"mask_box":[mx,my,mw,mh]` after `"blur"`
+  iff masked. Backdrop ALWAYS emits `"brightness":B` after `"saturate"`,
+  then `"smooth":S` iff smooth > 0, then `"mask":<paint>` iff masked.
+- `paths_rt` entries use `{"verbs":[0,…],"coords":[0,…]}` in frame-local
+  index order; the pool contains only geometry referenced by this frame.
+- scene entries use `{"node","parent","kind","x","y","w","h","radius","rot",
+  "cx","cy","flags","content_main","scroll_off","line","scroll_cross",
+  "content_cross","role","label","desc","checked","expanded","selected",
+  "active_descendant","controls","value_now","value_min","value_max",
+  "value_text","modal","live","live_atomic","level","pos_in_set","set_size",
+  "disabled","focused"}`. String semantics are numeric `St::scene_strs` refs
+  and optional-state enums retain the native codes above; optional numbers are
+  numeric or `null`.
+- diags use `{"code","line","msg"}` in emission order.
+- numbers via `value.fmt3`: round-half-even to 3 decimals by integer math,
+  trailing zeros trimmed, `-0 → 0`; panics on NaN/inf.
+- strings JSON-escaped (`\" \\ \n \t \r`, `\u00XX` below 0x20).
+
+The native Rust and Node-bound WASM runners emit byte-identical output for the
+same SLIR and environment. `slab conformance` and
+`bun tools/conformance-wasm.ts` compare frames, traces, capability reports,
+and TUI cell output against the same files in `conformance/expected/`: every
+manifest case has a `.frame.json` golden, and each TUI case also has a
+`.cells.txt` golden.

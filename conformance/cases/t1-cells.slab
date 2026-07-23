@@ -1,0 +1,14 @@
+// TUI: cell grid quantization, box-drawing borders, hairline rules,
+// radius>=4 corners, gradient first-stop degradation, truncation.
+col w=320 h=160 pad=16,8 gap=16 bg=#10141b {
+  text "RAIL STATUS" size=14 weight=700 color=#e6edf3
+  rect h=1 bg=#8a97a8
+  row gap=16 {
+    col w=144 h=64 pad=16,8 stroke=#4fc7e0 radius=6 {
+      text "OK 42" size=12 color=#3ddc84
+    }
+    col w=120 h=64 pad=16,8 bg=linear(180, #26314a 0%, #10141b 100%) {
+      text "a rather long line that truncates" size=12 color=#e6edf3 nowrap ellipsis
+    }
+  }
+}

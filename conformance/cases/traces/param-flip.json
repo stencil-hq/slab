@@ -1,0 +1,40 @@
+{
+  "doc": "i1-param",
+  "env": {
+    "vw": 200,
+    "vh": 400,
+    "client": "web",
+    "dark": false,
+    "coarse": false
+  },
+  "steps": [
+    {
+      "t": 0
+    },
+    {
+      "t": 16,
+      "param": {
+        "name": "hot",
+        "kind": "bool",
+        "value": 1
+      }
+    },
+    {
+      "t": 32
+    },
+    {
+      "t": 48,
+      "param": {
+        "name": "title",
+        "kind": "text",
+        "value": "World"
+      }
+    },
+    {
+      "t": 64
+    }
+  ],
+  "expect": {
+    "signals": []
+  }
+}

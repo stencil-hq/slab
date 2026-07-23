@@ -1,0 +1,5 @@
+// D2 (P9 degradation): path on the tui client — the op is skipped with ONE
+// cap-path grid note (slab_kernel::cells) and the chart reports path as none.
+col w=320 h=96 pad=16 {
+  path "M0 0 L64 32 L0 64 Z" stroke=#4fc7e0 stroke-w=2
+}

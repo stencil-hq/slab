@@ -1,0 +1,55 @@
+{
+  "doc": "edit-multiline",
+  "env": {
+    "vw": 240,
+    "vh": 120,
+    "client": "web",
+    "dark": false,
+    "coarse": false
+  },
+  "steps": [
+    {
+      "t": 0,
+      "event": {
+        "type": "pointer-down",
+        "x": 16,
+        "y": 16
+      }
+    },
+    {
+      "t": 16,
+      "event": {
+        "type": "pointer-up",
+        "x": 16,
+        "y": 16
+      }
+    },
+    {
+      "t": 32,
+      "event": {
+        "type": "paste",
+        "text": "one\ntwo"
+      }
+    },
+    {
+      "t": 48,
+      "event": {
+        "type": "key-down",
+        "key": "a",
+        "mods": ["ctrl"]
+      }
+    },
+    {
+      "t": 64
+    }
+  ],
+  "expect": {
+    "focus_key": "col@0/draft",
+    "edits": [
+      {
+        "name": "draft",
+        "text": "one\ntwo"
+      }
+    ]
+  }
+}

@@ -1,0 +1,4 @@
+// P5 fixture: word-op and selection editing on a longer field.
+col w=320 {
+  text "hello brave world" field=words size=14 w=300 nowrap
+}

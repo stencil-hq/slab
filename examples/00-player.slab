@@ -1,0 +1,197 @@
+// Music player card — "Pale Green Things", The Mountain Goats.
+// 1.0 host surface: params drive title/artist/times/progress/playing,
+// the transport buttons emit signals, and the queue is a host-filled hole
+// stocked with exported <Track> rows (web: slotted elements; native: a
+// child instance). Render: slab render examples/00-player.slab --width 360
+tokens {
+  color {
+    night #0A120D
+    panel #101A13
+    ink   #ECF5EC
+    muted #9AB0A0
+    faint #5F7263
+    mint  oklch(86% 0.13 155)
+    moss  #1B2E22
+    gold  #E8C07C
+    hair  #FFFFFF14
+  }
+  text {
+    display { family "Inter"; size 24; weight 800 }
+    body    { family "Inter"; size 13 }
+    label   { family "Inter"; size 10; weight 700; tracking 1.6 }
+    mono    { family "Berkeley Mono"; size 11 }
+  }
+  fx {
+    glass { backdrop 16,1.3; bg #FFFFFF10; stroke #FFFFFF24; stroke-w 1; radius 999 }
+  }
+  shadow {
+    soft  0,18,44,#00000073
+    crisp 0,2,8,#00000059
+    lift  inset,0,1,0,#FFFFFF33
+  }
+}
+
+params {
+  title    text = "Pale Green Things"
+  artist   text = "The Mountain Goats"
+  elapsed  text = "2:37"
+  remain   text = "-1:35"
+  progress pct = 62%
+  playing  bool = true
+}
+
+anim breathe {
+  0%   { opacity=0.35 }
+  100% { opacity=1 }
+}
+
+def Track(no, title, len, playing=false) export {
+  row focusable act=pick pad=8,12 gap=12 align=center radius=10 transition=140,ease-out {
+    text no style=text.mono color=color.faint w=18
+    text title style=text.body color=color.muted w=fill ellipsis nowrap
+    text len style=text.mono color=color.faint w=36 align-text=end
+    when playing {
+      bg=linear(90, #7FE0A824 0%, #7FE0A805 100%)
+      stroke=#7FE0A82E
+    }
+    when hover { bg=color.moss }
+    when pressed { bg=#0B1A11 }
+    when focus-visible { stroke=color.mint stroke-w=2 }
+  }
+}
+
+col #player w=360 bg=color.night radius=20 clip stroke=color.hair {
+
+  // ── artwork: dusk ridge line, no img needed ──────────────────────────
+  stack w=fill h=164 clip {
+    canvas w=360 h=164 clip {
+      rect at=0,0 w=360 h=164 bg=linear(180, #0E2418 0%, #23503A 58%, #7FB08B 100%)
+      // low moon
+      rect at=258,58 anchor=center w=150 h=150 radius=999 \
+          bg=radial(#F2EFD8CC 0%, #E8C07C55 45%, #E8C07C00 100%)
+      rect at=258,58 anchor=center w=34 h=34 radius=999 bg=#F4F1DD
+      // far ridge
+      path "M0 104 L60 68 L112 96 L170 58 L232 100 L292 76 L360 102 L360 164 L0 164 Z" \
+          bg=#122A1C
+      // near ridge
+      path "M0 136 L52 106 L118 132 L196 92 L262 128 L322 110 L360 126 L360 164 L0 164 Z" \
+          bg=#0B1A11
+      // sparse stars in the upper-left sky
+      rect at=42,30 w=2 h=2 radius=1 bg=#ECF5ECBB
+      rect at=96,52 w=1.5 h=1.5 radius=1 bg=#ECF5EC77
+      rect at=148,24 w=2 h=2 radius=1 bg=#ECF5EC99
+      rect at=70,78 w=1.5 h=1.5 radius=1 bg=#ECF5EC66
+      rect at=182,58 w=1.5 h=1.5 radius=1 bg=#ECF5EC55
+      rect at=24,58 w=1.5 h=1.5 radius=1 bg=#ECF5EC88
+    }
+    row self=bottom w=fill pad=0,14,12,14 align=end {
+      row style=fx.glass pad=5,12 gap=7 align=center w=hug shadow=shadow.crisp {
+        rect w=6 h=6 radius=3 bg=color.gold
+        text "THE SUNSET TREE · 2005" style=text.label color=color.ink nowrap
+      }
+      spacer
+      row style=fx.glass pad=5,12 w=hug {
+        text "FLAC" style=text.label color=color.mint
+      }
+    }
+  }
+
+  // ── header ───────────────────────────────────────────────────────────
+  col pad=16,22,0,22 gap=10 {
+    row align=center gap=8 {
+      col pad=0,0,4,0 stroke=color.mint stroke-w=2 stroke-sides=b w=hug {
+        text "NOW PLAYING" style=text.label color=color.mint
+      }
+      spacer
+      rect w=7 h=7 radius=999 bg=color.mint animate=breathe,1400,alternate,ease-in-out {
+        when !playing { opacity=0.25 }
+      }
+      text "LOSSLESS" style=text.label color=color.faint
+    }
+    col gap=4 {
+      text param.title style=text.display color=color.ink nowrap ellipsis
+      text param.artist style=text.body color=color.muted nowrap ellipsis
+    }
+  }
+
+  // ── waveform + time: the playhead tracks param.progress ─────────────
+  col pad=12,22,0,22 gap=6 {
+    canvas w=fill h=44 {
+      // full wave, faint (static texture; the played head below is live)
+      path "M0 26 L12 14 L24 30 L36 10 L48 34 L60 18 L72 28 L84 8 L96 32 L108 20 L120 36 L132 12 L144 26 L156 16 L168 34 L180 22 L196 10 L208 30 L220 18 L232 34 L244 14 L256 28 L268 20 L280 32 L292 16 L304 26 L316 22" \
+          stroke=#5F726355 stroke-w=2
+      // played head: the same wave, bright + glowing, clipped to progress
+      canvas at=0,0 w=param.progress h=44 clip {
+        path "M0 26 L12 14 L24 30 L36 10 L48 34 L60 18 L72 28 L84 8 L96 32 L108 20 L120 36 L132 12 L144 26 L156 16 L168 34 L180 22 L196 10 L208 30 L220 18 L232 34 L244 14 L256 28 L268 20 L280 32 L292 16 L304 26 L316 22" \
+            stroke=color.mint stroke-w=3 blur=4 opacity=0.65
+        path "M0 26 L12 14 L24 30 L36 10 L48 34 L60 18 L72 28 L84 8 L96 32 L108 20 L120 36 L132 12 L144 26 L156 16 L168 34 L180 22 L196 10 L208 30 L220 18 L232 34 L244 14 L256 28 L268 20 L280 32 L292 16 L304 26 L316 22" \
+            stroke=color.mint stroke-w=2
+      }
+      row at=0,4 w=param.progress h=36 pack=end {
+        rect w=1.5 h=36 bg=#ECF5EC66
+      }
+      row at=4,6 w=param.progress h=8 pack=end {
+        rect w=8 h=8 radius=999 bg=color.ink shadow=shadow.crisp
+      }
+    }
+    row {
+      text param.elapsed style=text.mono color=color.mint
+      spacer
+      text param.remain style=text.mono color=color.faint
+    }
+  }
+
+  // ── controls: every transport action is a signal ─────────────────────
+  row pad=14,22,0,22 {
+    row w=fill pad=8,18 gap=0 align=center radius=999 bg=#FFFFFF0A \
+        stroke=color.hair shadow=shadow.lift {
+      row#shuffle focusable act=shuffle pad=4,6 radius=8 transition=140,ease-out {
+        when hover { bg=color.moss }
+        when pressed { bg=#0B1A11 }
+        when focus-visible { stroke=color.mint stroke-w=2 }
+        text "SHUF" style=text.label color=color.faint
+      }
+      spacer
+      row#prev focusable act=prev pad=4,8 radius=8 transition=140,ease-out {
+        when hover { bg=color.moss }
+        when pressed { bg=#0B1A11 }
+        when focus-visible { stroke=color.mint stroke-w=2 }
+        text "<<" style=text.mono size=14 color=color.muted
+      }
+      spacer
+      row#play focusable act=toggle w=44 h=44 radius=999 pack=center align=center transition=160,ease-out \
+          bg=linear(160, #B9F5CE 0%, #7FE0A8 100%) shadow=shadow.crisp,shadow.lift {
+        when hover { bg=linear(160, #CDF9DC 0%, #93E7B6 100%) }
+        when pressed { bg=linear(160, #A3EFC0 0%, #6BD497 100%) }
+        when focus-visible { stroke=color.ink stroke-w=2 }
+        stack pack=center align=center {
+          text "|>" size=15 weight=800 color=#08130C { when playing { opacity=0 } }
+          text "||" size=15 weight=800 color=#08130C opacity=0 { when playing { opacity=1 } }
+        }
+      }
+      spacer
+      row#next focusable act=next pad=4,8 radius=8 transition=140,ease-out {
+        when hover { bg=color.moss }
+        when pressed { bg=#0B1A11 }
+        when focus-visible { stroke=color.mint stroke-w=2 }
+        text ">>" style=text.mono size=14 color=color.muted
+      }
+      spacer
+      row#loop focusable act=loop pad=4,6 radius=8 transition=140,ease-out {
+        when hover { bg=color.moss }
+        when pressed { bg=#0B1A11 }
+        when focus-visible { stroke=color.mint stroke-w=2 }
+        text "LOOP" style=text.label color=color.mint
+      }
+    }
+  }
+
+  // ── queue: host-filled hole, stocked with exported Track rows ────────
+  col pad=16,22,20,22 gap=6 {
+    row align=center gap=8 {
+      text "UP NEXT" style=text.label color=color.faint
+      rect h=1 w=fill stroke=color.hair stroke-sides=b
+    }
+    hole queue w=fill h=112 scroll
+  }
+}

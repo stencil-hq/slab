@@ -1,0 +1,14 @@
+// L2: grid tracks (fixed/fill/hug), row-major filling, span clamping,
+// justify-self, main/cross gaps.
+col w=360 pad=10 {
+  grid cols=100,fill,hug gap=10,6 {
+    rect w=fill h=18 bg=#111111
+    rect w=fill h=18 bg=#222222
+    text "hugme" size=12 color=#e6edf3
+    rect w=fill h=14 bg=#333333 span=2
+    rect w=20 h=14 bg=#444444
+    rect w=30 h=12 bg=#555555 self=end
+    rect w=fill h=12 bg=#666666
+    rect w=24 h=12 bg=#777777 self=center
+  }
+}

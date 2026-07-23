@@ -1,0 +1,161 @@
+// Mycora — fungus-leather startup hero, 1440x900.
+// Direction: earthy-lab. Deep moss->black gradient dusk, a soft radial
+// bloom behind the headline, glass feature cards with inset highlights,
+// tracked-caps eyebrow, gradient primary CTA. Right side carries the
+// grow-room atmosphere (canopy silhouettes + spore drift) so the 60%
+// text column keeps generous asymmetric whitespace.
+
+tokens {
+  color {
+    bone   #F4EFE4
+    sage   #8FA98B
+    sagedm #6E8A6C
+    spore  #E86A33
+    ember  #6a3d21
+    moss   #16221A
+    deep   #070B08
+    hair   #FFFFFF14
+    hairup #FFFFFF2E
+  }
+  text {
+    display { family "Archivo Expanded"; size 96; weight 800; leading 1.04 }
+    eyebrow { family "Seravek"; size 12; weight 700; tracking 3 }
+    body    { family "Seravek"; size 17; leading 1.6 }
+    nav     { family "Seravek"; size 14; weight 500 }
+    cardt   { family "Archivo Expanded"; size 19; weight 700 }
+    cardb   { family "Seravek"; size 13.5; leading 1.5 }
+    mark    { family "Archivo Expanded"; size 18; weight 800; tracking 1 }
+  }
+  fx {
+    glass { backdrop 18,1.25; bg #F4EFE40D; stroke #FFFFFF1F; stroke-w 1; radius 14 }
+  }
+  shadow {
+    ambient 0,28,64,#00000059
+    contact 0,2,8,#00000066
+    lift    inset,0,1,0,#FFFFFF33
+    ctaglow 0,10,32,#E86A3359
+  }
+}
+
+anim spores {
+  0%   { offset=0,0; opacity=0.9 }
+  100% { offset=-14,-40; opacity=0.35 }
+}
+
+def NavLink(label) {
+  text label style=text.nav color=#F4EFE4B8 nowrap
+}
+
+def Feature(kicker, title, blurb) {
+  col w=fill pad=26,28 gap=12 style=fx.glass shadow=shadow.ambient,shadow.lift {
+    text kicker style=text.eyebrow size=10.5 tracking=2.4 color=color.sage nowrap
+    text title style=text.cardt color=color.bone nowrap
+    text blurb style=text.cardb color=#C9D2C4CC
+  }
+}
+
+stack #hero w=1440 h=900 clip {
+
+  // ---- atmosphere: moss dusk falling into black ------------------------
+  rect w=fill h=fill bg=linear(200, #223428 0%, #16221A 46%, #070B08 100%)
+
+  // soft radial light behind the headline column
+  rect w=980 h=760 radius=999 offset=-140,140 \
+      bg=radial(#8FA98B2E 0%, #8FA98B12 45%, #8FA98B00 100%)
+  // warm ember bounce low-left, echoing the CTA
+  rect w=640 h=420 radius=999 self=bottom-start offset=-180,160 \
+      bg=radial(#E86A331F 0%, #E86A3300 100%)
+
+  // ---- right-weighted forest: trunks, canopy, spore drift ---------------
+  canvas w=1440 h=900 opacity=0.6 {
+    rect at=985,0 w=22 h=900 bg=linear(180, #0B110D00 0%, #0B110D 30%)
+    rect at=1075,0 w=12 h=900 bg=linear(180, #05080600 0%, #050806 24%)
+    rect at=1170,0 w=30 h=900 bg=linear(180, #0B110D00 0%, #0B110D 36%)
+    rect at=1275,0 w=16 h=900 bg=linear(180, #05080600 0%, #050806 20%)
+    rect at=1360,0 w=38 h=900 bg=linear(180, #0B110D00 0%, #0B110D 40%)
+    path "M880 0 L1440 0 L1440 300 C1290 230 1150 330 1010 240 C950 205 898 95 880 0 Z" \
+        bg=linear(180, #050806E6 0%, #0B110D66 100%)
+    path "M840 900 L1440 900 L1440 610 C1310 680 1170 600 1050 700 C965 770 885 845 840 900 Z" \
+        bg=linear(0, #101A13 0%, #101A1300 100%)
+  }
+  group opacity=0.85 animate=spores,4200,alternate,ease-in-out {
+    canvas w=1440 h=900 {
+      rect at=1012,330 w=6 h=6 radius=3 bg=color.sage
+      rect at=1188,212 w=4 h=4 radius=2 bg=#8FA98BB8
+      rect at=1306,432 w=5 h=5 radius=3 bg=color.sage
+      rect at=1098,548 w=4 h=4 radius=2 bg=#8FA98B8C
+      rect at=1388,158 w=6 h=6 radius=3 bg=#8FA98BD9
+      rect at=1240,620 w=3 h=3 radius=2 bg=#8FA98B73
+    }
+  }
+
+  // floating grow-room telemetry chip in the forest gap
+  col w=hug pad=14,18 gap=6 style=fx.glass radius=12 self=top-end offset=-88,470 \
+      shadow=shadow.ambient,shadow.lift {
+    row gap=7 align=center w=hug {
+      rect w=6 h=6 radius=3 bg=color.sage
+      text "GROW ROOM 04 · LIVE" style=text.eyebrow size=10 tracking=2 color=color.sage nowrap
+    }
+    text "Batch 0413 — curing, day 6 of 9" style=text.cardb color=color.bone nowrap
+  }
+
+  // ---- content -----------------------------------------------------------
+  col w=1440 h=900 pad=44,72,56,72 {
+
+    // slim top nav on a hairline
+    col gap=0 h=hug {
+      row align=center gap=32 h=hug pad=0,0,24,0 {
+        text "MYCORA" style=text.mark color=color.bone nowrap
+        spacer
+        NavLink label="Material"
+        NavLink label="Process"
+        NavLink label="Wholesale"
+        NavLink label="Journal"
+        row w=hug pad=9,22 radius=999 bg=#F4EFE412 stroke=color.hairup align=center {
+          text "Order Swatch Kit" style=text.nav weight=600 color=color.bone nowrap
+        }
+      }
+      rect h=1 stroke=color.hair stroke-sides=b
+    }
+
+    spacer h=fill:2
+
+    // oversized headline block inside a 62% column
+    col w=62% gap=30 {
+      row gap=10 align=center w=hug {
+        rect w=28 h=1 bg=color.spore
+        text "GROWN, NOT RAISED" style=text.eyebrow color=color.spore nowrap
+      }
+      col gap=0 {
+        text "Leather, grown" style=text.display color=color.bone nowrap
+        text "in 9 days." style=text.display color=color.bone nowrap
+        text "No cow\_required." style=text.display color=#AEC3A8 nowrap
+      }
+      text "Mycora sheets are cultivated from Reishi mycelium in vertical farms outside Ghent — 92% lower CO2 than bovine hide, supple at 1.2mm thickness." \
+          style=text.body color=#DCE2D4E0 max-w=560
+      row gap=28 align=center w=hug {
+        row w=hug pad=17,34 radius=8 align=center \
+            bg=linear(115, #F08A4B 0%, #E86A33 55%, #D4531F 100%) \
+            shadow=shadow.ctaglow,shadow.lift {
+          text "Request a Sample — €18" style=text.nav size=15 weight=700 color=#1A0E06 nowrap
+        }
+        row gap=8 align=center w=hug pad=0,0,5,0 stroke=#8FA98B59 stroke-w=1 stroke-sides=b {
+          text "Watch the grow room" style=text.nav size=15 color=color.sage nowrap
+          text "→" size=15 color=color.sage nowrap
+        }
+      }
+    }
+
+    spacer h=fill:3
+
+    // 3-up glass feature row pinned to the bottom edge
+    row gap=20 h=hug {
+      Feature kicker="CYCLE" title="9-Day Grow Cycle" \
+          blurb="From spore to finished sheet before traditional tanning even starts."
+      Feature kicker="CHEMISTRY" title="Tannery-Free" \
+          blurb="Zero chromium, zero formaldehyde, compostable offcuts."
+      Feature kicker="SUPPLY" title="Cut to Order" \
+          blurb="Sheets up to 140×60cm, dyed in 6 earth tones."
+    }
+  }
+}

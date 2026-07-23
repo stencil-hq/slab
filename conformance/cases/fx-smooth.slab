@@ -1,0 +1,6 @@
+// FX: smooth adds Figma-style corner smoothing to Rect/Clip ops; the twin
+// without smooth pins the unchanged baseline.
+row w=280 pad=12 gap=12 {
+  rect w=110 h=110 radius=24 smooth=0.6 bg=#4A90D9
+  rect w=110 h=110 radius=24 bg=#D94A4A
+}

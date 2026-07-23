@@ -1,0 +1,24 @@
+// P5 fixture: focus restoration when the focused node vanishes — #r2/#r4
+// are `when` extra children (detached until their state holds; spliced
+// after the base children, so document order is r1, r3, r2, r4). Dropping
+// `show` while r2 is focused restores to the nearest FOLLOWING entry of
+// the previous focusables list when one survives (r4 under show2), else
+// to the nearest preceding (r3) — §15.3.
+col w=200 gap=4 {
+  rect#r1 w=100 h=20 bg=#333333 focusable {
+    when focus { stroke=#ffffff stroke-w=1 }
+  }
+  rect#r3 w=100 h=20 bg=#555555 focusable {
+    when focus { stroke=#ffffff stroke-w=1 }
+  }
+  when show {
+    rect#r2 w=100 h=20 bg=#444444 focusable {
+      when focus { stroke=#ffffff stroke-w=1 }
+    }
+  }
+  when show2 {
+    rect#r4 w=100 h=20 bg=#666666 focusable {
+      when focus { stroke=#ffffff stroke-w=1 }
+    }
+  }
+}

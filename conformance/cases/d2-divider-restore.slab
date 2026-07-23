@@ -1,0 +1,6 @@
+// A host-restored keyed split extent persists into subsequent frames.
+row#root w=300 h=64 {
+  rect#before w=fill min-w=80 max-w=220 bg=#204a38
+  divider#split w=6 h=fill bg=#77c69d resize=split_resized
+  rect#after w=fill min-w=70 bg=#253d34
+}

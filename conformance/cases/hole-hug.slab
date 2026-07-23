@@ -1,0 +1,3 @@
+col w=160 h=100 {
+  hole content w=hug h=hug min-w=40 max-w=90 min-h=20 max-h=60
+}

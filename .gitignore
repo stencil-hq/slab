@@ -1,0 +1,14 @@
+/target
+node_modules
+*.slir
+/out
+.DS_Store
+/clients/web/dist
+/clients/web/LICENSE
+/packages/slab/dist
+/packages/slab/wasm
+/packages/slab/LICENSE*
+/site/dist
+/examples/web-demo/dist
+/editors/vscode/dist
+/editors/vscode/LICENSE

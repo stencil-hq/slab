@@ -1,0 +1,74 @@
+{
+  "doc": "i1-field",
+  "env": {
+    "vw": 300,
+    "vh": 600,
+    "client": "web",
+    "dark": false,
+    "coarse": false
+  },
+  "steps": [
+    {
+      "t": 0,
+      "event": {
+        "type": "pointer-down",
+        "x": 50,
+        "y": 8
+      }
+    },
+    {
+      "t": 16,
+      "event": {
+        "type": "pointer-up",
+        "x": 50,
+        "y": 8
+      }
+    },
+    {
+      "t": 32,
+      "event": {
+        "type": "text",
+        "text": "!"
+      }
+    },
+    {
+      "t": 48
+    },
+    {
+      "t": 64,
+      "event": {
+        "type": "key-down",
+        "key": "Backspace"
+      }
+    },
+    {
+      "t": 80,
+      "event": {
+        "type": "key-down",
+        "key": "Enter"
+      }
+    },
+    {
+      "t": 96
+    }
+  ],
+  "expect": {
+    "signals": [
+      {
+        "name": "name",
+        "text": "hi!"
+      },
+      {
+        "name": "name",
+        "text": "hi"
+      }
+    ],
+    "focus_key": "col@0/text@0",
+    "edits": [
+      {
+        "name": "name",
+        "text": "hi"
+      }
+    ]
+  }
+}

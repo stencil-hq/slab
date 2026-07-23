@@ -1,0 +1,5 @@
+grid cap-backdrop: tui renderer cannot blur backdrops; panel paints flat
+chart degraded radius: corner radius collapses to single arc glyphs (radius >= 4u draws ╭ ╮ ╰ ╯, smaller radii draw square corners)
+chart none backdrop: cap-backdrop
+chart degraded gradient: sampled per cell (linear angle, radial farthest-corner, conic sweep), alpha-composited
+chart degraded text-raster: wide clusters (EAW W/F, emoji presentation) occupy two cells; runs re-quantize to columns under the real font metrics

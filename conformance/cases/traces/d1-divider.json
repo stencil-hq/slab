@@ -1,0 +1,133 @@
+{
+  "doc": "d1-divider",
+  "env": {
+    "vw": 300,
+    "vh": 80,
+    "client": "web",
+    "dark": false,
+    "coarse": false
+  },
+  "steps": [
+    {
+      "t": 0,
+      "event": {
+        "type": "pointer-move",
+        "x": 150,
+        "y": 40
+      }
+    },
+    {
+      "t": 8,
+      "event": {
+        "type": "pointer-down",
+        "x": 150,
+        "y": 40,
+        "clicks": 1
+      }
+    },
+    {
+      "t": 16,
+      "event": {
+        "type": "pointer-move",
+        "x": 260,
+        "y": 40
+      }
+    },
+    {
+      "t": 24,
+      "event": {
+        "type": "pointer-up",
+        "x": 260,
+        "y": 40,
+        "clicks": 1
+      }
+    },
+    {
+      "t": 32,
+      "event": {
+        "type": "key-down",
+        "key": "ArrowLeft"
+      }
+    },
+    {
+      "t": 40,
+      "event": {
+        "type": "key-down",
+        "key": "ArrowLeft",
+        "mods": ["shift"]
+      }
+    },
+    {
+      "t": 48,
+      "event": {
+        "type": "pointer-down",
+        "x": 214,
+        "y": 40,
+        "clicks": 1
+      }
+    },
+    {
+      "t": 56,
+      "event": {
+        "type": "pointer-move",
+        "x": 0,
+        "y": 40
+      }
+    },
+    {
+      "t": 64,
+      "event": {
+        "type": "pointer-up",
+        "x": 0,
+        "y": 40,
+        "clicks": 1
+      }
+    },
+    {
+      "t": 72,
+      "event": {
+        "type": "pointer-down",
+        "x": 83,
+        "y": 40,
+        "clicks": 2
+      }
+    },
+    {
+      "t": 80,
+      "event": {
+        "type": "pointer-up",
+        "x": 83,
+        "y": 40,
+        "clicks": 2
+      }
+    },
+    {
+      "t": 88
+    }
+  ],
+  "expect": {
+    "signals": [
+      {
+        "name": "split_resized",
+        "text": "220"
+      },
+      {
+        "name": "split_resized",
+        "text": "212"
+      },
+      {
+        "name": "split_resized",
+        "text": "211"
+      },
+      {
+        "name": "split_resized",
+        "text": "80"
+      },
+      {
+        "name": "split_reset",
+        "text": ""
+      }
+    ],
+    "focus_key": "#root/#split"
+  }
+}

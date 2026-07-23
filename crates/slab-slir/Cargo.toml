@@ -1,0 +1,10 @@
+[package]
+name = "slab-slir"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+prost.workspace = true
+snap.workspace = true
+slab-kernel = { path = "../slab-kernel" }

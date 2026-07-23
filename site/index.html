@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+   <head>
+      <meta charset="utf-8" />
+      <meta name="viewport" content="width=device-width, initial-scale=1" />
+      <title>slab vibeviewer</title>
+      <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+      <link rel="stylesheet" href="./style.css" />
+   </head>
+   <body>
+      <header class="nav">
+         <svg class="logo-mark" viewBox="0 0 200 200" aria-hidden="true">
+            <polygon points="100,57 166,90 100,123 34,90" fill="none" stroke="currentColor" stroke-width="8" stroke-linejoin="round" />
+            <polygon points="100,82 116,90 100,98 84,90" fill="currentColor" />
+            <polygon points="34,90 100,123 100,143 34,110" fill="currentColor" />
+            <polygon points="100,123 166,90 166,110 100,143" fill="currentColor" />
+            <path d="M34 90 L34 110 L100 143 L166 110 L166 90" fill="none" stroke="currentColor" stroke-width="8" stroke-linejoin="round" stroke-linecap="round" />
+         </svg>
+         <span class="wordmark">slab</span>
+         <span class="eyebrow">VIBEVIEWER</span>
+         <nav>
+            <a href="https://github.com/stencil-hq/slab">GITHUB</a>
+            <a href="https://github.com/stencil-hq/slab/blob/main/spec/SPEC.md">SPEC</a>
+         </nav>
+      </header>
+      <div id="workbench">
+         <main id="split">
+            <section class="pane" id="editor-pane">
+               <div class="pane-bar">
+                  <span class="pane-label">EDITOR</span>
+                  <select id="example-select" aria-label="example document"></select>
+               </div>
+               <div id="editor"></div>
+            </section>
+            <div class="gutter gutter-v" id="gutter-v" title="drag · double-click to reset"></div>
+            <section class="pane" id="preview-pane">
+               <div class="pane-bar">
+                  <span class="pane-label">PREVIEW</span>
+                  <div class="seg" id="view-seg" role="tablist" aria-label="preview surface">
+                     <button type="button" data-view="canvas" class="on">CANVAS</button>
+                     <button type="button" data-view="tui">TUI</button>
+                  </div>
+                  <div class="seg" id="mode-seg" role="tablist" aria-label="interaction mode">
+                     <button type="button" data-mode="design" class="on">DESIGN</button>
+                     <button type="button" data-mode="interact">INTERACT</button>
+                  </div>
+                  <button type="button" id="add-btn" aria-haspopup="menu">+ ADD</button>
+                  <span class="pane-meta" id="preview-meta"></span>
+               </div>
+               <div id="stage-wrap">
+                  <div id="stage"></div>
+                  <div id="overlay"></div>
+                  <div id="tui" hidden></div>
+                  <div id="add-menu" role="menu" hidden></div>
+               </div>
+            </section>
+            <aside class="pane" id="inspect-pane">
+               <div class="pane-bar">
+                  <span class="pane-label">INSPECTOR</span>
+                  <span class="pane-meta" id="inspect-meta"></span>
+               </div>
+               <div id="crumbs" hidden></div>
+               <div id="inspect-body"></div>
+            </aside>
+         </main>
+         <div class="gutter gutter-h" id="gutter-h" title="drag · double-click to reset"></div>
+         <section id="panel">
+            <div class="pane-bar">
+               <span class="pane-label">PROBLEMS</span>
+               <span class="pane-meta" id="panel-meta"></span>
+            </div>
+            <pre id="diags"></pre>
+         </section>
+      </div>
+      <footer id="status">
+         <span id="status-state"><span class="status-pixel ok"></span>LOADING</span>
+         <span id="status-sel"></span>
+         <span id="status-dims"></span>
+         <button type="button" id="inspect-toggle" class="bar-toggle on">INSPECTOR</button>
+         <button type="button" id="panel-toggle" class="bar-toggle">PROBLEMS</button>
+      </footer>
+      <script type="module" src="./main.js"></script>
+   </body>
+</html>

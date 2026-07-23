@@ -1,0 +1,8 @@
+// Direct sticky children pin to the main-start edge, push one another off,
+// and paint above ordinary rows while remaining below the scrollbar.
+col#feed w=120 h=60 scroll scrollbar=always scrollbar-w=4 scrollbar-fg=#e8edf2 scrollbar-bg=#26313c {
+  row#header-a w=120 h=20 sticky bg=#cf5f57 { text "Alpha" color=#ffffff size=12 }
+  rect#body-a w=120 h=60 bg=#202c39
+  row#header-b w=120 h=20 sticky bg=#4e9a73 { text "Beta" color=#ffffff size=12 }
+  rect#body-b w=120 h=60 bg=#18222d
+}

@@ -1,0 +1,8 @@
+grid cap-grain: tui renderer cannot speckle; grain overlay skipped
+grid cap-transform: tui renderer ignores scaling; vector paths render at authored coordinates
+chart degraded gradient: sampled per cell (linear angle, radial farthest-corner, conic sweep), alpha-composited
+chart degraded gradient-conic: sampled per cell over the paint box
+chart none scale: cap-transform
+chart none tilt: cap-transform
+chart none grain: cap-grain
+chart degraded mask: mask alpha sampled per cell over the box

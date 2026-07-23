@@ -1,0 +1,15 @@
+[package]
+name = "slab-compile"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+slab-syntax = { path = "../slab-syntax" }
+slab-slir = { path = "../slab-slir" }
+serde_json = { workspace = true }
+slab-fonts = { path = "../slab-fonts" }
+ttf-parser = { workspace = true }
+slab-kernel = { path = "../slab-kernel" }
+tiny-skia = { workspace = true }
+png = { workspace = true }

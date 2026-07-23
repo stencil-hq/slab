@@ -1,0 +1,18 @@
+{
+  "doc": "s4-reveal",
+  "env": {"vw": 100, "vh": 100, "client": "web", "dark": false, "coarse": false},
+  "steps": [
+    {"t": 0},
+    {"t": 16, "reveal": {"key": "#outer/#inner/#target", "margin": 0}},
+    {"t": 32}
+  ],
+  "expect": {
+    "signals": [],
+    "scroll": [
+      {"key": "#outer/#inner", "axis": 0, "off": 70},
+      {"key": "#outer/#inner", "axis": 1, "off": 70},
+      {"key": "#outer", "axis": 0, "off": 150},
+      {"key": "#outer", "axis": 1, "off": 150}
+    ]
+  }
+}

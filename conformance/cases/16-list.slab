@@ -1,0 +1,22 @@
+// Typed list fixture: defaults establish item order and stable synthetic keys;
+// selected state is addressed through the each item's `~` key path.
+params {
+  items list(Row) = [
+    Row(label="Alpha", tone=#315A8A),
+    Row(label="Bravo", tone=#76522E),
+    Row(label="Charlie", tone=#456B45)
+  ]
+}
+
+def Row(label, tone=#315A8A) export {
+  row key=row focusable act=pick w=180 h=28 pad=4,8 gap=8 bg=tone align=center {
+    when hover { opacity=0.9 }
+    when selected { bg=#E5B94C stroke=#FFF4C2 stroke-w=2 }
+    rect w=8 h=8 radius=4 bg=#FFFFFFCC
+    text label size=12 color=#FFFFFFFF nowrap
+  }
+}
+
+col w=180 gap=0 {
+  each param.items key=list
+}

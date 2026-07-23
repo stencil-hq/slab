@@ -1,0 +1,8 @@
+// Cross-axis scrolling: a row keeps its horizontal main axis fixed while its
+// over-tall child moves vertically and paints a main-end scrollbar.
+row#cross w=120 h=60 scroll=cross scrollbar=always scrollbar-w=4 scrollbar-fg=#58c4dc scrollbar-bg=#17384a {
+  col#content w=120 h=140 {
+    rect w=120 h=70 bg=#163047
+    rect w=120 h=70 bg=#23516f
+  }
+}

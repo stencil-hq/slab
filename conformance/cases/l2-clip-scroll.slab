@@ -1,0 +1,13 @@
+// L2: clip wrapper emission, scroll flag = unbounded main + clip to
+// viewport (static renderers just clip).
+col w=240 pad=8 gap=8 {
+  row w=160 h=40 clip radius=8 bg=#181c22 {
+    rect w=300 h=24 bg=#4fc7e0
+  }
+  col#feed scroll h=60 gap=4 bg=#14181e scrollbar=always scrollbar-w=5 scrollbar-fg=#f08a5d scrollbar-bg=#403030 {
+    rect h=24 bg=#222222
+    rect h=24 bg=#333333
+    rect h=24 bg=#444444
+    rect h=24 bg=#555555
+  }
+}

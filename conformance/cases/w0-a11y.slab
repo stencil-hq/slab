@@ -1,0 +1,7 @@
+params {
+  title text = "Save"
+}
+col#toolbar role=toolbar label=param.title desc="Primary document actions" w=180 h=64 pad=8 {
+  text "Actions"
+  rect#save role=button label=param.title w=80 h=24 bg=#315a8a
+}

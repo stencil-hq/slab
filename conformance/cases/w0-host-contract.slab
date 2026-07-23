@@ -1,0 +1,13 @@
+params {
+  items list(Row) = [Row(label="Alpha"), Row(label="Bravo"), Row(label="Charlie")]
+}
+
+def Row(label) export {
+  text label w=120 h=20 nowrap
+}
+
+col w=120 h=40 {
+  col#viewport w=120 h=40 clip scroll {
+    each param.items key=list
+  }
+}

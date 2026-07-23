@@ -1,0 +1,63 @@
+{
+  "doc": "i1-buttons",
+  "env": {
+    "vw": 300,
+    "vh": 600,
+    "client": "web",
+    "dark": false,
+    "coarse": false
+  },
+  "steps": [
+    {
+      "t": 0,
+      "event": {
+        "type": "key-down",
+        "key": "Enter"
+      }
+    },
+    {
+      "t": 16,
+      "event": {
+        "type": "key-down",
+        "key": "Tab"
+      }
+    },
+    {
+      "t": 32,
+      "event": {
+        "type": "key-down",
+        "key": " "
+      }
+    },
+    {
+      "t": 48,
+      "event": {
+        "type": "key-down",
+        "key": "Tab"
+      }
+    },
+    {
+      "t": 64,
+      "event": {
+        "type": "key-down",
+        "key": "Enter"
+      }
+    },
+    {
+      "t": 80
+    }
+  ],
+  "expect": {
+    "signals": [
+      {
+        "name": "save",
+        "text": ""
+      },
+      {
+        "name": "reset",
+        "text": ""
+      }
+    ],
+    "focus_key": "col@0/b/box@0"
+  }
+}

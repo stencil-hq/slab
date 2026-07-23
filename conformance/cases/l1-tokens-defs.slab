@@ -1,0 +1,32 @@
+// L1: tokens, style bundles, defs with params/defaults, slot splicing,
+// multi-root def (grid-row idiom), call-site id on first root.
+tokens {
+  color { bg #0e1116; ink #e6edf3; accent #4fc7e0 }
+  text  { label { size 11; color #8a97a8 } }
+  fx    { card { pad 12; radius 8; bg #1a2028 } }
+}
+
+def Pair(k, v) {
+  text k style=text.label
+  text v size=12 color=color.ink align-text=end
+}
+
+def Panel(title, tone=color.accent) {
+  col style=fx.card gap=8 {
+    row align=center gap=6 {
+      rect w=8 h=8 radius=2 bg=tone
+      text title size=12 weight=600 color=color.ink
+    }
+    grid cols=100,fill gap=8,4 { slot }
+  }
+}
+
+col w=360 pad=16 gap=12 bg=color.bg {
+  Panel#stats title="STATS" {
+    Pair k="uptime" v="14d"
+    Pair k="load" v="0.42"
+  }
+  Panel title="NET" tone=#e0564a {
+    Pair k="rx" v="12MB/s"
+  }
+}

@@ -1,0 +1,531 @@
+{
+  "version": "1.0.0",
+  "comparison": {
+    "frame_json": "byte-exact against expected/<name>.frame.json from slab-kernel on BOTH targets: native via `slab conformance`, WebAssembly via `bun tools/conformance-wasm.ts`",
+    "floats": "round-half-even to 3 decimals, -0 -> 0, formatted by slab-kernel `dumpjson` — hosts never format numbers",
+    "metrics": "SLIR FONT tables (vendored Inter / JetBrains Mono), advance(gid)*size/upem + tracking, gid 0 -> default_advance; NOT the 0.5 Helvetica AFM table"
+  },
+  "notes": {
+    "t": "animation clock in ms; defaults to 0 and drives kernel motion sampling",
+    "states_prev+state_age": "transition sampling inputs: solve states_prev at t=0, flip to states at t=0, then sample at state_age ms",
+    "theme": "runtime theme name; defaults to the empty authored base and is applied before the first frame",
+    "set": "runtime param overrides applied before the first frame; list params accept JSON arrays of schema-shaped objects",
+    "client": "renderer class driving `when` Client conditions: web|gpu|tui|svg|png; TUI cases also freeze plain `cells` output",
+    "caps": "kind=caps cases freeze the degradation report as expected/<name>.caps.txt instead of frame.json: TUI `cells` grid diagnostics first, then one `chart <level> <feature>: <note>` line per used support.toml feature the client degrades/drops. The single slab-kernel `capability` scan is exercised natively by `slab conformance` and through WebAssembly by `bun tools/conformance-wasm.ts`; outputs must agree byte-identically. GPU-only render-time notes (e.g. cap-gradient-stroke) need a GPU and stay out of conformance; d3 asserts the chart level instead."
+  },
+  "cases": [
+    {
+      "name": "l1-box-basics",
+      "level": 1,
+      "kind": "ops",
+      "width": 800,
+      "client": "svg"
+    },
+    {
+      "name": "l1-percent",
+      "level": 1,
+      "kind": "ops",
+      "width": 800,
+      "client": "svg"
+    },
+    {
+      "name": "l1-text",
+      "level": 1,
+      "kind": "ops",
+      "width": 800,
+      "client": "svg"
+    },
+    {
+      "name": "l1-tokens-defs",
+      "level": 1,
+      "kind": "ops",
+      "width": 800,
+      "client": "svg"
+    },
+    {
+      "name": "l1-when",
+      "level": 1,
+      "kind": "ops",
+      "width": 400,
+      "client": "svg",
+      "states": [
+        "compact"
+      ]
+    },
+    {
+      "name": "l2-wrap",
+      "level": 2,
+      "kind": "ops",
+      "width": 800,
+      "client": "svg"
+    },
+    {
+      "name": "l2-grid",
+      "level": 2,
+      "kind": "ops",
+      "width": 800,
+      "client": "svg"
+    },
+    {
+      "name": "l2-stack-canvas",
+      "level": 2,
+      "kind": "ops",
+      "width": 800,
+      "client": "svg"
+    },
+    {
+      "name": "l2-para",
+      "level": 2,
+      "kind": "ops",
+      "width": 800,
+      "client": "svg"
+    },
+    {
+      "name": "l2-style",
+      "level": 2,
+      "kind": "ops",
+      "width": 800,
+      "client": "svg"
+    },
+    {
+      "name": "l2-clip-scroll",
+      "level": 2,
+      "kind": "ops",
+      "width": 800,
+      "client": "svg"
+    },
+    {
+      "name": "l3-rotate",
+      "level": 3,
+      "kind": "ops",
+      "width": 800,
+      "client": "svg"
+    },
+    {
+      "name": "l3-paint",
+      "level": 3,
+      "kind": "ops",
+      "width": 800,
+      "client": "svg"
+    },
+    {
+      "name": "l3-anim",
+      "level": 3,
+      "kind": "ops",
+      "width": 800,
+      "client": "svg",
+      "t": 550
+    },
+    {
+      "name": "l3-transition",
+      "level": 3,
+      "kind": "ops",
+      "width": 800,
+      "client": "svg",
+      "states": [
+        "hot"
+      ],
+      "states_prev": [],
+      "state_age": 100
+    },
+    {
+      "name": "l4-golden",
+      "level": 4,
+      "kind": "ops",
+      "width": 400,
+      "client": "svg"
+    },
+    {
+      "name": "w0-a11y",
+      "level": 4,
+      "kind": "ops",
+      "width": 180,
+      "height": 64,
+      "client": "web",
+      "set": {
+        "title": "Save changes"
+      }
+    },
+    {
+      "name": "a11y-dynamic",
+      "level": 4,
+      "kind": "ops",
+      "width": 180,
+      "height": 76,
+      "client": "web",
+      "set": {
+        "active": "#list/items~alpha/item",
+        "items": [
+          {
+            "key": "alpha",
+            "label": "Runtime Alpha",
+            "check": "mixed",
+            "chosen": true,
+            "open": true,
+            "now": 3,
+            "announcement": "assertive",
+            "position": 1,
+            "total": 2
+          },
+          {
+            "key": "beta",
+            "label": "Runtime Beta",
+            "check": "false",
+            "chosen": false,
+            "open": false,
+            "now": 9,
+            "announcement": "off",
+            "position": 2,
+            "total": 2
+          }
+        ]
+      }
+    },
+    {
+      "name": "p1-popover",
+      "level": 4,
+      "kind": "ops",
+      "width": 240,
+      "height": 140,
+      "client": "gpu"
+    },
+    {
+      "name": "p2-popover-flip",
+      "level": 4,
+      "kind": "ops",
+      "width": 240,
+      "height": 140,
+      "client": "gpu"
+    },
+    {
+      "name": "g1-press-context",
+      "level": 4,
+      "kind": "ops",
+      "width": 240,
+      "height": 96,
+      "client": "web"
+    },
+    {
+      "name": "g2-dblclick",
+      "level": 4,
+      "kind": "ops",
+      "width": 240,
+      "height": 96,
+      "client": "web"
+    },
+    {
+      "name": "g3-dragdrop",
+      "level": 4,
+      "kind": "ops",
+      "width": 300,
+      "height": 96,
+      "client": "web"
+    },
+    {
+      "name": "g4-drag-cancel",
+      "level": 4,
+      "kind": "ops",
+      "width": 300,
+      "height": 96,
+      "client": "web"
+    },
+    {
+      "name": "g5-drag-ghost",
+      "level": 4,
+      "kind": "ops",
+      "width": 300,
+      "height": 96,
+      "client": "web"
+    },
+    {
+      "name": "n1-nested-each",
+      "level": 4,
+      "kind": "ops",
+      "width": 180,
+      "height": 120,
+      "client": "gpu"
+    },
+    {
+      "name": "n2-para-runs",
+      "level": 4,
+      "kind": "ops",
+      "width": 220,
+      "height": 80,
+      "client": "web"
+    },
+    {
+      "name": "n3-tree-recursive",
+      "level": 4,
+      "kind": "ops",
+      "width": 180,
+      "height": 120,
+      "client": "gpu"
+    },
+    {
+      "name": "n4-virtual",
+      "level": 4,
+      "kind": "ops",
+      "width": 160,
+      "height": 100,
+      "client": "web"
+    },
+    {
+      "name": "n5-nested-trace",
+      "level": 4,
+      "kind": "ops",
+      "width": 160,
+      "height": 68,
+      "client": "web"
+    },
+    {
+      "name": "v2-lane-segments",
+      "level": 4,
+      "kind": "ops",
+      "width": 160,
+      "height": 88,
+      "client": "gpu"
+    },
+    {
+      "name": "v3-icons",
+      "level": 4,
+      "kind": "ops",
+      "width": 112,
+      "height": 32,
+      "client": "gpu"
+    },
+    {
+      "name": "14-spinner-t0",
+      "source": "14-spinner",
+      "level": 4,
+      "kind": "ops",
+      "width": 160,
+      "height": 32,
+      "client": "gpu",
+      "t": 0
+    },
+    {
+      "name": "14-spinner-hold",
+      "source": "14-spinner",
+      "level": 4,
+      "kind": "ops",
+      "width": 160,
+      "height": 32,
+      "client": "gpu",
+      "t": 375
+    },
+    {
+      "name": "15-theme-base",
+      "source": "15-theme",
+      "level": 4,
+      "kind": "ops",
+      "width": 240,
+      "height": 96,
+      "client": "gpu"
+    },
+    {
+      "name": "15-theme-dusk",
+      "source": "15-theme",
+      "level": 4,
+      "kind": "ops",
+      "width": 240,
+      "height": 96,
+      "client": "gpu",
+      "theme": "dusk"
+    },
+    {
+      "name": "16-list",
+      "level": 4,
+      "kind": "ops",
+      "width": 180,
+      "height": 84,
+      "client": "gpu"
+    },
+    {
+      "name": "16-list-set",
+      "source": "16-list",
+      "level": 4,
+      "kind": "ops",
+      "width": 180,
+      "height": 84,
+      "client": "gpu",
+      "set": {
+        "items": [
+          {
+            "label": "Delta",
+            "tone": "#6B3FA0"
+          },
+          {
+            "label": "Echo",
+            "tone": "#186A5B"
+          }
+        ]
+      }
+    },
+    {
+      "name": "16-list-tui",
+      "source": "16-list",
+      "level": 4,
+      "kind": "tui",
+      "width": 180,
+      "height": 84,
+      "client": "tui"
+    },
+    {
+      "name": "t1-cells",
+      "level": 2,
+      "kind": "tui",
+      "width": 320,
+      "client": "tui"
+    },
+    {
+      "name": "t2-railyard",
+      "level": 4,
+      "kind": "tui",
+      "width": 800,
+      "client": "tui"
+    },
+    {
+      "name": "12-wide",
+      "level": 4,
+      "kind": "tui",
+      "width": 320,
+      "height": 128,
+      "client": "tui"
+    },
+    {
+      "name": "d1-glass-tui",
+      "level": 2,
+      "kind": "caps",
+      "width": 320,
+      "client": "tui"
+    },
+    {
+      "name": "d2-path-tui",
+      "level": 2,
+      "kind": "caps",
+      "width": 320,
+      "client": "tui"
+    },
+    {
+      "name": "d3-gradient-stroke-gpu",
+      "level": 2,
+      "kind": "caps",
+      "width": 200,
+      "client": "gpu"
+    },
+    {
+      "name": "d4-transition-png",
+      "level": 2,
+      "kind": "caps",
+      "width": 200,
+      "client": "png"
+    },
+    {
+      "name": "d5-input-svg",
+      "level": 2,
+      "kind": "caps",
+      "width": 200,
+      "client": "svg"
+    },
+    {
+      "name": "d6-text-keyframes-svg",
+      "source": "14-spinner",
+      "level": 4,
+      "kind": "caps",
+      "width": 160,
+      "height": 32,
+      "client": "svg"
+    },
+    {
+      "name": "fx-scale",
+      "level": 3,
+      "kind": "ops",
+      "width": 200,
+      "client": "web"
+    },
+    {
+      "name": "fx-backdrop-bright",
+      "level": 3,
+      "kind": "ops",
+      "width": 320,
+      "height": 120,
+      "client": "web"
+    },
+    {
+      "name": "fx-gradient-stroke",
+      "level": 3,
+      "kind": "ops",
+      "width": 240,
+      "client": "web"
+    },
+    {
+      "name": "fx-conic",
+      "level": 3,
+      "kind": "ops",
+      "width": 160,
+      "height": 160,
+      "client": "web"
+    },
+    {
+      "name": "fx-gradient-text",
+      "level": 3,
+      "kind": "ops",
+      "width": 220,
+      "client": "web"
+    },
+    {
+      "name": "fx-grain",
+      "level": 3,
+      "kind": "ops",
+      "width": 280,
+      "client": "web"
+    },
+    {
+      "name": "fx-mask",
+      "level": 3,
+      "kind": "ops",
+      "width": 200,
+      "height": 120,
+      "client": "web"
+    },
+    {
+      "name": "fx-smooth",
+      "level": 3,
+      "kind": "ops",
+      "width": 280,
+      "client": "web"
+    },
+    {
+      "name": "fx-backdrop-fade",
+      "level": 3,
+      "kind": "ops",
+      "width": 320,
+      "height": 160,
+      "client": "web"
+    },
+    {
+      "name": "fx-tilt",
+      "level": 3,
+      "kind": "ops",
+      "width": 240,
+      "height": 180,
+      "client": "web"
+    },
+    {
+      "name": "fx-tui-caps",
+      "level": 3,
+      "kind": "caps",
+      "width": 320,
+      "client": "tui"
+    },
+    {
+      "name": "x1-showcase",
+      "source": "x1-showcase",
+      "level": 4,
+      "kind": "ops",
+      "width": 800,
+      "height": 600,
+      "client": "gpu"
+    }
+  ]
+}

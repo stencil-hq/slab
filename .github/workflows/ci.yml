@@ -1,0 +1,32 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown, wasm32-wasip2
+      - uses: Swatinem/rust-cache@v2
+      - uses: extractions/setup-just@v4
+      - run: bun install
+      - run: just ci
+      - run: just pack
+      - run: bunx playwright install chromium --with-deps
+      - run: just web-e2e
+      - run: bun scripts/pack-e2e.ts
+      - run: just editors
+      - uses: actions/upload-artifact@v4
+        with:
+          name: editor-plugins
+          path: out/editors/*
+          if-no-files-found: error

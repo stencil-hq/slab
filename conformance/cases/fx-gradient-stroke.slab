@@ -1,0 +1,7 @@
+// FX: gradient strokes are real paints on boxes and paths — no first-stop
+// degradation in the frame; stroke slots carry grad references.
+col w=240 pad=12 gap=12 {
+  rect w=120 h=60 radius=12 stroke=linear(135, #F5AF19 0%, #F12711 100%) stroke-w=4
+  path d="M0 24 C 24 0, 56 48, 80 24 S 136 0, 160 24" w=160 h=48 \
+      stroke=linear(90, #38ef7d 0%, #11998e 100%) stroke-w=3
+}

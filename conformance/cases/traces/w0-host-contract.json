@@ -1,0 +1,62 @@
+{
+  "doc": "w0-host-contract",
+  "env": {
+    "vw": 120,
+    "vh": 40,
+    "client": "web",
+    "dark": false,
+    "coarse": false
+  },
+  "steps": [
+    {
+      "t": 0,
+      "list": {"param": "items", "path": "", "op": "len", "n": 6}
+    },
+    {
+      "t": 16,
+      "list": {"param": "items", "path": "", "op": "field", "index": 3, "field": "label", "kind": "text", "value": "Delta"}
+    },
+    {
+      "t": 32,
+      "list": {"param": "items", "path": "", "op": "key", "index": 3, "key": "delta"}
+    },
+    {
+      "t": 48,
+      "scroll": {"key": "col@0/#viewport", "axis": 0, "off": 30}
+    },
+    {
+      "t": 64,
+      "window": {"each": "col@0/#viewport/list"}
+    },
+    {
+      "t": 80,
+      "reveal": {"key": "col@0/#viewport", "margin": 4}
+    },
+    {
+      "t": 96,
+      "reveal_item": {"each": "col@0/#viewport/list", "index": 3, "align": 0}
+    },
+    {
+      "t": 112,
+      "divider": {"key": "col@0/missing", "extent": 100}
+    },
+    {
+      "t": 128,
+      "img": {"name": "checker", "w": 2, "h": 2, "format": 1, "rgba": [255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255]}
+    },
+    {
+      "t": 144,
+      "img": {"name": "checker", "w": 2, "h": 2, "format": 1, "rgba": [255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255]}
+    },
+    {
+      "t": 160,
+      "img": {"op": "unregister", "name": "checker"}
+    }
+  ],
+  "expect": {
+    "signals": [],
+    "scroll": [
+      {"key": "col@0/#viewport", "axis": 0, "off": 30}
+    ]
+  }
+}

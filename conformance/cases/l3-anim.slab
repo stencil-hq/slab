@@ -1,0 +1,10 @@
+// L3: anim tags wrap the animated node's ops; with t (manifest: t=550,
+// dur=1000 linear loop) the keyframe attrs sample deterministically.
+anim slide {
+  0%   { opacity=1; offset=0,0 }
+  100% { opacity=0.2; offset=40,0 }
+}
+col w=200 pad=10 gap=8 {
+  rect w=30 h=30 bg=#4fc7e0 animate=slide,1000
+  rect w=30 h=30 bg=#555555
+}

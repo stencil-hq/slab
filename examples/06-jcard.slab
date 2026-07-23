@@ -1,0 +1,295 @@
+// 06-jcard — unfolded cassette J-card, "CHROME LAGOON" by Motel Ghost Radio.
+// One flat artboard 1050x400: back flap (150) | spine (48) | front cover (852).
+// Folds at x=150 and x=198. Full synthwave print: gradient dusk, scanline sun,
+// perspective deck grid around the drained pool, chromatic title, foil sticker.
+// Render: slab render examples/06-jcard.slab --width 1050 --height 400 -o out/06-jcard.png --scale 1.5
+
+tokens {
+  color {
+    night   #14102E
+    dusk    #241A4E
+    grape   #3A1D5E
+    magenta #7B2E63
+    ember   #E8865E
+    peach   #FFB37C
+    rose    #FF6E8C
+    cyan    #4FC7E0
+    teal    #6EE7D8
+    cream   #FFF2E2
+    numeral #8E9BD4
+    hair    #FFFFFF24
+  }
+  text {
+    display { family "Archivo Narrow"; size 64; weight 800 }
+    label   { family "Archivo Narrow"; size 9; weight 800 }
+    track   { family "Archivo Narrow"; size 8; weight 500 }
+    mono    { family "Berkeley Mono"; size 8 }
+    micro   { family "Berkeley Mono"; size 6 }
+    fine    { family "Berkeley Mono"; size 5 }
+  }
+  shadow {
+    drop 0,10,26,#00000073
+    snap 0,2,5,#00000066
+    rim  inset,0,1,1,#FFFFFF59
+  }
+}
+
+// One track row. Fixed 24u duration column in every row = one shared
+// right-aligned column across SIDE A and SIDE B. Dot leaders bridge the gap.
+def Track(n, t, d) {
+  row gap=4 align=baseline {
+    text n style=text.mono color=color.numeral w=9 nowrap
+    text t style=text.track color=color.cream nowrap
+    rect w=fill h=1 offset=0,-1 stroke=color.hair stroke-w=1 \
+        stroke-sides=b stroke-dash=1,3
+    text d style=text.mono color=color.peach w=24 align-text=end nowrap
+  }
+}
+
+def Side(label) {
+  row gap=6 align=center {
+    text label style=text.label color=color.peach tracking=3 nowrap
+    rect w=fill h=1 bg=linear(90, #4FC7E0B3 0%, #4FC7E000 100%)
+  }
+}
+
+stack #jcard w=1050 h=400 bg=color.night clip {
+
+  row w=1050 h=400 {
+
+    // ------------------------------------------------ back flap (150u)
+    col #back w=150 pad=10 gap=4 bg=linear(180, #241A4E 0%, #14102E 100%) {
+      Side label="SIDE A"
+      Track n="1." t="Vacancy Glow" d="3:42"
+      Track n="2." t="Coolant" d="4:15"
+      Track n="3." t="Pale Interstate" d="5:08"
+      rect h=8
+      Side label="SIDE B"
+      Track n="4." t="Chlorine Dusk" d="3:57"
+      Track n="5." t="Answering Machine" d="2:44"
+      Track n="6." t="Chrome Lagoon" d="6:31"
+      spacer
+      // label emblem: the scanline sun in miniature
+      col gap=6 align=center {
+        stack w=40 h=40 radius=999 clip {
+          col w=fill {
+            rect w=fill h=18 bg=linear(180, #FFF3CD 0%, #FFC98A 100%)
+            rect w=fill h=2
+            rect w=fill h=6 bg=#FFB07A
+            rect w=fill h=3
+            rect w=fill h=4 bg=#FF8D70
+            rect w=fill h=4
+            rect w=fill h=3 bg=#FF6E8C
+          }
+        }
+        text "PST-047 · C-30 · TYPE I" style=text.micro tracking=1 \
+            color=color.numeral nowrap
+      }
+      spacer
+      col gap=4 {
+        // barcode
+        row gap=1 align=end h=14 {
+          rect w=2 h=14 bg=color.cream; rect w=1 h=14 bg=color.cream
+          rect w=3 h=14 bg=color.cream; rect w=1 h=14 bg=color.cream
+          rect w=1 h=14 bg=color.cream; rect w=2 h=14 bg=color.cream
+          rect w=1 h=14 bg=color.cream; rect w=3 h=14 bg=color.cream
+          rect w=1 h=14 bg=color.cream; rect w=2 h=14 bg=color.cream
+          rect w=1 h=14 bg=color.cream; rect w=1 h=14 bg=color.cream
+          rect w=2 h=14 bg=color.cream; rect w=1 h=14 bg=color.cream
+          rect w=3 h=14 bg=color.cream; rect w=1 h=14 bg=color.cream
+          rect w=2 h=14 bg=color.cream; rect w=1 h=14 bg=color.cream
+          spacer
+          text "047" style=text.fine color=color.numeral nowrap
+        }
+        rect w=fill h=1 bg=color.hair
+        text "PEACH STATIC TAPES · DOLBY B NR · © 1987" \
+            style=text.fine color=color.numeral
+        text "PEACHSTATIC-TAPES.NEOCITIES.ORG/PST-047" \
+            style=text.fine color=color.numeral nowrap
+      }
+    }
+
+    // ------------------------------------------------ spine (48u)
+    // Quarter-turn rotation is layout-aware: the caption measures against
+    // swapped constraints and occupies a vertical box, so it is authored
+    // right here inside the strip.
+    stack #spine w=48 bg=linear(0, #7B2E63 0%, #241A4E 60%, #14102E 100%) \
+        align=center {
+      rect self=top offset=0,8 w=16 h=3 bg=color.cyan
+      text "MOTEL GHOST RADIO · CHROME LAGOON" nowrap rotate=90 self=top \
+          offset=0,20 family="Archivo Narrow" size=10 weight=700 tracking=0.5 \
+          color=color.cream
+      text "PST-047" nowrap rotate=90 self=bottom offset=0,-10 \
+          family="Berkeley Mono" size=7 tracking=1 color=color.peach
+    }
+
+    // ------------------------------------------------ front cover (852u)
+    stack #front w=fill clip {
+
+      // scene: gradient dusk, scanline sun, deck grid, drained pool
+      canvas w=fill h=fill clip {
+
+        // dusk ramp
+        rect at=0,0 w=852 h=400 \
+            bg=linear(180, #14102E 0%, #3A1D5E 34%, #7B2E63 62%, #E8865E 100%)
+
+        // sun halo
+        rect at=640,150 anchor=center w=380 h=380 radius=999 \
+            bg=radial(#FFC98A73 0%, #FFB37C26 55%, #FFB37C00 100%)
+
+        // low scanline sun — one clipped circle of ember slices
+        group at=640,150 anchor=center w=176 h=176 radius=999 clip {
+          col w=fill {
+            rect w=fill h=76 bg=linear(180, #FFF3CD 0%, #FFCE8E 100%)
+            rect w=fill h=4
+            rect w=fill h=16 bg=#FFC386
+            rect w=fill h=5
+            rect w=fill h=13 bg=#FFB07A
+            rect w=fill h=6
+            rect w=fill h=11 bg=#FFA173
+            rect w=fill h=7
+            rect w=fill h=9 bg=#FF8D70
+            rect w=fill h=8
+            rect w=fill h=7 bg=#FF7A76
+            rect w=fill h=9
+            rect w=fill h=5 bg=#FF6E8C
+          }
+        }
+
+        // cloud bars drifting across the disc
+        rect at=580,117 w=200 h=7 radius=4 bg=#3A1D5ECC
+        rect at=612,139 w=240 h=10 radius=5 bg=#2E1850D9
+        rect at=506,162 w=150 h=6 radius=3 bg=#3A1D5EB3
+
+        // first stars and a far-off flock
+        rect at=724,26 w=2 h=2 radius=999 bg=#FFF2E2 opacity=0.55
+        rect at=782,44 w=3 h=3 radius=999 bg=#6EE7D8 opacity=0.4
+        rect at=818,18 w=2 h=2 radius=999 bg=#FFF2E2 opacity=0.7
+        rect at=756,68 w=2 h=2 radius=999 bg=#FFF2E2 opacity=0.35
+        rect at=282,150 w=2 h=2 radius=999 bg=#FFF2E2 opacity=0.4
+        rect at=330,132 w=3 h=3 radius=999 bg=#FFB37C opacity=0.45
+        rect at=262,178 w=2 h=2 radius=999 bg=#FFF2E2 opacity=0.3
+        path "M392 170 L399 175 L406 170" stroke=#FFF2E2 stroke-w=1.5 opacity=0.55
+        path "M424 152 L432 158 L440 152" stroke=#FFF2E2 stroke-w=1.5 opacity=0.65
+        path "M452 168 L458 172 L464 168" stroke=#FFF2E2 stroke-w=1.2 opacity=0.45
+
+        // deck: dark ground plane with a perspective grid
+        rect at=0,210 w=852 h=190 bg=linear(180, #1C1240 0%, #0E0A24 100%)
+        path "M0 210 L852 210" stroke=#4FC7E0 stroke-w=1.5 opacity=0.9
+        path "M0 210 L852 210" stroke=#4FC7E0 stroke-w=5 opacity=0.25 blur=3
+        // horizontals, spacing opens toward the viewer
+        path "M0 224 L852 224" stroke=#4FC7E0 stroke-w=1 opacity=0.22
+        path "M0 242 L852 242" stroke=#4FC7E0 stroke-w=1 opacity=0.22
+        path "M0 264 L852 264" stroke=#4FC7E0 stroke-w=1 opacity=0.22
+        path "M0 292 L852 292" stroke=#4FC7E0 stroke-w=1 opacity=0.22
+        path "M0 326 L852 326" stroke=#4FC7E0 stroke-w=1 opacity=0.22
+        path "M0 364 L852 364" stroke=#4FC7E0 stroke-w=1 opacity=0.22
+        // convergents, vanishing at the sun
+        path "M260 210 L-943 400" stroke=#4FC7E0 stroke-w=1 opacity=0.20
+        path "M340 210 L-610 400" stroke=#4FC7E0 stroke-w=1 opacity=0.20
+        path "M420 210 L-277 400" stroke=#4FC7E0 stroke-w=1 opacity=0.20
+        path "M500 210 L57 400" stroke=#4FC7E0 stroke-w=1 opacity=0.20
+        path "M560 210 L307 400" stroke=#4FC7E0 stroke-w=1 opacity=0.20
+        path "M610 210 L515 400" stroke=#4FC7E0 stroke-w=1 opacity=0.20
+        path "M640 210 L640 400" stroke=#4FC7E0 stroke-w=1 opacity=0.20
+        path "M670 210 L765 400" stroke=#4FC7E0 stroke-w=1 opacity=0.20
+        path "M720 210 L973 400" stroke=#4FC7E0 stroke-w=1 opacity=0.20
+        path "M780 210 L1223 400" stroke=#4FC7E0 stroke-w=1 opacity=0.20
+
+        // the drained pool, sunk into the deck: floor, then shaded walls
+        path "M120 400 L268 216 L708 216 L830 400 Z" bg=#FFF2E2 opacity=0.92
+        path "M268 216 L708 216 L698 234 L278 234 Z" bg=#C9B49A opacity=0.85
+        path "M268 216 L278 234 L168 400 L120 400 Z" bg=#FBEED8 opacity=0.9
+        path "M708 216 L830 400 L780 400 L698 234 Z" bg=#D8C3A8 opacity=0.9
+        // stale water remnant at the deep end, catching the sun
+        path "M232 400 L312 330 L646 330 L706 400 Z" bg=#0F6B7C opacity=0.95
+        path "M312 330 L646 330" stroke=#6EE7D8 stroke-w=1.5
+        path "M338 352 L628 352" stroke=#6EE7D8 stroke-w=1 opacity=0.35
+        path "M470 344 L516 344" stroke=#FFB37C stroke-w=2 opacity=0.65
+        path "M448 362 L534 362" stroke=#FFB37C stroke-w=2 opacity=0.35
+        // cracks radiating up from the waterline
+        path "M424 330 L440 298 L414 266 L430 236" stroke=#1B1440 stroke-w=1.2 opacity=0.4
+        path "M524 330 L536 282 L520 242" stroke=#1B1440 stroke-w=1 opacity=0.35
+        path "M360 330 L348 294 L358 264" stroke=#1B1440 stroke-w=0.8 opacity=0.3
+        // painted depth marks on the far wall
+        text "8 FT" at=292,220 family="Berkeley Mono" size=7 weight=700 \
+            color=#1B1440 opacity=0.6 nowrap
+        text "3 FT" at=642,220 family="Berkeley Mono" size=7 weight=700 \
+            color=#1B1440 opacity=0.6 nowrap
+        // coping edge, lit by the sun
+        path "M268 216 L708 216" stroke=#FFB37C stroke-w=6 opacity=0.35 blur=3
+        path "M268 216 L708 216" stroke=#FFB37C stroke-w=3
+        // pool ladder, shallow end
+        path "M676 220 L676 322" stroke=#4FC7E0 stroke-w=6 opacity=0.2 blur=2
+        path "M698 220 L698 334" stroke=#4FC7E0 stroke-w=6 opacity=0.2 blur=2
+        path "M676 220 L676 322" stroke=#6EE7D8 stroke-w=3
+        path "M698 220 L698 334" stroke=#6EE7D8 stroke-w=3
+        path "M676 244 L698 244" stroke=#6EE7D8 stroke-w=3
+        path "M676 272 L698 272" stroke=#6EE7D8 stroke-w=3
+        path "M676 300 L698 300" stroke=#6EE7D8 stroke-w=3
+
+        // xerox scanlines, bottom scrim, corner vignette
+        rect at=0,352 w=852 h=1 bg=#4FC7E0 opacity=0.3
+        rect at=0,370 w=852 h=1 bg=#4FC7E0 opacity=0.2
+        rect at=0,388 w=852 h=1 bg=#4FC7E0 opacity=0.12
+        rect at=0,356 w=852 h=44 bg=linear(180, #14102E00 0%, #14102ED9 100%)
+        rect at=0,0 w=852 h=400 bg=radial(#00000000 55%, #14102E80 100%)
+      }
+
+      // type layer
+      col w=fill h=fill pad=24,28 {
+        // chromatic title: rose glow under misregistered cyan/rose passes
+        stack w=hug {
+          text "CHROME LAGOON" style=text.display tracking=3 nowrap \
+              color=#FF6E8C blur=14 opacity=0.8
+          text "CHROME LAGOON" style=text.display tracking=3 nowrap \
+              color=#4FC7E0 offset=-2,-1 opacity=0.85
+          text "CHROME LAGOON" style=text.display tracking=3 nowrap \
+              color=#FF6E8C offset=2,1 opacity=0.85
+          text "CHROME LAGOON" style=text.display tracking=3 nowrap \
+              color=color.cream
+        }
+        row gap=8 align=center w=hug offset=0,4 {
+          rect w=28 h=2 bg=linear(90, #6EE7D8 0%, #4FC7E0 100%)
+          text "Motel Ghost Radio" family="Berkeley Mono" size=11 \
+              tracking=1 color=color.teal nowrap
+        }
+        spacer
+        col gap=6 {
+          rect w=fill h=1 bg=linear(90, #FFFFFF3D 0%, #FFFFFF00 100%)
+          row align=center {
+            text "C-30 · STEREO · TYPE I" style=text.mono tracking=0.5 \
+                color=color.peach nowrap
+            spacer
+            text "DOLBY B NR" style=text.mono tracking=0.5 \
+                color=color.teal nowrap
+            spacer
+            text "PST-047" style=text.mono tracking=0.5 \
+                color=color.peach nowrap
+          }
+        }
+      }
+    }
+  }
+
+  canvas w=1050 h=400 {
+
+    // fold rules at panel seams
+    path "M150 0 L150 400" stroke=#FFF2E259 stroke-w=1 stroke-dash=4,4
+    path "M198 0 L198 400" stroke=#FFF2E259 stroke-w=1 stroke-dash=4,4
+
+    // foil sticker, deliberately astride the spine/front fold (x=198)
+    group at=200,306 anchor=center w=96 h=96 radius=999 \
+        bg=linear(160, #FFE0B0 0%, #FFB37C 55%, #FF8D70 100%) \
+        stroke=#FFF2E2 stroke-w=2 rotate=-8 \
+        shadow=shadow.drop,shadow.snap,shadow.rim \
+        pack=center align=center {
+      text "LIMITED RUN" family="Berkeley Mono" size=9 weight=700 \
+          color=color.night align-text=center nowrap
+      rect w=30 h=1 offset=0,2 stroke=#14102E stroke-w=1 \
+          stroke-sides=b stroke-dash=1,3
+      text "50 COPIES" family="Berkeley Mono" size=9 weight=700 \
+          color=color.night align-text=center nowrap offset=0,3
+    }
+  }
+}

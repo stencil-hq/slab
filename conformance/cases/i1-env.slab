@@ -1,0 +1,12 @@
+// P5 fixture: env-driven when conds (portrait derives from vw < vh, dark
+// from the host flag) and a width-conditioned patch against the INCOMING
+// constraint. Env flips re-solve entirely client-side.
+col w=fill gap=4 {
+  rect#hero w=100 h=40 bg=#333333 {
+    when portrait { bg=#00cc66 }
+    when dark { stroke=#ffffff stroke-w=2 }
+  }
+  rect#adapt w=100 h=20 bg=#111111 {
+    when w<600 { h=40 }
+  }
+}

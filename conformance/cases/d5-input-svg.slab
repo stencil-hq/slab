@@ -1,0 +1,6 @@
+// D5 (P9 degradation): interactive input on the svg client — a static SVG
+// cannot dispatch events; the chart reports input and signals as none
+// (cap-input, cap-signal). No text child, so the report stays minimal.
+col w=200 pad=10 {
+  rect#save focusable act=save w=80 h=24 radius=4 bg=#26314a
+}

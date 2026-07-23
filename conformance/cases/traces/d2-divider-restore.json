@@ -1,0 +1,25 @@
+{
+  "doc": "d2-divider-restore",
+  "env": {
+    "vw": 300,
+    "vh": 64,
+    "client": "web",
+    "dark": false,
+    "coarse": false
+  },
+  "steps": [
+    {
+      "t": 0,
+      "divider": {
+        "key": "#root/#split",
+        "extent": 190
+      }
+    },
+    {
+      "t": 16
+    }
+  ],
+  "expect": {
+    "signals": []
+  }
+}

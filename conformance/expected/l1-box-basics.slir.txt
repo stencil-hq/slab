@@ -1,0 +1,119 @@
+slir 1.0
+STRS 22
+  0 ""
+  1 "col@0"
+  2 "col@0/row@0"
+  3 "between"
+  4 "center"
+  5 "col@0/row@0/rect@0"
+  6 "col@0/row@0/rect@1"
+  7 "end"
+  8 "col@0/row@0/rect@2"
+  9 "col@0/row@1"
+  10 "col@0/row@1/rect@0"
+  11 "col@0/row@1/rect@1"
+  12 "col@0/row@1/rect@2"
+  13 "col@0/row@2"
+  14 "col@0/row@2/rect@0"
+  15 "col@0/row@2/spacer@0"
+  16 "col@0/row@2/rect@1"
+  17 "col@0/rect@0"
+  18 "col@0/row@3"
+  19 "col@0/row@3/rect@0"
+  20 "col@0/row@3/rect@1"
+  21 "Inter"
+NODE 17
+  0 Col flags=- parent=- child=1 sib=- key="col@0" id=- line=3
+  1 Row flags=- parent=0 child=2 sib=5 key="col@0/row@0" id=- line=4
+  2 Rect flags=- parent=1 child=- sib=3 key="col@0/row@0/rect@0" id=- line=5
+  3 Rect flags=- parent=1 child=- sib=4 key="col@0/row@0/rect@1" id=- line=6
+  4 Rect flags=- parent=1 child=- sib=- key="col@0/row@0/rect@2" id=- line=7
+  5 Row flags=- parent=0 child=6 sib=9 key="col@0/row@1" id=- line=9
+  6 Rect flags=- parent=5 child=- sib=7 key="col@0/row@1/rect@0" id=- line=10
+  7 Rect flags=- parent=5 child=- sib=8 key="col@0/row@1/rect@1" id=- line=11
+  8 Rect flags=- parent=5 child=- sib=- key="col@0/row@1/rect@2" id=- line=12
+  9 Row flags=- parent=0 child=10 sib=13 key="col@0/row@2" id=- line=14
+  10 Rect flags=- parent=9 child=- sib=11 key="col@0/row@2/rect@0" id=- line=15
+  11 Spacer flags=- parent=9 child=- sib=12 key="col@0/row@2/spacer@0" id=- line=16
+  12 Rect flags=- parent=9 child=- sib=- key="col@0/row@2/rect@1" id=- line=17
+  13 Rect flags=- parent=0 child=- sib=14 key="col@0/rect@0" id=- line=19
+  14 Row flags=- parent=0 child=15 sib=- key="col@0/row@3" id=- line=20
+  15 Rect flags=- parent=14 child=- sib=16 key="col@0/row@3/rect@0" id=- line=20
+  16 Rect flags=- parent=14 child=- sib=- key="col@0/row@3/rect@1" id=- line=20
+AVAL 34 f64s=4
+  0 SizeFixed 400
+  1 Tuple [16, 16, 16, 16]
+  2 Num 8
+  3 PaintSolid #101418
+  4 EnumSym "between"
+  5 EnumSym "center"
+  6 SizeFixed 40
+  7 PaintSolid #1a2028
+  8 SizeFixed 24
+  9 PaintSolid #ff0000
+  10 SizeFixed 12
+  11 PaintSolid #00ff00
+  12 EnumSym "end"
+  13 PaintSolid #0000ff
+  14 Num 4
+  15 SizeFixed 30
+  16 SizeFill 1
+  17 PaintSolid #333333
+  18 SizeFill 3
+  19 PaintSolid #444444
+  20 SizeFixed 60
+  21 PaintSolid #555555
+  22 SizeFixed 20
+  23 SizeFixed 200
+  24 Num 120
+  25 PaintSolid #666666
+  26 SizeFixed 10
+  27 Num 40
+  28 PaintSolid #777777
+  29 SizeFixed 1
+  30 PaintSolid #ffffff40
+  31 Num 6
+  32 PaintSolid #888888
+  33 PaintSolid #999999
+GRAD 0
+SHDW 0
+ATTR 50
+  0 w=@0 pad=@1 gap=@2 bg=@3
+  1 h=@6 gap=@2 pack=@4 align=@5 bg=@7
+  2 w=@8 h=@8 bg=@9
+  3 w=@8 h=@10 self=@12 bg=@11
+  4 w=@8 h=@8 bg=@13
+  5 h=@15 gap=@14
+  6 w=@16 h=@16 bg=@17
+  7 w=@18 h=@16 bg=@19
+  8 w=@20 h=@16 bg=@21
+  9 h=@22
+  10 w=@23 h=@16 max-w=@24 bg=@25
+  11 -
+  12 w=@26 h=@16 min-w=@27 bg=@28
+  13 h=@29 bg=@30
+  14 h=@8 gap=@31 pack=@5
+  15 w=@22 h=@22 bg=@32
+  16 w=@22 h=@22 bg=@33
+PATH 0
+FONT 1
+  0 family="Inter" class=sans weight=400 upem=2048 ascent=1984 descent=-494 line_gap=0 default_advance=1344 blob=@0+411640
+    cmap 32:1777:576 33:1427:589 34:1485:954 35:1453:1297 36:1309:1314 37:1744:2011 38:1425:1319 39:1484:614
+    cmap 40:1437:747 41:1438:747 42:1547:1026 43:1522:1355 44:1501:590 45:1459:942 46:1502:590 47:1455:738
+    cmap 48:1341:1292 49:1342:833 50:1343:1249 51:1345:1265 52:1346:1323 53:1347:1215 54:1349:1270 55:1350:1159
+    cmap 56:1351:1267 57:1352:1270 58:1505:590 59:1508:618 60:1516:1355 61:1520:1355 62:1517:1355 63:1431:1047
+    cmap 64:1445:1978 65:2:1413 66:65:1340 67:73:1496 68:84:1478 69:95:1231 70:137:1209 71:141:1528
+    cmap 72:161:1522 73:197:550 74:266:1169 75:271:1376 76:281:1158 77:292:1850 78:300:1543 79:321:1566
+    cmap 80:375:1308 81:382:1566 82:384:1318 83:397:1314 84:411:1322 85:424:1524 86:456:1413 87:459:2018
+    cmap 88:466:1397 89:472:1390 90:496:1288 91:1439:747 92:1458:738 93:1441:747 94:1546:965 95:1543:934
+    cmap 96:1754:661 97:507:1150 98:578:1254 99:586:1170 100:597:1254 101:614:1194 102:647:758 103:658:1256
+    cmap 104:670:1211 105:689:496 106:719:496 107:727:1124 108:736:496 109:766:1794 110:773:1210 111:790:1228
+    cmap 112:843:1254 113:849:1254 114:852:771 115:871:1081 116:889:670 117:915:1211 118:980:1151 119:984:1676
+    cmap 120:993:1118 121:998:1151 122:1022:1131 123:1443:873 124:1456:681 125:1444:873 126:1528:1355
+WHEN conds=0 patches=0 attrs=0 children=0
+ANIM anims=0 attrs=0 binds=0 trans=0
+PARM 0 enums=0 sites=0
+HOLE 0
+SIGN 0
+IMGS 0
+BLOB 411640 fnv1a64=c97b49922f93865a

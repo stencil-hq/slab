@@ -1,0 +1,24 @@
+{
+  "doc": "l3-anim",
+  "env": {
+    "vw": 800,
+    "vh": 0,
+    "client": "svg",
+    "dark": false,
+    "coarse": false
+  },
+  "steps": [
+    {
+      "t": 0
+    },
+    {
+      "t": 250
+    },
+    {
+      "t": 550
+    }
+  ],
+  "expect": {
+    "signals": []
+  }
+}

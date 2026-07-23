@@ -1,0 +1,21 @@
+// The wire-contract fixture: exercises every op class the consumers
+// (browser mini runtime, wgpu host) are built against. Deterministic under
+// VectorMetrics (renderer=svg); regenerate via tests/test_contract.py.
+stack w=400 h=300 clip {
+  rect w=fill h=fill bg=linear(180, #10141b 0%, #1d2633 100%)
+  col pad=20 gap=12 w=fill h=fill {
+    text "Golden Contract" size=20 weight=600 color=#eaf1f8 tracking=0.5
+    row gap=10 {
+      rect#chip w=60 h=24 radius=8 bg=#4fc7e0 stroke=#ffffff40 stroke-w=2 shadow=0,2,6,#00000066
+      rect w=40 h=24 radius=999 bg=radial(#f2b24c 0%, #b97a1e 100%)
+      rect w=24 h=24 rotate=45 bg=#e0564a
+    }
+    box#veil opacity=0.5 {
+      text "faded layer" size=12 color=#8ba6b5
+    }
+    canvas h=100 clip {
+      path "M0 30 Q50 0 100 30 T200 30" stroke=#4fc7e0 stroke-w=2 at=10,10
+      rect w=80 h=40 at=280,10 backdrop=8,1.2 radius=10 bg=#ffffff14
+    }
+  }
+}

@@ -1,0 +1,11 @@
+// L3: gradient strings pass through the wire VERBATIM; solid colors
+// normalize to #rrggbbaa (hex4/8, rgb(), oklch(), named white/black).
+col w=280 pad=10 gap=8 {
+  rect w=240 h=30 bg=linear(135, #241A4E 0%, #E8865E 100%)
+  rect w=240 h=30 bg=radial(#FFE0B0 0%, #FFB37C00 100%)
+  rect w=240 h=30 bg=linear(90, oklch(72% 0.16 250) 0%, #10141B 100%)
+  rect w=100 h=20 bg=#fff8
+  rect w=100 h=20 bg=rgb(64, 128, 255)
+  rect w=100 h=20 bg=oklch(72% 0.16 250)
+  rect w=100 h=20 bg=white stroke=black
+}

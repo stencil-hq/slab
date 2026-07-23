@@ -1,0 +1,11 @@
+# deps
+node_modules/
+
+# build artifacts (src/ is committed on purpose — consumers compile parser.c)
+build/
+target/
+*.wasm
+*.dylib
+*.so
+*.o
+log.html

@@ -1,0 +1,263 @@
+{
+  "def component": {
+    "prefix": "def",
+    "body": [
+      "def ${1:Chip}(${2:label}, ${3:tone}=${4:color.accent}) {",
+      "\trow pad=${5:4,10} gap=${6:6} radius=${7:999} stroke=$3 align=center w=hug {",
+      "\t\ttext $2 size=${8:12} color=$3 nowrap",
+      "\t}",
+      "}"
+    ],
+    "description": "Component definition with parameters and defaults"
+  },
+  "exported def": {
+    "prefix": "defexport",
+    "body": [
+      "def ${1:Track}(${2:title}, ${3:playing}=false) export {",
+      "\trow focusable act=${4:pick} pad=${5:8,12} gap=${6:12} align=center radius=${7:10} {",
+      "\t\ttext $2 size=${8:13}",
+      "\t}",
+      "}"
+    ],
+    "description": "Exported component: standalone host-instantiable list item (§13.4)"
+  },
+  "tokens block": {
+    "prefix": "tokens",
+    "body": [
+      "tokens {",
+      "\tcolor {",
+      "\t\tbg    ${1:#0e1116}",
+      "\t\tink   ${2:#e6edf3}",
+      "\t\taccent ${3:oklch(72% 0.16 250)}",
+      "\t}",
+      "\ttext {",
+      "\t\tbody { family \"${4:Inter}\"; size ${5:13} }",
+      "\t\tlabel { size 10; weight 700; tracking 1.6 }",
+      "\t}",
+      "}"
+    ],
+    "description": "Design-token declarations with nested groups"
+  },
+  "params block": {
+    "prefix": "params",
+    "body": [
+      "params {",
+      "\t${1:title}   text = \"${2:Settings}\"",
+      "\t${3:compact} bool = ${4:false}",
+      "}"
+    ],
+    "description": "Typed host inputs (§13.1); reference as param.name"
+  },
+  "hole": {
+    "prefix": "hole",
+    "body": [
+      "hole ${1:rows} w=${2:fill} h=${3:336} scroll"
+    ],
+    "description": "Host-filled viewport (§13.2); both axes must be determinate"
+  },
+  "anim block": {
+    "prefix": "anim",
+    "body": [
+      "anim ${1:pulse} {",
+      "\t0%   { ${2:opacity}=${3:0.4} }",
+      "\t100% { $2=${4:1} }",
+      "}"
+    ],
+    "description": "Keyframe animation declaration"
+  },
+  "when state": {
+    "prefix": "when",
+    "body": [
+      "when ${1|hover,pressed,focus,focus-visible,disabled,selected,composing,dragging,drop|} { ${2:bg}=${3:#2B3547} }"
+    ],
+    "description": "State-conditional attribute overrides"
+  },
+  "when breakpoint": {
+    "prefix": "whenw",
+    "body": [
+      "when w<${1:420} { ${2:gap}=${3:4} }"
+    ],
+    "description": "Width-breakpoint conditional block"
+  },
+  "when env": {
+    "prefix": "whenenv",
+    "body": [
+      "when ${1|dark,portrait,landscape,coarse,web,gpu,tui,svg,png|} { ${2:bg}=${3:#0e1116} }"
+    ],
+    "description": "Environment / renderer-class conditional block"
+  },
+  "row": {
+    "prefix": "row",
+    "body": [
+      "row gap=${1:8} align=${2:center} {",
+      "\t$0",
+      "}"
+    ],
+    "description": "Horizontal container"
+  },
+  "col": {
+    "prefix": "col",
+    "body": [
+      "col w=${1:360} pad=${2:24} gap=${3:8} radius=${4:12} bg=${5:color.bg} {",
+      "\t$0",
+      "}"
+    ],
+    "description": "Vertical container card scaffold"
+  },
+  "canvas": {
+    "prefix": "canvas",
+    "body": [
+      "canvas w=${1:fill} h=${2:48} {",
+      "\tpath \"${3:M0 36 L40 12 L80 40}\" stroke=${4:color.accent} stroke-w=${5:2}",
+      "\trect at=${6:120,0} w=${7:1} h=${8:48} bg=${9:color.ink}",
+      "}"
+    ],
+    "description": "Absolute-positioned drawing surface"
+  },
+  "grid": {
+    "prefix": "grid",
+    "body": [
+      "grid cols=${1:250,fill,120} gap=${2:18,15} {",
+      "\t$0",
+      "}"
+    ],
+    "description": "Grid container with column template"
+  },
+  "text": {
+    "prefix": "text",
+    "body": [
+      "text \"${1:Pale Green Things}\" size=${2:14} weight=${3:600} color=${4:color.ink}"
+    ],
+    "description": "Text leaf with common typography attributes"
+  },
+  "component call": {
+    "prefix": "chip",
+    "body": [
+      "${1:Chip}#${2:a} ${3:label}=\"${4:FLAC}\" ${5:tone}=${6:color.accent}"
+    ],
+    "description": "Component instantiation with id and named arguments"
+  },
+  "action row": {
+    "prefix": "act",
+    "body": [
+      "row focusable act=${1:save} pad=${2:8,16} radius=${3:8} bg=${4:#222A38} align=center w=hug {",
+      "\twhen hover { bg=${5:#2B3547} }",
+      "\ttext \"${6:Save}\" size=${7:13}",
+      "}"
+    ],
+    "description": "Focusable button emitting a named signal (§13.3)"
+  },
+  "edit field": {
+    "prefix": "field",
+    "body": [
+      "text#${1:field} param.${2:draft} field=${2:draft} size=${3:13} nowrap w=${4:300} h=${5:32} pad=${6:6,10} radius=${7:8} clip"
+    ],
+    "description": "Kernel-edited single-line text field (§15.6)"
+  },
+  "icon declaration and use": {
+    "prefix": "icondecl",
+    "body": [
+      "icon ${1:check} viewbox=${2:24} {",
+      "\tpath \"${3:M4 12 L9 17 L20 6}\" bg=current",
+      "}",
+      "icon $1 size=${4:16} color=${5:color.ink}"
+    ],
+    "description": "Reusable static-path icon with current-color paint"
+  },
+  "recursive list schema": {
+    "prefix": "listrecursive",
+    "body": [
+      "def ${1:Tree}(label=\"\", children=list($1)) export {",
+      "\tcol gap=${2:4} {",
+      "\t\ttext label",
+      "\t\teach children",
+      "\t}",
+      "}",
+      "params {",
+      "\t${3:roots} list($1) = [",
+      "\t\t$1(label=\"${4:root}\", children=[]),",
+      "\t]",
+      "}"
+    ],
+    "description": "Recursive list(Def) field, nested default, and nested each"
+  },
+  "rich text list runs": {
+    "prefix": "eachspan",
+    "body": [
+      "def ${1:Run}(text=\"\", tone=${2:#E2E8F0}) export {",
+      "\tspan text color=tone",
+      "}",
+      "params { ${3:runs} list($1) = [] }",
+      "para { each param.$3 key=text }"
+    ],
+    "description": "Para whose direct each template is exactly one styled span"
+  },
+  "virtual list": {
+    "prefix": "virtualeach",
+    "body": [
+      "col#${1:viewport} w=${2:fill} h=${3:320} scroll {",
+      "\teach param.${4:rows} #${5:rows} virtual item-extent=${6:20} overscan=${7:4}",
+      "}"
+    ],
+    "description": "Uniform-height top-level each windowed by its main-axis scroll parent"
+  },
+  "sticky two-axis scroll": {
+    "prefix": "scrollboth",
+    "body": [
+      "col#${1:viewport} w=${2:360} h=${3:240} scroll=both {",
+      "\trow sticky { text \"${4:Heading}\" }",
+      "\t$0",
+      "}"
+    ],
+    "description": "Main+cross scroll container with a direct main-start sticky child"
+  },
+  "split divider": {
+    "prefix": "divider",
+    "body": [
+      "row w=${1:640} h=${2:400} {",
+      "\tcol#${3:source} w=${4:240} min-w=${5:160} { $0 }",
+      "\tdivider#${6:split} w=${7:4} resize=${8:resized} dblclick=${9:reset}",
+      "\tcol#${10:detail} w=fill min-w=${11:240}",
+      "}"
+    ],
+    "description": "Focusable split handle controlling its previous row/col sibling"
+  },
+  "anchored overlay": {
+    "prefix": "popover",
+    "body": [
+      "stack#${1:surface} {",
+      "\trow#${2:anchor} focusable act=${3:open}",
+      "\tcol#${4:menu} attach=\"#$1/#$2\" gravity=${5|below-start,below-center,below-end,above-start,above-center,above-end,left-start,left-center,left-end,right-start,right-center,right-end|} collide=${6|auto,none|} offset=${7:0,4} {",
+      "\t\t$0",
+      "\t}",
+      "}"
+    ],
+    "description": "Stack/canvas child anchored to an exact full node key"
+  },
+  "drag and drop": {
+    "prefix": "dragdrop",
+    "body": [
+      "row#${1:source} press=${2:selected} pointer-move=${3:pointer_moved} pointer-up=${4:pointer_released} drag=${5:drag_started} drag-update=${6:drag_updated} drag-end=${7:drag_ended} drag-ghost role=button label=\"${8:Draggable item}\" {",
+      "\twhen dragging { opacity=${9:0.6} }",
+      "}",
+      "row#${10:target} drop=${11:dropped} {",
+      "\twhen drop { stroke=${12:color.accent} }",
+      "}"
+    ],
+    "description": "Pointer lifecycle plus drag start/update/end, cursor ghost, and drop target"
+  },
+  "accessibility metadata": {
+    "prefix": "a11y",
+    "body": [
+      "role=${1:button} label=\"${2:Accessible name}\" desc=\"${3:Accessible description}\""
+    ],
+    "description": "Scene-exported role (open identifier), label, and description"
+  },
+  "accessibility state and relationships": {
+    "prefix": "a11ystate",
+    "body": [
+      "checked=${1|false,true,mixed|} expanded=${2|false,true|} selected=${3|false,true|} active-descendant=\"${4:#item}\" controls=\"${5:#panel}\" value-now=${6:50} value-min=${7:0} value-max=${8:100} value-text=\"${9:50 percent}\" modal=${10|false,true|} live=${11|off,polite,assertive|} live-atomic=${12|false,true|} level=${13:1} pos-in-set=${14:1} set-size=${15:1}"
+    ],
+    "description": "Typed accessibility state, relationships, range values, and live-region metadata"
+  }
+}

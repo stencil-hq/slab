@@ -1,0 +1,7 @@
+// Custom activation keys bubble through a focused edit field to the dialog.
+col w=160 {
+  col#dialog keys=Escape,F2 act=cancel w=160 h=80 pad=8 {
+    when disabled { opacity=0.5 }
+    text#field "draft" field=value w=120 h=24
+  }
+}

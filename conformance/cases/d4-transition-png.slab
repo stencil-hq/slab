@@ -1,0 +1,8 @@
+// D4 (P9 degradation): transition on the png client — static export has no
+// state flips to tween; the chart reports transition as none:cap-transition
+// (slab render prints the same note to stderr).
+col w=200 pad=10 {
+  rect#warm w=100 h=24 bg=#102030 transition=200,linear {
+    when hot { bg=#e0564a }
+  }
+}

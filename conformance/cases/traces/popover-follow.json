@@ -1,0 +1,58 @@
+{
+  "doc": "popover-follow",
+  "env": {
+    "vw": 240,
+    "vh": 120,
+    "client": "web",
+    "dark": false,
+    "coarse": false
+  },
+  "steps": [
+    {
+      "t": 0,
+      "event": {
+        "type": "pointer-down",
+        "x": 8,
+        "y": 8
+      }
+    },
+    {
+      "t": 16,
+      "event": {
+        "type": "pointer-up",
+        "x": 8,
+        "y": 8
+      }
+    },
+    {
+      "t": 32,
+      "param": {
+        "name": "pop-x",
+        "kind": "num",
+        "value": 57.5
+      }
+    },
+    {
+      "t": 48,
+      "param": {
+        "name": "pop-y",
+        "kind": "num",
+        "value": 19.6
+      }
+    },
+    {
+      "t": 64,
+      "param": {
+        "name": "pop",
+        "kind": "bool",
+        "value": 1
+      }
+    },
+    {
+      "t": 80
+    }
+  ],
+  "expect": {
+    "focus_key": "canvas@0/#q"
+  }
+}

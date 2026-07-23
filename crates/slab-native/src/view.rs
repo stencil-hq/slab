@@ -1,0 +1,715 @@
+//! `slab-native FILE.slab` — generic document viewer: compile the source
+//! in-process (assets resolve against the file's directory), hand SLIR to
+//! the kernel, and drive the same winit/wgpu loop as the demos. Signals
+//! print to stdout; holes render empty (hole content is app territory —
+//! mount a child instance like `--demo settings` does when you need one).
+//!
+//! # Window chrome contract (`--undecorated`)
+//! Borderless windows flip the document-global state `undecorated` on, so a
+//! document renders its own chrome behind `when undecorated { … }` (static
+//! renders preview it with `--state undecorated`). The chrome talks back
+//! through reserved activation signals the viewer intercepts instead of the
+//! host: `act=window-close`, `act=window-minimize`, `act=window-maximize`
+//! (toggle), and `act=window-drag` (starts an OS window move on press —
+//! bind it on the titlebar container; nested controls still win).
+
+#[path = "a11y.rs"]
+pub(crate) mod a11y;
+
+use crate::demo::{self, write_png};
+use crate::renderer::{LayerInput, Renderer};
+use crate::{ClickCounter, NativeDocument};
+use slab_kernel::dispatch as kdispatch;
+use slab_kernel::dispatch::Event;
+use slab_kernel::frame::{self as kframe};
+use slab_kernel::slir::Doc;
+use std::path::Path;
+use std::sync::Arc;
+use std::time::Instant;
+use winit::application::ApplicationHandler;
+use winit::dpi::{LogicalPosition, LogicalSize};
+use winit::event::{ElementState, Ime, MouseScrollDelta, WindowEvent};
+use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
+use winit::keyboard::{Key, NamedKey};
+use winit::window::{Window, WindowId};
+
+/// Kernel client code for the GPU driver (`caps::CLIENTS` index).
+const CLIENT_GPU: u32 = 1;
+/// Window actions a document's own chrome requests through reserved
+/// activation signal names (`act=window-close` …). The viewer performs the
+/// action; the signal still prints for host visibility.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum WindowCmd {
+    Close,
+    Minimize,
+    /// Toggles maximized.
+    Maximize,
+    /// Starts an OS window move; only meaningful on pointer press.
+    Drag,
+}
+
+impl WindowCmd {
+    /// Maps a signal name to its window action (None = ordinary app signal).
+    pub fn from_signal(name: &str) -> Option<WindowCmd> {
+        match name {
+            "window-close" => Some(WindowCmd::Close),
+            "window-minimize" => Some(WindowCmd::Minimize),
+            "window-maximize" => Some(WindowCmd::Maximize),
+            "window-drag" => Some(WindowCmd::Drag),
+            _ => None,
+        }
+    }
+}
+
+/// Activation signal name bound to `node` (its `act=` binding), if any.
+pub fn act_signal(doc: &Doc, node: u32) -> Option<&str> {
+    for s in 0..doc.sign_name.len() {
+        if doc.sign_node[s] == node && doc.sign_trigger[s] == 0 {
+            return doc.strs.get(doc.sign_name[s] as usize).map(String::as_str);
+        }
+    }
+    None
+}
+
+/// Compile `path` and run it windowed (or `--headless-frame` offscreen).
+/// Diagnostics print to stderr in CLI format; errors abort before any GPU
+/// work.
+pub fn run(path: &Path, opts: demo::Opts) -> Result<(), String> {
+    let src = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let base = path.parent().unwrap_or(Path::new(".")).to_path_buf();
+    let name = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("document")
+        .to_string();
+    run_source(&name, &src, base, opts)
+}
+
+/// Compile embedded `.slab` source and run it through the same viewer loop.
+/// Backs baked-in demos (`--demo modern`) that carry their document in the
+/// binary instead of on disk.
+pub fn run_source(
+    name: &str,
+    src: &str,
+    base_dir: std::path::PathBuf,
+    opts: demo::Opts,
+) -> Result<(), String> {
+    let copts = slab_compile::Options {
+        base_dir,
+        ..Default::default()
+    };
+    let (slir, diags) = slab_compile::compile(src, &copts);
+    for d in &diags.0 {
+        eprintln!("{}", d.format(name));
+    }
+    let Some(slir) = slir else {
+        return Err("compile failed".into());
+    };
+    let bytes = slab_slir::write(&slir);
+    let mut doc =
+        NativeDocument::decode(&bytes).map_err(|err| format!("SLIR decode failed: {err}"))?;
+    if !doc.inst.ok {
+        return Err(format!("SLIR decode failed: {:?}", doc.inst.doc.errs));
+    }
+    if opts.undecorated {
+        // documents render their own chrome behind `when undecorated`
+        kframe::inst_set_state(&mut doc.inst, "undecorated", true);
+    }
+    if !doc.inst.doc.hole_name.is_empty() {
+        eprintln!("slab-native: note: document declares holes; they render empty here");
+    }
+    if opts.headless_out.is_some() {
+        return headless_frame(&mut doc, &opts);
+    }
+
+    let title = format!("slab — {name}");
+    let event_loop = EventLoop::<a11y::Event>::with_user_event()
+        .build()
+        .map_err(|e| e.to_string())?;
+    event_loop.set_control_flow(ControlFlow::Wait);
+    let mut app = ViewApp::new(doc, title, opts, event_loop.create_proxy());
+    event_loop.run_app(&mut app).map_err(|e| e.to_string())?;
+    eprintln!("slab-native: presented {} frames", app.frames);
+    if app.frames == 0 {
+        return Err("no frames presented".into());
+    }
+    Ok(())
+}
+
+/// Render one frame offscreen at `--t` and write a PNG (no probe pixels —
+/// arbitrary documents carry no known colors to assert).
+fn headless_frame(doc: &mut NativeDocument, opts: &demo::Opts) -> Result<(), String> {
+    let out = opts.headless_out.clone().ok_or("missing output path")?;
+    let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
+    let (adapter, device, queue) =
+        crate::request_device(&instance, None).ok_or("no wgpu adapter available (headless)")?;
+    eprintln!(
+        "slab-native: adapter {} ({:?})",
+        adapter.get_info().name,
+        adapter.get_info().backend
+    );
+    let mut renderer = Renderer::new(device, queue);
+    kframe::inst_set_env(
+        &mut doc.inst,
+        opts.width,
+        opts.height,
+        CLIENT_GPU,
+        opts.dark,
+        false,
+    );
+    let doc_id = renderer.register_doc(&doc.inst.doc, &doc.imgs, doc.registered_fonts());
+    let fr = kframe::inst_frame(&mut doc.inst, opts.t);
+    let pending = kframe::inst_take_signals(&mut doc.inst);
+    for name in pending.sig_name {
+        println!("signal: {}", slab_kernel::slir::str_at(&doc.inst.doc, name));
+    }
+
+    let scale = opts.scale.unwrap_or(1.0);
+    let tw = (opts.width * scale).ceil() as u32;
+    let th = (opts.height * scale).ceil() as u32;
+    let layers = [LayerInput {
+        doc_id,
+        inst: &doc.inst,
+        frame: &fr,
+        ox: 0.0,
+        oy: 0.0,
+        clip: None,
+    }];
+    let build = renderer.build(&layers, scale, tw, th);
+    renderer.render(&build, None, wgpu::Color::BLACK);
+    let (w, h, px) = renderer.read_pixels().ok_or("readback failed")?;
+    write_png(&out, w, h, &px)?;
+    eprintln!(
+        "slab-native: headless-frame OK ({w}x{h}px) -> {}",
+        out.display()
+    );
+    Ok(())
+}
+
+struct ViewApp {
+    opts: demo::Opts,
+    title: String,
+    window: Option<Arc<Window>>,
+    a11y_proxy: EventLoopProxy<a11y::Event>,
+    accessibility: Option<a11y::WindowAccessibility>,
+    surface: Option<wgpu::Surface<'static>>,
+    surface_format: wgpu::TextureFormat,
+    renderer: Option<Renderer>,
+    doc: NativeDocument,
+    doc_id: usize,
+    mods: u32,
+    cursor: (f64, f64),
+    cursor_sample: Option<(f64, f64)>,
+    clicks: ClickCounter,
+    composing: bool,
+    start: Instant,
+    frames: u64,
+    exit_deadline: Option<Instant>,
+}
+
+impl ViewApp {
+    fn new(
+        doc: NativeDocument,
+        title: String,
+        opts: demo::Opts,
+        a11y_proxy: EventLoopProxy<a11y::Event>,
+    ) -> ViewApp {
+        ViewApp {
+            exit_deadline: opts
+                .exit_after_ms
+                .map(|ms| Instant::now() + std::time::Duration::from_millis(ms)),
+            opts,
+            title,
+            window: None,
+            a11y_proxy,
+            accessibility: None,
+            surface: None,
+            surface_format: wgpu::TextureFormat::Bgra8Unorm,
+            renderer: None,
+            doc,
+            doc_id: 0,
+            mods: 0,
+            cursor: (0.0, 0.0),
+            cursor_sample: None,
+            clicks: ClickCounter::default(),
+            composing: false,
+            start: Instant::now(),
+            frames: 0,
+        }
+    }
+
+    fn t_ms(&self) -> f64 {
+        self.start.elapsed().as_secs_f64() * 1000.0
+    }
+
+    fn scale(&self) -> f64 {
+        self.window.as_ref().map_or(1.0, |w| w.scale_factor())
+    }
+
+    fn configure_surface(&mut self) {
+        let (Some(window), Some(surface), Some(renderer)) =
+            (&self.window, &self.surface, &self.renderer)
+        else {
+            return;
+        };
+        let size = window.inner_size();
+        if size.width == 0 || size.height == 0 {
+            return;
+        }
+        surface.configure(
+            &renderer.device,
+            &wgpu::SurfaceConfiguration {
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                format: self.surface_format,
+                width: size.width,
+                height: size.height,
+                present_mode: wgpu::PresentMode::Fifo,
+                alpha_mode: wgpu::CompositeAlphaMode::Opaque,
+                view_formats: vec![],
+                desired_maximum_frame_latency: 2,
+            },
+        );
+        let s = window.scale_factor();
+        kframe::inst_set_env(
+            &mut self.doc.inst,
+            size.width as f64 / s,
+            size.height as f64 / s,
+            CLIENT_GPU,
+            self.opts.dark,
+            false,
+        );
+    }
+
+    fn refresh_accessibility(
+        &mut self,
+        frame: &slab_kernel::flatten::Frame,
+        size: winit::dpi::PhysicalSize<u32>,
+    ) {
+        let scale = self.scale();
+        let layer = a11y::SceneLayer::new(self.doc_id, &self.doc.inst, frame);
+        if let Some(accessibility) = &mut self.accessibility {
+            accessibility.refresh(
+                &self.title,
+                f64::from(size.width) / scale,
+                f64::from(size.height) / scale,
+                scale,
+                &[layer],
+            );
+            accessibility.update(false);
+        }
+    }
+
+    fn draw(&mut self) {
+        let t = self.t_ms();
+        let Some(window) = self.window.clone() else {
+            return;
+        };
+        let size = window.inner_size();
+        if size.width == 0 || size.height == 0 {
+            return;
+        }
+        let fr = kframe::inst_frame(&mut self.doc.inst, t);
+        let pending = kframe::inst_take_signals(&mut self.doc.inst);
+        for name in pending.sig_name {
+            println!(
+                "signal: {}",
+                slab_kernel::slir::str_at(&self.doc.inst.doc, name)
+            );
+        }
+        self.refresh_accessibility(&fr, size);
+        let Some(renderer) = self.renderer.as_mut() else {
+            return;
+        };
+        let Some(surface) = self.surface.as_ref() else {
+            return;
+        };
+        let layers = [LayerInput {
+            doc_id: self.doc_id,
+            inst: &self.doc.inst,
+            frame: &fr,
+            ox: 0.0,
+            oy: 0.0,
+            clip: None,
+        }];
+        let scale = window.scale_factor();
+        let build = renderer.build(&layers, scale, size.width, size.height);
+        let frame_tex = match surface.get_current_texture() {
+            Ok(t) => t,
+            Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
+                // reconfigure and try again next frame — keep the redraw
+                // chain alive (an animating doc reschedules only after a
+                // SUCCESSFUL draw)
+                self.configure_surface();
+                window.request_redraw();
+                return;
+            }
+            Err(e) => {
+                eprintln!("slab-native: surface error: {e}");
+                return;
+            }
+        };
+        let view = frame_tex
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+        renderer.render(
+            &build,
+            Some((&view, self.surface_format)),
+            wgpu::Color::BLACK,
+        );
+        window.pre_present_notify();
+        frame_tex.present();
+        self.frames += 1;
+
+        if self.doc.inst.dirty || self.doc.inst.ms.active || self.opts.max_frames.is_some() {
+            window.request_redraw();
+        }
+    }
+
+    fn dispatch(&mut self, event_loop: &ActiveEventLoop, ev: Event) {
+        let eff = kframe::inst_dispatch(&mut self.doc.inst, &ev);
+        let mut cmd = None;
+        for k in 0..eff.sig_name.len() {
+            let name = self
+                .doc
+                .inst
+                .doc
+                .strs
+                .get(eff.sig_name[k] as usize)
+                .map(String::as_str)
+                .unwrap_or("?");
+            let text = &eff.sig_text[k];
+            if text.is_empty() {
+                println!("signal: {name}");
+            } else {
+                println!("signal: {name} {text:?}");
+            }
+            cmd = cmd.or_else(|| WindowCmd::from_signal(name));
+        }
+        match cmd {
+            Some(WindowCmd::Close) => event_loop.exit(),
+            Some(WindowCmd::Minimize) => {
+                if let Some(w) = &self.window {
+                    w.set_minimized(true);
+                }
+            }
+            Some(WindowCmd::Maximize) => {
+                if let Some(w) = &self.window {
+                    w.set_maximized(!w.is_maximized());
+                }
+            }
+            // Drag acts on pointer PRESS (see MouseInput), not on Activate.
+            Some(WindowCmd::Drag) | None => {}
+        }
+        let Some(window) = &self.window else { return };
+        if eff.repaint {
+            window.request_redraw();
+        }
+        window.set_cursor(crate::cursor_icon(eff.cursor));
+        if eff.has_ime {
+            window.set_ime_cursor_area(
+                LogicalPosition::new(eff.ime_x, eff.ime_y),
+                LogicalSize::new(eff.ime_w.max(1.0), eff.ime_h),
+            );
+        }
+    }
+
+    fn base_event(&self, etype: u32) -> Event {
+        Event {
+            etype,
+            x: self.cursor.0,
+            y: self.cursor.1,
+            dx: 0.0,
+            dy: 0.0,
+            button: 0,
+            clicks: 0,
+            key: String::new(),
+            text: String::new(),
+            mods: self.mods,
+        }
+    }
+
+    fn accessibility_action(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        request: &accesskit::ActionRequest,
+    ) {
+        let routed = self
+            .accessibility
+            .as_ref()
+            .and_then(|accessibility| accessibility.resolve_action(request));
+        let Some(routed) = routed.filter(|action| action.document == self.doc_id) else {
+            return;
+        };
+        match routed.apply(&mut self.doc.inst) {
+            a11y::ActionResult::Ignored => return,
+            a11y::ActionResult::Changed => {}
+            a11y::ActionResult::Dispatch(event) => self.dispatch(event_loop, event),
+        }
+        if let Some(window) = &self.window {
+            window.request_redraw();
+        }
+    }
+}
+
+impl ApplicationHandler<a11y::Event> for ViewApp {
+    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        if self.window.is_some() {
+            return;
+        }
+        let window = match event_loop.create_window(
+            Window::default_attributes()
+                .with_title(&self.title)
+                .with_inner_size(LogicalSize::new(self.opts.width, self.opts.height))
+                .with_decorations(!self.opts.undecorated)
+                .with_visible(false),
+        ) {
+            Ok(w) => Arc::new(w),
+            Err(e) => {
+                eprintln!("slab-native: window creation failed: {e}");
+                event_loop.exit();
+                return;
+            }
+        };
+        let accessibility =
+            a11y::WindowAccessibility::new(event_loop, &window, self.a11y_proxy.clone());
+        window.set_ime_allowed(true);
+        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
+        let surface = match instance.create_surface(window.clone()) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("slab-native: surface creation failed: {e}");
+                event_loop.exit();
+                return;
+            }
+        };
+        let Some((adapter, device, queue)) = crate::request_device(&instance, Some(&surface))
+        else {
+            eprintln!("slab-native: no wgpu adapter");
+            event_loop.exit();
+            return;
+        };
+        let caps = surface.get_capabilities(&adapter);
+        self.surface_format = caps
+            .formats
+            .iter()
+            .copied()
+            .find(|f| !f.is_srgb())
+            .unwrap_or(caps.formats[0]);
+        let mut renderer = Renderer::new(device, queue);
+        self.doc_id = renderer.register_doc(
+            &self.doc.inst.doc,
+            &self.doc.imgs,
+            self.doc.registered_fonts(),
+        );
+        self.renderer = Some(renderer);
+        self.surface = Some(surface);
+        self.window = Some(window.clone());
+        self.accessibility = Some(accessibility);
+        self.configure_surface();
+        window.set_visible(true);
+        window.request_redraw();
+    }
+
+    fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
+        if let (Some(accessibility), Some(window)) = (&mut self.accessibility, &self.window) {
+            accessibility.process_event(window, &event);
+        }
+        match event {
+            WindowEvent::CloseRequested => {
+                let ev = self.base_event(kdispatch::E_CLOSE);
+                self.dispatch(event_loop, ev);
+                event_loop.exit();
+            }
+            WindowEvent::RedrawRequested => {
+                self.draw();
+                if let Some(max) = self.opts.max_frames
+                    && self.frames >= max
+                {
+                    event_loop.exit();
+                }
+            }
+            WindowEvent::Resized(_) => {
+                self.configure_surface();
+                if let Some(w) = &self.window {
+                    w.request_redraw();
+                }
+            }
+            WindowEvent::ScaleFactorChanged { .. } => {
+                self.cursor_sample = None;
+                self.configure_surface();
+                if let Some(window) = &self.window {
+                    window.request_redraw();
+                }
+            }
+            WindowEvent::ModifiersChanged(m) => {
+                let st = m.state();
+                self.mods = 0;
+                if st.shift_key() {
+                    self.mods |= kdispatch::M_SHIFT;
+                }
+                if st.alt_key() {
+                    self.mods |= kdispatch::M_ALT;
+                }
+                if st.control_key() {
+                    self.mods |= kdispatch::M_CTRL;
+                }
+                if st.super_key() {
+                    self.mods |= kdispatch::M_META;
+                }
+            }
+            WindowEvent::CursorMoved { position, .. } => {
+                let s = self.scale();
+                let cursor = (position.x / s, position.y / s);
+                let (dx, dy) = crate::cursor_delta(&mut self.cursor_sample, cursor);
+                self.cursor = cursor;
+                let mut ev = self.base_event(kdispatch::E_POINTER_MOVE);
+                ev.dx = dx;
+                ev.dy = dy;
+                self.dispatch(event_loop, ev);
+            }
+            WindowEvent::CursorLeft { .. } => {
+                self.cursor_sample = None;
+            }
+            WindowEvent::MouseInput { state, button, .. } => {
+                let btn = crate::mouse_button_id(button);
+                let clicks = if state == ElementState::Pressed {
+                    self.clicks.pointer_down(btn, self.cursor.0, self.cursor.1)
+                } else {
+                    0
+                };
+                // window-drag regions start an OS move on press; a nested
+                // act-bound control (close button in the titlebar) wins
+                if state == ElementState::Pressed && btn == 0 {
+                    let chain = kframe::inst_hit(&self.doc.inst, self.cursor.0, self.cursor.1);
+                    for node in chain.iter().rev() {
+                        // nearest act-bound node decides: drag region → OS
+                        // move; anything else (app control) → kernel path
+                        let Some(sig) = act_signal(&self.doc.inst.doc, *node) else {
+                            continue;
+                        };
+                        if WindowCmd::from_signal(sig) == Some(WindowCmd::Drag)
+                            && let Some(window) = &self.window
+                        {
+                            let _ = window.drag_window();
+                        }
+                        break;
+                    }
+                }
+                let etype = if state == ElementState::Pressed {
+                    kdispatch::E_POINTER_DOWN
+                } else {
+                    kdispatch::E_POINTER_UP
+                };
+                let mut ev = self.base_event(etype);
+                ev.button = btn;
+                ev.clicks = clicks;
+                self.dispatch(event_loop, ev);
+            }
+            WindowEvent::MouseWheel { delta, .. } => {
+                let (dx, dy) = match delta {
+                    MouseScrollDelta::LineDelta(x, y) => (-x as f64 * 40.0, -y as f64 * 40.0),
+                    MouseScrollDelta::PixelDelta(p) => {
+                        let s = self.scale();
+                        (-p.x / s, -p.y / s)
+                    }
+                };
+                let mut ev = self.base_event(kdispatch::E_WHEEL);
+                ev.dx = dx;
+                ev.dy = dy;
+                self.dispatch(event_loop, ev);
+            }
+            WindowEvent::KeyboardInput { event, .. } => {
+                if event.state != ElementState::Pressed || self.composing {
+                    return;
+                }
+                if let Some(name) = crate::key_name(&event.logical_key) {
+                    let mut ev = self.base_event(kdispatch::E_KEY_DOWN);
+                    ev.key = name;
+                    self.dispatch(event_loop, ev);
+                }
+                let insertable = matches!(event.logical_key, Key::Character(_))
+                    || event.logical_key == Key::Named(NamedKey::Space);
+                let no_cmd = self.mods & (kdispatch::M_CTRL | kdispatch::M_META) == 0;
+                if insertable
+                    && no_cmd
+                    && let Some(text) = &event.text
+                {
+                    let mut ev = self.base_event(kdispatch::E_TEXT);
+                    ev.text = text.to_string();
+                    self.dispatch(event_loop, ev);
+                }
+            }
+            WindowEvent::Ime(ime) => match ime {
+                Ime::Enabled => {}
+                Ime::Preedit(text, _cursor) => {
+                    if !text.is_empty() {
+                        if !self.composing {
+                            self.composing = true;
+                            let ev = self.base_event(kdispatch::E_COMPOSITION_START);
+                            self.dispatch(event_loop, ev);
+                        }
+                        let mut ev = self.base_event(kdispatch::E_COMPOSITION_UPDATE);
+                        ev.text = text;
+                        self.dispatch(event_loop, ev);
+                    }
+                }
+                Ime::Commit(text) => {
+                    if self.composing {
+                        self.composing = false;
+                        let mut ev = self.base_event(kdispatch::E_COMPOSITION_END);
+                        ev.text = text;
+                        self.dispatch(event_loop, ev);
+                    } else {
+                        // direct commit without preedit (e.g. dead keys)
+                        let mut ev = self.base_event(kdispatch::E_TEXT);
+                        ev.text = text;
+                        self.dispatch(event_loop, ev);
+                    }
+                }
+                Ime::Disabled => {
+                    if self.composing {
+                        self.composing = false;
+                        let ev = self.base_event(kdispatch::E_COMPOSITION_END);
+                        self.dispatch(event_loop, ev);
+                    }
+                }
+            },
+            WindowEvent::Focused(false) => {
+                let ev = self.base_event(kdispatch::E_BLUR);
+                self.dispatch(event_loop, ev);
+            }
+            _ => {}
+        }
+    }
+
+    fn user_event(&mut self, event_loop: &ActiveEventLoop, event: a11y::Event) {
+        if self
+            .window
+            .as_ref()
+            .is_none_or(|window| window.id() != event.window_id)
+        {
+            return;
+        }
+        match event.window_event {
+            a11y::EventKind::InitialTreeRequested => {
+                if let Some(accessibility) = &mut self.accessibility {
+                    accessibility.update(true);
+                }
+            }
+            a11y::EventKind::ActionRequested(request) => {
+                self.accessibility_action(event_loop, &request);
+            }
+            a11y::EventKind::AccessibilityDeactivated => {}
+        }
+    }
+
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        if let Some(deadline) = self.exit_deadline {
+            if Instant::now() >= deadline {
+                event_loop.exit();
+            } else {
+                event_loop.set_control_flow(ControlFlow::WaitUntil(deadline));
+            }
+        }
+    }
+}

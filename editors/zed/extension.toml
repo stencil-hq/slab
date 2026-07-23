@@ -1,0 +1,18 @@
+id = "slab"
+name = "Slab"
+description = "Slab design language support: syntax highlighting, outline, indentation, and LSP diagnostics."
+version = "0.1.0"
+schema_version = 1
+authors = ["Slab contributors"]
+repository = "https://github.com/stencil-hq/slab"
+
+[language_servers.slab-lsp]
+name = "Slab LSP"
+language = "Slab"
+
+# `just editors` restamps `rev` to the commit being packaged; keep this value in
+# sync with the latest `tree-sitter-slab` change for dev installs from a checkout.
+[grammars.slab]
+repository = "https://github.com/stencil-hq/slab"
+rev = "51520fd13627a6c1c7407d32568dd4b36f9b15c8"
+path = "tree-sitter-slab"

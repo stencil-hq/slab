@@ -1,0 +1,14 @@
+// Scroll dispatch fixture: horizontal wheel routing, keyboard precedence, API,
+// retained offsets, and ordinary Rect scrollbar geometry.
+col w=240 gap=8 {
+  row#hlist scroll focusable w=100 h=32 gap=0 scrollbar=always scrollbar-w=4 scrollbar-fg=#ff7a59 scrollbar-bg=#412a2a {
+    rect w=60 h=32 bg=#18202b
+    rect w=60 h=32 bg=#243247
+    rect w=60 h=32 bg=#304563
+  }
+  col#vlist scroll focusable w=100 h=64 gap=0 scrollbar=always scrollbar-w=4 scrollbar-fg=#65d1a5 scrollbar-bg=#19382f {
+    rect h=40 bg=#182b24
+    rect h=40 bg=#244738
+    rect h=40 bg=#30634c
+  }
+}

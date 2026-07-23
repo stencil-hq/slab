@@ -1,0 +1,6 @@
+// FX: tilt is ink-only 3D perspective — TiltPush pins (cx, cy, rx, ry, depth)
+// while the scene keeps the flat layout rect.
+stack w=240 h=180 bg=#10141B {
+  rect w=160 h=100 radius=12 at=40,40 tilt=12,-18 \
+      bg=linear(135, #4A90D9 0%, #9B59B6 100%) stroke=#FFFFFF3D
+}

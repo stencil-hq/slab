@@ -1,0 +1,76 @@
+{
+  "doc": "p3-popover-dynamic",
+  "env": {
+    "vw": 240,
+    "vh": 140,
+    "client": "web",
+    "dark": false,
+    "coarse": false
+  },
+  "steps": [
+    {
+      "t": 0
+    },
+    {
+      "t": 16,
+      "scroll": {
+        "key": "#surface/#scroller",
+        "axis": 0,
+        "off": 30
+      }
+    },
+    {
+      "t": 32
+    },
+    {
+      "t": 48,
+      "param": {
+        "name": "target",
+        "kind": "text",
+        "value": "#surface/#scroller/#second"
+      }
+    },
+    {
+      "t": 64
+    },
+    {
+      "t": 80,
+      "param": {
+        "name": "target",
+        "kind": "text",
+        "value": "#surface/#missing"
+      }
+    },
+    {
+      "t": 96
+    },
+    {
+      "t": 112,
+      "hit": [
+        140,
+        100
+      ]
+    },
+    {
+      "t": 128,
+      "param": {
+        "name": "target",
+        "kind": "text",
+        "value": ""
+      }
+    },
+    {
+      "t": 144
+    },
+    {
+      "t": 160,
+      "hit": [
+        140,
+        100
+      ]
+    }
+  ],
+  "expect": {
+    "signals": []
+  }
+}

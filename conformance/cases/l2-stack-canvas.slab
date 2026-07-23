@@ -1,0 +1,18 @@
+// L2: stack 9-pos + offset + bleed; canvas at/anchor, path bbox, group
+// island re-entering flow.
+col w=300 pad=10 gap=10 {
+  stack w=200 h=100 bg=#14181e bleed {
+    rect w=200 h=100 bg=#1c222a
+    rect w=30 h=30 bg=#ff0000 self=top-end offset=6,-6
+    rect w=40 h=16 bg=#00ff00 self=center
+    rect w=24 h=24 bg=#0000ff self=bottom-start offset=-4,4
+  }
+  canvas h=120 clip {
+    path "M0 40 L60 10 L120 50 L180 20" stroke=#4fc7e0 stroke-w=2 at=10,10
+    rect w=10 h=10 radius=5 bg=#f2b24c at=70,20 anchor=center
+    group at=150,60 pad=6 bg=#20262e radius=6 {
+      text "island" size=11 color=#e6edf3
+    }
+    rect w=12 h=12 bg=#e0564a at=190,110 anchor=bottom-end
+  }
+}
