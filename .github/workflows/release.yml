@@ -29,13 +29,3 @@ jobs:
           gh release upload "$GITHUB_REF_NAME" out/editors/* --clobber
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - name: publish @stencil-hq/wslab
-        run: bun publish --access public
-        working-directory: clients/web
-        env:
-          NPM_CONFIG_TOKEN: ${{ secrets.NPM_TOKEN }}
-      - name: publish @stencil-hq/slab
-        run: bun publish --access public
-        working-directory: packages/slab
-        env:
-          NPM_CONFIG_TOKEN: ${{ secrets.NPM_TOKEN }}
