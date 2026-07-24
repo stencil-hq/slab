@@ -25,7 +25,7 @@ jobs:
       - run: just web-e2e
       - run: bun scripts/pack-e2e.ts
       - run: just editors
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: editor-plugins
           path: out/editors/*
