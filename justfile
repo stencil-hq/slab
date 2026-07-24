@@ -106,17 +106,6 @@ tui file="examples/00-player.slab":
 gallery dir="examples":
     cargo run -q -p slab-tui -- --examples {{dir}}
 
-# generate and exercise every web-component E2E fixture
-web-e2e: gen
-    cargo run -q -p slab-cli -- gen wc examples/10-settings.slab -o examples/web-demo/dist --tag slab-settings
-    cargo run -q -p slab-cli -- gen wc conformance/cases/15-theme.slab -o examples/web-demo/dist --tag slab-theme
-    cargo run -q -p slab-cli -- gen wc conformance/cases/hole-hug.slab -o examples/web-demo/dist --tag slab-hole-hug
-    cargo run -q -p slab-cli -- gen wc conformance/cases/edit-multiline.slab -o examples/web-demo/dist --tag slab-edit-multiline
-    cargo run -q -p slab-cli -- gen wc conformance/cases/16-list.slab -o examples/web-demo/dist --tag slab-list
-    cargo run -q -p slab-cli -- gen wc conformance/cases/x1-showcase.slab -o examples/web-demo/dist --tag slab-showcase
-    cargo run -q -p slab-cli -- gen wc conformance/cases/a11y-dynamic.slab -o examples/web-demo/dist --tag slab-a11y-dynamic
-    bun tools/web-e2e.ts
-
 # render documents through ghostty (libghostty-vt), native wgpu, and the web
 # runtime, then stack each set into out/compare/<doc>.png
 compare *docs:

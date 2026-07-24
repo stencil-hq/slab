@@ -476,11 +476,10 @@ await page.evaluate(() => {
       );
    }
 });
-await page.waitForTimeout(100);
-console.log(
-   'composition diagnostic',
-   await page.evaluate(() => (globalThis as DebugGlobal).__sig?.['edit-draft']?.at(-1)),
-);
+await page.waitForFunction(() => {
+   const events = (globalThis as DebugGlobal).__sig?.['edit-draft'] ?? [];
+   return (events.at(-1) as { text?: string } | undefined)?.text?.endsWith('!Ω') === true;
+});
 const semanticEditResult = await page.evaluate(() => {
    const host = document.getElementById('edit-multiline-host');
    const active = host?.shadowRoot?.activeElement as HTMLElement | null | undefined;

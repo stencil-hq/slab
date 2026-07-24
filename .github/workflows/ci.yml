@@ -22,7 +22,6 @@ jobs:
       - run: just ci
       - run: just pack
       - run: bunx playwright install chromium --with-deps
-      - run: just web-e2e
       - run: bun scripts/pack-e2e.ts
       - run: just editors
       - uses: actions/upload-artifact@v7

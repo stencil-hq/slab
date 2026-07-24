@@ -1491,7 +1491,6 @@ export class SlabElement extends HTMLElement {
          return true;
       }
       if (!inst.set_focus(key, visible)) return false;
-      this.#refreshCaret();
       this.#schedule();
       return true;
    }
