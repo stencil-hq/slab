@@ -82,6 +82,8 @@ pub struct St {
     /// Document-order patch indices grouped by their authored base node.
     pub patches_by_node: Vec<Vec<usize>>,
     base_attr_values: Vec<[i32; ATTR_COUNT]>,
+    effective_attr_node: u32,
+    effective_attr_values: [i32; ATTR_COUNT],
     font_selection: FxHashMap<(u32, u32), i32>,
     family_index: FxHashMap<String, u32>,
     /// Synthetic-node size-condition results keyed by node and patch.
@@ -148,6 +150,8 @@ pub fn st_new() -> crate::style::St {
         patch_on: vec![],
         patches_by_node: vec![],
         base_attr_values: vec![],
+        effective_attr_node: crate::slir::NONE,
+        effective_attr_values: [-1; ATTR_COUNT],
         font_selection: FxHashMap::default(),
         family_index: FxHashMap::default(),
         wh_node: vec![],
@@ -325,6 +329,7 @@ fn refresh_virtual_windows(d: &crate::slir::Doc, st: &mut crate::style::St) {
 /// incoming constraints. The motion overlay is cleared here and rebuilt before
 /// layout reads attributes.
 pub fn begin_solve(d: &crate::slir::Doc, st: &mut crate::style::St) {
+    st.effective_attr_node = crate::slir::NONE;
     // Key and recursive-length setters form a host-side batch. Prune only at
     // the solve boundary, after transient reorder duplicates and child writes
     // are complete and before style or scene traversal can observe removals.
@@ -421,6 +426,7 @@ pub fn set_patch_flags(
     cw: f64,
     ch: f64,
 ) {
+    st.effective_attr_node = crate::slir::NONE;
     let b = crate::list::base(&st.lists, d, node);
     let synthetic = crate::list::each_of(&st.lists, d, node) != crate::slir::NONE;
     for (patch, (&patch_node, &condition)) in d.patch_node.iter().zip(&d.patch_cond).enumerate() {
@@ -824,6 +830,44 @@ pub fn patch_on_for(d: &crate::slir::Doc, st: &crate::style::St, pi: i32, node: 
     )
 }
 
+fn apply_effective_patch(d: &crate::slir::Doc, st: &mut crate::style::St, patch: usize) {
+    let start = index_i32(d.patch_attr_off[patch]);
+    let end = index_i32(d.patch_attr_off[patch].wrapping_add(d.patch_attr_len[patch]));
+    for attr_index in start..end {
+        let attr = index_u32(d.wattr_id[attr_index]);
+        if let Some(value) = st.effective_attr_values.get_mut(attr) {
+            *value = i32::from_ne_bytes(d.wattr_val[attr_index].to_ne_bytes());
+        }
+    }
+}
+
+fn prepare_attrs(d: &crate::slir::Doc, st: &mut crate::style::St, node: u32) -> u32 {
+    let base = crate::list::base(&st.lists, d, node);
+    let base_index = index_u32(base);
+    st.effective_attr_node = crate::slir::NONE;
+    st.effective_attr_values = st.base_attr_values[base_index];
+
+    if base_index < st.patches_by_node.len() {
+        let patch_count = st.patches_by_node[base_index].len();
+        for patch_position in 0..patch_count {
+            let patch = st.patches_by_node[base_index][patch_position];
+            let patch_i32 = i32::try_from(patch).expect("patch index exceeds i32");
+            if patch_on_for(d, st, patch_i32, node) {
+                apply_effective_patch(d, st, patch);
+            }
+        }
+    } else {
+        for (patch, &patch_node) in d.patch_node.iter().enumerate() {
+            let patch_i32 = i32::try_from(patch).expect("patch index exceeds i32");
+            if patch_node == base && patch_on_for(d, st, patch_i32, node) {
+                apply_effective_patch(d, st, patch);
+            }
+        }
+    }
+    st.effective_attr_node = node;
+    base
+}
+
 // Returns the last matching value within one active patch.
 #[inline]
 fn patch_attr(
@@ -853,6 +897,13 @@ fn patch_attr(
 /// Active patches are visited in document order and later declarations replace
 /// earlier declarations, preserving the cascade's last-wins rule.
 pub fn attr_ix(d: &crate::slir::Doc, st: &crate::style::St, node: u32, attr: u32) -> i32 {
+    if st.effective_attr_node == node {
+        return st
+            .effective_attr_values
+            .get(index_u32(attr))
+            .copied()
+            .unwrap_or(-1);
+    }
     let base = crate::list::base(&st.lists, d, node);
     let mut value = st.base_attr_values[index_u32(base)]
         .get(index_u32(attr))
@@ -1891,7 +1942,7 @@ pub fn build_rstyle(
     inh_leading: f64,
     inh_tracking: f64,
 ) -> i32 {
-    let b = crate::list::base(&st.lists, d, node);
+    let b = prepare_attrs(d, st, node);
     let base = index_u32(b);
     let kind = d.node_kind[base];
     st.rs
