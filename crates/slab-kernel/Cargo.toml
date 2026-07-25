@@ -6,3 +6,4 @@ license = "MIT"
 
 [dependencies]
 png = { workspace = true }
+rustc-hash = { workspace = true }

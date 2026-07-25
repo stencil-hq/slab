@@ -5,7 +5,7 @@
 //! synthetic-node identity across keyed reorders and virtual windows.
 
 use crate::{slir, value};
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 
 const NONE: u32 = u32::MAX;
 
@@ -55,6 +55,8 @@ pub struct State {
     pub sy_each: Vec<u32>,
     pub sy_tpl: Vec<u32>,
     pub sy_key: Vec<String>,
+    sy_item: Vec<i32>,
+    sy_list: Vec<u32>,
     pub sy_next: u32,
     sy_slot: HashMap<u32, usize>,
     sy_identity: HashMap<(u32, u32), HashMap<String, u32>>,
@@ -150,13 +152,13 @@ pub fn state_new() -> State {
         li_owner_field: Vec::new(),
         li_len: Vec::new(),
         li_next: 0,
-        li_slot: HashMap::new(),
-        li_child: HashMap::new(),
+        li_slot: HashMap::default(),
+        li_child: HashMap::default(),
         lk_param: Vec::new(),
         lk_index: Vec::new(),
         lk_key: Vec::new(),
-        lk_slot: HashMap::new(),
-        lk_key_index: HashMap::new(),
+        lk_slot: HashMap::default(),
+        lk_key_index: HashMap::default(),
         lv_param: Vec::new(),
         lv_index: Vec::new(),
         lv_field: Vec::new(),
@@ -165,16 +167,18 @@ pub fn state_new() -> State {
         lv_str: Vec::new(),
         lv_h: Vec::new(),
         lv_sym: Vec::new(),
-        lv_slot: HashMap::new(),
+        lv_slot: HashMap::default(),
         sy_id: Vec::new(),
         sy_each: Vec::new(),
         sy_tpl: Vec::new(),
         sy_key: Vec::new(),
+        sy_item: Vec::new(),
+        sy_list: Vec::new(),
         sy_next: 0,
-        sy_slot: HashMap::new(),
-        sy_identity: HashMap::new(),
+        sy_slot: HashMap::default(),
+        sy_identity: HashMap::default(),
         sy_materialized: Vec::new(),
-        sy_materialized_set: HashSet::new(),
+        sy_materialized_set: HashSet::default(),
         sy_deleted: Vec::new(),
         prune_pending: false,
         win_each: Vec::new(),
@@ -816,6 +820,8 @@ pub fn remove_sy(s: &mut State, k: i32) {
     s.sy_each.swap_remove(slot);
     s.sy_tpl.swap_remove(slot);
     s.sy_key.swap_remove(slot);
+    s.sy_item.swap_remove(slot);
+    s.sy_list.swap_remove(slot);
     if slot < s.sy_id.len() {
         s.sy_slot.insert(s.sy_id[slot], slot);
     }
@@ -1116,30 +1122,16 @@ pub fn item_key(s: &State, d: &slir::Doc, node: u32) -> String {
 }
 
 /// Returns the current innermost item index represented by a synthetic node.
-pub fn item_ix(s: &State, d: &slir::Doc, node: u32) -> i32 {
-    let Some(slot) = synthetic_slot(s, node) else {
-        return -1;
-    };
-    let each = s.sy_each[slot];
-    let list = each_list(d, s, each);
-    if list < 0 {
-        return -1;
-    }
-    item_index_for_key(d, s, unsigned(list), &s.sy_key[slot])
+pub fn item_ix(s: &State, _d: &slir::Doc, node: u32) -> i32 {
+    synthetic_slot(s, node).map_or(-1, |slot| s.sy_item[slot])
 }
 
 /// Returns the concrete list handle for a synthetic node, or `-1` otherwise.
-pub fn param_of(s: &State, d: &slir::Doc, node: u32) -> i32 {
-    let each = each_of(s, d, node);
-    if each == slir::NONE {
-        -1
-    } else {
-        each_list(d, s, each)
-    }
+pub fn param_of(s: &State, _d: &slir::Doc, node: u32) -> i32 {
+    synthetic_slot(s, node).map_or(-1, |slot| signed(s.sy_list[slot]))
 }
 
-/// Returns or creates the stable identity for one each instance, template, and item key.
-pub fn synthetic(_d: &slir::Doc, s: &mut State, each: u32, tpl: u32, key: &str) -> u32 {
+fn synthetic_identity(s: &mut State, each: u32, tpl: u32, key: &str) -> (u32, usize) {
     let identity = (each, tpl);
     note_lookup();
     let existing = s
@@ -1148,8 +1140,8 @@ pub fn synthetic(_d: &slir::Doc, s: &mut State, each: u32, tpl: u32, key: &str) 
         .and_then(|keys| keys.get(key))
         .copied();
     if let Some(id) = existing {
-        if synthetic_slot(s, id).is_some() {
-            return id;
+        if let Some(slot) = synthetic_slot(s, id) {
+            return (id, slot);
         }
         let mut remove_identity = false;
         if let Some(keys) = s.sy_identity.get_mut(&identity) {
@@ -1173,7 +1165,21 @@ pub fn synthetic(_d: &slir::Doc, s: &mut State, each: u32, tpl: u32, key: &str) 
     s.sy_each.push(each);
     s.sy_tpl.push(tpl);
     s.sy_key.push(key.to_owned());
-    id
+    s.sy_item.push(-1);
+    s.sy_list.push(NONE);
+    (id, slot)
+}
+
+/// Returns or creates the stable identity for one each instance, template, and item key.
+pub fn synthetic(_d: &slir::Doc, s: &mut State, each: u32, tpl: u32, key: &str) -> u32 {
+    synthetic_identity(s, each, tpl, key).0
+}
+
+fn synthetic_at(s: &mut State, each: u32, tpl: u32, key: &str, list: u32, item: i32) -> u32 {
+    let (node, slot) = synthetic_identity(s, each, tpl, key);
+    s.sy_item[slot] = item;
+    s.sy_list[slot] = list;
+    node
 }
 
 fn mark_materialized(s: &mut State, node: u32) {
@@ -1182,8 +1188,16 @@ fn mark_materialized(s: &mut State, node: u32) {
     }
 }
 
-fn sync_template(d: &slir::Doc, s: &mut State, each: u32, tpl: u32, key: &str) {
-    let node = synthetic(d, s, each, tpl, key);
+fn sync_template(
+    d: &slir::Doc,
+    s: &mut State,
+    each: u32,
+    tpl: u32,
+    key: &str,
+    list: u32,
+    item: i32,
+) {
+    let node = synthetic_at(s, each, tpl, key, list, item);
     mark_materialized(s, node);
     if d.node_kind[tpl as usize] == slir::K_EACH {
         sync_each(d, s, node);
@@ -1191,7 +1205,7 @@ fn sync_template(d: &slir::Doc, s: &mut State, each: u32, tpl: u32, key: &str) {
     }
     let mut child = d.node_first[tpl as usize];
     while child != slir::NONE {
-        sync_template(d, s, each, child, key);
+        sync_template(d, s, each, child, key, list, item);
         child = d.node_next[child as usize];
     }
     for (patch, &owner) in d.patch_node.iter().enumerate() {
@@ -1201,7 +1215,15 @@ fn sync_template(d: &slir::Doc, s: &mut State, each: u32, tpl: u32, key: &str) {
         let start = d.patch_child_off[patch];
         let end = start.wrapping_add(d.patch_child_len[patch]);
         for patch_child in start..end {
-            sync_template(d, s, each, d.patch_children[patch_child as usize], key);
+            sync_template(
+                d,
+                s,
+                each,
+                d.patch_children[patch_child as usize],
+                key,
+                list,
+                item,
+            );
         }
     }
 }
@@ -1216,7 +1238,8 @@ fn sync_each(d: &slir::Doc, s: &mut State, each: u32) {
     if list < 0 {
         return;
     }
-    let list_len = length(d, s, unsigned(list));
+    let list = unsigned(list);
+    let list_len = length(d, s, list);
     let range = if d.node_flags[base_ix] & slir::F_VIRTUAL != 0 {
         let current = current_window(s, each);
         if current == (0, 0) && list_len > 0 {
@@ -1228,10 +1251,10 @@ fn sync_each(d: &slir::Doc, s: &mut State, each: u32) {
         (0, list_len)
     };
     for item in range.0..range.1 {
-        let key = key_at(d, s, unsigned(list), item);
+        let key = key_at(d, s, list, item);
         let mut template = template_first(d, s, each);
         while template != slir::NONE {
-            sync_template(d, s, each, template, &key);
+            sync_template(d, s, each, template, &key, list, item);
             template = d.node_next[template as usize];
         }
     }

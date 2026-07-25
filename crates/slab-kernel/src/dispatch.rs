@@ -70,7 +70,8 @@ pub const TR_DBLCLICK: u32 = 5;
 pub const TR_DRAG_START: u32 = 6;
 /// Drop signal trigger.
 pub const TR_DROP: u32 = 7;
-/// Divider resize signal trigger.
+/// Divider resize signal trigger, delivered live while a divider drags (and
+/// per keyboard step), then once more with the final clamped extent on release.
 pub const TR_RESIZE: u32 = 8;
 /// Continuous pointer-move signal trigger.
 pub const TR_POINTER_MOVE: u32 = 9;
@@ -1558,7 +1559,17 @@ pub fn dispatch(
             if cancel_divider {
                 ds.divider = None;
             } else if let Some(divider) = ds.divider.as_mut() {
-                effects.repaint |= move_divider(st, divider, ev.x, ev.y);
+                if move_divider(st, divider, ev.x, ev.y) {
+                    effects.repaint = true;
+                    deliver_trigger(
+                        d,
+                        st,
+                        &mut effects,
+                        divider.node,
+                        TR_RESIZE,
+                        crate::value::fmt3(divider.current_extent),
+                    );
+                }
             }
 
             if ds.drag_source != slir::NONE

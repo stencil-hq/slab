@@ -1229,8 +1229,21 @@ impl Renderer {
         }
         let mut groups: Vec<(f32, f32, Option<MaskI>)> = Vec::new();
         let mut tilts: Vec<TiltI> = Vec::new();
+        let mut hidden_groups = 0usize;
 
         for (op_ix, op) in li.frame.ops.iter().enumerate() {
+            if hidden_groups > 0 {
+                match op {
+                    FrameOp::GroupPush(_) | FrameOp::TiltPush(_) => hidden_groups += 1,
+                    FrameOp::GroupPop | FrameOp::TiltPop => hidden_groups -= 1,
+                    _ => {}
+                }
+                continue;
+            }
+            if matches!(op, FrameOp::GroupPush(group) if group.opacity <= 0.0) {
+                hidden_groups = 1;
+                continue;
+            }
             let mat = *mats.last().unwrap();
             let clip = *clips.last().unwrap();
             match op {

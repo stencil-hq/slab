@@ -37,6 +37,7 @@ crossterm = "0.29"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 anyhow = "1"
+rustc-hash = "1.1"
 
 prost = "0.13"
 snap = "1"

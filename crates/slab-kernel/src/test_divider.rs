@@ -260,6 +260,12 @@ pub fn test_divider_pointer_keyboard_cursor_and_reset() {
         &pointer(dispatch::E_POINTER_MOVE, x + 20.0, y, 1),
     );
     assert!(moved.repaint, "drag updates the overlay live");
+    assert_eq!(
+        moved.sig_name.as_slice(),
+        &[5],
+        "drag delivers the resize signal live"
+    );
+    assert_eq!(moved.sig_text[0], "167");
     frame::inst_frame(&mut instance, 1.0);
     assert_eq!(extent(&instance, 1, true), 167.0);
 

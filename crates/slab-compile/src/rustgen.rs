@@ -192,7 +192,7 @@ fn emit_list_setters(
         let _ = writeln!(out, "        }}\n        true\n    }}");
         let _ = writeln!(
             out,
-            "\n    fn {helper}(&mut self, path: &str, items: &[{item_ty}]) -> bool {{\n        let Ok(len) = i32::try_from(items.len()) else {{ return false }};\n        if !kframe::inst_set_list_len(&mut self.inst, {param}, path, len) {{ return false; }}\n        for (index, item) in items.iter().enumerate() {{\n            let Ok(index) = i32::try_from(index) else {{ return false }};\n            let key = item.key.clone().unwrap_or_else(|| index.to_string());\n            if !kframe::inst_set_list_key(&mut self.inst, {param}, path, index, &key) {{ return false; }}"
+            "\n    fn {helper}(\n        &mut self,\n        path: &str,\n        items: &[{item_ty}],\n        previous: Option<&[{item_ty}]>,\n    ) -> bool {{\n        let Ok(len) = i32::try_from(items.len()) else {{ return false }};\n        if !kframe::inst_set_list_len(&mut self.inst, {param}, path, len) {{ return false; }}\n        for (item_index, item) in items.iter().enumerate() {{\n            let previous = previous.and_then(|items| items.get(item_index));\n            if previous == Some(item) {{ continue; }}\n            let Ok(index) = i32::try_from(item_index) else {{ return false }};\n            if previous.is_none_or(|previous| previous.key != item.key) {{\n                let key = item.key.clone().unwrap_or_else(|| item_index.to_string());\n                if !kframe::inst_set_list_key(&mut self.inst, {param}, path, index, &key) {{ return false; }}\n            }}"
         );
         for field_ix in schema.field_off..schema.field_off + schema.field_len {
             let field = &slir.list_fields[field_ix as usize];
@@ -204,7 +204,7 @@ fn emit_list_setters(
                 let child_helper = format!("set_{}_path", snake(child_base));
                 let _ = writeln!(
                     out,
-                    "            let child_path = if path.is_empty() {{\n                format!(\"{{index}}.{field_name}\")\n            }} else {{\n                format!(\"{{path}}.{{index}}.{field_name}\")\n            }};\n            if !self.{child_helper}(&child_path, &item.{member}) {{ return false; }}"
+                    "            let child_path = if path.is_empty() {{\n                format!(\"{{index}}.{field_name}\")\n            }} else {{\n                format!(\"{{path}}.{{index}}.{field_name}\")\n            }};\n            let previous_{member} = previous.map(|previous| previous.{member}.as_slice());\n            if !self.{child_helper}(&child_path, &item.{member}, previous_{member}) {{ return false; }}"
                 );
                 continue;
             }
@@ -218,7 +218,7 @@ fn emit_list_setters(
             };
             let _ = writeln!(
                 out,
-                "            let mut pv = ParamValue {{ kind: {}, num: 0.0, s: String::new(), rgba: 0, sym: String::new() }};\n            {fill}\n            if !kframe::inst_set_list_field(&mut self.inst, {param}, path, index, {field_name:?}, &pv) {{ return false; }}",
+                "            if previous.is_none_or(|previous| previous.{member} != item.{member}) {{\n                let mut pv = ParamValue {{ kind: {}, num: 0.0, s: String::new(), rgba: 0, sym: String::new() }};\n                {fill}\n                if !kframe::inst_set_list_field(&mut self.inst, {param}, path, index, {field_name:?}, &pv) {{ return false; }}\n            }}",
                 field.ty
             );
         }
@@ -228,9 +228,10 @@ fn emit_list_setters(
     let root_base = root_type.strip_suffix("Item").unwrap_or(&root_type);
     let validator = format!("validate_{}", snake(root_base));
     let root_helper = format!("set_{}_path", snake(root_base));
+    let cache = format!("{}_cache", snake(param_name));
     let _ = writeln!(
         out,
-        "\n    /// Replace list param `{param_name}` and all nested lists through path-addressed writes.\n    pub fn set_{}(&mut self, items: &[{root_type}]) -> bool {{\n        if !Self::{validator}(items) {{ return false; }}\n        self.{root_helper}(\"\", items)\n    }}",
+        "\n    /// Reconciles list param `{param_name}` and all nested lists with the last typed value.\n    pub fn set_{}(&mut self, items: &[{root_type}]) -> bool {{\n        if self.{cache}.as_deref() == Some(items) {{ return true; }}\n        if !Self::{validator}(items) {{ return false; }}\n        let previous = self.{cache}.take();\n        let updated = self.{root_helper}(\"\", items, previous.as_deref());\n        self.{cache} = if updated {{ Some(items.to_vec()) }} else {{ previous }};\n        updated\n    }}",
         snake(param_name)
     );
 }
@@ -361,6 +362,8 @@ fn emit_module(slir: &Slir, bytes: &[u8], src_name: &str) -> String {
         }
     }
     let _ = writeln!(o, "}}\n");
+    let mut list_cache_fields = String::new();
+    let mut list_cache_initializers = String::new();
     for (param_ix, p) in slir.params.iter().enumerate() {
         if p.ty != 6 {
             continue;
@@ -374,6 +377,10 @@ fn emit_module(slir: &Slir, bytes: &[u8], src_name: &str) -> String {
         let mut names = Vec::new();
         let mut order = Vec::new();
         collect_list_types(slir, schema_row, pascal(param_name), &mut names, &mut order);
+        let root_type = list_type_name(&names, slir, schema_row);
+        let cache = format!("{}_cache", snake(param_name));
+        let _ = writeln!(list_cache_fields, "    {cache}: Option<Vec<{root_type}>>,");
+        let _ = writeln!(list_cache_initializers, "            {cache}: None,");
         for row in order {
             let schema = &slir.lists[row];
             let item_ty = list_type_name(&names, slir, row);
@@ -437,7 +444,7 @@ fn emit_module(slir: &Slir, bytes: &[u8], src_name: &str) -> String {
     let _ = writeln!(
         o,
         "/// The document instance, driven through `slab-kernel`.\n\
-         pub struct Doc {{\n    /// Raw kernel instance for advanced integrations.\n    pub inst: Instance,\n    /// Embedded image bytes, parallel to the document image tables.\n    pub imgs: Vec<Vec<u8>>,\n}}\n\n\
+         pub struct Doc {{\n    /// Raw kernel instance for advanced integrations.\n    pub inst: Instance,\n    /// Embedded image bytes, parallel to the document image tables.\n    pub imgs: Vec<Vec<u8>>,\n{list_cache_fields}}}\n\n\
          impl Default for Doc {{\n    fn default() -> Self {{\n        Self::new()\n    }}\n}}\n\n\
          impl Doc {{\n\
          \x20   /// Create an instance initialized from the embedded document.\n\
@@ -446,7 +453,10 @@ fn emit_module(slir: &Slir, bytes: &[u8], src_name: &str) -> String {
          \x20       let mut inst = kframe::inst_shell();\n\
          \x20       inst.doc = doc;\n\
          \x20       kframe::inst_init(&mut inst);\n\
-         \x20       Doc {{ inst, imgs }}\n\
+         \x20       Doc {{\n\
+         \x20           inst,\n\
+         \x20           imgs,\n\
+         {list_cache_initializers}        }}\n\
          \x20   }}\n\n\
          \x20   /// Whether the embedded document decoded successfully.\n\
          \x20   pub fn ok(&self) -> bool {{\n        self.inst.ok\n    }}\n\n\
@@ -701,5 +711,8 @@ col { each param.trees }
         assert!(
             module.contains("let key = item.key.clone().unwrap_or_else(|| index.to_string());")
         );
+        assert!(module.contains("trees_cache: Option<Vec<TreesItem>>"));
+        assert!(module.contains("if self.trees_cache.as_deref() == Some(items)"));
+        assert!(module.contains("if previous == Some(item) { continue; }"));
     }
 }
