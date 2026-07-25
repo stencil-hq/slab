@@ -10,6 +10,7 @@
 //! and motion's per-solve interpolated attribute inputs. Motion values precede
 //! patches and base attributes so layout always re-solves from interpolated
 //! inputs. Overlay tuples are stored in [`St::mo_f`] under [`T_OV_TUPLE`].
+use rustc_hash::FxHashMap;
 
 const ATTR_COUNT: usize = 89;
 
@@ -81,6 +82,7 @@ pub struct St {
     /// Document-order patch indices grouped by their authored base node.
     pub patches_by_node: Vec<Vec<usize>>,
     base_attr_values: Vec<[i32; ATTR_COUNT]>,
+    font_selection: FxHashMap<(u32, u32), i32>,
     /// Synthetic-node size-condition results keyed by node and patch.
     pub wh_node: Vec<u32>,
     pub wh_patch: Vec<i32>,
@@ -145,6 +147,7 @@ pub fn st_new() -> crate::style::St {
         patch_on: vec![],
         patches_by_node: vec![],
         base_attr_values: vec![],
+        font_selection: FxHashMap::default(),
         wh_node: vec![],
         wh_patch: vec![],
         wh_on: vec![],
@@ -191,6 +194,7 @@ pub fn init_params(d: &crate::slir::Doc, st: &mut crate::style::St) {
         st.patches_by_node[index_u32(node)].push(patch);
     }
     st.base_attr_values.clear();
+    st.font_selection.clear();
     st.base_attr_values
         .resize(d.node_kind.len(), [-1; ATTR_COUNT]);
     for node in 0..d.node_kind.len() {
@@ -1835,6 +1839,20 @@ pub fn is_container(kind: u32) -> bool {
     )
 }
 
+fn cached_font(
+    d: &crate::slir::Doc,
+    st: &mut crate::style::St,
+    family: u32,
+    weight: u32,
+) -> i32 {
+    if let Some(&font) = st.font_selection.get(&(family, weight)) {
+        return font;
+    }
+    let font = crate::slir::font_select(d, family, weight);
+    st.font_selection.insert((family, weight), font);
+    font
+}
+
 /// Builds the resolved style for `node` and returns its pool index.
 ///
 /// `parent_kind` is the layout parent's node kind; [`crate::slir::NONE`] marks
@@ -2095,6 +2113,7 @@ pub fn build_rstyle(
     let family = crate::style::attr_val(d, st, node, crate::slir::A_FAMILY);
     let mut fam = inh_fam;
     let mut dynamic_family = String::new();
+    let mut dynamic_family_uninterned = false;
     if family.tag == crate::slir::T_STR {
         fam = family.h;
     } else if matches!(
@@ -2108,6 +2127,8 @@ pub fn build_rstyle(
             .position(|candidate| crate::slir::family_eq(candidate, &dynamic_family))
         {
             fam = u32::try_from(index).expect("family string index exceeds u32");
+        } else {
+            dynamic_family_uninterned = true;
         }
     }
     st.rs[ri].fam = fam;
@@ -2126,10 +2147,11 @@ pub fn build_rstyle(
         st.rs[ri].color = inh_color;
         st.rs[ri].color_kind = inh_color_kind;
     }
-    st.rs[ri].font = if dynamic_family.is_empty() {
-        crate::slir::font_select(d, fam, f64_to_u32(st.rs[ri].weight))
+    let weight = f64_to_u32(st.rs[ri].weight);
+    st.rs[ri].font = if dynamic_family_uninterned {
+        crate::slir::font_select_name(d, &dynamic_family, weight)
     } else {
-        crate::slir::font_select_name(d, &dynamic_family, f64_to_u32(st.rs[ri].weight))
+        cached_font(d, st, fam, weight)
     };
     st.rs[ri].talign = crate::style::talign_code(&crate::style::attr_enum(
         d,
