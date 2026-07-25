@@ -194,6 +194,7 @@ pub fn inst_font_register(
     i.doc.font_cmap_cp.extend_from_slice(cmap_cp);
     i.doc.font_cmap_gid.extend_from_slice(cmap_gid);
     i.doc.font_adv.extend_from_slice(adv);
+    style::invalidate_font_selection(&mut i.st);
     i.dirty = true;
 
     i32::try_from(i.doc.font_family.len())

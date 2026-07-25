@@ -373,11 +373,11 @@ pub fn sync_synthetic_clocks(d: &Doc, st: &St, ms: &mut MSt, t: f64) {
     for &node in list::materialized(&st.lists) {
         note_synthetic_work();
         let base = list::base(&st.lists, d, node);
-        for patch in 0..d.patch_node.len() {
-            if d.patch_node[patch] != base
-                || d.cond_kind[index(
-                    i32::try_from(d.patch_cond[patch]).expect("condition index exceeds i32"),
-                )] != slir::C_STATE
+        let base_index = usize::try_from(base).expect("node index exceeds usize");
+        for &patch in &st.lists.patches_by_node[base_index] {
+            if d.cond_kind
+                [index(i32::try_from(d.patch_cond[patch]).expect("condition index exceeds i32"))]
+                != slir::C_STATE
             {
                 continue;
             }
@@ -404,15 +404,15 @@ pub fn sync_synthetic_clocks(d: &Doc, st: &St, ms: &mut MSt, t: f64) {
 pub fn synthetic_transition(d: &Doc, st: &mut St, ms: &MSt, tr: i32, node: u32, t: f64) -> bool {
     let transition = index(tr);
     let base = list::base(&st.lists, d, node);
+    let base_index = usize::try_from(base).expect("node index exceeds usize");
+    let patch_count = st.lists.patches_by_node[base_index].len();
     let dur = d.trans_dur[transition];
     if dur <= 0.0 {
         return false;
     }
     let delay = d.trans_delay[transition];
-    let any = (0..d.patch_node.len()).any(|patch| {
-        if d.patch_node[patch] != base {
-            return false;
-        }
+    let any = (0..patch_count).any(|position| {
+        let patch = st.lists.patches_by_node[base_index][position];
         let pi = i32::try_from(patch).expect("patch index exceeds i32");
         let clock = sp_find(ms, node, pi);
         clock >= 0 && {
@@ -427,10 +427,8 @@ pub fn synthetic_transition(d: &Doc, st: &mut St, ms: &MSt, tr: i32, node: u32, 
     }
 
     let mut attrs = Vec::new();
-    for patch in 0..d.patch_node.len() {
-        if d.patch_node[patch] != base {
-            continue;
-        }
+    for position in 0..patch_count {
+        let patch = st.lists.patches_by_node[base_index][position];
         let start = d.patch_attr_off[patch];
         let end = start.wrapping_add(d.patch_attr_len[patch]);
         for entry in start..end {
@@ -446,10 +444,8 @@ pub fn synthetic_transition(d: &Doc, st: &mut St, ms: &MSt, tr: i32, node: u32, 
         let mut has_value = base_ix >= 0;
         let mut current = pv(d, st, &value::decode(d, base_ix));
         let mut tweened = false;
-        for patch in 0..d.patch_node.len() {
-            if d.patch_node[patch] != base {
-                continue;
-            }
+        for position in 0..patch_count {
+            let patch = st.lists.patches_by_node[base_index][position];
             let pi = i32::try_from(patch).expect("patch index exceeds i32");
             let target_ix = patch_attr_ix(d, pi, attr);
             if target_ix < 0 {
@@ -551,16 +547,18 @@ pub fn apply(d: &Doc, st: &mut St, ms: &mut MSt, t: f64) -> bool {
     // Authored transition nodes fold the base and patches in document order.
     for transition in 0..d.trans_node.len() {
         let node = d.trans_node[transition];
+        let node_index = usize::try_from(node).expect("node index exceeds usize");
+        let patch_count = st.lists.patches_by_node[node_index].len();
         let dur = d.trans_dur[transition];
         if dur <= 0.0 {
             continue;
         }
         let delay = d.trans_delay[transition];
-        let any = (0..d.patch_node.len()).any(|patch| {
+        let any = (0..patch_count).any(|position| {
+            let patch = st.lists.patches_by_node[node_index][position];
             let condition =
                 index(i32::try_from(d.patch_cond[patch]).expect("condition index exceeds i32"));
-            d.patch_node[patch] == node
-                && d.cond_kind[condition] == slir::C_STATE
+            d.cond_kind[condition] == slir::C_STATE
                 && ms.p_flip[patch] > NEVER
                 && ms.p_prev[patch] != ms.p_last[patch]
                 && t - ms.p_flip[patch] - delay < dur
@@ -572,10 +570,8 @@ pub fn apply(d: &Doc, st: &mut St, ms: &mut MSt, t: f64) -> bool {
 
         // Preserve first-appearance order for deterministic overlay output.
         let mut attrs = Vec::new();
-        for patch in 0..d.patch_node.len() {
-            if d.patch_node[patch] != node {
-                continue;
-            }
+        for position in 0..patch_count {
+            let patch = st.lists.patches_by_node[node_index][position];
             let start = d.patch_attr_off[patch];
             let end = start.wrapping_add(d.patch_attr_len[patch]);
             for entry in start..end {
@@ -591,10 +587,8 @@ pub fn apply(d: &Doc, st: &mut St, ms: &mut MSt, t: f64) -> bool {
             let mut current = pv(d, st, &value::decode(d, base_ix));
             let mut has_value = base_ix >= 0;
             let mut tweened = false;
-            for patch in 0..d.patch_node.len() {
-                if d.patch_node[patch] != node {
-                    continue;
-                }
+            for position in 0..patch_count {
+                let patch = st.lists.patches_by_node[node_index][position];
                 let target_ix = patch_attr_ix(
                     d,
                     i32::try_from(patch).expect("patch index exceeds i32"),

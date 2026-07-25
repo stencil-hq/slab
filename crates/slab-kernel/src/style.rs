@@ -62,6 +62,7 @@ pub struct St {
     pub(crate) img_missing: std::collections::HashSet<String>,
     /// Append-only per-instance scene string pool; index zero is always empty.
     pub scene_strs: Vec<String>,
+    scene_str_index: FxHashMap<String, u32>,
     /// Instance-lifetime normalized runtime paths keyed by authored data.
     pub rt_path_ix: std::collections::HashMap<String, u32>,
     /// Runtime path verb streams, parallel with [`Self::rt_path_coords`].
@@ -79,8 +80,6 @@ pub struct St {
     pub cond_on: Vec<bool>,
     /// Effective patch state; size comparisons are refreshed per node.
     pub patch_on: Vec<bool>,
-    /// Document-order patch indices grouped by their authored base node.
-    pub patches_by_node: Vec<Vec<usize>>,
     base_attr_values: Vec<[i32; ATTR_COUNT]>,
     effective_attr_node: u32,
     effective_attr_values: [i32; ATTR_COUNT],
@@ -139,6 +138,7 @@ pub fn st_new() -> crate::style::St {
         runtime_images: vec![],
         img_missing: std::collections::HashSet::new(),
         scene_strs: vec![String::new()],
+        scene_str_index: FxHashMap::default(),
         rt_path_ix: std::collections::HashMap::new(),
         rt_path_verbs: vec![],
         rt_path_coords: vec![],
@@ -148,7 +148,6 @@ pub fn st_new() -> crate::style::St {
         hole_h: vec![],
         cond_on: vec![],
         patch_on: vec![],
-        patches_by_node: vec![],
         base_attr_values: vec![],
         effective_attr_node: crate::slir::NONE,
         effective_attr_values: [-1; ATTR_COUNT],
@@ -182,40 +181,39 @@ pub fn warn(st: &mut crate::style::St, code: &str, msg: &str, line: u32) {
     st.diag_line.push(line);
 }
 
+fn authored_attr_values(d: &crate::slir::Doc, node: usize) -> [i32; ATTR_COUNT] {
+    let mut values = [-1; ATTR_COUNT];
+    let start = index_i32(d.attr_index[node]);
+    let end = index_i32(d.attr_index[node + 1]);
+    for attr_index in start..end {
+        let attr = index_u32(d.attr_id[attr_index]);
+        if let Some(value) = values.get_mut(attr)
+            && *value < 0
+        {
+            *value = i32::from_ne_bytes(d.attr_val[attr_index].to_ne_bytes());
+        }
+    }
+    values
+}
+
 /// Initializes persistent parameter defaults and zeroed host hole reports.
 pub fn init_params(d: &crate::slir::Doc, st: &mut crate::style::St) {
     st.pv_num.clear();
     st.pv_str.clear();
     st.pv_h.clear();
     st.pv_sym.clear();
+    st.scene_str_index.clear();
     st.scene_strs.clear();
     st.scene_strs.push(String::new());
     st.hole_w.clear();
     st.hole_h.clear();
     st.hole_w.resize(d.hole_name.len(), 0.0);
     st.hole_h.resize(d.hole_name.len(), 0.0);
-    st.patches_by_node.clear();
-    st.patches_by_node.resize_with(d.node_kind.len(), Vec::new);
-    for (patch, &node) in d.patch_node.iter().enumerate() {
-        st.patches_by_node[index_u32(node)].push(patch);
-    }
     st.base_attr_values.clear();
     st.font_selection.clear();
     st.family_index.clear();
     st.base_attr_values
-        .resize(d.node_kind.len(), [-1; ATTR_COUNT]);
-    for node in 0..d.node_kind.len() {
-        let start = index_i32(d.attr_index[node]);
-        let end = index_i32(d.attr_index[node + 1]);
-        for attr_index in start..end {
-            let attr = index_u32(d.attr_id[attr_index]);
-            if let Some(value) = st.base_attr_values[node].get_mut(attr)
-                && *value < 0
-            {
-                *value = i32::from_ne_bytes(d.attr_val[attr_index].to_ne_bytes());
-            }
-        }
-    }
+        .extend((0..d.node_kind.len()).map(|node| authored_attr_values(d, node)));
     crate::list::init(d, &mut st.lists);
     for &encoded in &d.parm_default {
         let v = crate::value::decode(d, i32::from_ne_bytes(encoded.to_ne_bytes()));
@@ -429,10 +427,11 @@ pub fn set_patch_flags(
     st.effective_attr_node = crate::slir::NONE;
     let b = crate::list::base(&st.lists, d, node);
     let synthetic = crate::list::each_of(&st.lists, d, node) != crate::slir::NONE;
-    for (patch, (&patch_node, &condition)) in d.patch_node.iter().zip(&d.patch_cond).enumerate() {
-        if patch_node != b {
-            continue;
-        }
+    let base_index = index_u32(b);
+    let patch_count = st.lists.patches_by_node.get(base_index).map_or(0, Vec::len);
+    for patch_position in 0..patch_count {
+        let patch = st.lists.patches_by_node[base_index][patch_position];
+        let condition = d.patch_cond[patch];
         let condition_index = usize::try_from(condition).expect("condition index exceeds usize");
         let kind = d.cond_kind[condition_index];
         if kind == crate::slir::C_WCMP || kind == crate::slir::C_HCMP {
@@ -845,12 +844,16 @@ fn prepare_attrs(d: &crate::slir::Doc, st: &mut crate::style::St, node: u32) -> 
     let base = crate::list::base(&st.lists, d, node);
     let base_index = index_u32(base);
     st.effective_attr_node = crate::slir::NONE;
-    st.effective_attr_values = st.base_attr_values[base_index];
+    st.effective_attr_values = st
+        .base_attr_values
+        .get(base_index)
+        .copied()
+        .unwrap_or_else(|| authored_attr_values(d, base_index));
 
-    if base_index < st.patches_by_node.len() {
-        let patch_count = st.patches_by_node[base_index].len();
+    if base_index < st.lists.patches_by_node.len() {
+        let patch_count = st.lists.patches_by_node[base_index].len();
         for patch_position in 0..patch_count {
-            let patch = st.patches_by_node[base_index][patch_position];
+            let patch = st.lists.patches_by_node[base_index][patch_position];
             let patch_i32 = i32::try_from(patch).expect("patch index exceeds i32");
             if patch_on_for(d, st, patch_i32, node) {
                 apply_effective_patch(d, st, patch);
@@ -896,6 +899,7 @@ fn patch_attr(
 ///
 /// Active patches are visited in document order and later declarations replace
 /// earlier declarations, preserving the cascade's last-wins rule.
+#[inline]
 pub fn attr_ix(d: &crate::slir::Doc, st: &crate::style::St, node: u32, attr: u32) -> i32 {
     if st.effective_attr_node == node {
         return st
@@ -905,12 +909,15 @@ pub fn attr_ix(d: &crate::slir::Doc, st: &crate::style::St, node: u32, attr: u32
             .unwrap_or(-1);
     }
     let base = crate::list::base(&st.lists, d, node);
-    let mut value = st.base_attr_values[index_u32(base)]
-        .get(index_u32(attr))
+    let base_index = index_u32(base);
+    let mut value = st
+        .base_attr_values
+        .get(base_index)
+        .and_then(|values| values.get(index_u32(attr)))
         .copied()
-        .unwrap_or(-1);
+        .unwrap_or_else(|| crate::slir::base_attr(d, base, attr));
 
-    if let Some(patches) = st.patches_by_node.get(index_u32(base)) {
+    if let Some(patches) = st.lists.patches_by_node.get(index_u32(base)) {
         for &patch in patches {
             if let Some(patch_value) = patch_attr(d, st, patch, node, attr) {
                 value = patch_value;
@@ -929,6 +936,7 @@ pub fn attr_ix(d: &crate::slir::Doc, st: &crate::style::St, node: u32, attr: u32
 }
 
 /// Returns the last motion overlay value for a node attribute.
+#[inline]
 pub fn overlay_val(st: &crate::style::St, node: u32, attr: u32) -> crate::value::V {
     let Some(index) = st
         .mo_node
@@ -953,6 +961,7 @@ pub fn overlay_val(st: &crate::style::St, node: u32, attr: u32) -> crate::value:
 /// Motion inputs supersede patches and base values and are already parameter
 /// resolved. Enum and text references are resolved by [`attr_enum`] and
 /// [`content_str`] because they use separate string channels.
+#[inline]
 pub fn attr_val(
     d: &crate::slir::Doc,
     st: &crate::style::St,
@@ -1007,7 +1016,7 @@ pub fn attr_val(
     if v.tag == crate::slir::T_PROP_REF {
         let parameter = u32::from_ne_bytes(crate::list::param_of(&st.lists, d, node).to_ne_bytes());
         let item = crate::list::item_ix(&st.lists, d, node);
-        let x = crate::list::get(d, &st.lists, parameter, item, v.h);
+        let x = crate::list::get_ref(&st.lists, parameter, item, v.h);
         if x.kind == 1u32 {
             return crate::value::V {
                 tag: crate::slir::T_NUM,
@@ -1126,8 +1135,7 @@ pub fn attr_enum(d: &crate::slir::Doc, st: &crate::style::St, node: u32, attr: u
         return st.pv_sym[index_u32(v.h)].clone();
     }
     if v.tag == crate::slir::T_PROP_REF {
-        let x = crate::list::get(
-            d,
+        let x = crate::list::get_ref(
             &st.lists,
             u32::from_ne_bytes(crate::list::param_of(&st.lists, d, node).to_ne_bytes()),
             crate::list::item_ix(&st.lists, d, node),
@@ -1150,8 +1158,7 @@ pub fn attr_str(d: &crate::slir::Doc, st: &crate::style::St, node: u32, attr: u3
         return st.pv_str[index_u32(v.h)].clone();
     }
     if v.tag == crate::slir::T_PROP_REF {
-        let x = crate::list::get(
-            d,
+        let x = crate::list::get_ref(
             &st.lists,
             u32::from_ne_bytes(crate::list::param_of(&st.lists, d, node).to_ne_bytes()),
             crate::list::item_ix(&st.lists, d, node),
@@ -1200,15 +1207,13 @@ fn intern_scene_str(st: &mut crate::style::St, value: String) -> u32 {
     if value.is_empty() {
         return 0;
     }
-    if let Some(index) = st
-        .scene_strs
-        .iter()
-        .position(|candidate| crate::rt::str_eq(candidate, &value))
-    {
-        return u32::try_from(index).expect("scene string index exceeds u32");
+    if let Some(&index) = st.scene_str_index.get(&value) {
+        return index;
     }
-    st.scene_strs.push(value);
-    u32::try_from(st.scene_strs.len()).expect("scene string pool exceeds u32") - 1
+    let index = u32::try_from(st.scene_strs.len()).expect("scene string pool exceeds u32");
+    st.scene_strs.push(value.clone());
+    st.scene_str_index.insert(value, index);
+    index
 }
 
 fn a11y_ref(
@@ -1320,8 +1325,7 @@ pub fn content_str(d: &crate::slir::Doc, st: &crate::style::St, node: u32) -> St
         return st.pv_str[index_u32(v.h)].clone();
     }
     if v.tag == crate::slir::T_PROP_REF {
-        let x = crate::list::get(
-            d,
+        let x = crate::list::get_ref(
             &st.lists,
             u32::from_ne_bytes(crate::list::param_of(&st.lists, d, node).to_ne_bytes()),
             crate::list::item_ix(&st.lists, d, node),
@@ -1338,9 +1342,24 @@ pub fn content_str(d: &crate::slir::Doc, st: &crate::style::St, node: u32) -> St
 pub fn eff_flags(d: &crate::slir::Doc, st: &crate::style::St, node: u32) -> u32 {
     let base = crate::list::base(&st.lists, d, node);
     let mut flags = d.node_flags[index_u32(base)];
-    for (patch, &patch_node) in d.patch_node.iter().enumerate() {
+    let base_index = index_u32(base);
+    let indexed = base_index < st.lists.patches_by_node.len();
+    let patch_count = if indexed {
+        st.lists.patches_by_node[base_index].len()
+    } else {
+        d.patch_node.len()
+    };
+    for position in 0..patch_count {
+        let patch = if indexed {
+            st.lists.patches_by_node[base_index][position]
+        } else {
+            position
+        };
+        if !indexed && d.patch_node[patch] != base {
+            continue;
+        }
         let patch_i32 = i32::try_from(patch).expect("patch index exceeds i32");
-        if patch_node != base || !crate::style::patch_on_for(d, st, patch_i32, node) {
+        if !crate::style::patch_on_for(d, st, patch_i32, node) {
             continue;
         }
         let start = index_i32(d.patch_attr_off[patch]);
@@ -1406,9 +1425,23 @@ pub fn children(d: &crate::slir::Doc, st: &mut crate::style::St, node: u32, out:
         }
         child = d.node_next[index_u32(child)];
     }
-    for (patch, &patch_node) in d.patch_node.iter().enumerate() {
+    let indexed = base_index < st.lists.patches_by_node.len();
+    let patch_count = if indexed {
+        st.lists.patches_by_node[base_index].len()
+    } else {
+        d.patch_node.len()
+    };
+    for position in 0..patch_count {
+        let patch = if indexed {
+            st.lists.patches_by_node[base_index][position]
+        } else {
+            position
+        };
+        if !indexed && d.patch_node[patch] != base {
+            continue;
+        }
         let patch_i32 = i32::try_from(patch).expect("patch index exceeds i32");
-        if patch_node != base || !crate::style::patch_on_for(d, st, patch_i32, node) {
+        if !crate::style::patch_on_for(d, st, patch_i32, node) {
             continue;
         }
         let start = index_i32(d.patch_child_off[patch]);
@@ -1893,6 +1926,12 @@ pub fn is_container(kind: u32) -> bool {
     )
 }
 
+/// Clears cached family and weight matches after the document font table changes.
+pub(crate) fn invalidate_font_selection(st: &mut crate::style::St) {
+    st.font_selection.clear();
+    st.family_index.clear();
+}
+
 fn cached_family(d: &crate::slir::Doc, st: &mut crate::style::St, name: &str) -> Option<u32> {
     if let Some(&family) = st.family_index.get(name) {
         return (family != crate::slir::NONE).then_some(family);
@@ -1908,12 +1947,7 @@ fn cached_family(d: &crate::slir::Doc, st: &mut crate::style::St, name: &str) ->
     (family != crate::slir::NONE).then_some(family)
 }
 
-fn cached_font(
-    d: &crate::slir::Doc,
-    st: &mut crate::style::St,
-    family: u32,
-    weight: u32,
-) -> i32 {
+fn cached_font(d: &crate::slir::Doc, st: &mut crate::style::St, family: u32, weight: u32) -> i32 {
     if let Some(&font) = st.font_selection.get(&(family, weight)) {
         return font;
     }
@@ -2492,9 +2526,9 @@ pub fn reset_wh_patches(d: &crate::slir::Doc, st: &mut crate::style::St, node: u
     let base = crate::list::base(&st.lists, d, node);
     let base_index = index_u32(base);
     let synthetic = crate::list::each_of(&st.lists, d, node) != crate::slir::NONE;
-    if st.patches_by_node.len() == d.node_kind.len() {
-        for index in 0..st.patches_by_node[base_index].len() {
-            let patch = st.patches_by_node[base_index][index];
+    if st.lists.patches_by_node.len() == d.node_kind.len() {
+        for index in 0..st.lists.patches_by_node[base_index].len() {
+            let patch = st.lists.patches_by_node[base_index][index];
             reset_wh_patch(d, st, node, synthetic, patch);
         }
     } else {

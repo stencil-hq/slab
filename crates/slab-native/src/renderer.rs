@@ -2244,6 +2244,13 @@ impl Renderer {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("frame"),
             });
+        // Metal queues cap in-flight command buffers (default 64) and wgpu
+        // records every render pass into its own Metal command buffer, all
+        // committed only at submit. A frame with enough layers would block
+        // forever acquiring buffer #65, so the frame is split across
+        // multiple submissions well below that limit.
+        const MAX_PASSES_PER_SUBMIT: usize = 16;
+        let mut encoder_passes = 0usize;
 
         // layer stack: indices into pool; usize::MAX = main target
         let main_t = &self.main.as_ref().unwrap().2;
@@ -2273,6 +2280,7 @@ impl Renderer {
                         wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT)
                     };
                     $cleared[$stack.len() - 1] = true;
+                    encoder_passes += 1;
                     let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                         label: Some("draws"),
                         color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -2379,6 +2387,18 @@ impl Renderer {
         }
 
         for st in &fb.steps {
+            if encoder_passes >= MAX_PASSES_PER_SUBMIT {
+                encoder_passes = 0;
+                let finished = std::mem::replace(
+                    &mut encoder,
+                    self.device
+                        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                            label: Some("frame"),
+                        }),
+                )
+                .finish();
+                self.queue.submit(Some(finished));
+            }
             match st {
                 Step::Rects { .. }
                 | Step::Glyphs { .. }
@@ -2406,6 +2426,7 @@ impl Renderer {
                     next_layer = popped; // reuse the slot for siblings
                     // blur popped in place via aux ping-pong
                     let src_ix = if *sigma > 0.0 && need_aux {
+                        encoder_passes += 2;
                         self.blur_pass(
                             &mut encoder,
                             target_of(popped),
@@ -2434,6 +2455,7 @@ impl Renderer {
                         // multiply the layer by the mask paint's alpha over
                         // its box (contract 6.3): dst *= src.a via mask blend
                         let mbuf = mkbuf(bytemuck::cast_slice(&[*mask]), "mask");
+                        encoder_passes += 1;
                         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                             label: Some("mask"),
                             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -2472,6 +2494,7 @@ impl Renderer {
                         wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT)
                     };
                     cleared[stack.len() - 1] = true;
+                    encoder_passes += 1;
                     let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                         label: Some("composite"),
                         color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -2511,6 +2534,7 @@ impl Renderer {
                         wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT)
                     };
                     cleared[stack.len() - 1] = true;
+                    encoder_passes += 1;
                     let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                         label: Some("tilt"),
                         color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -2594,6 +2618,7 @@ impl Renderer {
                             (rect[2] + pad).min(tw as f32),
                             (rect[3] + pad).min(th as f32),
                         ];
+                        encoder_passes += 2;
                         self.blur_pass(
                             &mut encoder,
                             &self.pool[aux_a],
@@ -2656,6 +2681,7 @@ impl Renderer {
                                 mkbuf(bytemuck::cast_slice(&[comp]), "backdrop"),
                             )
                         };
+                        encoder_passes += 1;
                         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                             label: Some("backdrop"),
                             color_attachments: &[Some(wgpu::RenderPassColorAttachment {

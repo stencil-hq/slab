@@ -8,6 +8,7 @@ use crate::{slir, value};
 use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 
 const NONE: u32 = u32::MAX;
+const NO_SLOT: usize = usize::MAX;
 
 #[derive(Clone, Debug)]
 enum KeyItems {
@@ -57,13 +58,16 @@ pub struct State {
     pub sy_key: Vec<String>,
     sy_item: Vec<i32>,
     sy_list: Vec<u32>,
+    sy_generation: Vec<u64>,
+    location_generation: u64,
     pub sy_next: u32,
-    sy_slot: HashMap<u32, usize>,
+    sy_slot: Vec<usize>,
     sy_identity: HashMap<(u32, u32), HashMap<String, u32>>,
     sy_materialized: Vec<u32>,
     sy_materialized_set: HashSet<u32>,
     sy_deleted: Vec<u32>,
     prune_pending: bool,
+    pub(crate) patches_by_node: Vec<Vec<usize>>,
     pub win_each: Vec<u32>,
     pub win_start: Vec<i32>,
     pub win_end: Vec<i32>,
@@ -81,6 +85,15 @@ pub struct Val {
     pub sym: String,
 }
 
+/// Borrowed scalar list value used by the kernel's read-only hot paths.
+pub(crate) struct ValRef<'a> {
+    pub kind: u32,
+    pub num: f64,
+    pub s: &'a str,
+    pub rgba: u32,
+    pub sym: &'a str,
+}
+
 fn index(value: i32) -> usize {
     usize::try_from(value).expect("nonnegative list index")
 }
@@ -95,6 +108,14 @@ fn unsigned(value: i32) -> u32 {
 
 fn len_i32<T>(values: &[T]) -> i32 {
     i32::try_from(values.len()).expect("list state exceeds i32 capacity")
+}
+
+fn invalidate_locations(s: &mut State) {
+    let next = s.location_generation.wrapping_add(1);
+    if next == 0 {
+        s.sy_generation.fill(u64::MAX);
+    }
+    s.location_generation = next;
 }
 
 #[cfg(test)]
@@ -174,13 +195,16 @@ pub fn state_new() -> State {
         sy_key: Vec::new(),
         sy_item: Vec::new(),
         sy_list: Vec::new(),
+        sy_generation: Vec::new(),
+        location_generation: 1,
         sy_next: 0,
-        sy_slot: HashMap::default(),
+        sy_slot: Vec::new(),
         sy_identity: HashMap::default(),
         sy_materialized: Vec::new(),
         sy_materialized_set: HashSet::default(),
         sy_deleted: Vec::new(),
         prune_pending: false,
+        patches_by_node: Vec::new(),
         win_each: Vec::new(),
         win_start: Vec::new(),
         win_end: Vec::new(),
@@ -814,7 +838,7 @@ pub fn remove_sy(s: &mut State, k: i32) {
     if remove_identity {
         s.sy_identity.remove(&identity);
     }
-    s.sy_slot.remove(&id);
+    s.sy_slot[usize::try_from(id).expect("synthetic node index exceeds usize")] = NO_SLOT;
     s.sy_deleted.push(id);
     s.sy_id.swap_remove(slot);
     s.sy_each.swap_remove(slot);
@@ -822,8 +846,10 @@ pub fn remove_sy(s: &mut State, k: i32) {
     s.sy_key.swap_remove(slot);
     s.sy_item.swap_remove(slot);
     s.sy_list.swap_remove(slot);
+    s.sy_generation.swap_remove(slot);
     if slot < s.sy_id.len() {
-        s.sy_slot.insert(s.sy_id[slot], slot);
+        s.sy_slot[usize::try_from(s.sy_id[slot]).expect("synthetic node index exceeds usize")] =
+            slot;
     }
 }
 
@@ -860,6 +886,7 @@ fn set_len_id(d: &slir::Doc, s: &mut State, list: u32, n: i32) -> i32 {
     if old == n {
         return 0;
     }
+    invalidate_locations(s);
     if n > old {
         s.li_len[index(slot)] = n;
         for item in old..n {
@@ -1005,6 +1032,7 @@ fn set_key_id(d: &slir::Doc, s: &mut State, list: u32, item_index: i32, key: &st
     if key_at(d, s, list, item_index) == key {
         return 0;
     }
+    invalidate_locations(s);
     s.prune_pending = true;
     note_lookup();
     if let Some(&slot) = s.lk_slot.get(&(list, item_index)) {
@@ -1050,24 +1078,47 @@ pub fn set_key_path(
     }
 }
 
-/// Returns a stored scalar field value or the empty sentinel when absent.
-pub fn get(_d: &slir::Doc, s: &State, list: u32, item_index: i32, field: u32) -> Val {
+#[inline]
+/// Borrows a stored scalar field value without cloning its string variants.
+pub(crate) fn get_ref(s: &State, list: u32, item_index: i32, field: u32) -> ValRef<'_> {
     note_lookup();
     let Some(&slot) = s.lv_slot.get(&(list, item_index, field)) else {
-        return empty_val(0);
+        return ValRef {
+            kind: 0,
+            num: 0.0,
+            s: "",
+            rgba: 0,
+            sym: "",
+        };
     };
-    Val {
+    ValRef {
         kind: s.lv_kind[slot],
         num: s.lv_num[slot],
-        s: s.lv_str[slot].clone(),
+        s: &s.lv_str[slot],
         rgba: s.lv_h[slot],
-        sym: s.lv_sym[slot].clone(),
+        sym: &s.lv_sym[slot],
+    }
+}
+
+/// Returns a stored scalar field value or the empty sentinel when absent.
+pub fn get(_d: &slir::Doc, s: &State, list: u32, item_index: i32, field: u32) -> Val {
+    let value = get_ref(s, list, item_index, field);
+    Val {
+        kind: value.kind,
+        num: value.num,
+        s: value.s.to_owned(),
+        rgba: value.rgba,
+        sym: value.sym.to_owned(),
     }
 }
 
 /// Resets list state from document schemas and recursive default items.
 pub fn init(d: &slir::Doc, s: &mut State) {
     *s = state_new();
+    s.patches_by_node.resize_with(d.node_kind.len(), Vec::new);
+    for (patch, &node) in d.patch_node.iter().enumerate() {
+        s.patches_by_node[usize::try_from(node).expect("node index exceeds usize")].push(patch);
+    }
     s.li_next = u32::try_from(d.parm_type.len()).expect("parameter count exceeds u32");
     s.sy_next = u32::try_from(d.node_kind.len()).expect("node count exceeds u32");
     for param_ix in 0..d.parm_type.len() {
@@ -1091,12 +1142,14 @@ pub fn init(d: &slir::Doc, s: &mut State) {
     sync(d, s);
 }
 
+#[inline]
 fn synthetic_slot(s: &State, node: u32) -> Option<usize> {
     note_lookup();
-    let &slot = s.sy_slot.get(&node)?;
-    (s.sy_id.get(slot) == Some(&node)).then_some(slot)
+    let slot = *s.sy_slot.get(usize::try_from(node).ok()?)?;
+    (slot != NO_SLOT && s.sy_id.get(slot) == Some(&node)).then_some(slot)
 }
 
+#[inline]
 /// Resolves a synthetic node to its document template; document nodes are unchanged.
 pub fn base(s: &State, d: &slir::Doc, node: u32) -> u32 {
     if signed(node) >= 0 && signed(node) < len_i32(&d.node_kind) {
@@ -1105,6 +1158,7 @@ pub fn base(s: &State, d: &slir::Doc, node: u32) -> u32 {
     synthetic_slot(s, node).map_or(slir::NONE, |slot| s.sy_tpl[slot])
 }
 
+#[inline]
 /// Returns the concrete each instance owning a synthetic node.
 pub fn each_of(s: &State, d: &slir::Doc, node: u32) -> u32 {
     if signed(node) >= 0 && signed(node) < len_i32(&d.node_kind) {
@@ -1121,14 +1175,34 @@ pub fn item_key(s: &State, d: &slir::Doc, node: u32) -> String {
     synthetic_slot(s, node).map_or_else(String::new, |slot| s.sy_key[slot].clone())
 }
 
-/// Returns the current innermost item index represented by a synthetic node.
-pub fn item_ix(s: &State, _d: &slir::Doc, node: u32) -> i32 {
-    synthetic_slot(s, node).map_or(-1, |slot| s.sy_item[slot])
+fn synthetic_location(s: &State, d: &slir::Doc, node: u32) -> Option<(u32, i32)> {
+    let slot = synthetic_slot(s, node)?;
+    if s.sy_generation[slot] == s.location_generation {
+        let list = s.sy_list[slot];
+        let item = s.sy_item[slot];
+        if list != NONE && item >= 0 {
+            return Some((list, item));
+        }
+    }
+    let list = each_list(d, s, s.sy_each[slot]);
+    if list < 0 {
+        return None;
+    }
+    let list = unsigned(list);
+    let item = item_index_for_key(d, s, list, &s.sy_key[slot]);
+    (item >= 0).then_some((list, item))
 }
 
+#[inline]
+/// Returns the current innermost item index represented by a synthetic node.
+pub fn item_ix(s: &State, d: &slir::Doc, node: u32) -> i32 {
+    synthetic_location(s, d, node).map_or(-1, |(_, item)| item)
+}
+
+#[inline]
 /// Returns the concrete list handle for a synthetic node, or `-1` otherwise.
-pub fn param_of(s: &State, _d: &slir::Doc, node: u32) -> i32 {
-    synthetic_slot(s, node).map_or(-1, |slot| signed(s.sy_list[slot]))
+pub fn param_of(s: &State, d: &slir::Doc, node: u32) -> i32 {
+    synthetic_location(s, d, node).map_or(-1, |(list, _)| signed(list))
 }
 
 fn synthetic_identity(s: &mut State, each: u32, tpl: u32, key: &str) -> (u32, usize) {
@@ -1151,12 +1225,14 @@ fn synthetic_identity(s: &mut State, each: u32, tpl: u32, key: &str) -> (u32, us
         if remove_identity {
             s.sy_identity.remove(&identity);
         }
-        s.sy_slot.remove(&id);
+        s.sy_slot[usize::try_from(id).expect("synthetic node index exceeds usize")] = NO_SLOT;
     }
     let id = s.sy_next;
     s.sy_next = s.sy_next.wrapping_add(1);
     let slot = s.sy_id.len();
-    s.sy_slot.insert(id, slot);
+    let id_index = usize::try_from(id).expect("synthetic node index exceeds usize");
+    s.sy_slot.resize(id_index + 1, NO_SLOT);
+    s.sy_slot[id_index] = slot;
     s.sy_identity
         .entry(identity)
         .or_default()
@@ -1167,6 +1243,7 @@ fn synthetic_identity(s: &mut State, each: u32, tpl: u32, key: &str) -> (u32, us
     s.sy_key.push(key.to_owned());
     s.sy_item.push(-1);
     s.sy_list.push(NONE);
+    s.sy_generation.push(s.location_generation.wrapping_sub(1));
     (id, slot)
 }
 
@@ -1179,6 +1256,7 @@ fn synthetic_at(s: &mut State, each: u32, tpl: u32, key: &str, list: u32, item: 
     let (node, slot) = synthetic_identity(s, each, tpl, key);
     s.sy_item[slot] = item;
     s.sy_list[slot] = list;
+    s.sy_generation[slot] = s.location_generation;
     node
 }
 
@@ -1208,10 +1286,9 @@ fn sync_template(
         sync_template(d, s, each, child, key, list, item);
         child = d.node_next[child as usize];
     }
-    for (patch, &owner) in d.patch_node.iter().enumerate() {
-        if owner != tpl {
-            continue;
-        }
+    let patch_count = s.patches_by_node[tpl as usize].len();
+    for patch_position in 0..patch_count {
+        let patch = s.patches_by_node[tpl as usize][patch_position];
         let start = d.patch_child_off[patch];
         let end = start.wrapping_add(d.patch_child_len[patch]);
         for patch_child in start..end {

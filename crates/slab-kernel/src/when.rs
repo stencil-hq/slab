@@ -212,7 +212,7 @@ pub fn eval_cond_item(
     // Preserve the encoded two's-complement value passed by the generated
     // implementation; `get` is called even when no list parameter is found.
     let param_bits = u32::from_ne_bytes(param.to_ne_bytes());
-    let value = list::get(d, lists, param_bits, item, d.cond_sym[condition]);
+    let value = list::get_ref(lists, param_bits, item, d.cond_sym[condition]);
     let active = if param < 0 || item < 0 {
         false
     } else {
