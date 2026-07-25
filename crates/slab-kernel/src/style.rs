@@ -83,6 +83,7 @@ pub struct St {
     pub patches_by_node: Vec<Vec<usize>>,
     base_attr_values: Vec<[i32; ATTR_COUNT]>,
     font_selection: FxHashMap<(u32, u32), i32>,
+    family_index: FxHashMap<String, u32>,
     /// Synthetic-node size-condition results keyed by node and patch.
     pub wh_node: Vec<u32>,
     pub wh_patch: Vec<i32>,
@@ -148,6 +149,7 @@ pub fn st_new() -> crate::style::St {
         patches_by_node: vec![],
         base_attr_values: vec![],
         font_selection: FxHashMap::default(),
+        family_index: FxHashMap::default(),
         wh_node: vec![],
         wh_patch: vec![],
         wh_on: vec![],
@@ -195,6 +197,7 @@ pub fn init_params(d: &crate::slir::Doc, st: &mut crate::style::St) {
     }
     st.base_attr_values.clear();
     st.font_selection.clear();
+    st.family_index.clear();
     st.base_attr_values
         .resize(d.node_kind.len(), [-1; ATTR_COUNT]);
     for node in 0..d.node_kind.len() {
@@ -1839,6 +1842,21 @@ pub fn is_container(kind: u32) -> bool {
     )
 }
 
+fn cached_family(d: &crate::slir::Doc, st: &mut crate::style::St, name: &str) -> Option<u32> {
+    if let Some(&family) = st.family_index.get(name) {
+        return (family != crate::slir::NONE).then_some(family);
+    }
+    let family = d
+        .strs
+        .iter()
+        .position(|candidate| crate::slir::family_eq(candidate, name))
+        .map_or(crate::slir::NONE, |index| {
+            u32::try_from(index).expect("family string index exceeds u32")
+        });
+    st.family_index.insert(name.to_owned(), family);
+    (family != crate::slir::NONE).then_some(family)
+}
+
 fn cached_font(
     d: &crate::slir::Doc,
     st: &mut crate::style::St,
@@ -2121,12 +2139,8 @@ pub fn build_rstyle(
         crate::slir::T_PARAM_REF | crate::slir::T_PROP_REF
     ) {
         dynamic_family = crate::style::attr_str(d, st, node, crate::slir::A_FAMILY);
-        if let Some(index) = d
-            .strs
-            .iter()
-            .position(|candidate| crate::slir::family_eq(candidate, &dynamic_family))
-        {
-            fam = u32::try_from(index).expect("family string index exceeds u32");
+        if let Some(index) = cached_family(d, st, &dynamic_family) {
+            fam = index;
         } else {
             dynamic_family_uninterned = true;
         }
