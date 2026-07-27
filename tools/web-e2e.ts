@@ -114,6 +114,23 @@ const boxCount = await page.evaluate(() => {
 });
 check('(a) upgrade+paint', boxCount > 10, `${boxCount} shadow-DOM boxes`);
 
+// ------------------------------------------------------------------ (a2)
+const slim = await page.evaluate(() => {
+   const root = document.getElementById('host')?.shadowRoot?.querySelector('.slab-ops');
+   if (!root) return null;
+   const spans = [...root.querySelectorAll('span')] as HTMLElement[];
+   return {
+      count: spans.length,
+      nested: spans.some((s) => s.parentElement !== root && s.parentElement?.localName === 'div'),
+      clean: spans.every((s) => !s.style.position && !s.style.fontFamily && !s.style.whiteSpace),
+   };
+});
+check(
+   '(a2) spans nest in container rects without repeated declarations',
+   slim !== null && slim.count > 0 && slim.nested && slim.clean,
+   JSON.stringify(slim),
+);
+
 // Record signal CustomEvents.
 await page.evaluate(() => {
    const host = document.getElementById('host');

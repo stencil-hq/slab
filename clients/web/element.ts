@@ -20,7 +20,7 @@ import type {
    SigMeta,
    Statics,
 } from './kernel.ts';
-import { type FontCss, liftedAnimationCss, Painter } from './painter.ts';
+import { type FontCss, fontRulesCss, liftedAnimationCss, Painter } from './painter.ts';
 import init, { KInst } from './wasm/slab_kernel.js';
 
 /** Shared metadata carried by every named Slab signal. */
@@ -43,7 +43,13 @@ const BASE_CSS = `
 :host(:focus) { outline: none; }
 .slab-ops, .slab-holes { position: absolute; left: 0; top: 0; width: 100%; height: 100%; pointer-events: none; }
 .slab-ops * { position: absolute; box-sizing: border-box; margin: 0; padding: 0; }
-.slab-ops span { font-kerning: none; font-variant-ligatures: none; }
+.slab-ops div { left: 0; top: 0; width: 0; height: 0; }
+.slab-ops svg { overflow: visible; }
+.slab-ops span {
+   font: 400 16px/1 sans-serif;
+   font-kerning: none; font-variant-ligatures: none;
+   letter-spacing: 0; white-space: pre;
+}
 .slab-hole { position: absolute; pointer-events: auto; }
 .slab-hole { scrollbar-width: thin; scrollbar-color: color-mix(in srgb, currentColor 25%, transparent) transparent; }
 .slab-a11y { position: absolute; left: 0; top: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
@@ -409,11 +415,13 @@ export class SlabElement extends HTMLElement {
    #theme = '';
    // Per-element sheet holding lifted @keyframes (names are binding-scoped).
    #animSheet = new CSSStyleSheet();
+   // Per-element sheet mapping SLIR FONT indices to `.f<i>` family classes.
+   #fontSheet = new CSSStyleSheet();
 
    constructor() {
       super();
       const root = this.attachShadow({ mode: 'open', delegatesFocus: true });
-      root.adoptedStyleSheets = [sheet(), this.#animSheet];
+      root.adoptedStyleSheets = [sheet(), this.#fontSheet, this.#animSheet];
       this.#ime = document.createElement('textarea');
       this.#ime.className = 'slab-ime';
       this.#ime.setAttribute('aria-hidden', 'true');
@@ -569,6 +577,7 @@ export class SlabElement extends HTMLElement {
          this.#ownImageUrls = urls.filter((url): url is string => url !== null);
          painter.imageUrls = urls;
       }
+      this.#fontSheet.replaceSync(fontRulesCss(painter.fonts));
       this.#painter = painter;
       this.#liftAnimations(inst, painter);
       this.#appliedFonts.clear();
@@ -758,6 +767,7 @@ export class SlabElement extends HTMLElement {
          ascent: metrics.ascent,
          descent: metrics.descent,
       };
+      this.#fontSheet.replaceSync(fontRulesCss(painter.fonts));
       this.#appliedFonts.add(key);
       this.#schedule();
    }
@@ -826,7 +836,7 @@ export class SlabElement extends HTMLElement {
       const decoded = decodeFrame(inst.frame(t));
       this.#lastFrame = decoded;
       this.#scene = null;
-      painter.paint(decoded);
+      painter.paint(decoded, this.sceneSnapshot());
       this.#syncHoles();
       this.#refreshCaret();
       this.#syncSemantics();

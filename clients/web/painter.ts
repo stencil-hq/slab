@@ -16,6 +16,14 @@
 // Genuine reorders use `moveBefore` where available, which moves a connected
 // node without resetting its animation/iframe/focus state.
 //
+// Shared declarations live in the element's adopted stylesheets, not inline:
+// `.slab-ops` rules supply position/box-sizing, zero-size div defaults, svg
+// overflow, and span font defaults; per-index font classes (`fontRulesCss`)
+// and lifted keyframes ride sibling sheets. Inline styles carry only
+// per-element values. Paint elements nest inside the first rect div of their
+// nearest painted ancestor scene container, with `left`/`top` relative to
+// that container; everything else stays layer-flat.
+//
 // Documented degradations (spec/support.toml `web` column):
 // - stroke_align center/outside → CSS outline (side mask degrades to all
 //   four sides); dash → border/outline-style dashed (on/off lengths lost).
@@ -26,7 +34,15 @@
 //   stroke the full perimeter (inline-svg drop-shadow branch).
 // - backdrop-mask → six hard-banded backdrop divs (contract §6.6).
 
-import type { Frame, ImageInfo, LiftedAnimation, LiftedStop, OpRect, Statics } from './kernel.ts';
+import type {
+   Frame,
+   ImageInfo,
+   LiftedAnimation,
+   LiftedStop,
+   OpRect,
+   SceneNode,
+   Statics,
+} from './kernel.ts';
 
 /** CSS binding for one SLIR FONT table. */
 export interface FontCss {
@@ -38,6 +54,19 @@ export interface FontCss {
    ascent: number;
    /** Font descender in font units. */
    descent: number;
+}
+
+/**
+ * Shared rules mapping SLIR FONT indices to CSS families; adopted alongside
+ * the element base sheet so text spans can reference fonts by class.
+ */
+export function fontRulesCss(fonts: (FontCss | null)[]): string {
+   let rules = '';
+   for (let i = 0; i < fonts.length; i++) {
+      const f = fonts[i];
+      if (f) rules += `.slab-ops .f${i}{font-family:${f.family};}`;
+   }
+   return rules;
 }
 
 /** Converts the kernel's little-endian packed RGBA word into a CSS color. */
@@ -466,6 +495,8 @@ interface Layer {
    oy: number;
    /** Last element placed in this layer; the next one belongs after it. */
    prev: Element | null;
+   /** Document node id when this layer is a scene-container rect div. */
+   node?: number;
 }
 
 type PathBox = readonly [x: number, y: number, width: number, height: number];
@@ -730,7 +761,7 @@ export class Painter {
       let body = '';
       let shadowHost: 'svg' | 'bg' = 'svg';
       if (conicBgEl !== null) {
-         let bgCss = `position:absolute;left:${o.x - ox}px;top:${o.y - oy}px;width:${o.w}px;height:${o.h}px;clip-path:path('${d}');background-image:${gradientCss(doc, o.bg, o.w, o.h)};`;
+         let bgCss = `left:${o.x - ox}px;top:${o.y - oy}px;width:${o.w}px;height:${o.h}px;clip-path:path('${d}');background-image:${gradientCss(doc, o.bg, o.w, o.h)};`;
          if (o.opacity !== 1) bgCss += `opacity:${o.opacity};`;
          bgCss += this.#dropShadowCss(o);
          setCss(conicBgEl, bgCss);
@@ -773,7 +804,7 @@ export class Painter {
          }
       }
       setMarkup(el, (defs !== '' ? `<defs>${defs}</defs>` : '') + body);
-      let css = `position:absolute;left:${o.x - ox}px;top:${o.y - oy}px;width:${o.w}px;height:${o.h}px;overflow:visible;`;
+      let css = `left:${o.x - ox}px;top:${o.y - oy}px;width:${o.w}px;height:${o.h}px;`;
       if (shadowHost === 'svg') css += this.#dropShadowCss(o);
       if (o.opacity !== 1) css += `opacity:${o.opacity};`;
       css += this.animations.get(o.node) ?? '';
@@ -795,12 +826,32 @@ export class Painter {
       return parts.length > 0 ? `filter:${parts.join(' ')};` : '';
    }
 
-   paint(fr: Frame): void {
+   paint(fr: Frame, scene: readonly SceneNode[]): void {
       const doc = this.doc;
       const used = new Set<string>();
       const counts = new Map<string, number>();
       const stack: Layer[] = [{ el: this.#root, ox: 0, oy: 0, prev: null }];
       const runtimePaths: (PaintedPath | undefined)[] = [];
+
+      // Scene containment: map document nodes to parents so paint elements
+      // can nest inside their container's rect div with parent-relative
+      // coordinates. Ghost re-paints repeat node ids with identical
+      // parentage, so first-wins insertion is correct.
+      const parentOf = new Map<number, number>();
+      const containers = new Set<number>();
+      for (const s of scene) {
+         if (s.parent >= 0) {
+            const p = scene[s.parent].node;
+            if (!parentOf.has(s.node)) parentOf.set(s.node, p);
+            containers.add(p);
+         }
+      }
+      const inSubtree = (node: number, root: number): boolean => {
+         for (let n: number | undefined = node; n !== undefined; n = parentOf.get(n)) {
+            if (n === root) return true;
+         }
+         return false;
+      };
 
       const take = (base: string, tag: 'canvas' | 'div' | 'span' | 'img' | 'svg'): Element => {
          const n = counts.get(base) ?? 0;
@@ -835,6 +886,22 @@ export class Painter {
       };
 
       for (const op of fr.ops) {
+         // Close scene containers that do not contain this op's node. Ops
+         // without a node (clips, transforms, backdrops, ghost groups)
+         // neither open nor close containers.
+         const opNode =
+            op.tag === 'Rect' || op.tag === 'Text' || op.tag === 'Image' || op.tag === 'PathDraw'
+               ? op.v.node
+               : op.tag === 'GroupPush' && op.v.node !== NO_NODE
+                 ? op.v.node
+                 : undefined;
+         if (opNode !== undefined) {
+            while (stack.length > 1) {
+               const top = stack[stack.length - 1];
+               if (top.node === undefined || inSubtree(opNode, top.node)) break;
+               stack.pop();
+            }
+         }
          const { ox, oy } = stack[stack.length - 1];
          switch (op.tag) {
             case 'Rect': {
@@ -851,7 +918,7 @@ export class Painter {
                   break;
                }
                const el = take(`R${o.node}`, 'div');
-               let css = `position:absolute;box-sizing:border-box;left:${o.x - ox}px;top:${o.y - oy}px;width:${o.w}px;height:${o.h}px;`;
+               let css = `left:${o.x - ox}px;top:${o.y - oy}px;width:${o.w}px;height:${o.h}px;`;
                if (o.radius > 0) css += `border-radius:${o.radius}px;`;
                // Fill and grain share one background stack; grain is the TOP
                // layer (contract §6.2 — CSS inset shadows still paint above).
@@ -915,12 +982,18 @@ export class Painter {
                   const rw = o.w + 2 * grow;
                   const rh = o.h + 2 * grow;
                   const mask = 'linear-gradient(#fff 0 0) content-box,linear-gradient(#fff 0 0)';
-                  let rcss = `position:absolute;box-sizing:border-box;left:${o.x - ox - grow}px;top:${o.y - oy - grow}px;width:${rw}px;height:${rh}px;padding:${o.stroke_w}px;background-image:${gradientCss(doc, o.stroke, rw, rh)};`;
+                  let rcss = `left:${o.x - ox - grow}px;top:${o.y - oy - grow}px;width:${rw}px;height:${rh}px;padding:${o.stroke_w}px;background-image:${gradientCss(doc, o.stroke, rw, rh)};`;
                   if (o.radius > 0) rcss += `border-radius:${o.radius + grow}px;`;
                   rcss += `mask:${mask};-webkit-mask:${mask};mask-composite:exclude;-webkit-mask-composite:xor;`;
                   if (o.opacity !== 1) rcss += `opacity:${o.opacity};`;
                   rcss += this.animations.get(o.node) ?? '';
                   setCss(take(`S${o.node}`, 'div'), rcss);
+               }
+               if (containers.has(o.node) && counts.get(`R${o.node}`) === 1) {
+                  // First rect occurrence of a scene container becomes the
+                  // positioning parent for its descendants' paint elements
+                  // (scrollbar/ghost occurrences must not swallow ops).
+                  stack.push({ el, ox: o.x, oy: o.y, prev: null, node: o.node });
                }
                break;
             }
@@ -935,7 +1008,10 @@ export class Painter {
                // same hhea metrics the kernel measured with.
                const asc = f ? (f.ascent * o.size) / f.upem : o.size * 0.8;
                const lineH = f ? ((f.ascent - f.descent) * o.size) / f.upem : o.size;
-               let css = `position:absolute;white-space:pre;left:${o.x - ox}px;top:${o.y_baseline - oy - asc}px;line-height:${lineH}px;font-family:${f ? f.family : 'sans-serif'};font-size:${o.size}px;font-weight:${o.weight};`;
+               const cls = f ? `f${o.font}` : '';
+               if (el.getAttribute('class') !== cls) el.setAttribute('class', cls);
+               let css = `left:${o.x - ox}px;top:${o.y_baseline - oy - asc}px;line-height:${lineH}px;font-size:${o.size}px;`;
+               if (o.weight !== 400) css += `font-weight:${o.weight};`;
                if (o.color_kind === 2) {
                   // W5 gradient text: the paint spans the node's content box
                   // (contract §6.7), offset per line from the span's own
@@ -957,7 +1033,7 @@ export class Painter {
                const o = op.v;
                const runtime = o.img >= doc.img_src.length;
                const el = take(`${runtime ? 'J' : 'I'}${o.node}`, runtime ? 'canvas' : 'img');
-               let css = `position:absolute;left:${o.x - ox}px;top:${o.y - oy}px;width:${o.w}px;height:${o.h}px;`;
+               let css = `left:${o.x - ox}px;top:${o.y - oy}px;width:${o.w}px;height:${o.h}px;`;
                if (o.smooth > 0 && o.radius > 0)
                   css += `clip-path:path('${squirclePathD(o.w, o.h, o.radius, o.smooth)}');`;
                else if (o.radius > 0) css += `border-radius:${o.radius}px;`;
@@ -1002,7 +1078,7 @@ export class Painter {
                if (el.getAttribute('viewBox') !== `${bx} ${by} ${bw} ${bh}`) {
                   el.setAttribute('viewBox', `${bx} ${by} ${bw} ${bh}`);
                }
-               let css = `position:absolute;left:${o.dx + bx - ox}px;top:${o.dy + by - oy}px;width:${bw}px;height:${bh}px;overflow:visible;`;
+               let css = `left:${o.dx + bx - ox}px;top:${o.dy + by - oy}px;width:${bw}px;height:${bh}px;`;
                // W3: gradient path paints are real per-path defs mapped over
                // the path's coord bbox; conic paints keep their first stop
                // (SVG has no conic primitive).
@@ -1047,7 +1123,7 @@ export class Painter {
             case 'ClipPush': {
                const o = op.v;
                const el = take('C', 'div');
-               let css = `position:absolute;left:${o.x - ox}px;top:${o.y - oy}px;width:${o.w}px;height:${o.h}px;overflow:hidden;`;
+               let css = `left:${o.x - ox}px;top:${o.y - oy}px;width:${o.w}px;height:${o.h}px;overflow:hidden;`;
                if (o.smooth > 0 && o.radius > 0)
                   css += `clip-path:path('${squirclePathD(o.w, o.h, o.radius, o.smooth)}');`;
                else if (o.radius > 0) css += `border-radius:${o.radius}px;`;
@@ -1062,9 +1138,9 @@ export class Painter {
                const sized = o.mask_kind !== 0 || animation !== undefined;
                let originX = ox;
                let originY = oy;
-               let css = 'position:absolute;left:0;top:0;width:0;height:0;overflow:visible;';
+               let css = '';
                if (sized) {
-                  css = `position:absolute;left:${o.mx - ox}px;top:${o.my - oy}px;width:${o.mw}px;height:${o.mh}px;overflow:visible;`;
+                  css = `left:${o.mx - ox}px;top:${o.my - oy}px;width:${o.mw}px;height:${o.mh}px;`;
                   originX = o.mx;
                   originY = o.my;
                }
@@ -1088,7 +1164,7 @@ export class Painter {
             case 'RotatePush': {
                const o = op.v;
                const el = take('O', 'div');
-               const css = `position:absolute;left:0;top:0;width:0;height:0;overflow:visible;transform-origin:${o.cx - ox}px ${o.cy - oy}px;transform:rotate(${o.deg}deg);`;
+               const css = `transform-origin:${o.cx - ox}px ${o.cy - oy}px;transform:rotate(${o.deg}deg);`;
                setCss(el, css);
                stack.push({ el, ox, oy, prev: null });
                break;
@@ -1096,7 +1172,7 @@ export class Painter {
             case 'ScalePush': {
                const o = op.v;
                const el = take('S', 'div');
-               const css = `position:absolute;left:0;top:0;width:0;height:0;overflow:visible;transform-origin:${o.cx - ox}px ${o.cy - oy}px;transform:scale(${o.sx},${o.sy});`;
+               const css = `transform-origin:${o.cx - ox}px ${o.cy - oy}px;transform:scale(${o.sx},${o.sy});`;
                setCss(el, css);
                stack.push({ el, ox, oy, prev: null });
                break;
@@ -1106,7 +1182,7 @@ export class Painter {
                // transform-style keeps the subtree flattened into one plane.
                const o = op.v;
                const el = take('V', 'div');
-               const css = `position:absolute;left:0;top:0;width:0;height:0;overflow:visible;transform-origin:${o.cx - ox}px ${o.cy - oy}px;transform:perspective(${o.depth}px) rotateX(${o.rx}deg) rotateY(${o.ry}deg);`;
+               const css = `transform-origin:${o.cx - ox}px ${o.cy - oy}px;transform:perspective(${o.depth}px) rotateX(${o.rx}deg) rotateY(${o.ry}deg);`;
                setCss(el, css);
                stack.push({ el, ox, oy, prev: null });
                break;
@@ -1117,7 +1193,7 @@ export class Painter {
                if (o.smooth > 0 && o.radius > 0)
                   shape = `clip-path:path('${squirclePathD(o.w, o.h, o.radius, o.smooth)}');`;
                else if (o.radius > 0) shape = `border-radius:${o.radius}px;`;
-               const base = `position:absolute;left:${o.x - ox}px;top:${o.y - oy}px;width:${o.w}px;height:${o.h}px;${shape}`;
+               const base = `left:${o.x - ox}px;top:${o.y - oy}px;width:${o.w}px;height:${o.h}px;${shape}`;
                if (o.mask_kind !== 0) {
                   // W9: six banded sibling divs approximate progressive blur
                   // (contract §6.6); the plain backdrop div is suppressed.
@@ -1158,6 +1234,8 @@ export class Painter {
             case 'RotatePop':
             case 'ScalePop':
             case 'TiltPop':
+               // Scene containers opened inside this wrapper close with it.
+               while (stack.length > 1 && stack[stack.length - 1].node !== undefined) stack.pop();
                if (stack.length > 1) stack.pop();
                break;
             default: {

@@ -248,6 +248,10 @@ pub fn focusables(sc: &Scene, out: &mut Vec<u32>) {
 ///
 /// Returns [`NONE`] when the key is absent. The first match in node-identifier
 /// order wins; keys are unique except where duplicate-key diagnostics apply.
+/// A bare query without `/` (an authored `#id`, with or without the leading
+/// `#`) also resolves against the final segment of hierarchical keys, so
+/// hosts can address `#diff-scroll` as `"diff-scroll"` without knowing the
+/// instantiation path.
 pub fn node_by_key(d: &Doc, lists: &State, key: &str) -> u32 {
     for (node, &key_ref) in d.node_key.iter().enumerate() {
         let key_index = usize::try_from(key_ref).expect("string reference does not fit usize");
@@ -259,6 +263,19 @@ pub fn node_by_key(d: &Doc, lists: &State, key: &str) -> u32 {
     for &node in &lists.sy_id {
         if list::item_ix(lists, d, node) >= 0 && key_of(d, lists, node) == key {
             return node;
+        }
+    }
+
+    if !key.is_empty() && !key.contains('/') {
+        let want = key.strip_prefix('#').unwrap_or(key);
+        for (node, &key_ref) in d.node_key.iter().enumerate() {
+            let key_index =
+                usize::try_from(key_ref).expect("string reference does not fit usize");
+            let full = d.strs[key_index].as_str();
+            let leaf = full.rsplit('/').next().unwrap_or(full);
+            if leaf.strip_prefix('#').unwrap_or(leaf) == want {
+                return u32::try_from(node).expect("document has more than u32::MAX nodes");
+            }
         }
     }
 

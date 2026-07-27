@@ -2,7 +2,7 @@
 {"set":"list","op":"len","ok":true}
 {"set":"list","op":"field","ok":true}
 {"set":"list","op":"field","ok":true}
-{"set":"scroll","changed":false,"read":false}
+{"set":"scroll","changed":true,"read":false}
 {"repaint":true,"signals":[],"caret":null,"ime":null,"cursor":3,"focus":null,"scrolls":[]}
 {"repaint":true,"signals":[],"caret":null,"ime":null,"cursor":3,"focus":"#app/row@0/#split","scrolls":[]}
 {"repaint":true,"signals":[{"name":"split_drag","text":"480","item":"","meta":{"x":480,"y":300,"dx":0,"dy":0,"drag_dx":0,"drag_dy":0,"mods":0,"button":0,"clicks":0,"key":"#app/row@0/#split","src_key":"","src_item":"","cancelled":false,"dropped":false}}],"caret":null,"ime":null,"cursor":0,"focus":"#app/row@0/#split","scrolls":[]}
