@@ -70,23 +70,35 @@ export interface Statics {
    lists: ListDef[];
 }
 
-/** One normalized keyframe of a lifted animation binding. */
+/** One normalized keyframe of a lifted animation binding. Positions live in
+ * the time domain; `ctrl` holds the exact `cubic-bezier(1/3, y1, 2/3, y2)`
+ * y-controls for the segment leaving this stop. */
 export interface LiftedStop {
    pos: number;
+   ctrl: [number, number];
    offset: [number, number] | null;
    opacity: number | null;
+   rotate: number | null;
+   scale: number | null;
+   bg: number | null;
+   color: number | null;
 }
 
 /** A CSS-replayable animation binding from `KInst.lift_animations_json()`.
- * The kernel stops driving lifted bindings; the driver owns their playback. */
+ * The kernel stops driving lifted bindings; the driver owns their playback.
+ * Transform stops are absolute — replay is a delta against `base_rotate` /
+ * `base_scale` / `base_offset`; color stops map onto the paint channel the
+ * node `kind` uses (rect background, path fill, text ink). */
 export interface LiftedAnimation {
    binding: number;
    node: number;
+   kind: number;
    dur: number;
    delay: number;
    mode: number;
-   easing: number;
    base_offset: [number, number];
+   base_rotate: number;
+   base_scale: [number, number];
    stops: LiftedStop[];
 }
 

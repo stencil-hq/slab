@@ -54,19 +54,26 @@ struct ListDef<'a> {
 #[derive(Serialize)]
 struct LiftStopSnapshot {
     pos: f64,
+    ctrl: (f64, f64),
     offset: Option<(f64, f64)>,
     opacity: Option<f64>,
+    rotate: Option<f64>,
+    scale: Option<f64>,
+    bg: Option<u32>,
+    color: Option<u32>,
 }
 
 #[derive(Serialize)]
 struct LiftSnapshot {
     binding: usize,
     node: u32,
+    kind: u32,
     dur: f64,
     delay: f64,
     mode: u32,
-    easing: u32,
     base_offset: (f64, f64),
+    base_rotate: f64,
+    base_scale: (f64, f64),
     stops: Vec<LiftStopSnapshot>,
 }
 
@@ -396,18 +403,25 @@ pub(crate) fn lifts_json(lifts: &[motion::Lift]) -> String {
         .map(|lift| LiftSnapshot {
             binding: lift.binding,
             node: lift.node,
+            kind: lift.kind,
             dur: lift.dur,
             delay: lift.delay,
             mode: lift.mode,
-            easing: lift.easing,
             base_offset: lift.base_offset,
+            base_rotate: lift.base_rotate,
+            base_scale: lift.base_scale,
             stops: lift
                 .stops
                 .iter()
                 .map(|stop| LiftStopSnapshot {
                     pos: stop.pos,
+                    ctrl: stop.ctrl,
                     offset: stop.offset,
                     opacity: stop.opacity,
+                    rotate: stop.rotate,
+                    scale: stop.scale,
+                    bg: stop.bg,
+                    color: stop.color,
                 })
                 .collect(),
         })

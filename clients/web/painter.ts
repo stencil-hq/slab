@@ -309,29 +309,45 @@ function bandMaskCss(
    return `radial-gradient(circle ${fmt(Math.sqrt(w * w + hh * hh) / 2)}px at 50% 50%,${ramp})`;
 }
 
-// Slab's quadratic easing curves are exact cubic beziers: t² and t(2-t).
-const EASE_IN_QUAD = 'cubic-bezier(0.333333,0,0.666667,0.333333)';
-const EASE_OUT_QUAD = 'cubic-bezier(0.333333,0.666667,0.666667,1)';
+// Segment curves matching the kernel's normalized lifts: every keyframe
+// carries the exact `cubic-bezier(1/3, y1, 2/3, y2)` restriction of the
+// whole-cycle Slab easing, so (1/3, 2/3) means the segment is linear.
+const LINEAR_Y1 = 1 / 3;
+const LINEAR_Y2 = 2 / 3;
 
-/** Declarations one lifted keyframe contributes (deltas against the base offset). */
-function stopCss(stop: LiftedStop, base: [number, number]): string {
+// SLIR node kinds whose lifted color keyframes target distinct CSS channels.
+const KIND_PATH = 12;
+
+/**
+ * Declarations one lifted keyframe contributes. Transforms use the individual
+ * `translate`/`rotate`/`scale` properties — their fixed CSS composition order
+ * mirrors the kernel's offset-then-rotate-then-scale grouping about the node
+ * center — as deltas against the binding's static bases, which the painted
+ * geometry already includes. Colors are absolute and land on the paint
+ * channel the node kind uses (rect background, path fill, text ink).
+ */
+function stopCss(anim: LiftedAnimation, stop: LiftedStop, last: boolean): string {
    let css = '';
-   if (stop.offset)
-      css += `transform:translate(${stop.offset[0] - base[0]}px,${stop.offset[1] - base[1]}px);`;
-   if (stop.opacity !== null) css += `opacity:${stop.opacity};`;
+   if (stop.offset) {
+      const [bx, by] = anim.base_offset;
+      css += `translate:${fmt(stop.offset[0] - bx)}px ${fmt(stop.offset[1] - by)}px;`;
+   }
+   if (stop.rotate !== null) css += `rotate:${fmt(stop.rotate - anim.base_rotate)}deg;`;
+   if (stop.scale !== null) {
+      const sx = stop.scale / anim.base_scale[0];
+      const sy = stop.scale / anim.base_scale[1];
+      css += sx === sy ? `scale:${fmt(sx)};` : `scale:${fmt(sx)} ${fmt(sy)};`;
+   }
+   if (stop.opacity !== null) css += `opacity:${fmt(stop.opacity)};`;
+   if (stop.bg !== null) {
+      css += `${anim.kind === KIND_PATH ? 'fill' : 'background-color'}:${rgbaCss(stop.bg)};`;
+   }
+   if (stop.color !== null) css += `color:${rgbaCss(stop.color)};`;
+   const [y1, y2] = stop.ctrl;
+   if (!last && !(y1 === LINEAR_Y1 && y2 === LINEAR_Y2)) {
+      css += `animation-timing-function:cubic-bezier(${fmt(LINEAR_Y1)},${fmt(y1)},${fmt(LINEAR_Y2)},${fmt(y2)});`;
+   }
    return css;
-}
-
-/** The exact midpoint of a two-stop track (used to split whole-cycle ease-in-out). */
-function midStop(a: LiftedStop, b: LiftedStop): LiftedStop {
-   return {
-      pos: 0.5,
-      offset:
-         a.offset && b.offset
-            ? [(a.offset[0] + b.offset[0]) / 2, (a.offset[1] + b.offset[1]) / 2]
-            : null,
-      opacity: a.opacity !== null && b.opacity !== null ? (a.opacity + b.opacity) / 2 : null,
-   };
 }
 
 /**
@@ -339,10 +355,11 @@ function midStop(a: LiftedStop, b: LiftedStop): LiftedStop {
  * binding, `byNode` maps each animated node to the `animation:` declaration
  * the painter appends to its cssText.
  *
- * Slab easings apply to the whole cycle while CSS timing functions apply per
- * keyframe segment; the kernel therefore only lifts non-linear easings with
- * 0%/100% stops, where the models coincide. `ease-in-out` (piecewise
- * quadratic) splits at 50% into its exact quad-in and quad-out halves.
+ * The kernel has already normalized whole-cycle Slab easing into time-domain
+ * stop positions with exact per-segment Bézier curves, so translation is 1:1:
+ * one keyframe per stop, an `animation-timing-function` on every non-linear
+ * segment, and `alternate` cycles replay the same curves mirrored — matching
+ * the kernel's `ease(1 - t)` on odd cycles.
  */
 export function liftedAnimationCss(lifted: LiftedAnimation[]): {
    rules: string;
@@ -353,25 +370,15 @@ export function liftedAnimationCss(lifted: LiftedAnimation[]): {
    for (const anim of lifted) {
       const name = `slab-b${anim.binding}`;
       let frames = '';
-      let timing = 'linear';
-      if (anim.easing === 3) {
-         const [first, last] = [anim.stops[0], anim.stops[anim.stops.length - 1]];
-         frames =
-            `0%{${stopCss(first, anim.base_offset)}animation-timing-function:${EASE_IN_QUAD};}` +
-            `50%{${stopCss(midStop(first, last), anim.base_offset)}animation-timing-function:${EASE_OUT_QUAD};}` +
-            `100%{${stopCss(last, anim.base_offset)}}`;
-      } else {
-         if (anim.easing === 1) timing = EASE_IN_QUAD;
-         else if (anim.easing === 2) timing = EASE_OUT_QUAD;
-         for (const stop of anim.stops) {
-            frames += `${stop.pos * 100}%{${stopCss(stop, anim.base_offset)}}`;
-         }
+      for (let i = 0; i < anim.stops.length; i++) {
+         const last = i === anim.stops.length - 1;
+         frames += `${fmt(anim.stops[i].pos * 100)}%{${stopCss(anim, anim.stops[i], last)}}`;
       }
       rules += `@keyframes ${name}{${frames}}`;
       const count = anim.mode === 1 ? '1' : 'infinite';
       const direction = anim.mode === 2 ? 'alternate' : 'normal';
       const items = perNode.get(anim.node) ?? [];
-      items.push(`${anim.dur}ms ${timing} ${anim.delay}ms ${count} ${direction} both ${name}`);
+      items.push(`${anim.dur}ms linear ${anim.delay}ms ${count} ${direction} both ${name}`);
       perNode.set(anim.node, items);
    }
    const byNode = new Map<number, string>();

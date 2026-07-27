@@ -290,10 +290,11 @@ layout re-solves per displayed value (countdown/ticker idiom). Standalone
 SVG can't express it and freezes the authored content (`cap-anim-content`).
 
 **Lifting**: drivers may take over CSS-translatable bindings (static
-`offset`/`opacity` keyframes on non-interactive, unpatched, unrotated
-leaves outside `each`) via `inst_lift_animations` — the web element
-replays them as `@keyframes`, and a fully lifted document solves once and
-idles. Automatic; nothing to author.
+`offset`/`opacity`/`rotate`/`scale`, solid `bg`, and text `color` keyframes
+on non-interactive, unpatched leaves outside `each`; any easing) via
+`inst_lift_animations` — the web element replays them as `@keyframes` with
+exact per-segment curves and OKLab-faithful color stops, and a fully lifted
+document solves once and idles. Automatic; nothing to author.
 
 ### Transitions
 

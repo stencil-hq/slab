@@ -732,17 +732,33 @@ pub fn apply(d: &Doc, st: &mut St, ms: &mut MSt, t: f64) -> bool {
 
 /// One normalized keyframe of a liftable binding.
 ///
-/// Stops are sorted, span the full `[0, 1]` cycle, and carry every animated
-/// attribute at every position using the kernel's clamp-and-interpolate
-/// keyframe semantics, so drivers translate them 1:1 into native keyframes.
+/// Stops are sorted, span the full `[0, 1]` cycle in the *time* domain
+/// (whole-cycle easing is already folded into the positions and per-segment
+/// curves), and carry every animated attribute at every position using the
+/// kernel's clamp-and-interpolate keyframe semantics, so drivers translate
+/// them 1:1 into native keyframes.
 #[derive(Clone, Debug, PartialEq)]
 pub struct LiftStop {
-    /// Cycle position in `[0, 1]`.
+    /// Cycle position in `[0, 1]`, measured in time (not eased progress).
     pub pos: f64,
+    /// Y control points of the exact `cubic-bezier(1/3, y1, 2/3, y2)` timing
+    /// curve for the segment leaving this stop. `(1/3, 2/3)` is linear. The
+    /// last stop carries the linear curve. Slab's quadratic easings restricted
+    /// to any sub-interval are quadratics, and every monotone quadratic through
+    /// `(0,0)`/`(1,1)` is exactly a cubic Bézier with x controls at 1/3 and 2/3.
+    pub ctrl: (f64, f64),
     /// Animated `offset` at this position, when the animation drives it.
     pub offset: Option<(f64, f64)>,
     /// Animated `opacity` at this position, when the animation drives it.
     pub opacity: Option<f64>,
+    /// Animated `rotate` in degrees (absolute, not a delta), when driven.
+    pub rotate: Option<f64>,
+    /// Animated uniform `scale` factor (absolute), when driven.
+    pub scale: Option<f64>,
+    /// Animated solid `bg` as a SLIR-packed RGBA word, when driven.
+    pub bg: Option<u32>,
+    /// Animated text `color` as a SLIR-packed RGBA word, when driven.
+    pub color: Option<u32>,
 }
 
 /// An animation binding a driver may replay natively (e.g. as a CSS
@@ -753,17 +769,24 @@ pub struct Lift {
     pub binding: usize,
     /// The bound node.
     pub node: u32,
+    /// The bound node's kind; drivers map color keyframes onto the paint
+    /// channel that kind uses natively (rect background, path fill, text ink).
+    pub kind: u32,
     /// Cycle duration in milliseconds.
     pub dur: f64,
     /// Start delay in milliseconds.
     pub delay: f64,
     /// Cycle mode: `0` loops, `1` runs once, `2` alternates.
     pub mode: u32,
-    /// Whole-cycle easing code (see [`ease_code`]).
-    pub easing: u32,
     /// The node's static base offset. Painted geometry already includes it,
     /// so native translation keyframes are deltas against this value.
     pub base_offset: (f64, f64),
+    /// The node's static base rotation in degrees; rotation keyframes are
+    /// deltas against it (same-center rotations compose additively).
+    pub base_rotate: f64,
+    /// The node's static base scale; scale keyframes are per-axis ratios
+    /// against it (same-center scales compose multiplicatively).
+    pub base_scale: (f64, f64),
     /// Normalized keyframes.
     pub stops: Vec<LiftStop>,
 }
@@ -772,16 +795,33 @@ pub struct Lift {
 ///
 /// A binding lifts only when replaying it outside the kernel is
 /// indistinguishable from the per-solve overlay:
-/// - it animates nothing but `offset` and `opacity` — pure paint-time
-///   translation and blending that never move siblings or resize parents;
-/// - every keyframe and the node's base `offset` are static literals, so no
-///   parameter, list field, or theme flip can change the track;
+/// - it animates nothing but ink: `offset`, `opacity`, `rotate`, `scale`,
+///   solid `bg`, and text `color` — attributes that never move siblings or
+///   resize parents. `rotate`/`scale` lift on `rect`/`image`/`path` (multi-line
+///   text paints one run per line, each of which would transform about its own
+///   box); `bg` lifts on plain rects and paths; `color` lifts on text.
+/// - every keyframe (and each base the deltas are computed against) is a
+///   static literal, so no parameter, list field, or theme flip can change
+///   the track;
 /// - the node paints exactly one leaf (`rect`, `text`, `image`, `path`)
-///   outside any `each` template, carries no `when` patches, actions, or
-///   `rotate`, and emits no signals — its retained hit geometry never
-///   diverges from the drawn position in a way an interaction could observe;
-/// - a non-linear easing (whole-cycle in Slab, per-segment natively) only
-///   lifts when the stops sit at 0% and 100%, where both models agree.
+///   outside any `each` template, carries no `when` patches or actions, and
+///   emits no signals — its retained hit geometry never diverges from the
+///   drawn position in a way an interaction could observe;
+/// - an animated `offset` additionally requires no base `rotate`/`scale`/
+///   `tilt` (their retained transform groups would distort native translation
+///   deltas), and an animated `rotate` track must stay clear of the quarter
+///   turns near 90°/270° where the kernel re-solves layout in the rotated
+///   bounding box;
+/// - a `bg` lift requires the retained base paint to stay a solid (or absent)
+///   fill on an un-smoothed rect, so the native color channel it animates is
+///   the one the driver painted.
+///
+/// Slab easings apply to the whole cycle while native models ease per
+/// keyframe segment; [`lifts`] therefore remaps stop positions into the time
+/// domain and emits each segment's exact quadratic-restriction Bézier.
+/// Color keyframes interpolate in OKLab (§14.2) while native replay lerps
+/// sRGB; segments where the two visibly diverge are subdivided until the
+/// difference stays within one 8-bit quantization step.
 ///
 /// Bindings sharing a node lift all-or-nothing so per-attribute overlay
 /// precedence between them is preserved.
@@ -797,6 +837,153 @@ pub fn lifts(d: &Doc) -> Vec<Lift> {
     lifted
 }
 
+/// Maximum bisections per keyframe segment when reconciling OKLab color
+/// interpolation with a driver's native sRGB lerp (up to 16 sub-segments).
+const COLOR_SPLIT_DEPTH: u32 = 4;
+
+/// Inverts [`ease_code`] on `[0, 1]`: the time at which the whole-cycle
+/// easing reaches progress `p`. Every Slab easing is strictly monotone.
+fn ease_inv(code: u32, p: f64) -> f64 {
+    match code {
+        1 => p.sqrt(),
+        2 => 1.0 - (1.0 - p).sqrt(),
+        3 => {
+            if p < 0.5 {
+                (p / 2.0).sqrt()
+            } else {
+                1.0 - ((1.0 - p) / 2.0).sqrt()
+            }
+        }
+        _ => p,
+    }
+}
+
+/// Quadratic coefficients `(α, β)` of the easing piece `e(t) = αt² + βt + γ`
+/// covering times at and after `t0` (γ cancels out of segment restrictions).
+/// `ease-in-out` callers must never span a segment across `t = 0.5`.
+fn ease_quad(code: u32, t0: f64) -> (f64, f64) {
+    match code {
+        1 => (1.0, 0.0),
+        2 => (-1.0, 2.0),
+        3 => {
+            if t0 < 0.5 {
+                (2.0, 0.0)
+            } else {
+                (-2.0, 4.0)
+            }
+        }
+        _ => (0.0, 1.0),
+    }
+}
+
+/// Exact cubic-Bézier y controls for the easing restricted to the time
+/// segment `[t0, t1]` spanning progress `[p0, p1]`.
+///
+/// The normalized restriction is the quadratic `f(u) = au² + bu` with
+/// `f(1) = 1`; matching polynomial coefficients against the Bézier with x
+/// controls at 1/3 and 2/3 gives `y1 = b/3` and `y2 = (a + 2b)/3`.
+fn segment_ctrl(code: u32, t0: f64, t1: f64, p0: f64, p1: f64) -> (f64, f64) {
+    let (alpha, beta) = ease_quad(code, t0);
+    let span = t1 - t0;
+    let progress = p1 - p0;
+    let a = alpha * span * span / progress;
+    let b = (2.0 * alpha * t0 + beta) * span / progress;
+    (b / 3.0, (a + 2.0 * b) / 3.0)
+}
+
+/// The linear segment curve ([`segment_ctrl`] for `f(u) = u`).
+const CTRL_LINEAR: (f64, f64) = (1.0 / 3.0, 2.0 / 3.0);
+
+/// Whether any point of the linear rotation segment `[a, b]` (degrees,
+/// unbounded) falls within the kernel's quarter-turn window — ±0.5° of 90° or
+/// 270° modulo 360 — where layout re-solves in the rotated bounding box and
+/// ink-only native replay would diverge.
+fn hits_quarter_turn(a: f64, b: f64) -> bool {
+    let lo = a.min(b) - 0.5;
+    let hi = a.max(b) + 0.5;
+    [90.0, 270.0].iter().any(|target| {
+        let k = ((lo - target) / 360.0).ceil();
+        target + 360.0 * k <= hi
+    })
+}
+
+/// Interpolates two SLIR-packed RGBA words the way native drivers do:
+/// premultiplied-alpha lerp in gamma-encoded sRGB (the CSS legacy-color
+/// rule). Used only to decide where OKLab segments need subdividing.
+fn css_lerp_rgba(a: u32, b: u32, f: f64) -> u32 {
+    let ch = |c: u32, shift: u32| f64::from(c.wrapping_shr(shift) & 0xff);
+    let a1 = ch(a, 24);
+    let a2 = ch(b, 24);
+    let am = a1 + (a2 - a1) * f;
+    let mix = |shift: u32| -> u32 {
+        let v = if am > 0.0 {
+            (ch(a, shift) * a1 * (1.0 - f) + ch(b, shift) * a2 * f) / am
+        } else {
+            ch(a, shift) + (ch(b, shift) - ch(a, shift)) * f
+        };
+        truncate_u32(v.round())
+    };
+    mix(0)
+        | mix(8).wrapping_shl(8)
+        | mix(16).wrapping_shl(16)
+        | truncate_u32(am.round()).wrapping_shl(24)
+}
+
+/// Implements Rust's saturating float-to-unsigned-integer cast without `as`.
+fn truncate_u32(value: f64) -> u32 {
+    if value.is_nan() || value <= 0.0 {
+        return 0;
+    }
+    if value >= f64::from(u32::MAX) {
+        return u32::MAX;
+    }
+
+    let bits = value.to_bits();
+    let exponent = i32::try_from((bits >> 52) & 0x7ff).expect("f64 exponent fits i32") - 1023;
+    if exponent < 0 {
+        return 0;
+    }
+    let significand = (bits & ((1_u64 << 52) - 1)) | (1_u64 << 52);
+    let magnitude = significand >> u32::try_from(52 - exponent).expect("nonnegative right shift");
+    u32::try_from(magnitude).expect("bounded f64 magnitude fits u32")
+}
+
+/// Largest per-channel difference between two packed RGBA words.
+fn max_channel_delta(a: u32, b: u32) -> u32 {
+    (0..4)
+        .map(|i| (a.wrapping_shr(8 * i) & 0xff).abs_diff(b.wrapping_shr(8 * i) & 0xff))
+        .max()
+        .unwrap_or(0)
+}
+
+/// Splits progress segment `[p0, p1]` until native sRGB replay of every color
+/// track stays within one quantization step of the kernel's OKLab path, then
+/// appends every knot after `p0` to `out`.
+fn refine_colors(
+    d: &Doc,
+    animation: usize,
+    color_attrs: &[u32],
+    p0: f64,
+    p1: f64,
+    depth: u32,
+    out: &mut Vec<f64>,
+) {
+    let mid = (p0 + p1) / 2.0;
+    let diverges = depth > 0
+        && color_attrs.iter().any(|&attr| {
+            let start = track_rgba(d, animation, attr, p0);
+            let end = track_rgba(d, animation, attr, p1);
+            let native = css_lerp_rgba(start, end, 0.5);
+            max_channel_delta(native, track_rgba(d, animation, attr, mid)) > 1
+        });
+    if diverges {
+        refine_colors(d, animation, color_attrs, p0, mid, depth - 1, out);
+        refine_colors(d, animation, color_attrs, mid, p1, depth - 1, out);
+    } else {
+        out.push(p1);
+    }
+}
+
 /// Builds the lift description for one binding, or `None` when it must stay
 /// kernel-driven.
 fn lift_of(d: &Doc, binding: usize) -> Option<Lift> {
@@ -807,7 +994,7 @@ fn lift_of(d: &Doc, binding: usize) -> Option<Lift> {
         return None;
     }
 
-    // Leaf paints only: translating a container natively would leave its
+    // Leaf paints only: transforming a container natively would leave its
     // separately-painted children behind.
     let kind = d.node_kind[index(i32::try_from(node).expect("node index exceeds i32"))];
     if !matches!(
@@ -830,21 +1017,25 @@ fn lift_of(d: &Doc, binding: usize) -> Option<Lift> {
     if d.patch_node.contains(&node) || d.sign_node.contains(&node) {
         return None;
     }
-    if slir::base_attr(d, node, slir::A_ACT) >= 0 || slir::base_attr(d, node, slir::A_ROTATE) >= 0 {
+    if slir::base_attr(d, node, slir::A_ACT) >= 0 {
         return None;
     }
 
-    // Animated attributes, in first-appearance order across stops.
+    // Animated attributes, in first-appearance order across stops. Every
+    // keyframe value must be a static literal of the attribute's shape.
     let mut attrs = Vec::new();
     let animation =
         index(i32::try_from(d.bind_anim[binding]).expect("animation index exceeds i32"));
     let stop_start = d.anim_stop_off[animation];
     let stop_end = stop_start.wrapping_add(d.anim_stop_len[animation]);
     let mut positions = Vec::new();
+    let mut rotate_track = Vec::new();
     for stop in stop_start..stop_end {
         let stop = index(stop);
         let position = d.anim_stop_pos[stop];
-        if easing != 0 && position != 0.0 && position != 1.0 {
+        if positions.contains(&position) && d.anim_stop_attr_len[stop] > 0 {
+            // Duplicate positions are step discontinuities native keyframes
+            // sample differently at the shared instant.
             return None;
         }
         if !positions.contains(&position) {
@@ -855,19 +1046,21 @@ fn lift_of(d: &Doc, binding: usize) -> Option<Lift> {
         for entry in attr_start..attr_end {
             let entry = index(entry);
             let attr = d.aattr_id[entry];
-            if attr != slir::A_OFFSET && attr != slir::A_OPACITY {
-                return None;
-            }
             let v = value::decode(
                 d,
                 i32::try_from(d.aattr_val[entry]).expect("attribute value index exceeds i32"),
             );
             let static_ok = match attr {
                 slir::A_OFFSET => v.tag == slir::T_TUPLE && v.ln >= 2,
-                _ => v.tag == slir::T_NUM,
+                slir::A_OPACITY | slir::A_ROTATE | slir::A_SCALE => v.tag == slir::T_NUM,
+                slir::A_BG | slir::A_COLOR => is_colorlike(v.tag),
+                _ => return None,
             };
             if !static_ok {
                 return None;
+            }
+            if attr == slir::A_ROTATE {
+                rotate_track.push(v.num);
             }
             if !attrs.contains(&attr) {
                 attrs.push(attr);
@@ -878,14 +1071,105 @@ fn lift_of(d: &Doc, binding: usize) -> Option<Lift> {
         return None;
     }
 
-    // Base offset must be static too: translation keyframes are deltas.
-    let base = value::decode(d, slir::base_attr(d, node, slir::A_OFFSET));
-    let base_offset = match base.tag {
-        value::V_MISSING => (0.0, 0.0),
-        slir::T_TUPLE if base.ln >= 2 => {
-            (value::tuple_at(d, &base, 0), value::tuple_at(d, &base, 1))
+    let base_of = |attr: u32| value::decode(d, slir::base_attr(d, node, attr));
+    let transforms_ok = matches!(kind, slir::K_RECT | slir::K_IMG | slir::K_PATH);
+    let base_rot = base_of(slir::A_ROTATE);
+    let base_sc = base_of(slir::A_SCALE);
+    let has_tilt = slir::base_attr(d, node, slir::A_TILT) >= 0;
+
+    // Translation deltas must not pass through retained transform groups
+    // (rotate/scale/tilt wrap the leaf about its *base* center).
+    if attrs.contains(&slir::A_OFFSET)
+        && (base_rot.tag != value::V_MISSING || base_sc.tag != value::V_MISSING || has_tilt)
+    {
+        return None;
+    }
+
+    let mut base_rotate = 0.0;
+    if attrs.contains(&slir::A_ROTATE) {
+        if !transforms_ok || has_tilt {
+            return None;
         }
-        _ => return None,
+        base_rotate = match base_rot.tag {
+            value::V_MISSING => 0.0,
+            slir::T_NUM => base_rot.num,
+            _ => return None,
+        };
+        // Uniform animated scale commutes with rotation; anything else on the
+        // scale channel must keep the kernel authoritative.
+        if !matches!(base_sc.tag, value::V_MISSING | slir::T_NUM) {
+            return None;
+        }
+        // The kernel re-solves quarter turns (±0.5° of 90/270 mod 360) in the
+        // rotated bounding box; ink-only replay would not.
+        let quarter = match rotate_track.as_slice() {
+            [] => false,
+            [only] => hits_quarter_turn(*only, *only),
+            track => track.windows(2).any(|w| hits_quarter_turn(w[0], w[1])),
+        };
+        if quarter {
+            return None;
+        }
+    }
+
+    let mut base_scale = (1.0, 1.0);
+    if attrs.contains(&slir::A_SCALE) {
+        if !transforms_ok || has_tilt {
+            return None;
+        }
+        base_scale = match base_sc.tag {
+            value::V_MISSING => (1.0, 1.0),
+            slir::T_NUM => (base_sc.num, base_sc.num),
+            slir::T_TUPLE if base_sc.ln >= 2 => (
+                value::tuple_at(d, &base_sc, 0),
+                value::tuple_at(d, &base_sc, 1),
+            ),
+            _ => return None,
+        };
+        if base_scale.0 == 0.0 || base_scale.1 == 0.0 {
+            return None;
+        }
+    }
+
+    if attrs.contains(&slir::A_BG) {
+        match kind {
+            // A path's fill is a native paint channel regardless of its base;
+            // a rect's is only when the retained fill stays a plain solid
+            // (gradients paint as images, smoothing paints as inline vectors).
+            slir::K_PATH => {}
+            slir::K_RECT => {
+                let base_bg = base_of(slir::A_BG);
+                if !(base_bg.tag == value::V_MISSING || is_colorlike(base_bg.tag))
+                    || slir::base_attr(d, node, slir::A_SMOOTH) >= 0
+                {
+                    return None;
+                }
+            }
+            _ => return None,
+        }
+    }
+
+    if attrs.contains(&slir::A_COLOR) {
+        let base_color = base_of(slir::A_COLOR);
+        if kind != slir::K_TEXT
+            || !(base_color.tag == value::V_MISSING || is_colorlike(base_color.tag))
+        {
+            return None;
+        }
+    }
+
+    // Base offset must be static too: translation keyframes are deltas.
+    let base_offset = if attrs.contains(&slir::A_OFFSET) {
+        let base = base_of(slir::A_OFFSET);
+        match base.tag {
+            value::V_MISSING => (0.0, 0.0),
+            slir::T_TUPLE if base.ln >= 2 => {
+                (value::tuple_at(d, &base, 0), value::tuple_at(d, &base, 1))
+            }
+            _ => return None,
+        }
+    } else {
+        (0.0, 0.0)
     };
 
     positions.sort_by(f64::total_cmp);
@@ -895,30 +1179,72 @@ fn lift_of(d: &Doc, binding: usize) -> Option<Lift> {
     if positions.last() != Some(&1.0) {
         positions.push(1.0);
     }
-    let animates_offset = attrs.contains(&slir::A_OFFSET);
-    let animates_opacity = attrs.contains(&slir::A_OPACITY);
+    if easing == 3 && !positions.contains(&0.5) {
+        // Keep every segment inside one quadratic piece of ease-in-out.
+        let at = positions.partition_point(|&p| p < 0.5);
+        positions.insert(at, 0.5);
+    }
+
+    // Where OKLab and native sRGB interpolation visibly disagree, add knots.
+    let color_attrs: Vec<u32> = attrs
+        .iter()
+        .copied()
+        .filter(|&attr| attr == slir::A_BG || attr == slir::A_COLOR)
+        .collect();
+    if !color_attrs.is_empty() {
+        let mut refined = vec![positions[0]];
+        for pair in positions.windows(2) {
+            refine_colors(
+                d,
+                animation,
+                &color_attrs,
+                pair[0],
+                pair[1],
+                COLOR_SPLIT_DEPTH,
+                &mut refined,
+            );
+        }
+        positions = refined;
+    }
+
+    let times: Vec<f64> = positions.iter().map(|&p| ease_inv(easing, p)).collect();
+    let has = |attr: u32| attrs.contains(&attr);
     let stops = positions
         .iter()
-        .map(|&pos| LiftStop {
-            pos,
-            offset: animates_offset.then(|| {
+        .zip(&times)
+        .enumerate()
+        .map(|(i, (&pos, &t))| LiftStop {
+            pos: t,
+            ctrl: if i + 1 < times.len() {
+                segment_ctrl(easing, t, times[i + 1], pos, positions[i + 1])
+            } else {
+                CTRL_LINEAR
+            },
+            offset: has(slir::A_OFFSET).then(|| {
                 (
                     track_num(d, animation, slir::A_OFFSET, pos, 0),
                     track_num(d, animation, slir::A_OFFSET, pos, 1),
                 )
             }),
-            opacity: animates_opacity.then(|| track_num(d, animation, slir::A_OPACITY, pos, -1)),
+            opacity: has(slir::A_OPACITY)
+                .then(|| track_num(d, animation, slir::A_OPACITY, pos, -1)),
+            rotate: has(slir::A_ROTATE).then(|| track_num(d, animation, slir::A_ROTATE, pos, -1)),
+            scale: has(slir::A_SCALE).then(|| track_num(d, animation, slir::A_SCALE, pos, -1)),
+            bg: has(slir::A_BG).then(|| track_rgba(d, animation, slir::A_BG, pos)),
+            color: has(slir::A_COLOR).then(|| track_rgba(d, animation, slir::A_COLOR, pos)),
         })
         .collect();
 
     Some(Lift {
         binding,
         node,
+        kind,
         dur,
         delay: d.bind_delay[binding],
         mode: d.bind_mode[binding],
-        easing,
         base_offset,
+        base_rotate,
+        base_scale,
         stops,
     })
 }
@@ -974,4 +1300,50 @@ fn track_num(d: &Doc, animation: usize, attr: u32, pos: f64, component: i32) -> 
         }
     }
     previous.map(|(_, num)| num).unwrap_or(0.0)
+}
+
+/// Evaluates a static color keyframe track at `pos` with the kernel's OKLab
+/// clamp-and-interpolate rule, returning the SLIR-packed RGBA word.
+fn track_rgba(d: &Doc, animation: usize, attr: u32, pos: f64) -> u32 {
+    let read = |aval: u32| -> u32 {
+        value::decode(
+            d,
+            i32::try_from(aval).expect("attribute value index exceeds i32"),
+        )
+        .h
+    };
+
+    let stop_start = d.anim_stop_off[animation];
+    let stop_end = stop_start.wrapping_add(d.anim_stop_len[animation]);
+    let mut previous: Option<(f64, u32)> = None;
+    for stop in stop_start..stop_end {
+        let stop = index(stop);
+        let attr_start = d.anim_stop_attr_off[stop];
+        let attr_end = attr_start.wrapping_add(d.anim_stop_attr_len[stop]);
+        for entry in attr_start..attr_end {
+            let entry = index(entry);
+            if d.aattr_id[entry] != attr {
+                continue;
+            }
+            let current = (d.anim_stop_pos[stop], read(d.aattr_val[entry]));
+            let Some((previous_pos, previous_rgba)) = previous else {
+                if pos <= current.0 {
+                    return current.1;
+                }
+                previous = Some(current);
+                continue;
+            };
+            if pos <= current.0 {
+                let span = current.0 - previous_pos;
+                let f = if span > 0.0 {
+                    (pos - previous_pos) / span
+                } else {
+                    0.0
+                };
+                return lerp_rgba(previous_rgba, current.1, f);
+            }
+            previous = Some(current);
+        }
+    }
+    previous.map(|(_, rgba)| rgba).unwrap_or(0)
 }

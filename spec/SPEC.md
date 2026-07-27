@@ -1235,13 +1235,22 @@ rect w=9 h=9 radius=999 animate=pulse,1100,alternate,ease-in-out
   the authored content and reports `cap-anim-content`.
 - **Lifting.** A driver may call `inst_lift_animations` to take over every
   binding whose native replay is indistinguishable from the kernel overlay:
-  static `offset`/`opacity` keyframes on a non-interactive, unpatched,
-  unrotated leaf outside `each`, with non-linear easing only across 0%/100%
-  stops (Slab eases the whole cycle; native models ease per segment). Lifted
-  bindings stop driving kernel motion — a fully lifted document solves once
-  and goes idle — and the driver replays the returned normalized keyframes
-  itself (the web driver emits `@keyframes` with `translate` deltas against
-  the base offset). Everything else stays "interpolate inputs, re-solve".
+  static keyframes over ink-only attributes — `offset`/`opacity`, `rotate`/
+  `scale` on `rect`/`image`/`path` leaves, solid `bg` on plain rects and
+  paths, `color` on text — bound to a non-interactive, unpatched leaf
+  outside `each`. Transform stops require static bases (deltas compose about
+  the same center), an animated `offset` requires no base transform group,
+  and `rotate` tracks must stay clear of the quarter-turn window at
+  90°/270° where layout re-solves in the rotated bounding box. The lift is
+  normalized for native replay: whole-cycle Slab easing is remapped into
+  time-domain stop positions carrying each segment's exact quadratic-
+  restriction Bézier, and OKLab color tracks are subdivided until a native
+  sRGB lerp stays within one 8-bit quantization step. Lifted bindings stop
+  driving kernel motion — a fully lifted document solves once and goes idle
+  — and the driver replays the returned keyframes itself (the web driver
+  emits `@keyframes` with `translate`/`rotate`/`scale` deltas and
+  per-segment `animation-timing-function`s). Everything else stays
+  "interpolate inputs, re-solve".
 
 ### 14.2 Interpolation
 
