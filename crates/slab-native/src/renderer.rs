@@ -2707,6 +2707,9 @@ impl Renderer {
             }
         }
         flush!(stack, cleared);
+        // The frame ends here; the split-submission budget only matters
+        // between steps, so the final flush's count is intentionally unread.
+        let _ = encoder_passes;
 
         // final blit to the surface
         if let Some((view, format)) = surface {

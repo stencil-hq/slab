@@ -1558,18 +1558,18 @@ pub fn dispatch(
             });
             if cancel_divider {
                 ds.divider = None;
-            } else if let Some(divider) = ds.divider.as_mut() {
-                if move_divider(st, divider, ev.x, ev.y) {
-                    effects.repaint = true;
-                    deliver_trigger(
-                        d,
-                        st,
-                        &mut effects,
-                        divider.node,
-                        TR_RESIZE,
-                        crate::value::fmt3(divider.current_extent),
-                    );
-                }
+            } else if let Some(divider) = ds.divider.as_mut()
+                && move_divider(st, divider, ev.x, ev.y)
+            {
+                effects.repaint = true;
+                deliver_trigger(
+                    d,
+                    st,
+                    &mut effects,
+                    divider.node,
+                    TR_RESIZE,
+                    crate::value::fmt3(divider.current_extent),
+                );
             }
 
             if ds.drag_source != slir::NONE
