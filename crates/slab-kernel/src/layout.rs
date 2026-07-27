@@ -2248,18 +2248,65 @@ pub fn text_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &
         max_lines = truncate_i32((1.0f64).max(((((budget_h - pt) - pb) + EPS) / lh).floor()));
     }
     let flags = st.rs[idx(ri)].flags;
-    l.tls.push(crate::textm::measure_text(
-        d,
-        st.rs[idx(ri)].font,
-        st.rs[idx(ri)].size,
-        st.rs[idx(ri)].leading,
-        st.rs[idx(ri)].tracking,
-        &st.rs[idx(ri)].content,
-        avail_w,
-        (flags & crate::slir::F_NOWRAP) == 0u32,
-        (flags & crate::slir::F_ELLIPSIS) != 0u32,
-        max_lines,
-    ));
+    let font = st.rs[idx(ri)].font;
+    let size = st.rs[idx(ri)].size;
+    let leading = st.rs[idx(ri)].leading;
+    let tracking = st.rs[idx(ri)].tracking;
+    let wrap = (flags & crate::slir::F_NOWRAP) == 0u32;
+    let ellipsis = (flags & crate::slir::F_ELLIPSIS) != 0u32;
+    let hit = st.text_layout_cache.get(&node).is_some_and(|entry| {
+        entry.font == font
+            && entry.size == size.to_bits()
+            && entry.leading == leading.to_bits()
+            && entry.tracking == tracking.to_bits()
+            && entry.max_w == avail_w.to_bits()
+            && entry.wrap == wrap
+            && entry.ellipsis == ellipsis
+            && entry.max_lines == max_lines
+            && entry.content == st.rs[idx(ri)].content
+    });
+    if hit {
+        l.tls.push(
+            st.text_layout_cache
+                .get(&node)
+                .expect("cache entry vanished between probes")
+                .layout
+                .clone(),
+        );
+    } else {
+        let layout = crate::textm::measure_text(
+            d,
+            font,
+            size,
+            leading,
+            tracking,
+            &st.rs[idx(ri)].content,
+            avail_w,
+            wrap,
+            ellipsis,
+            max_lines,
+        );
+        // Bound the cache; cleared entries refill on the next solve.
+        if st.text_layout_cache.len() >= 4096 {
+            st.text_layout_cache.clear();
+        }
+        st.text_layout_cache.insert(
+            node,
+            crate::textm::TextCacheEntry {
+                font,
+                size: size.to_bits(),
+                leading: leading.to_bits(),
+                tracking: tracking.to_bits(),
+                max_w: avail_w.to_bits(),
+                wrap,
+                ellipsis,
+                max_lines,
+                content: st.rs[idx(ri)].content.clone(),
+                layout: layout.clone(),
+            },
+        );
+        l.tls.push(layout);
+    }
     let ti = len_i32(&l.tls).wrapping_sub(1i32);
     if l.tls[idx(ti)].truncated && ((flags & crate::slir::F_ELLIPSIS) == 0u32) {
         let mut head: Vec<u32> = vec![];

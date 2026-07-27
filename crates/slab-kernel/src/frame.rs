@@ -365,6 +365,15 @@ pub fn inst_img_bytes(i: &Instance, img: i32) -> &[u8] {
 /// Portrait and landscape derive from `vw < vh`. A non-positive height means
 /// unbounded height for a static render invocation.
 pub fn inst_set_env(i: &mut Instance, vw: f64, vh: f64, client: u32, dark: bool, coarse: bool) {
+    if i.has_env
+        && i.st.env.vw == vw
+        && i.st.env.vh == vh
+        && i.st.env.client == client
+        && i.st.env.dark == dark
+        && i.st.env.coarse == coarse
+    {
+        return;
+    }
     i.st.env.vw = vw;
     i.st.env.vh = vh;
     i.st.env.client = client;
@@ -708,6 +717,8 @@ pub fn inst_each_window(i: &Instance, each_key: &str) -> (i32, i32) {
 ///
 /// Returns `false` for an unknown parameter, a type mismatch, a list
 /// parameter, or an enum value that is not a declared member.
+///
+/// Equal values are a no-op and do not mark the instance dirty.
 pub fn inst_set_param(i: &mut Instance, param: u32, v: &ParamValue) -> bool {
     let Ok(param_index) = usize::try_from(param) else {
         return false;
@@ -720,10 +731,31 @@ pub fn inst_set_param(i: &mut Instance, param: u32, v: &ParamValue) -> bool {
     }
 
     match v.kind {
-        0 => i.st.pv_str[param_index] = v.s.clone(),
-        1 | 2 => i.st.pv_num[param_index] = v.num,
-        3 => i.st.pv_h[param_index] = v.rgba,
-        4 => i.st.pv_num[param_index] = if v.num == 0.0 { 0.0 } else { 1.0 },
+        0 => {
+            if i.st.pv_str[param_index] == v.s {
+                return true;
+            }
+            i.st.pv_str[param_index] = v.s.clone();
+        }
+        1 | 2 => {
+            if i.st.pv_num[param_index] == v.num {
+                return true;
+            }
+            i.st.pv_num[param_index] = v.num;
+        }
+        3 => {
+            if i.st.pv_h[param_index] == v.rgba {
+                return true;
+            }
+            i.st.pv_h[param_index] = v.rgba;
+        }
+        4 => {
+            let next = if v.num == 0.0 { 0.0 } else { 1.0 };
+            if i.st.pv_num[param_index] == next {
+                return true;
+            }
+            i.st.pv_num[param_index] = next;
+        }
         5 => {
             let enum_offset = i.doc.parm_enum_off[param_index];
             let enum_len = i.doc.parm_enum_len[param_index];
@@ -735,6 +767,9 @@ pub fn inst_set_param(i: &mut Instance, param: u32, v: &ParamValue) -> bool {
             });
             if !declared {
                 return false;
+            }
+            if i.st.pv_sym[param_index] == v.sym {
+                return true;
             }
             i.st.pv_sym[param_index] = v.sym.clone();
         }
@@ -938,6 +973,11 @@ pub fn solve_frame(i: &mut Instance, t_ms: f64, with_motion: bool) -> Frame {
 }
 
 fn solve_frame_into(i: &mut Instance, t_ms: f64, with_motion: bool, frame: &mut Frame) {
+    solve_layout(i, t_ms, with_motion);
+    flatten::flatten_into(&i.doc, &i.st, &i.lay, &i.ds, &i.ms, i.root_pi, frame);
+}
+
+fn solve_layout(i: &mut Instance, t_ms: f64, with_motion: bool) {
     style::begin_solve(&i.doc, &mut i.st);
     if dispatch::prune_vanished(&i.doc, &mut i.st, &mut i.ds) {
         // A surviving Drop target changed state after list identity pruning;
@@ -965,24 +1005,20 @@ fn solve_frame_into(i: &mut Instance, t_ms: f64, with_motion: bool, frame: &mut 
         viewport_width,
         viewport_height,
     );
-    flatten::flatten_into(&i.doc, &i.st, &i.lay, &i.ds, &i.ms, i.root_pi, frame);
 }
 
 // A non-fixed divider handle can change after its pane overlay is clamped.
 // Iterate only to the layout solver's EPS tolerance and keep each frame call bounded.
-fn solve_frame_settled(
-    i: &mut Instance,
-    t_ms: f64,
-    with_motion: bool,
-    frame: &mut Frame,
-) -> bool {
+// Settling iterations only re-measure; the converged layout flattens once.
+fn solve_frame_settled(i: &mut Instance, t_ms: f64, with_motion: bool, frame: &mut Frame) -> bool {
     const LIMIT: usize = 16;
     for _ in 0..LIMIT {
-        solve_frame_into(i, t_ms, with_motion, frame);
+        solve_layout(i, t_ms, with_motion);
         if !i.st.divider_footprint_changed {
-            return false;
+            break;
         }
     }
+    flatten::flatten_into(&i.doc, &i.st, &i.lay, &i.ds, &i.ms, i.root_pi, frame);
     i.st.divider_footprint_changed
 }
 

@@ -53,6 +53,26 @@ pub struct TextLayout {
     pub truncated: bool,
 }
 
+/// A cached [`measure_text`] result with the exact inputs that produced it.
+///
+/// Layout stores one entry per text node and treats an entry as valid only
+/// when every input matches, so style or content changes re-measure.
+#[derive(Clone, Debug)]
+pub struct TextCacheEntry {
+    pub font: i32,
+    /// Bit patterns of the size, leading, tracking, and width budget.
+    pub size: u64,
+    pub leading: u64,
+    pub tracking: u64,
+    pub max_w: u64,
+    pub wrap: bool,
+    pub ellipsis: bool,
+    pub max_lines: i32,
+    /// Resolved text content at measurement time.
+    pub content: String,
+    pub layout: TextLayout,
+}
+
 /// Creates an empty text layout.
 pub fn tl_new() -> TextLayout {
     TextLayout {
