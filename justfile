@@ -67,6 +67,18 @@ freshness:
 pack: gen
     bun scripts/pack.ts
 
+# publish the three npm packages (pack + tarball e2e first); e.g. `just publish --dry-run`
+publish *flags: pack
+    bun scripts/pack-e2e.ts
+    cd clients/web && bun publish {{flags}}
+    cd packages/dslab && bun publish {{flags}}
+    cd packages/slab && bun publish {{flags}}
+
+# bump the npm package versions in lockstep, commit, tag vX.Y.Z, and push
+# (the tag triggers the release workflow, which publishes to npm via OIDC)
+version *args:
+    bun scripts/version.ts {{args}}
+
 # build the VSCode .vsix and Zed .tar.gz plugins into out/editors
 editors:
     bun scripts/pack-editors.ts
