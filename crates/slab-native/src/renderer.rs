@@ -446,6 +446,29 @@ pub struct FrameBuild {
 }
 
 impl FrameBuild {
+    fn empty() -> Self {
+        Self {
+            rects: Vec::new(),
+            glyphs: Vec::new(),
+            meshes: Vec::new(),
+            texq: Vec::new(),
+            steps: Vec::new(),
+            tw: 0,
+            th: 0,
+        }
+    }
+
+    fn clear(&mut self) {
+        self.rects.clear();
+        self.glyphs.clear();
+        self.meshes.clear();
+        self.texq.clear();
+        self.steps.clear();
+    }
+}
+
+
+impl FrameBuild {
     fn push_rect(&mut self, scissor: Sc, inst: RectI) {
         if scissor.2 == 0 || scissor.3 == 0 {
             return;
@@ -525,6 +548,37 @@ struct Target {
     bind: wgpu::BindGroup,
 }
 
+#[derive(Default)]
+struct UploadBuffer {
+    buffer: Option<wgpu::Buffer>,
+    capacity: usize,
+}
+
+impl UploadBuffer {
+    fn upload(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        data: &[u8],
+        label: &'static str,
+    ) {
+        if data.is_empty() {
+            return;
+        }
+        if data.len() > self.capacity {
+            self.capacity = data.len().next_power_of_two();
+            self.buffer = Some(device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some(label),
+                size: self.capacity as u64,
+                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::VERTEX,
+                mapped_at_creation: false,
+            }));
+        }
+        queue.write_buffer(self.buffer.as_ref().unwrap(), 0, data);
+    }
+}
+
+
 pub struct Renderer {
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
@@ -551,6 +605,11 @@ pub struct Renderer {
     docs: Vec<DocRes>,
     main: Option<(u32, u32, Target)>,
     pool: Vec<Target>,
+    frame_spare: Option<FrameBuild>,
+    rect_upload: UploadBuffer,
+    glyph_upload: UploadBuffer,
+    mesh_upload: UploadBuffer,
+    tex_upload: UploadBuffer,
     notes: HashSet<&'static str>,
     pub scale: f64,
 }
@@ -839,6 +898,11 @@ impl Renderer {
             docs: Vec::new(),
             main: None,
             pool: Vec::new(),
+            frame_spare: None,
+            rect_upload: UploadBuffer::default(),
+            glyph_upload: UploadBuffer::default(),
+            mesh_upload: UploadBuffer::default(),
+            tex_upload: UploadBuffer::default(),
             notes: HashSet::new(),
             scale: 1.0,
         }
@@ -1182,15 +1246,10 @@ impl Renderer {
     /// device-px target at `scale` device px per logical unit.
     pub fn build(&mut self, layers: &[LayerInput<'_>], scale: f64, tw: u32, th: u32) -> FrameBuild {
         self.scale = scale;
-        let mut fb = FrameBuild {
-            rects: Vec::new(),
-            glyphs: Vec::new(),
-            meshes: Vec::new(),
-            texq: Vec::new(),
-            steps: Vec::new(),
-            tw,
-            th,
-        };
+        let mut fb = self.frame_spare.take().unwrap_or_else(FrameBuild::empty);
+        fb.clear();
+        fb.tw = tw;
+        fb.th = th;
         for layer in layers {
             self.build_layer(&mut fb, layer, scale as f32, tw, th);
         }
@@ -2150,9 +2209,11 @@ impl Renderer {
 
     /// Execute a build into the internal target; optionally blit to a
     /// surface view. `clear` is the base color of the internal target.
+    ///
+    /// The consumed build is cleared and retained for a later [`Self::build`].
     pub fn render(
         &mut self,
-        fb: &FrameBuild,
+        mut fb: FrameBuild,
         surface: Option<(&wgpu::TextureView, wgpu::TextureFormat)>,
         clear: wgpu::Color,
     ) {
@@ -2233,13 +2294,54 @@ impl Renderer {
                     usage: wgpu::BufferUsages::VERTEX,
                 })
         };
-        let rect_buf =
-            (!fb.rects.is_empty()).then(|| mkbuf(bytemuck::cast_slice(&fb.rects), "rects"));
-        let glyph_buf =
-            (!fb.glyphs.is_empty()).then(|| mkbuf(bytemuck::cast_slice(&fb.glyphs), "glyphs"));
-        let mesh_buf =
-            (!fb.meshes.is_empty()).then(|| mkbuf(bytemuck::cast_slice(&fb.meshes), "meshinst"));
-        let tex_buf = (!fb.texq.is_empty()).then(|| mkbuf(bytemuck::cast_slice(&fb.texq), "texq"));
+        self.rect_upload.upload(
+            &self.device,
+            &self.queue,
+            bytemuck::cast_slice(&fb.rects),
+            "rects",
+        );
+        self.glyph_upload.upload(
+            &self.device,
+            &self.queue,
+            bytemuck::cast_slice(&fb.glyphs),
+            "glyphs",
+        );
+        self.mesh_upload.upload(
+            &self.device,
+            &self.queue,
+            bytemuck::cast_slice(&fb.meshes),
+            "meshinst",
+        );
+        self.tex_upload.upload(
+            &self.device,
+            &self.queue,
+            bytemuck::cast_slice(&fb.texq),
+            "texq",
+        );
+        let rect_buf = (!fb.rects.is_empty()).then_some(
+            self.rect_upload
+                .buffer
+                .as_ref()
+                .expect("uploaded rect buffer"),
+        );
+        let glyph_buf = (!fb.glyphs.is_empty()).then_some(
+            self.glyph_upload
+                .buffer
+                .as_ref()
+                .expect("uploaded glyph buffer"),
+        );
+        let mesh_buf = (!fb.meshes.is_empty()).then_some(
+            self.mesh_upload
+                .buffer
+                .as_ref()
+                .expect("uploaded mesh instance buffer"),
+        );
+        let tex_buf = (!fb.texq.is_empty()).then_some(
+            self.tex_upload
+                .buffer
+                .as_ref()
+                .expect("uploaded texture instance buffer"),
+        );
 
         let mut encoder = self
             .device
@@ -2758,6 +2860,9 @@ impl Renderer {
         }
 
         self.queue.submit(Some(encoder.finish()));
+        drop(pending);
+        fb.clear();
+        self.frame_spare = Some(fb);
     }
 
     #[allow(clippy::too_many_arguments)]

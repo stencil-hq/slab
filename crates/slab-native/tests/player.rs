@@ -164,7 +164,7 @@ fn pixel_probes_play_circle_and_card_bg() {
         clip: None,
     }];
     let build = renderer.build(&layers, 1.0, tw, th);
-    renderer.render(&build, None, wgpu::Color::BLACK);
+    renderer.render(build, None, wgpu::Color::BLACK);
     let (w, h, px) = renderer.read_pixels().expect("readback failed");
 
     let probe = |x: u32, y: u32| -> [u8; 3] {

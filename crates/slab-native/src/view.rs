@@ -176,7 +176,7 @@ fn headless_frame(doc: &mut NativeDocument, opts: &demo::Opts) -> Result<(), Str
         clip: None,
     }];
     let build = renderer.build(&layers, scale, tw, th);
-    renderer.render(&build, None, wgpu::Color::BLACK);
+    renderer.render(build, None, wgpu::Color::BLACK);
     let (w, h, px) = renderer.read_pixels().ok_or("readback failed")?;
     write_png(&out, w, h, &px)?;
     eprintln!(
@@ -354,7 +354,7 @@ impl ViewApp {
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
         renderer.render(
-            &build,
+            build,
             Some((&view, self.surface_format)),
             wgpu::Color::BLACK,
         );

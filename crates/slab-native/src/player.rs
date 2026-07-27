@@ -619,7 +619,7 @@ pub fn headless_frame(opts: &Opts) -> Result<(), String> {
         });
     }
     let build = renderer.build(&layers, scale, tw, th);
-    renderer.render(&build, None, wgpu::Color::BLACK);
+    renderer.render(build, None, wgpu::Color::BLACK);
     let (w, h, px) = renderer.read_pixels().ok_or("readback failed")?;
 
     let probe = |x: u32, y: u32| -> [u8; 3] {
@@ -874,7 +874,7 @@ impl App {
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
         renderer.render(
-            &build,
+            build,
             Some((&view, self.surface_format)),
             wgpu::Color::BLACK,
         );

@@ -181,7 +181,7 @@ pub fn headless_frame(opts: &Opts) -> Result<(), String> {
         });
     }
     let build = renderer.build(&layers, scale, tw, th);
-    renderer.render(&build, None, wgpu::Color::BLACK);
+    renderer.render(build, None, wgpu::Color::BLACK);
     let (w, h, px) = renderer.read_pixels().ok_or("readback failed")?;
 
     // self-check probes (straight from the doc's tokens)
@@ -478,7 +478,7 @@ impl App {
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
         renderer.render(
-            &build,
+            build,
             Some((&view, self.surface_format)),
             wgpu::Color::BLACK,
         );

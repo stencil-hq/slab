@@ -71,7 +71,7 @@ fn render_and_read(
         clip: None,
     }];
     let build = renderer.build(&layers, 1.0, tw, th);
-    renderer.render(&build, None, wgpu::Color::BLACK);
+    renderer.render(build, None, wgpu::Color::BLACK);
     renderer.read_pixels().expect("readback failed")
 }
 
