@@ -114,6 +114,7 @@ kernel_tests! {
     test_list__test_recursive_list_defaults_and_reextension_are_clean => slab_kernel::test_list::test_recursive_list_defaults_and_reextension_are_clean;
     test_list__test_virtual_list_window_extent_identity_and_focus => slab_kernel::test_list::test_virtual_list_window_extent_identity_and_focus;
     test_list__test_virtual_list_frame_settle_reveal_and_op_bound => slab_kernel::test_list::test_virtual_list_frame_settle_reveal_and_op_bound;
+    test_list__test_retained_frame_update_reuses_output_and_reports_clean_frames => slab_kernel::test_list::test_retained_frame_update_reuses_output_and_reports_clean_frames;
 
     test_motion__test_apply_skips_lifted_bindings => slab_kernel::test_motion::test_apply_skips_lifted_bindings;
     test_motion__test_easing_and_cycle_modes => slab_kernel::test_motion::test_easing_and_cycle_modes;

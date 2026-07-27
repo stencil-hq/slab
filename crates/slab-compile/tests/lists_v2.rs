@@ -1,5 +1,5 @@
 use slab_compile::{Options, compile};
-use slab_kernel::{dispatch, flatten::FrameOp, frame};
+use slab_kernel::{dispatch, flatten::FrameOp, frame, list, scene};
 use slab_slir::{Slir, attrs, aval, flags, kind};
 
 fn compile_ok(source: &str) -> Slir {
@@ -296,6 +296,66 @@ col scroll { each param.rows virtual }
         .collect();
     assert!(codes.contains(&"virtual-ctx"));
     assert!(codes.contains(&"virtual-extent"));
+}
+
+#[test]
+fn virtual_each_accepts_nested_list_properties() {
+    let source = r#"
+def Row(label="") export { row h=20 { text label } }
+def Section(rows=list(Row)) export {
+  col #rows-scroll h=60 scroll {
+    each rows #rows-each virtual item-extent=20 overscan=2
+  }
+}
+params {
+  sections list(Section) = [
+    Section(rows=[Row(label="one"), Row(label="two"), Row(label="three")])
+  ]
+}
+col { each param.sections }
+"#;
+    let slir = compile_ok(source);
+    let bytes = slab_slir::write(&slir);
+    let (mut instance, _) = slab_slir::instance(&bytes).expect("nested virtual list instance");
+    frame::inst_set_env(&mut instance, 120.0, 60.0, 0, false, false);
+    assert!(frame::inst_set_list_len(&mut instance, 0, "0.rows", 1_000));
+
+    frame::inst_frame(&mut instance, 0.0);
+    let settled = frame::inst_frame(&mut instance, 0.0);
+    assert!(
+        settled.scene.len() < 100,
+        "nested virtual list emitted {} scene nodes",
+        settled.scene.len()
+    );
+    let each = settled
+        .scene
+        .iter()
+        .find_map(|node| {
+            list::virtual_config(&instance.doc, &instance.st.lists, node.node)
+                .is_some()
+                .then_some(node.node)
+        })
+        .expect("materialized nested virtual each");
+    let each_key = scene::key_of(&instance.doc, &instance.st.lists, each);
+    let (start, end) = frame::inst_each_window(&instance, &each_key);
+    assert_eq!(start, 0);
+    assert!(end <= 10);
+
+    let (_, _, scroll_parent) =
+        list::virtual_config(&instance.doc, &instance.st.lists, each).expect("virtual config");
+    let scroll_key = scene::key_of(&instance.doc, &instance.st.lists, scroll_parent);
+    assert!(frame::inst_set_scroll(
+        &mut instance,
+        &scroll_key,
+        0,
+        10_000.0
+    ));
+    frame::inst_frame(&mut instance, 0.0);
+    let scrolled = frame::inst_frame(&mut instance, 0.0);
+    let (start, end) = frame::inst_each_window(&instance, &each_key);
+    assert!(start > 0);
+    assert!(end - start <= 10);
+    assert!(scrolled.scene.len() < 100);
 }
 
 #[test]

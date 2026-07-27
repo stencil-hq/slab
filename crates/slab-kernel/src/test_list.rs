@@ -916,6 +916,36 @@ pub fn test_virtual_list_frame_settle_reveal_and_op_bound() {
     assert!(revealed.ops.len() < 200);
 }
 
+/// Verifies retained frame updates skip clean instances without clearing or
+/// reallocating the caller-owned frame.
+pub fn test_retained_frame_update_reuses_output_and_reports_clean_frames() {
+    let mut inst = frame::inst_shell();
+    inst.doc = virtual_list_with_origin_doc();
+    frame::inst_init(&mut inst);
+    frame::inst_set_env(&mut inst, 120.0, 100.0, 0, false, false);
+    assert!(frame::inst_set_list_len(&mut inst, 0, "", 10_000));
+
+    let mut output = crate::flatten::frame_new();
+    assert!(frame::inst_frame_update(&mut inst, 0.0, &mut output));
+    assert!(frame::inst_frame_update(&mut inst, 0.0, &mut output));
+    let scene_len = output.scene.len();
+    let ops_len = output.ops.len();
+    let strings_len = output.strings.len();
+    let scene_ptr = output.scene.as_ptr();
+    let ops_ptr = output.ops.as_ptr();
+
+    assert!(!frame::inst_frame_update(&mut inst, 0.0, &mut output));
+    assert_eq!(output.scene.len(), scene_len);
+    assert_eq!(output.ops.len(), ops_len);
+    assert_eq!(output.strings.len(), strings_len);
+    assert_eq!(output.scene.as_ptr(), scene_ptr);
+    assert_eq!(output.ops.as_ptr(), ops_ptr);
+
+    assert!(frame::inst_set_scroll(&mut inst, "scroll", 0, 1_000.0));
+    assert!(frame::inst_frame_update(&mut inst, 0.0, &mut output));
+    assert!(frame::inst_each_window(&inst, "virtual").0 > 0);
+}
+
 #[cfg(test)]
 #[test]
 fn virtual_motion_work_tracks_current_window_and_retains_clock_state() {
