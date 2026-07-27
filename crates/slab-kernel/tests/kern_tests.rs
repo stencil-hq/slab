@@ -117,9 +117,13 @@ kernel_tests! {
     test_motion__test_apply_skips_lifted_bindings => slab_kernel::test_motion::test_apply_skips_lifted_bindings;
     test_motion__test_easing_and_cycle_modes => slab_kernel::test_motion::test_easing_and_cycle_modes;
     test_motion__test_lerp_types => slab_kernel::test_motion::test_lerp_types;
+    test_motion__test_inst_lift_marks_css_targets => slab_kernel::test_motion::test_inst_lift_marks_css_targets;
     test_motion__test_lift_color_subdivision => slab_kernel::test_motion::test_lift_color_subdivision;
     test_motion__test_lift_easing_remap => slab_kernel::test_motion::test_lift_easing_remap;
+    test_motion__test_lift_paint_only_interaction => slab_kernel::test_motion::test_lift_paint_only_interaction;
+    test_motion__test_lift_square_full_rotation => slab_kernel::test_motion::test_lift_square_full_rotation;
     test_motion__test_lift_transform_tracks => slab_kernel::test_motion::test_lift_transform_tracks;
+    test_motion__test_lift_tuple_scale_track => slab_kernel::test_motion::test_lift_tuple_scale_track;
     test_motion__test_lifts_classification => slab_kernel::test_motion::test_lifts_classification;
     test_motion__test_rgba_swap_involution => slab_kernel::test_motion::test_rgba_swap_involution;
     test_motion__test_tuple_lerp_elementwise => slab_kernel::test_motion::test_tuple_lerp_elementwise;

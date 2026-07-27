@@ -221,6 +221,7 @@ pub fn request_device(
         power_preference: wgpu::PowerPreference::default(),
         force_fallback_adapter: false,
         compatible_surface: surface,
+        apply_limit_buckets: false,
     }))
     .ok()?;
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {

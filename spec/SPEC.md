@@ -1235,22 +1235,27 @@ rect w=9 h=9 radius=999 animate=pulse,1100,alternate,ease-in-out
   the authored content and reports `cap-anim-content`.
 - **Lifting.** A driver may call `inst_lift_animations` to take over every
   binding whose native replay is indistinguishable from the kernel overlay:
-  static keyframes over ink-only attributes — `offset`/`opacity`, `rotate`/
-  `scale` on `rect`/`image`/`path` leaves, solid `bg` on plain rects and
-  paths, `color` on text — bound to a non-interactive, unpatched leaf
-  outside `each`. Transform stops require static bases (deltas compose about
-  the same center), an animated `offset` requires no base transform group,
-  and `rotate` tracks must stay clear of the quarter-turn window at
-  90°/270° where layout re-solves in the rotated bounding box. The lift is
+  static keyframes over ink-only attributes — `offset`/`opacity` on paint
+  leaves or render-only containers, `rotate`/`scale` (including two-axis
+  scale) on `rect`/`image`/`path` leaves, solid `bg` on plain rects and paths,
+  and `color` on text — outside `each`. Paint-only tracks may coexist with
+  signals, actions, and patches that do not switch their paint channel;
+  geometry tracks require an interaction-free subtree with no scroll,
+  detached paint, holes, or conditional materialization. The web driver gives
+  every lifted node one stable, node-sized compositing group: `offset` and
+  `opacity` animate that group so every paint op and child moves/fades
+  together, while leaf-local transforms and colors animate their native paint
+  element. Transform deltas require static bases; a base quarter-turn remains
+  kernel-owned, and an animated `rotate` track may cross 90°/270° only for a
+  statically square leaf, whose swapped layout is identical. The lift is
   normalized for native replay: whole-cycle Slab easing is remapped into
   time-domain stop positions carrying each segment's exact quadratic-
   restriction Bézier, and OKLab color tracks are subdivided until a native
   sRGB lerp stays within one 8-bit quantization step. Lifted bindings stop
-  driving kernel motion — a fully lifted document solves once and goes idle
-  — and the driver replays the returned keyframes itself (the web driver
-  emits `@keyframes` with `translate`/`rotate`/`scale` deltas and
-  per-segment `animation-timing-function`s). Everything else stays
-  "interpolate inputs, re-solve".
+  driving kernel motion — a fully lifted document solves once and goes idle —
+  and the web driver emits split group/paint `@keyframes` with per-segment
+  `animation-timing-function`s. Everything else stays "interpolate inputs,
+  re-solve".
 
 ### 14.2 Interpolation
 

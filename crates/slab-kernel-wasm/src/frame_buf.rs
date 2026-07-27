@@ -234,8 +234,10 @@ fn signed_word(value: i32) -> u32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{CLIP_POP, FrameBuf, GROUP_POP, ROTATE_POP, SCALE_POP, SCALE_PUSH, TEXT};
-    use slab_kernel::flatten::{Frame, FrameOp, OpScale, OpText, RtPath};
+    use super::{
+        CLIP_POP, FrameBuf, GROUP_POP, GROUP_PUSH, ROTATE_POP, SCALE_POP, SCALE_PUSH, TEXT,
+    };
+    use slab_kernel::flatten::{Frame, FrameOp, OpGroup, OpScale, OpText, RtPath};
 
     #[test]
     fn encodes_dimensions_signed_indices_and_operation_tags() {
@@ -262,6 +264,17 @@ mod tests {
                     gh: 0.0,
                 }),
                 FrameOp::ClipPop,
+                FrameOp::GroupPush(OpGroup {
+                    node: 9,
+                    opacity: 0.5,
+                    blur: 2.0,
+                    mask_kind: 0,
+                    mask: 0,
+                    mx: 1.0,
+                    my: 2.0,
+                    mw: 30.0,
+                    mh: 40.0,
+                }),
                 FrameOp::GroupPop,
                 FrameOp::RotatePop,
                 FrameOp::ScalePush(OpScale {
@@ -292,6 +305,10 @@ mod tests {
                 0x1122_3344,
                 1,
                 CLIP_POP,
+                GROUP_PUSH,
+                9,
+                0,
+                0,
                 GROUP_POP,
                 ROTATE_POP,
                 SCALE_PUSH,
@@ -301,8 +318,8 @@ mod tests {
         assert_eq!(
             encoded.f64s,
             [
-                320.0, 180.0, 10.0, 20.0, 30.0, 16.0, 0.5, 0.75, 0.0, 0.0, 0.0, 0.0, 4.0, 5.0, 2.0,
-                3.0,
+                320.0, 180.0, 10.0, 20.0, 30.0, 16.0, 0.5, 0.75, 0.0, 0.0, 0.0, 0.0, 0.5, 2.0, 1.0,
+                2.0, 30.0, 40.0, 4.0, 5.0, 2.0, 3.0,
             ]
         );
         assert_eq!(encoded.strings, [String::from("hello")]);

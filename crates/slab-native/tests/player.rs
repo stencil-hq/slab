@@ -138,7 +138,7 @@ fn progress_param_moves_playhead_knob() {
 
 #[test]
 fn pixel_probes_play_circle_and_card_bg() {
-    let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
+    let instance = wgpu::Instance::default();
     let Some((adapter, device, queue)) = slab_native::request_device(&instance, None) else {
         println!("SKIP: no wgpu adapter available");
         return;

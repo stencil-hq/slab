@@ -96,7 +96,7 @@ fn check(px: &[u8], w: u32, probes: &[Probe], case: &str) {
 }
 
 fn make_renderer() -> Option<Renderer> {
-    let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
+    let instance = wgpu::Instance::default();
     let (adapter, device, queue) = slab_native::request_device(&instance, None)?;
     println!(
         "adapter: {} ({:?})",

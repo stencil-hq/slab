@@ -140,7 +140,7 @@ pub fn run_source(
 /// arbitrary documents carry no known colors to assert).
 fn headless_frame(doc: &mut NativeDocument, opts: &demo::Opts) -> Result<(), String> {
     let out = opts.headless_out.clone().ok_or("missing output path")?;
-    let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
+    let instance = wgpu::Instance::default();
     let (adapter, device, queue) =
         crate::request_device(&instance, None).ok_or("no wgpu adapter available (headless)")?;
     eprintln!(
@@ -261,6 +261,7 @@ impl ViewApp {
             &wgpu::SurfaceConfiguration {
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
                 format: self.surface_format,
+                color_space: wgpu::SurfaceColorSpace::Auto,
                 width: size.width,
                 height: size.height,
                 present_mode: wgpu::PresentMode::Fifo,
@@ -334,17 +335,18 @@ impl ViewApp {
         let scale = window.scale_factor();
         let build = renderer.build(&layers, scale, size.width, size.height);
         let frame_tex = match surface.get_current_texture() {
-            Ok(t) => t,
-            Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
-                // reconfigure and try again next frame — keep the redraw
+            wgpu::CurrentSurfaceTexture::Success(texture)
+            | wgpu::CurrentSurfaceTexture::Suboptimal(texture) => texture,
+            wgpu::CurrentSurfaceTexture::Lost | wgpu::CurrentSurfaceTexture::Outdated => {
+                // Reconfigure and try again next frame — keep the redraw
                 // chain alive (an animating doc reschedules only after a
-                // SUCCESSFUL draw)
+                // successful draw).
                 self.configure_surface();
                 window.request_redraw();
                 return;
             }
-            Err(e) => {
-                eprintln!("slab-native: surface error: {e}");
+            error => {
+                eprintln!("slab-native: surface error: {error:?}");
                 return;
             }
         };
@@ -357,7 +359,7 @@ impl ViewApp {
             wgpu::Color::BLACK,
         );
         window.pre_present_notify();
-        frame_tex.present();
+        renderer.queue.present(frame_tex);
         self.frames += 1;
 
         if self.doc.inst.dirty || self.doc.inst.ms.active || self.opts.max_frames.is_some() {
@@ -473,7 +475,7 @@ impl ApplicationHandler<a11y::Event> for ViewApp {
         let accessibility =
             a11y::WindowAccessibility::new(event_loop, &window, self.a11y_proxy.clone());
         window.set_ime_allowed(true);
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
+        let instance = wgpu::Instance::default();
         let surface = match instance.create_surface(window.clone()) {
             Ok(s) => s,
             Err(e) => {

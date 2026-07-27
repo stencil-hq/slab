@@ -160,9 +160,10 @@ floats (`cx, cy, rx, ry, depth`) and TiltPop contributes none. The FX-kit
 fields extend existing payloads at the END of each op's record: RECT appends
 `smooth, grain_amount, grain_size` (floats); TEXT appends `color_kind` (u32)
 and `gx, gy, gw, gh` (floats); IMAGE and CLIP_PUSH append `smooth`;
-GROUP_PUSH appends `mask_kind, mask` (u32s) and `mx, my, mw, mh` (floats);
-BACKDROP appends `mask_kind, mask` (u32s) and `brightness, smooth` (floats).
-Every operation tag otherwise retains its fixed integer and float arity
+GROUP_PUSH contributes `node, mask_kind, mask` (u32s) and
+`opacity, blur, mx, my, mw, mh` (floats); BACKDROP appends
+`mask_kind, mask` (u32s) and `brightness, smooth` (floats). Every operation
+tag otherwise retains its fixed integer and float arity
 and decodes to the `FrameOp` payload fields below. Canonical `frame_json`,
 dispatch/hit/trace dumps, `cells_text`, capability reports, and self-test
 counts are exported for the Node conformance runner.
@@ -396,7 +397,7 @@ PathDraw(OpPath)     { node, dx, dy, path (signed path reference),
                        bg_kind, bg, stroke_kind, stroke, stroke_w,
                        dash_on, dash_off, has_dash, opacity }
 ClipPush(OpClip)     { x, y, w, h, radius, smooth } · ClipPop
-GroupPush(OpGroup)   { opacity, blur,
+GroupPush(OpGroup)   { node, opacity, blur,
                        mask_kind (0 none|1 solid|2 gradient), mask,
                        mx, my, mw, mh }    · GroupPop
 RotatePush(OpRotate) { cx, cy, deg }       · RotatePop
@@ -434,8 +435,12 @@ SceneNode { node, parent_ix (scene index, -1 root), kind (SLIR kind),
   above. A group mask multiplies the layer's alpha by the paint's alpha
   mapped over the mask box `(mx, my, mw, mh)`; a backdrop mask scales the
   backdrop effect strength (progressive blur, banded per the support chart).
-- Every paint op carries `node` (retained-DOM diffing key for the web driver;
-  GPU/TUI may ignore it). Node opacity composites through `GroupPush`.
+- `OpGroup.node` owns the node-sized compositing box `(mx, my, mw, mh)`;
+  `NONE` marks a host-generated envelope such as a drag ghost. Browser-native
+  animation replay targets this stable group for `offset` and `opacity`.
+- Every paint op and node-owned group carries `node` (retained-DOM diffing key
+  for the web driver; GPU/TUI may ignore it). Node opacity composites through
+  `GroupPush`.
 - `SceneNode.flags` are the node's *effective* flags: `F_CLIP` is set iff this
   frame clips (authored clip/scroll or boundary-forced), and `F_INERT` is set
   for self-or-ancestor inert. Quarter-turned nodes contribute one scene entry
@@ -561,8 +566,9 @@ whitespace and canonical key order:
   `"#rrggbbaa"`, gradient `"grad:N"`) and appends `"grad_box":[gx,gy,gw,gh]`
   after `"opacity"` iff the color is a gradient. Image appends `"smooth"`
   after `"opacity"` and ClipPush after `"radius"`, each iff smooth > 0.
-  GroupPush appends `"mask":<paint>,"mask_box":[mx,my,mw,mh]` after `"blur"`
-  iff masked. Backdrop ALWAYS emits `"brightness":B` after `"saturate"`,
+  GroupPush always writes `"node":N` before `"opacity"` and appends
+  `"mask":<paint>,"mask_box":[mx,my,mw,mh]` after `"blur"` iff masked.
+  Backdrop ALWAYS emits `"brightness":B` after `"saturate"`,
   then `"smooth":S` iff smooth > 0, then `"mask":<paint>` iff masked.
 - `paths_rt` entries use `{"verbs":[0,…],"coords":[0,…]}` in frame-local
   index order; the pool contains only geometry referenced by this frame.

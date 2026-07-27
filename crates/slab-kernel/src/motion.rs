@@ -803,23 +803,21 @@ pub struct Lift {
 ///
 /// A binding lifts only when replaying it outside the kernel is
 /// indistinguishable from the per-solve overlay:
-/// - it animates nothing but ink: `offset`, `opacity`, `rotate`, `scale`,
-///   solid `bg`, and text `color` — attributes that never move siblings or
-///   resize parents. `rotate`/`scale` lift on `rect`/`image`/`path` (multi-line
-///   text paints one run per line, each of which would transform about its own
-///   box); `bg` lifts on plain rects and paths; `color` lifts on text.
-/// - every keyframe (and each base the deltas are computed against) is a
-///   static literal, so no parameter, list field, or theme flip can change
-///   the track;
-/// - the node paints exactly one leaf (`rect`, `text`, `image`, `path`)
-///   outside any `each` template, carries no `when` patches or actions, and
-///   emits no signals — its retained hit geometry never diverges from the
-///   drawn position in a way an interaction could observe;
-/// - an animated `offset` additionally requires no base `rotate`/`scale`/
-///   `tilt` (their retained transform groups would distort native translation
-///   deltas), and an animated `rotate` track must stay clear of the quarter
-///   turns near 90°/270° where the kernel re-solves layout in the rotated
-///   bounding box;
+/// - it animates nothing but ink: `offset`/`opacity` on paint leaves or
+///   render-only containers, `rotate`/`scale` on `rect`/`image`/`path`,
+///   solid `bg` on plain rects and paths, and text `color`;
+/// - every keyframe (and each base used for a delta) is a static literal, so
+///   no parameter, list field, or theme flip can change the track;
+/// - geometry tracks stay outside `each` and require an interaction-free
+///   subtree without patches, signals, actions, scroll, detached paint, holes,
+///   or conditional materialization. Paint-only tracks may coexist with those
+///   behaviors when patches cannot replace their native paint channel;
+/// - the browser replays `offset`/`opacity` on a stable, node-sized group, so
+///   container children and multi-op leaves move/fade together and authored
+///   opacity is replaced rather than multiplied;
+/// - leaf-local transform bases must stay static. A base quarter-turn is
+///   unliftable, while an animated rotation may cross the quarter-turn window
+///   only for a statically square leaf whose axis swap changes no geometry;
 /// - a `bg` lift requires the retained base paint to stay a solid (or absent)
 ///   fill on an un-smoothed rect, so the native color channel it animates is
 ///   the one the driver painted.

@@ -4,15 +4,15 @@
 // arithmetic is wrapper-offset subtraction and the FRAME.md baseline formula
 // (ascent from the SLIR FONT table).
 //
-// Keying: element identity is `<opTag><node>#<occurrence>` (Text ops get one
-// span per line via the occurrence counter; push ops have no node and key on
-// occurrence alone). Auxiliary siblings extend the scheme: gradient stroke
-// rings key `S<node>` and progressive-blur backdrop bands `Db<i>`; a retained
-// key that switches element kind (rect div ⇄ squircle svg) drops and
-// recreates its element. Placement is delta-only: a per-layer cursor walks the
-// retained children and the DOM is touched solely when an element is missing
+// Keying: paint identity is `<opTag><node>#<occurrence>` (Text ops get one
+// span per line); node-owned groups use the same scheme, while host envelopes
+// and structural clips key on occurrence alone. Auxiliary siblings extend it:
+// gradient stroke rings key `S<node>` and progressive-blur backdrop bands
+// `Db<i>`. A retained key that switches element kind (rect div ⇄ squircle SVG)
+// drops and recreates its element. Placement is delta-only: a per-layer cursor
+// walks retained children. The DOM is touched only when an element is missing
 // or out of order — a stable frame performs zero mutations, so running CSS
-// animations (lifted keyframes, the caret blink) are never restarted.
+// animations (lifted keyframes and the caret blink) never restart.
 // Genuine reorders use `moveBefore` where available, which moves a connected
 // node without resetting its animation/iframe/focus state.
 //
@@ -1058,7 +1058,16 @@ export class Painter {
             case 'GroupPush': {
                const o = op.v;
                const el = take(o.node === NO_NODE ? 'G' : `G${o.node}`, 'div');
-               let css = `position:absolute;left:${o.mx - ox}px;top:${o.my - oy}px;width:${o.mw}px;height:${o.mh}px;overflow:visible;`;
+               const animation = this.groupAnimations.get(o.node);
+               const sized = o.mask_kind !== 0 || animation !== undefined;
+               let originX = ox;
+               let originY = oy;
+               let css = 'position:absolute;left:0;top:0;width:0;height:0;overflow:visible;';
+               if (sized) {
+                  css = `position:absolute;left:${o.mx - ox}px;top:${o.my - oy}px;width:${o.mw}px;height:${o.mh}px;overflow:visible;`;
+                  originX = o.mx;
+                  originY = o.my;
+               }
                if (o.mask_kind !== 0) {
                   // W7: the subtree's alpha is multiplied by the paint over
                   // the owning node's border box (contract §6.3); ink outside
@@ -1071,9 +1080,9 @@ export class Painter {
                }
                if (o.opacity !== 1) css += `opacity:${o.opacity};`;
                if (o.blur > 0) css += `filter:blur(${o.blur / 2}px);`;
-               css += this.groupAnimations.get(o.node) ?? '';
+               css += animation ?? '';
                setCss(el, css);
-               stack.push({ el, ox: o.mx, oy: o.my, prev: null });
+               stack.push({ el, ox: originX, oy: originY, prev: null });
                break;
             }
             case 'RotatePush': {

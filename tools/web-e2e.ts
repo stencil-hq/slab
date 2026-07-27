@@ -182,7 +182,9 @@ const field = await nodeCenter('#field');
 check('(c) field located', field !== null, `kernel geometry ${JSON.stringify(field)}`);
 if (field) {
    await page.mouse.click(field.cx, field.cy);
-   await page.keyboard.type('héllo', { delay: 25 });
+   for (const character of 'héllo') {
+      await page.keyboard.insertText(character);
+   }
    await page.waitForFunction(() => {
       const dbg = globalThis as DebugGlobal;
       const drafts = dbg.__sig?.draft ?? [];
@@ -409,9 +411,9 @@ const draftField = await nodeCenter('/draft', 'edit-multiline-host');
 check('(i) multiline draft located', draftField !== null, JSON.stringify(draftField));
 if (draftField) {
    await page.mouse.click(draftField.cx, draftField.cy);
-   await page.keyboard.type('hello');
+   await page.keyboard.insertText('hello');
    await page.keyboard.press('Enter');
-   await page.keyboard.type('world');
+   await page.keyboard.insertText('world');
 }
 await page.waitForFunction(() => {
    const events = (globalThis as DebugGlobal).__sig?.['edit-draft'] ?? [];
@@ -430,7 +432,7 @@ const submitField = await nodeCenter('/message', 'edit-multiline-host');
 check('(i) multiline submit field located', submitField !== null, JSON.stringify(submitField));
 if (submitField) {
    await page.mouse.click(submitField.cx, submitField.cy);
-   await page.keyboard.type('ready');
+   await page.keyboard.insertText('ready');
    await page.keyboard.press('Enter');
 }
 await page.waitForFunction(() => {
@@ -462,7 +464,7 @@ await page.waitForFunction(() => {
    const active = host?.shadowRoot?.activeElement as HTMLElement | null | undefined;
    return active?.dataset.slabEditor === 'true' && active.dataset.slabKey?.includes('/draft');
 });
-await page.keyboard.type('!');
+await page.keyboard.insertText('!');
 await page.evaluate(() => {
    const host = document.getElementById('edit-multiline-host');
    const active = host?.shadowRoot?.activeElement;

@@ -1,6 +1,6 @@
 //! Cycle progress modes, easing codes, and typed interpolation for continuous and discrete values.
 
-use crate::{motion, slir, style, value};
+use crate::{frame, motion, slir, style, value};
 
 /// Verifies cycle modes, delay handling, and each easing code.
 pub fn test_easing_and_cycle_modes() {
@@ -229,6 +229,29 @@ fn atuple(d: &mut slir::Doc, x: f64, y: f64) -> u32 {
     let off = u32::try_from(d.f64s.len()).expect("fixture tuple pool fits in u32");
     d.f64s.extend([x, y]);
     aval(d, slir::T_TUPLE, off, 2, 0.0)
+}
+fn two_stop_animation(d: &mut slir::Doc, attr: u32, a: u32, b: u32) -> u32 {
+    let animation = u32::try_from(d.anim_name.len()).expect("fixture animation count fits u32");
+    let stop_off = i32::try_from(d.anim_stop_pos.len()).expect("fixture stop count fits i32");
+    let attr_off = i32::try_from(d.aattr_id.len()).expect("fixture animation attrs fit i32");
+    d.anim_name.push(0);
+    d.anim_stop_off.push(stop_off);
+    d.anim_stop_len.push(2);
+    d.anim_stop_pos.extend([0.0, 1.0]);
+    d.anim_stop_attr_off.extend([attr_off, attr_off + 1]);
+    d.anim_stop_attr_len.extend([1, 1]);
+    d.aattr_id.extend([attr, attr]);
+    d.aattr_val.extend([a, b]);
+    animation
+}
+
+fn insert_base_attr(d: &mut slir::Doc, node: usize, attr: u32, value: u32) {
+    let end = usize::try_from(d.attr_index[node + 1]).expect("fixture attr index is nonnegative");
+    d.attr_id.insert(end, attr);
+    d.attr_val.insert(end, value);
+    for boundary in &mut d.attr_index[node + 1..] {
+        *boundary += 1;
+    }
 }
 
 /// Builds the lift-classification fixture.
@@ -641,6 +664,88 @@ pub fn test_lift_transform_tracks() {
         ),
         (Some(0xFF00FF00), Some(0xFF0000FF)),
         "color stops carry SLIR-packed endpoints"
+    );
+}
+/// Verifies paint-only bindings keep CSS ownership across state and signal
+/// activity while a flags patch, which would recreate the clock, stays native.
+pub fn test_lift_paint_only_interaction() {
+    let mut d = lift_doc();
+    let high = aval(&mut d, slir::T_NUM, 0, 0, 1.0);
+    let low = aval(&mut d, slir::T_NUM, 0, 0, 0.25);
+    d.bind_anim[3] = two_stop_animation(&mut d, slir::A_OPACITY, high, low);
+    d.wattr_id[0] = slir::A_OPACITY;
+    d.wattr_val[0] = low;
+    d.sign_node.push(4);
+    assert!(
+        motion::lifts(&d).iter().any(|lift| lift.binding == 3),
+        "wrapper-owned opacity lifts despite an opacity patch and signal"
+    );
+
+    d.wattr_id[0] = slir::A_FLAGS;
+    assert!(
+        motion::lifts(&d).iter().all(|lift| lift.binding != 3),
+        "a patch that removes the wrapper keeps the binding kernel-driven"
+    );
+}
+
+/// Verifies a fixed square may cross the quarter-turn layout window because
+/// swapping its axes leaves both its measured box and rotation center intact.
+pub fn test_lift_square_full_rotation() {
+    let mut d = transform_doc();
+    let side = aval(&mut d, slir::T_NUM, 0, 0, 24.0);
+    insert_base_attr(&mut d, 2, slir::A_W, side);
+    insert_base_attr(&mut d, 2, slir::A_H, side);
+    assert!(
+        motion::lifts(&d).iter().any(|lift| lift.binding == 1),
+        "full rotations lift on static square leaves"
+    );
+}
+
+/// Verifies nonuniform scale keyframes retain both axes for CSS replay.
+pub fn test_lift_tuple_scale_track() {
+    let mut d = transform_doc();
+    let start = atuple(&mut d, 1.0, 0.5);
+    let end = atuple(&mut d, 1.5, 2.0);
+    d.aattr_val[4] = start;
+    d.aattr_val[5] = end;
+    let lifted = motion::lifts(&d);
+    let scale = lifted
+        .iter()
+        .find(|lift| lift.binding == 3)
+        .expect("tuple scale binding lifts");
+    let track: Vec<_> = scale.stops.iter().map(|stop| stop.scale).collect();
+    assert_eq!(
+        track,
+        [Some((1.0, 0.5)), Some((1.5, 2.0))],
+        "both scale axes survive normalization"
+    );
+}
+
+/// Verifies the host lift call records stable group owners and transparent
+/// paint targets needed by the browser's CSS replay.
+pub fn test_inst_lift_marks_css_targets() {
+    let mut instance = frame::inst_shell();
+    instance.doc = lift_doc();
+    frame::inst_init(&mut instance);
+    let lifted = frame::inst_lift_animations(&mut instance);
+    assert_eq!(
+        lifted.iter().map(|lift| lift.binding).collect::<Vec<_>>(),
+        [0, 1, 2, 6, 7],
+        "instance exposes every classified binding"
+    );
+    assert!(
+        [1, 2, 3, 6, 7]
+            .iter()
+            .all(|&node| instance.ms.lift_node[node]),
+        "each lifted node owns a stable compositing group"
+    );
+    assert!(
+        instance.ms.lift_bg[2],
+        "a color-only rect with no base fill receives a paint target"
+    );
+    assert!(
+        !instance.ms.lift_node[4] && !instance.ms.lift_node[5],
+        "kernel-driven nodes receive no browser wrapper"
     );
 }
 

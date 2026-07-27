@@ -4,7 +4,9 @@
 //! no depth buffer. Rects are instanced quads with an SDF fragment shader
 //! (fill, aligned stroke, in-shader linear/radial gradients, blurred-SDF
 //! shadows, rounded clip). Text is textured quads from a shared A8 atlas fed
-//! by kernel `text_glyphs`. Paths are lyon meshes tessellated at first use.
+//! by kernel `text_glyphs`; glyph coverage blends through the gamma-corrected
+//! curve in shader.wgsl ("text gamma") to match desktop text-stack weight.
+//! Paths are lyon meshes tessellated at first use.
 //! GroupPush/Pop composite through pooled offscreen layers with opacity and
 //! two-pass gaussian blur; Backdrop copies the current target region, blurs
 //! it, and paints it back with a rounded mask + saturation.
@@ -2863,9 +2865,9 @@ impl Renderer {
         slice.map_async(wgpu::MapMode::Read, move |r| {
             let _ = tx.send(r);
         });
-        let _ = self.device.poll(wgpu::PollType::Wait);
+        let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
         rx.recv().ok()?.ok()?;
-        let data = slice.get_mapped_range();
+        let data = slice.get_mapped_range().ok()?;
         let mut out = Vec::with_capacity((tw * th * 4) as usize);
         for row in 0..th {
             let o = (row * bpr) as usize;

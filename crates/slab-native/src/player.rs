@@ -578,7 +578,7 @@ fn player_core(theme: Option<&str>) -> Result<PlayerCore, String> {
 /// (card night bg, mint play circle) so the artifact is self-checking.
 pub fn headless_frame(opts: &Opts) -> Result<(), String> {
     let out = opts.headless_out.clone().ok_or("missing output path")?;
-    let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
+    let instance = wgpu::Instance::default();
     let (adapter, device, queue) =
         crate::request_device(&instance, None).ok_or("no wgpu adapter available (headless)")?;
     eprintln!(
@@ -748,6 +748,7 @@ impl App {
             &wgpu::SurfaceConfiguration {
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
                 format: self.surface_format,
+                color_space: wgpu::SurfaceColorSpace::Auto,
                 width: size.width,
                 height: size.height,
                 present_mode: wgpu::PresentMode::Fifo,
@@ -858,13 +859,14 @@ impl App {
         let scale = window.scale_factor();
         let build = renderer.build(&layers, scale, size.width, size.height);
         let frame_tex = match surface.get_current_texture() {
-            Ok(t) => t,
-            Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
+            wgpu::CurrentSurfaceTexture::Success(texture)
+            | wgpu::CurrentSurfaceTexture::Suboptimal(texture) => texture,
+            wgpu::CurrentSurfaceTexture::Lost | wgpu::CurrentSurfaceTexture::Outdated => {
                 self.configure_surface();
                 return;
             }
-            Err(e) => {
-                eprintln!("slab-native: surface error: {e}");
+            error => {
+                eprintln!("slab-native: surface error: {error:?}");
                 return;
             }
         };
@@ -877,7 +879,7 @@ impl App {
             wgpu::Color::BLACK,
         );
         window.pre_present_notify();
-        frame_tex.present();
+        renderer.queue.present(frame_tex);
         self.frames += 1;
 
         if self.core.needs_frame() || self.opts.max_frames.is_some() {
@@ -986,7 +988,7 @@ impl ApplicationHandler<a11y::Event> for App {
         };
         let accessibility =
             a11y::WindowAccessibility::new(event_loop, &window, self.a11y_proxy.clone());
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
+        let instance = wgpu::Instance::default();
         let surface = match instance.create_surface(window.clone()) {
             Ok(s) => s,
             Err(e) => {

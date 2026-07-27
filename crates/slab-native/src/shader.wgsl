@@ -8,7 +8,8 @@
 // (rotation/scale about a point) maps device -> device; to_ndc flips to clip
 // space. Colors are straight-alpha sRGB bytes /255 (blending happens in sRGB
 // space, matching the tiny-skia raster and web drivers); fragments
-// premultiply.
+// premultiply. Exception: glyph coverage uses the gamma-corrected curve
+// described at "text gamma" below to match desktop text-stack weight.
 
 struct Globals {
     viewport: vec2<f32>,
@@ -211,6 +212,28 @@ fn fs_rect(v: RectVary) -> @location(0) vec4<f32> {
     return out * clip_cov(v.clip_pos.xy, vec4(v.dc.zw, v.c2.xy), v.dc.y);
 }
 
+// ------------------------------------------------------- text gamma ----
+//
+// The pre-slab UI drew text with glyphon's ColorMode::Web onto an sRGB
+// swapchain: sRGB-encoded ink and coverage were blended as raw numbers
+// against the linear-decoded destination, and the attachment re-encoded
+// the result. Net effect on this sRGB-byte-space target: a text fragment
+// with straight sRGB color c and coverage a must land as
+//     enc(c*a + dec(dst)*(1-a))
+// Plain coverage blending (c*a + dst*(1-a)) renders light-on-dark text
+// visibly dimmer and thinner. We emulate the old curve without knowing
+// dst: premultiplied rgb = enc(c*a) (exact over black) and alpha chosen
+// so the white-destination endpoint is exact too — in between the error
+// is negligible for UI contrast levels.
+
+fn srgb_enc1(x: f32) -> f32 {
+    return select(1.055 * pow(max(x, 0.0), 1.0 / 2.4) - 0.055, 12.92 * x, x <= 0.0031308);
+}
+
+fn srgb_enc3(x: vec3<f32>) -> vec3<f32> {
+    return vec3(srgb_enc1(x.r), srgb_enc1(x.g), srgb_enc1(x.b));
+}
+
 // --------------------------------------------------------------- glyphs ----
 
 @group(1) @binding(0) var tex0: texture_2d<f32>;
@@ -263,7 +286,12 @@ fn fs_glyph(v: GlyphVary) -> @location(0) vec4<f32> {
         col = grad_color(gi, grad_t(gi, v.pre - v.g2.xy, v.color.xy));
         col.a = col.a * v.g2.w;
     }
-    let out = vec4(col.rgb * col.a, col.a) * a;
+    // fold ink alpha into coverage, then apply the old stack's gamma curve
+    // (see "text gamma" above): rgb exact over black, alpha exact over white.
+    let cov = a * col.a;
+    let peak = max(col.r, max(col.g, col.b));
+    let alpha = srgb_enc1(peak * cov) + 1.0 - srgb_enc1(1.0 - cov * (1.0 - peak));
+    let out = vec4(srgb_enc3(col.rgb * cov), alpha);
     return out * clip_cov(v.clip_pos.xy, v.clip, v.cr);
 }
 
