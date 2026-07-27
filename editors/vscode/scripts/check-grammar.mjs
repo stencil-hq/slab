@@ -36,6 +36,7 @@ const seen = {
   component: false,
   nodeId: false,
   attributeName: false,
+  tokenName: false,
   hexColor: false,
   keywordControl: false,
   flag: false,
@@ -83,6 +84,7 @@ for (const name of readdirSync(examplesDir).filter((f) => f.endsWith(".slab")).s
       if (scopes.some((s) => s.startsWith("support.class.component.slab"))) seen.component = true;
       if (scopes.some((s) => s.startsWith("entity.other.attribute-name.id.slab"))) seen.nodeId = true;
       if (scopes.some((s) => s === "entity.other.attribute-name.slab")) seen.attributeName = true;
+      if (scopes.some((s) => s === "entity.other.attribute-name.token.slab")) seen.tokenName = true;
       if (scopes.some((s) => s.startsWith("constant.other.color.slab"))) seen.hexColor = true;
       if (scopes.some((s) => s.startsWith("keyword.control"))) seen.keywordControl = true;
       if (scopes.some((s) => s.startsWith("constant.language.flag.slab"))) seen.flag = true;
@@ -108,11 +110,11 @@ const probes = [
   { line: "params {", word: "params", scope: "keyword.control.slab" },
   { line: "def Track(no, title) export {", word: "export", scope: "keyword.control.slab" },
   { line: "hole rows w=fill h=336 scroll", word: "hole", scope: "entity.name.tag.slab" },
-  { line: "row focusable act=save pad=8 {", word: "act", scope: "entity.other.attribute-name.slab" },
-  { line: "text#field param.draft field=draft w=300", word: "field=", scope: "entity.other.attribute-name.slab" },
+  { line: "row focusable act=save pad=8 {", word: "act", scope: "entity.other.attribute-name.binding.slab" },
+  { line: "text#field param.draft field=draft w=300", word: "field=", scope: "entity.other.attribute-name.binding.slab" },
   { line: "params { tracks list(Track) = [] }", word: "list", scope: "keyword.control.slab" },
   { line: "each param.tracks", word: "each", scope: "keyword.control.slab" },
-  { line: "text param.draft field=draft submit=send multiline", word: "submit=", scope: "entity.other.attribute-name.slab" },
+  { line: "text param.draft field=draft submit=send multiline", word: "submit=", scope: "entity.other.attribute-name.binding.slab" },
   { line: "text param.draft field=draft submit=send multiline", word: "multiline", scope: "constant.language.flag.slab" },
   { line: "when gpu { tokens { } }", word: "gpu", scope: "support.constant.state.slab" },
   { line: "when dark { tokens { } }", word: "dark", scope: "support.constant.state.slab" },

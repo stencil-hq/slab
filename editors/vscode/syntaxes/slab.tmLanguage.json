@@ -7,6 +7,7 @@
     { "include": "#comments" },
     { "include": "#strings" },
     { "include": "#line-continuation" },
+    { "include": "#tokens-block" },
     { "include": "#icon-declaration" },
     { "include": "#icon-usage" },
     { "include": "#each-target" },
@@ -65,6 +66,46 @@
     "line-continuation": {
       "name": "constant.character.escape.line-continuation.slab",
       "match": "\\\\\\s*$"
+    },
+    "tokens-block": {
+      "begin": "(?<![\\w.-])(?:(tokens)|(theme)\\s+([A-Za-z_](?:[A-Za-z0-9_]|-(?=[A-Za-z_]))*))\\s*(\\{)",
+      "beginCaptures": {
+        "1": { "name": "keyword.control.slab" },
+        "2": { "name": "keyword.control.slab" },
+        "3": { "name": "variable.other.constant.theme.slab" },
+        "4": { "name": "punctuation.section.block.begin.slab" }
+      },
+      "end": "\\}",
+      "endCaptures": { "0": { "name": "punctuation.section.block.end.slab" } },
+      "patterns": [{ "include": "#token-items" }]
+    },
+    "token-items": {
+      "patterns": [
+        { "include": "#comments" },
+        { "include": "#strings" },
+        { "include": "#line-continuation" },
+        {
+          "begin": "(?<![\\w.-])([A-Za-z_](?:[A-Za-z0-9_]|-(?=[A-Za-z_]))*)\\s*(\\{)",
+          "beginCaptures": {
+            "1": { "name": "entity.other.attribute-name.token.slab" },
+            "2": { "name": "punctuation.section.block.begin.slab" }
+          },
+          "end": "\\}",
+          "endCaptures": { "0": { "name": "punctuation.section.block.end.slab" } },
+          "patterns": [{ "include": "#token-items" }]
+        },
+        {
+          "name": "entity.other.attribute-name.token.slab",
+          "match": "(?<![\\w.-])[A-Za-z_](?:[A-Za-z0-9_]|-(?=[A-Za-z_]))*(?=\\s+[^\\s={}])"
+        },
+        { "include": "#color-function" },
+        { "include": "#hex-color" },
+        { "include": "#percent" },
+        { "include": "#number" },
+        { "include": "#reference" },
+        { "include": "#value-keywords" },
+        { "include": "#punctuation" }
+      ]
     },
     "icon-declaration": {
       "match": "(?<![\\w.-])(icon)\\s+([A-Za-z_](?:[A-Za-z0-9_]|-(?=[A-Za-z_]))*)(?=\\s*(?:viewbox\\s*=\\s*-?(?:\\d+(?:\\.\\d+)?|\\.\\d+)\\s*)?\\{)",
