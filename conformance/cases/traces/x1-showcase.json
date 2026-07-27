@@ -107,6 +107,7 @@
   "expect": {
     "signals": [
       { "name": "split_drag", "text": "480", "item": "" },
+      { "name": "split_drag", "text": "480", "item": "" },
       { "name": "tag_drag", "text": "", "item": "1" },
       { "name": "commit_drop", "text": "", "item": "1" }
     ],

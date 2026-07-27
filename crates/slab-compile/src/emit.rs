@@ -691,8 +691,14 @@ pub fn emit(ex: &Expanded, opts: &Options, diags: &mut Diagnostics) -> Slir {
     }
     for family in families {
         let class = font_assets::classify_family(&family);
+        let custom = opts
+            .fonts
+            .iter()
+            .find(|(name, _)| name.eq_ignore_ascii_case(&family))
+            .map(|(_, bytes)| bytes.as_slice());
         for &weight in &weights {
-            let mut table = fonts::build_table(font_assets::asset(class, weight), &ex.text_cps);
+            let bytes = custom.unwrap_or_else(|| font_assets::asset(class, weight).bytes);
+            let mut table = fonts::build_table(class, weight, bytes, &ex.text_cps);
             table.family = em.intern(&family);
             em.slir.fonts.push(table);
         }

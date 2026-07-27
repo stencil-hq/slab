@@ -95,7 +95,7 @@ fn rows_slir() -> Result<Vec<u8>, String> {
     let opts = slab_compile::Options {
         embed_assets: true,
         base_dir: PathBuf::from("."),
-        assets: None,
+        ..slab_compile::Options::default()
     };
     let (slir, diags) = slab_compile::compile(&src, &opts);
     let slir = slir.ok_or_else(|| format!("rows doc failed to compile: {:?}", diags.0))?;

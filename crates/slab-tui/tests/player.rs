@@ -53,11 +53,7 @@ fn run_err(args: &[&str]) -> (i32, String) {
 fn player_frame(sets: &[(&str, slab_kernel::frame::ParamValue)]) -> slab_kernel::flatten::Frame {
     let file = root().join(PLAYER);
     let src = std::fs::read_to_string(&file).expect("read player");
-    let opts = slab_compile::Options {
-        embed_assets: true,
-        base_dir: file.parent().unwrap().to_path_buf(),
-        assets: None,
-    };
+    let opts = slab_compile::Options { embed_assets: true, base_dir: file.parent().unwrap().to_path_buf(), ..slab_compile::Options::default() };
     let (slir, diags) = slab_compile::compile(&src, &opts);
     assert!(!diags.has_errors(), "player must compile clean");
     let bytes = slab_slir::write(&slir.expect("slir"));

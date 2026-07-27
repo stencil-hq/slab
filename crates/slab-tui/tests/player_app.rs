@@ -38,11 +38,7 @@ fn run_app(args: &[&str]) -> String {
 fn player_instance() -> kframe::Instance {
     let file = root().join(PLAYER);
     let src = std::fs::read_to_string(&file).expect("read player");
-    let opts = slab_compile::Options {
-        embed_assets: true,
-        base_dir: file.parent().unwrap().to_path_buf(),
-        assets: None,
-    };
+    let opts = slab_compile::Options { embed_assets: true, base_dir: file.parent().unwrap().to_path_buf(), ..slab_compile::Options::default() };
     let (slir, diags) = slab_compile::compile(&src, &opts);
     assert!(!diags.has_errors(), "player must compile clean");
     let bytes = slab_slir::write(&slir.expect("slir"));

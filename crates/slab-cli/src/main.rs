@@ -137,6 +137,7 @@ pub(crate) fn compile_file(
         embed_assets,
         base_dir: path.parent().unwrap_or(Path::new(".")).to_path_buf(),
         assets: None,
+        fonts: std::collections::HashMap::new(),
     };
     slab_compile::compile(&src, &opts)
 }

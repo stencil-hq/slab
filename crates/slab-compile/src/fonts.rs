@@ -1,12 +1,16 @@
 //! FONT metric table subsetting from shared runtime-font metrics.
 
-use slab_fonts::{FontAsset, parse_metrics};
+use slab_fonts::parse_metrics;
 use slab_slir::FontE;
 use std::collections::BTreeSet;
 
-/// Build a FONT metric table subset to `cps`.
-pub fn build_table(a: &FontAsset, cps: &BTreeSet<u32>) -> FontE {
-    let metrics = parse_metrics(a.bytes).expect("vendored font parses");
+/// Build a FONT metric table for one face, subset to `cps`.
+///
+/// `class` supplies fallback metrics classification and `weight` is the
+/// weight this table represents in the document, independent of the weight
+/// declared inside `bytes`.
+pub fn build_table(class: u8, weight: u16, bytes: &[u8], cps: &BTreeSet<u32>) -> FontE {
+    let metrics = parse_metrics(bytes).expect("registered font parses");
     let mut cmap = Vec::new();
     let mut advances = Vec::new();
     for (&cp, (&gid, &advance)) in metrics
@@ -21,8 +25,8 @@ pub fn build_table(a: &FontAsset, cps: &BTreeSet<u32>) -> FontE {
     }
     FontE {
         family: 0,
-        class: a.class,
-        weight: a.weight,
+        class,
+        weight,
         upem: metrics.upem,
         ascent: metrics.ascent,
         descent: metrics.descent,

@@ -710,6 +710,7 @@ pub fn generate(
         embed_assets: false,
         base_dir: copts.base_dir.clone(),
         assets: None,
+        fonts: copts.fonts.clone(),
     };
     for def in exported_def_names(src) {
         let (dslir, ddiags, props) = compile_export(src, &def, &def_opts);

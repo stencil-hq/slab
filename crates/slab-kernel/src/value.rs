@@ -10,7 +10,11 @@ use crate::slir::{
 };
 
 /// Tag used when an attribute has no AVAL entry.
-pub const V_MISSING: u32 = 16;
+///
+/// Deliberately outside the SLIR tag range: reusing a live tag (this was
+/// `16`, which `T_PROP_REF` later claimed) makes every missing attribute on
+/// a synthetic list node read as a field-0 property reference.
+pub const V_MISSING: u32 = u32::MAX;
 
 /// A decoded, tagged AVAL value.
 #[derive(Clone, Debug)]

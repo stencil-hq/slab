@@ -1,12 +1,12 @@
-RAILYARD v2.4.1 — Zürich HB                                                               18:42:07 C
-┌─ ● LIVE 12 departure2 delayedfilter: none────────────────────────────────────────────────────────┐
+RAILYARD v2.4.1 — Zürich HB                                                             18:42:07 CES
+┌─ ● LIVE 12 departures 2 delayed filter: none─────────────────────────────────────────────────────┐
 │                                                                                                  │
 │ TIME      DELAY    TRAIN           PLATFORM      DESTINATION                 STATUS              │
 │ ──────────────────────────────────────────────────────────────────────────────────────────────── │
 │ 18:47     +3'      IC 5 1528       13            St. Gallen                  boarding            │
 │ 18:51     —        S3 19342        41/42         Hardbrücke–Dietikon–Aarau   on time             │
 │ 18:54     —        IR 36 2276      8             Basel SBB                   on time             │
-│ 18:59     +12'     EC 307          10            München-Hbf-über-St.Margrethdelayed             │
+│ 18:59     +12'     EC 307          10            München-Hbf-über-St.Margret…delayed             │
 │ 19:02     —        IC 2 785        31            Lugano                      on time             │
 │                                                                                                  │
 │                                                                                                  │
@@ -29,4 +29,4 @@ RAILYARD v2.4.1 — Zürich HB                                                  
 │ showing 5 of 12 · next refresh in 18s                                                            │
 │                                                                                                  │
 └──────────────────────────────────────────────────────────────────────────────────────────────────┘
- [j/ scro[f fil[/ searc[p platform v[ refres[q quit
+ [j/k] scroll [f filter [/] search [p] platform view[r] refresh [q] quit

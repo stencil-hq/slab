@@ -133,7 +133,7 @@ fn queue_slir(playing_idx: usize) -> Result<Vec<u8>, String> {
     let opts = slab_compile::Options {
         embed_assets: true,
         base_dir: PathBuf::from("."),
-        assets: None,
+        ..slab_compile::Options::default()
     };
     let (slir, diags) = slab_compile::compile(&queue_src(playing_idx), &opts);
     let slir = slir.ok_or_else(|| format!("queue doc failed to compile: {:?}", diags.0))?;

@@ -29,6 +29,11 @@ pub struct Options {
     /// document. `Some` → the filesystem is never touched (wasm hosts);
     /// `None` → read `base_dir.join(src)` as before.
     pub assets: Option<std::collections::HashMap<String, Vec<u8>>>,
+    /// Host-supplied sfnt bytes keyed by family name (matched
+    /// case-insensitively). A matching family's FONT tables are built from
+    /// these bytes instead of the bundled class fallback, so compiled glyph
+    /// ids agree with the face the host registers at render time.
+    pub fonts: std::collections::HashMap<String, Vec<u8>>,
 }
 
 impl Default for Options {
@@ -37,6 +42,7 @@ impl Default for Options {
             embed_assets: true,
             base_dir: PathBuf::from("."),
             assets: None,
+            fonts: std::collections::HashMap::new(),
         }
     }
 }
