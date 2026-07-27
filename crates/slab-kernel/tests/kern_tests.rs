@@ -17,6 +17,7 @@ kernel_tests! {
     test_cells__test_hairlines_and_borders => slab_kernel::test_cells::test_hairlines_and_borders;
     test_cells__test_quantization_half_even => slab_kernel::test_cells::test_quantization_half_even;
     test_cells__test_serialize => slab_kernel::test_cells::test_serialize;
+    test_cells__test_shallow_outline_wells => slab_kernel::test_cells::test_shallow_outline_wells;
     test_cells__test_text_and_fill_bg => slab_kernel::test_cells::test_text_and_fill_bg;
     test_cells__test_wide_grapheme_clusters => slab_kernel::test_cells::test_wide_grapheme_clusters;
     test_cells__test_wide_overwrite_cleanup => slab_kernel::test_cells::test_wide_overwrite_cleanup;

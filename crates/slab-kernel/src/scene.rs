@@ -269,8 +269,7 @@ pub fn node_by_key(d: &Doc, lists: &State, key: &str) -> u32 {
     if !key.is_empty() && !key.contains('/') {
         let want = key.strip_prefix('#').unwrap_or(key);
         for (node, &key_ref) in d.node_key.iter().enumerate() {
-            let key_index =
-                usize::try_from(key_ref).expect("string reference does not fit usize");
+            let key_index = usize::try_from(key_ref).expect("string reference does not fit usize");
             let full = d.strs[key_index].as_str();
             let leaf = full.rsplit('/').next().unwrap_or(full);
             if leaf.strip_prefix('#').unwrap_or(leaf) == want {

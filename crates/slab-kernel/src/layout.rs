@@ -2365,6 +2365,10 @@ pub fn para_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &
     let mut w_a: Vec<i32> = vec![];
     let mut w_b: Vec<i32> = vec![];
     let mut w_ri: Vec<i32> = vec![];
+    // Source spaces preceding each word, counted across span boundaries so
+    // adjacent spans join with exactly the whitespace the content contains.
+    let mut w_gap: Vec<i32> = vec![];
+    let mut pending_gap = 0i32;
     for i in 0i32..(len_i32(&kids)) {
         crate::style::set_patch_flags(d, st, kids[idx(i)], avail, INF);
         let sri = crate::style::build_rstyle(
@@ -2390,7 +2394,7 @@ pub fn para_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &
         for k in 0i32..(n) {
             l.para_chars.push(cs[idx(k)]);
         }
-        // Split on spaces; line construction drops empty chunks.
+        // Split on spaces; each word remembers how many source spaces led it.
         let mut a = 0i32;
         loop {
             let mut b = a;
@@ -2401,15 +2405,21 @@ pub fn para_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &
                 w_a.push(base.wrapping_add(a));
                 w_b.push(base.wrapping_add(b));
                 w_ri.push(sri);
+                w_gap.push(pending_gap);
+                pending_gap = 0i32;
             }
             if b >= n {
                 break;
             }
+            pending_gap = pending_gap.wrapping_add(1i32);
             a = b.wrapping_add(1i32);
         }
     }
     // Greedily wrap words with the same EPS tolerance used by the solver.
+    // Each word advances by its source gap; a gap is dropped when the word
+    // opens a wrapped line, and `w_eff` records the gap actually applied.
     let mut wline: Vec<i32> = vec![];
+    let mut w_eff: Vec<i32> = vec![];
     let mut cur_line = 0i32;
     let mut cur_w = 0.0f64;
     let mut line_len = 0i32;
@@ -2431,17 +2441,17 @@ pub fn para_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &
             st.rs[idx(sri)].tracking,
             32u32,
         );
-        let mut add = ww;
-        if line_len > 0i32 {
-            add = ww + sp;
-        }
+        let mut eff = w_gap[idx(i)];
+        let mut add = ww + (f64::from(eff)) * sp;
         if ((line_len > 0i32) && (avail != INF)) && ((cur_w + add) > (avail + EPS)) {
             cur_line = cur_line.wrapping_add(1i32);
             cur_w = 0.0f64;
             line_len = 0i32;
+            eff = 0i32;
             add = ww;
         }
         wline.push(cur_line);
+        w_eff.push(eff);
         cur_w += add;
         line_len = line_len.wrapping_add(1i32);
     }
@@ -2500,24 +2510,31 @@ pub fn para_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &
             } else {
                 false
             };
-            // Joined words contribute exactly one space to the character pool.
+            // Joined words contribute their applied source gap to the pool;
+            // a zero gap butts adjacent spans together with no space.
+            let eff = w_eff[idx(i)];
             if same {
-                l.para_chars.push(32u32);
+                for _s in 0i32..(eff) {
+                    l.para_chars.push(32u32);
+                }
                 for k in (w_a[idx(i)])..(w_b[idx(i)]) {
                     l.para_chars.push(l.para_chars[idx(k)]);
                 }
             } else {
+                let gw = (f64::from(eff))
+                    * crate::textm::char_w(
+                        d,
+                        st.rs[idx(sri)].font,
+                        st.rs[idx(sri)].size,
+                        st.rs[idx(sri)].tracking,
+                        32u32,
+                    );
                 if seg_open {
                     close_seg(d, st, l, seg_start, seg_sri, x);
                     let last = len_i32(&l.seg_x).wrapping_sub(1i32);
-                    x = (l.seg_x[idx(last)] + l.seg_w[idx(last)])
-                        + crate::textm::char_w(
-                            d,
-                            st.rs[idx(seg_sri)].font,
-                            st.rs[idx(seg_sri)].size,
-                            st.rs[idx(seg_sri)].tracking,
-                            32u32,
-                        );
+                    x = (l.seg_x[idx(last)] + l.seg_w[idx(last)]) + gw;
+                } else {
+                    x = gw;
                 }
                 seg_open = true;
                 seg_sri = sri;

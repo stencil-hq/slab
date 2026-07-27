@@ -479,17 +479,30 @@ pub fn stroke_fg(grid: &CellGrid, column: i32, row: i32, rgba: u32, opacity: f64
         blend_rgb(base, rgb_of(rgba), alpha)
     }
 }
+/// One text run's cell footprint, prescanned by [`cells_from_frame`] so
+/// shallow rect outlines can route their horizontal border to a text-free row.
+#[derive(Clone, Copy, Debug)]
+pub struct TextSpan {
+    pub row: i32,
+    pub col0: i32,
+    /// Exclusive end column.
+    pub col1: i32,
+}
+
 /// Rasterizes a rectangle as a fill, outline, or one-cell hairline.
 ///
 /// Fills sample gradients and composite alpha per cell. Outlines use
 /// box-drawing characters, with rounded corners for radii of at least four
-/// layout units and dashed variants when requested.
+/// layout units and dashed variants when requested. Outlines only one or two
+/// cells tall degrade to a three-sided well: the row carrying text keeps
+/// plain side verticals so the border never fights the glyphs.
 pub fn draw_rect(
     doc: &Doc,
     grid: &mut CellGrid,
     rect: &flatten::OpRect,
     opacity: f64,
     masks: &[MaskCtx],
+    text_spans: &[TextSpan],
 ) {
     let left = cell_col(rect.x);
     let top = cell_row(rect.y);
@@ -588,7 +601,7 @@ pub fn draw_rect(
     }
 
     // Outline strokes use rounded corners at radius >= 4.
-    if rect.stroke_kind == 0 || right.wrapping_sub(left) < 2 || bottom.wrapping_sub(top) < 2 {
+    if rect.stroke_kind == 0 || right.wrapping_sub(left) < 2 || bottom.wrapping_sub(top) < 1 {
         return;
     }
     let (top_left, top_right, bottom_left, bottom_right) = if rect.radius >= 4.0 {
@@ -603,6 +616,90 @@ pub fn draw_rect(
     };
     let last_row = bottom.wrapping_sub(1);
     let last_column = right.wrapping_sub(1);
+
+    // A shallow outline (one or two cell rows) cannot sandwich its content
+    // row between two border rows: centered text lands on a border row,
+    // erases the horizontal run, and strands the corners. Give the row that
+    // holds text plain side verticals and the other row — when one exists —
+    // a corner-capped border, forming a coherent three-sided well. A two-row
+    // outline with no text on either row keeps its closed box.
+    if bottom.wrapping_sub(top) <= 2 {
+        let stroke_cell = |grid: &mut CellGrid, column: i32, row: i32, x: f64, y: f64, glyph| {
+            let rgba = paint_rgba_at(
+                doc,
+                rect.stroke_kind,
+                rect.stroke,
+                x,
+                y,
+                rect.x,
+                rect.y,
+                rect.w,
+                rect.h,
+            );
+            let foreground = stroke_fg(
+                grid,
+                column,
+                row,
+                rgba,
+                effective_opacity * mask_alpha_at(doc, masks, x, y),
+            );
+            if foreground != NO_COLOR {
+                put(grid, column, row, glyph, foreground, NO_COLOR);
+            }
+        };
+        let overlaps = |row: i32| {
+            text_spans
+                .iter()
+                .any(|span| span.row == row && span.col1 > left && span.col0 <= last_column)
+        };
+        let content_row = if bottom.wrapping_sub(top) < 2 {
+            Some(top)
+        } else {
+            match (overlaps(top), overlaps(last_row)) {
+                (true, false) => Some(top),
+                (false, true) => Some(last_row),
+                (false, false) => None,
+                // Both rows carry text: keep the border away from the box's
+                // pixel center, where the primary content sits.
+                (true, true) => {
+                    Some(cell_row(rect.y + rect.h / 2.0 - CH / 2.0).clamp(top, last_row))
+                }
+            }
+        };
+        if let Some(content_row) = content_row {
+            let point_y = (f64::from(content_row) + 0.5) * CH;
+            stroke_cell(grid, left, content_row, rect.x, point_y, vertical);
+            stroke_cell(
+                grid,
+                last_column,
+                content_row,
+                rect.x + rect.w,
+                point_y,
+                vertical,
+            );
+            if bottom.wrapping_sub(top) == 2 {
+                let border_row = if content_row == top { last_row } else { top };
+                let border_y = if border_row == top {
+                    rect.y
+                } else {
+                    rect.y + rect.h
+                };
+                for column in left.wrapping_add(1)..last_column {
+                    let point_x = (f64::from(column) + 0.5) * CW;
+                    stroke_cell(grid, column, border_row, point_x, border_y, horizontal);
+                }
+                let (left_corner, right_corner) = if border_row == top {
+                    (top_left, top_right)
+                } else {
+                    (bottom_left, bottom_right)
+                };
+                // Corners share the box-origin sample, like the closed box.
+                stroke_cell(grid, left, border_row, rect.x, rect.y, left_corner);
+                stroke_cell(grid, last_column, border_row, rect.x, rect.y, right_corner);
+            }
+            return;
+        }
+    }
 
     for column in left.wrapping_add(1)..last_column {
         let point_x = (f64::from(column) + 0.5) * CW;
@@ -1213,6 +1310,35 @@ pub fn cells_from_frame(doc: &Doc, frame: &flatten::Frame, width: f64, height: f
     let mut masks: Vec<MaskCtx> = Vec::new();
     // Parallel to `opacity_stack` minus the root: whether each group pushed a mask.
     let mut group_masked: Vec<bool> = Vec::new();
+    // Prescan text cell footprints so shallow rect outlines can route their
+    // horizontal border to a text-free row (rects paint before their text).
+    let mut text_spans: Vec<TextSpan> = Vec::new();
+    let mut prescan_rotation: i32 = 0;
+    for operation in &frame.ops {
+        match operation {
+            flatten::FrameOp::RotatePush(_) | flatten::FrameOp::TiltPush(_) => {
+                prescan_rotation = prescan_rotation.wrapping_add(1);
+            }
+            flatten::FrameOp::RotatePop | flatten::FrameOp::TiltPop => {
+                if prescan_rotation > 0 {
+                    prescan_rotation = prescan_rotation.wrapping_sub(1);
+                }
+            }
+            flatten::FrameOp::Text(text) if prescan_rotation == 0 => {
+                let value = &frame.strings[index(text.str_ref)];
+                let columns = text_columns_before(value, count(value.len()));
+                if columns > 0 {
+                    let col0 = cell_col(text.x);
+                    text_spans.push(TextSpan {
+                        row: cell_row(text.y_baseline - 12.0),
+                        col0,
+                        col1: col0.wrapping_add(columns),
+                    });
+                }
+            }
+            _ => {}
+        }
+    }
 
     for operation in &frame.ops {
         match operation {
@@ -1274,6 +1400,7 @@ pub fn cells_from_frame(doc: &Doc, frame: &flatten::Frame, width: f64, height: f
                     rect,
                     *opacity_stack.last().expect("opacity stack has a root"),
                     &masks,
+                    &text_spans,
                 );
             }
             flatten::FrameOp::Text(text) if rotation_depth == 0 => {

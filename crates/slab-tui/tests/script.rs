@@ -100,11 +100,11 @@ fn tab_traversal_changes_the_grid() {
     };
     assert_ne!(strip(&one), strip(&two), "focus ring did not move");
     assert!(
-        one.contains("╭─Save"),
+        one.contains("│ Save │") && one.contains("╰──────╯"),
         "ring not on Save after one Tab:\n{one}"
     );
     assert!(
-        two.contains("╭─Reset"),
+        two.contains("│ Reset │") && two.contains("╰───────╯"),
         "ring not on Reset after two Tabs:\n{two}"
     );
 }
