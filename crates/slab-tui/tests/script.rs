@@ -86,8 +86,8 @@ fn typing_into_field_emits_draft_and_renders() {
 
 /// The kernel focus-visible state drives the doc's own when-patches:
 /// tab traversal must change the rendered grid (the focus ring stroke
-/// draws box cells around the focused button), with no driver-side
-/// focus painting.
+/// draws box cells around the focused button, with the label overprinting
+/// the top border), with no driver-side focus painting.
 #[test]
 fn tab_traversal_changes_the_grid() {
     let one = run("examples/10-settings.slab", &["--script", "TAB"]);
@@ -100,11 +100,11 @@ fn tab_traversal_changes_the_grid() {
     };
     assert_ne!(strip(&one), strip(&two), "focus ring did not move");
     assert!(
-        one.contains("│ Save │") && one.contains("╰──────╯"),
+        one.contains("╭─Save─╮") && one.contains("╰──────╯"),
         "ring not on Save after one Tab:\n{one}"
     );
     assert!(
-        two.contains("│ Reset │") && two.contains("╰───────╯"),
+        two.contains("╭─Reset─╮") && two.contains("╰───────╯"),
         "ring not on Reset after two Tabs:\n{two}"
     );
 }
