@@ -467,7 +467,6 @@ impl FrameBuild {
     }
 }
 
-
 impl FrameBuild {
     fn push_rect(&mut self, scissor: Sc, inst: RectI) {
         if scissor.2 == 0 || scissor.3 == 0 {
@@ -554,6 +553,19 @@ struct UploadBuffer {
     capacity: usize,
 }
 
+/// Returns the upload buffer when the frame has instances for it.
+///
+/// `then_some` would evaluate the unwrap eagerly; empty layers legitimately
+/// have no buffer (a view without images has no texture instances).
+fn uploaded<'a>(upload: &'a UploadBuffer, len: usize, what: &str) -> Option<&'a wgpu::Buffer> {
+    (len > 0).then(|| {
+        upload
+            .buffer
+            .as_ref()
+            .unwrap_or_else(|| panic!("uploaded {what} buffer"))
+    })
+}
+
 impl UploadBuffer {
     fn upload(
         &mut self,
@@ -577,7 +589,6 @@ impl UploadBuffer {
         queue.write_buffer(self.buffer.as_ref().unwrap(), 0, data);
     }
 }
-
 
 pub struct Renderer {
     pub device: wgpu::Device,
@@ -2318,30 +2329,10 @@ impl Renderer {
             bytemuck::cast_slice(&fb.texq),
             "texq",
         );
-        let rect_buf = (!fb.rects.is_empty()).then_some(
-            self.rect_upload
-                .buffer
-                .as_ref()
-                .expect("uploaded rect buffer"),
-        );
-        let glyph_buf = (!fb.glyphs.is_empty()).then_some(
-            self.glyph_upload
-                .buffer
-                .as_ref()
-                .expect("uploaded glyph buffer"),
-        );
-        let mesh_buf = (!fb.meshes.is_empty()).then_some(
-            self.mesh_upload
-                .buffer
-                .as_ref()
-                .expect("uploaded mesh instance buffer"),
-        );
-        let tex_buf = (!fb.texq.is_empty()).then_some(
-            self.tex_upload
-                .buffer
-                .as_ref()
-                .expect("uploaded texture instance buffer"),
-        );
+        let rect_buf = uploaded(&self.rect_upload, fb.rects.len(), "rect");
+        let glyph_buf = uploaded(&self.glyph_upload, fb.glyphs.len(), "glyph");
+        let mesh_buf = uploaded(&self.mesh_upload, fb.meshes.len(), "mesh instance");
+        let tex_buf = uploaded(&self.tex_upload, fb.texq.len(), "texture instance");
 
         let mut encoder = self
             .device
