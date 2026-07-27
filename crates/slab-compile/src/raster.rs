@@ -721,6 +721,7 @@ impl<'a> Raster<'a> {
                         let r = ((w * w + hh * hh).sqrt() / 2.0) as f32;
                         RadialGradient::new(
                             c,
+                            0.0,
                             c,
                             r.max(0.001),
                             stops,

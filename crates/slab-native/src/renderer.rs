@@ -663,13 +663,13 @@ impl Renderer {
 
         let layout1 = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("g"),
-            bind_group_layouts: &[&bgl_globals],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(&bgl_globals)],
+            immediate_size: 0,
         });
         let layout2 = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("gt"),
-            bind_group_layouts: &[&bgl_globals, &bgl_tex],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(&bgl_globals), Some(&bgl_tex)],
+            immediate_size: 0,
         });
 
         let rect_pl = make_pipeline(
@@ -710,16 +710,16 @@ impl Renderer {
             "vs_mesh",
             "fs_mesh",
             &[
-                wgpu::VertexBufferLayout {
+                Some(wgpu::VertexBufferLayout {
                     array_stride: 8,
                     step_mode: wgpu::VertexStepMode::Vertex,
                     attributes: &MESH_VTX_ATTRS,
-                },
-                wgpu::VertexBufferLayout {
+                }),
+                Some(wgpu::VertexBufferLayout {
                     array_stride: std::mem::size_of::<MeshI>() as u64,
                     step_mode: wgpu::VertexStepMode::Instance,
                     attributes: &MESH_INST_ATTRS,
-                },
+                }),
             ],
             INTERNAL_FORMAT,
             premul_blend(),
@@ -2126,8 +2126,8 @@ impl Renderer {
                 .device
                 .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                     label: Some("blit"),
-                    bind_group_layouts: &[&self.bgl_globals, &self.bgl_tex],
-                    push_constant_ranges: &[],
+                    bind_group_layouts: &[Some(&self.bgl_globals), Some(&self.bgl_tex)],
+                    immediate_size: 0,
                 });
             let pl = make_pipeline(
                 &self.device,
@@ -2285,6 +2285,7 @@ impl Renderer {
                         label: Some("draws"),
                         color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                             view: &target_of(top).view,
+                            depth_slice: None,
                             resolve_target: None,
                             ops: wgpu::Operations {
                                 load,
@@ -2294,6 +2295,7 @@ impl Renderer {
                         depth_stencil_attachment: None,
                         timestamp_writes: None,
                         occlusion_query_set: None,
+                        multiview_mask: None,
                     });
                     pass.set_bind_group(0, &self.globals_bg, &[]);
                     for st in pending.drain(..) {
@@ -2460,6 +2462,7 @@ impl Renderer {
                             label: Some("mask"),
                             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                                 view: &target_of(src_ix).view,
+                                depth_slice: None,
                                 resolve_target: None,
                                 ops: wgpu::Operations {
                                     load: wgpu::LoadOp::Load,
@@ -2469,6 +2472,7 @@ impl Renderer {
                             depth_stencil_attachment: None,
                             timestamp_writes: None,
                             occlusion_query_set: None,
+                            multiview_mask: None,
                         });
                         pass.set_bind_group(0, &self.globals_bg, &[]);
                         pass.set_pipeline(&self.mask_pl);
@@ -2499,6 +2503,7 @@ impl Renderer {
                         label: Some("composite"),
                         color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                             view: &target_of(top).view,
+                            depth_slice: None,
                             resolve_target: None,
                             ops: wgpu::Operations {
                                 load,
@@ -2508,6 +2513,7 @@ impl Renderer {
                         depth_stencil_attachment: None,
                         timestamp_writes: None,
                         occlusion_query_set: None,
+                        multiview_mask: None,
                     });
                     pass.set_bind_group(0, &self.globals_bg, &[]);
                     pass.set_pipeline(&self.tex_pl);
@@ -2539,6 +2545,7 @@ impl Renderer {
                         label: Some("tilt"),
                         color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                             view: &target_of(top).view,
+                            depth_slice: None,
                             resolve_target: None,
                             ops: wgpu::Operations {
                                 load,
@@ -2548,6 +2555,7 @@ impl Renderer {
                         depth_stencil_attachment: None,
                         timestamp_writes: None,
                         occlusion_query_set: None,
+                        multiview_mask: None,
                     });
                     pass.set_bind_group(0, &self.globals_bg, &[]);
                     pass.set_pipeline(&self.tilt_pl);
@@ -2686,6 +2694,7 @@ impl Renderer {
                             label: Some("backdrop"),
                             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                                 view: &t.view,
+                                depth_slice: None,
                                 resolve_target: None,
                                 ops: wgpu::Operations {
                                     load: wgpu::LoadOp::Load,
@@ -2695,6 +2704,7 @@ impl Renderer {
                             depth_stencil_attachment: None,
                             timestamp_writes: None,
                             occlusion_query_set: None,
+                            multiview_mask: None,
                         });
                         pass.set_bind_group(0, &self.globals_bg, &[]);
                         pass.set_scissor_rect(x, y, w, h);
@@ -2726,6 +2736,7 @@ impl Renderer {
                 label: Some("blit"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view,
+                    depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
@@ -2735,6 +2746,7 @@ impl Renderer {
                 depth_stencil_attachment: None,
                 timestamp_writes: None,
                 occlusion_query_set: None,
+                multiview_mask: None,
             });
             pass.set_bind_group(0, &self.globals_bg, &[]);
             pass.set_pipeline(&self.blit_pls[&format]);
@@ -2793,6 +2805,7 @@ impl Renderer {
             label: Some("blur"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view: &dst.view,
+                depth_slice: None,
                 resolve_target: None,
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
@@ -2802,6 +2815,7 @@ impl Renderer {
             depth_stencil_attachment: None,
             timestamp_writes: None,
             occlusion_query_set: None,
+            multiview_mask: None,
         });
         pass.set_bind_group(0, &self.globals_bg, &[]);
         pass.set_pipeline(&self.blur_pl);
@@ -2917,12 +2931,15 @@ fn premul_blend() -> wgpu::BlendState {
     }
 }
 
-fn inst_layout(stride: u64, attrs: &[wgpu::VertexAttribute]) -> wgpu::VertexBufferLayout<'_> {
-    wgpu::VertexBufferLayout {
+fn inst_layout(
+    stride: u64,
+    attrs: &[wgpu::VertexAttribute],
+) -> Option<wgpu::VertexBufferLayout<'_>> {
+    Some(wgpu::VertexBufferLayout {
         array_stride: stride,
         step_mode: wgpu::VertexStepMode::Instance,
         attributes: attrs,
-    }
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2933,7 +2950,7 @@ fn make_pipeline(
     layout: &wgpu::PipelineLayout,
     vs: &str,
     fs: &str,
-    buffers: &[wgpu::VertexBufferLayout<'_>],
+    buffers: &[Option<wgpu::VertexBufferLayout<'_>>],
     format: wgpu::TextureFormat,
     blend: wgpu::BlendState,
     topology: wgpu::PrimitiveTopology,
@@ -2963,7 +2980,7 @@ fn make_pipeline(
                 write_mask: wgpu::ColorWrites::ALL,
             })],
         }),
-        multiview: None,
+        multiview_mask: None,
         cache: None,
     })
 }

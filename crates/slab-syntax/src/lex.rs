@@ -124,7 +124,7 @@ fn num_val(lex: &Lexer<'_, RawTok>) -> f64 {
 #[logos(extras = LexExtras)]
 enum RawTok {
     #[regex(r"[ \t\r]+", logos::skip)]
-    #[regex(r"//[^\n]*", logos::skip)]
+    #[regex(r"//[^\n]*", logos::skip, allow_greedy = true)]
     #[regex(r"\\\r?\n", logos::skip)]
     #[token("/*", skip_block_comment)]
     #[token("\n")]

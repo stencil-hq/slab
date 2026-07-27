@@ -7,7 +7,9 @@ use crate::{
     dispatch::{self, DState},
     edit,
     layout::Lay,
-    list, rt, slir,
+    list,
+    motion::MSt,
+    rt, slir,
     style::{self, RStyle, St},
     textm,
 };
@@ -125,6 +127,9 @@ pub struct OpClip {
 /// Compositing settings applied until the matching group pop.
 #[derive(Clone, Debug)]
 pub struct OpGroup {
+    /// Document node owning this compositing group, or [`slir::NONE`] for a
+    /// host-generated group such as the drag ghost envelope.
+    pub node: u32,
     pub opacity: f64,
     pub blur: f64,
     /// Fade-mask paint: `0` none, `1` solid, `2` gradient.
@@ -684,6 +689,7 @@ pub fn walk(
     st: &St,
     l: &Lay,
     ds: &DState,
+    ms: &MSt,
     fr: &mut Frame,
     pi: i32,
     ox: f64,
@@ -706,6 +712,7 @@ pub fn walk(
         st,
         l,
         ds,
+        ms,
         fr,
         pi,
         ox,
@@ -725,6 +732,7 @@ fn walk_node(
     st: &St,
     l: &Lay,
     ds: &DState,
+    ms: &MSt,
     fr: &mut Frame,
     pi: i32,
     ox: f64,
@@ -764,6 +772,7 @@ fn walk_node(
             st,
             l,
             ds,
+            ms,
             fr,
             inner
                 .try_into()
@@ -855,9 +864,15 @@ fn walk_node(
     let scene_index = fr.scene.len() - 1;
     let scene_index_i32 = count(scene_index);
 
-    let grouped = rule.opacity < 1.0 || rule.blur > 0.0 || rule.mask_kind != 0;
+    let native_group = ms
+        .lift_node
+        .get(usize::try_from(node).expect("node index exceeds usize"))
+        .copied()
+        .unwrap_or(false);
+    let grouped = native_group || rule.opacity < 1.0 || rule.blur > 0.0 || rule.mask_kind != 0;
     if grouped {
         fr.ops.push(FrameOp::GroupPush(OpGroup {
+            node,
             opacity: rule.opacity,
             blur: rule.blur,
             mask_kind: rule.mask_kind,
@@ -961,6 +976,11 @@ fn walk_node(
         || rule.stroke_kind != 0
         || rule.shadow_len > 0
         || rule.grain_amount > 0.0
+        || ms
+            .lift_bg
+            .get(usize::try_from(node).expect("node index exceeds usize"))
+            .copied()
+            .unwrap_or(false)
     {
         fr.ops
             .push(FrameOp::Rect(styled_rect(rule, node, x, y, w, h, radius)));
@@ -1215,6 +1235,7 @@ fn walk_node(
             st,
             l,
             ds,
+            ms,
             fr,
             l.child_pool[index(child_pool_index)],
             children_x,
@@ -1254,6 +1275,7 @@ fn walk_node(
             st,
             l,
             ds,
+            ms,
             fr,
             child_pi,
             sticky_x,
@@ -1295,7 +1317,7 @@ fn walk_node(
 
 const DRAG_GHOST_OPACITY: f64 = 0.72;
 
-fn append_drag_ghost(d: &slir::Doc, st: &St, l: &Lay, ds: &DState, frame: &mut Frame) {
+fn append_drag_ghost(d: &slir::Doc, st: &St, l: &Lay, ds: &DState, ms: &MSt, frame: &mut Frame) {
     if !ds.drag_active || ds.drag_source == slir::NONE {
         return;
     }
@@ -1325,6 +1347,7 @@ fn append_drag_ghost(d: &slir::Doc, st: &St, l: &Lay, ds: &DState, frame: &mut F
     let move_y = desired_y - source_scene.y;
     let scene_len = frame.scene.len();
     frame.ops.push(FrameOp::GroupPush(OpGroup {
+        node: slir::NONE,
         opacity: DRAG_GHOST_OPACITY,
         blur: 0.0,
         mask_kind: 0,
@@ -1339,6 +1362,7 @@ fn append_drag_ghost(d: &slir::Doc, st: &St, l: &Lay, ds: &DState, frame: &mut F
         st,
         l,
         ds,
+        ms,
         frame,
         i32::try_from(placement).expect("placed node index exceeds i32"),
         move_x,
@@ -1355,14 +1379,14 @@ fn append_drag_ghost(d: &slir::Doc, st: &St, l: &Lay, ds: &DState, frame: &mut F
 }
 
 /// Lowers the placed tree rooted at `root_pi` into a frame.
-pub fn flatten(d: &slir::Doc, st: &St, l: &Lay, ds: &DState, root_pi: i32) -> Frame {
+pub fn flatten(d: &slir::Doc, st: &St, l: &Lay, ds: &DState, ms: &MSt, root_pi: i32) -> Frame {
     let root = index(root_pi);
     let mut frame = frame_new();
     frame.width = l.p_w[root];
     frame.height = l.p_h[root];
     walk(
-        d, st, l, ds, &mut frame, root_pi, 0.0, 0.0, -1, false, false, 0.0, 0.0, 0.0,
+        d, st, l, ds, ms, &mut frame, root_pi, 0.0, 0.0, -1, false, false, 0.0, 0.0, 0.0,
     );
-    append_drag_ghost(d, st, l, ds, &mut frame);
+    append_drag_ghost(d, st, l, ds, ms, &mut frame);
     frame
 }

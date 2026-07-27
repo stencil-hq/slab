@@ -152,8 +152,13 @@ pub fn inst_lift_animations(i: &mut Instance) -> Vec<motion::Lift> {
         return lifted;
     }
     i.ms.lifted = vec![false; i.doc.bind_node.len()];
+    i.ms.lift_node = vec![false; i.doc.node_kind.len()];
+    i.ms.lift_bg = vec![false; i.doc.node_kind.len()];
     for lift in &lifted {
         i.ms.lifted[lift.binding] = true;
+        let node = usize::try_from(lift.node).expect("node index exceeds usize");
+        i.ms.lift_node[node] = true;
+        i.ms.lift_bg[node] |= lift.stops.iter().any(|stop| stop.bg.is_some());
     }
     i.dirty = true;
     lifted
@@ -954,9 +959,8 @@ pub fn solve_frame(i: &mut Instance, t_ms: f64, with_motion: bool) -> Frame {
         viewport_width,
         viewport_height,
     );
-    flatten::flatten(&i.doc, &i.st, &i.lay, &i.ds, i.root_pi)
+    flatten::flatten(&i.doc, &i.st, &i.lay, &i.ds, &i.ms, i.root_pi)
 }
-
 // A non-fixed divider handle can change after its pane overlay is clamped.
 // Iterate only to the layout solver's EPS tolerance and keep each frame call bounded.
 fn solve_frame_settled(i: &mut Instance, t_ms: f64, with_motion: bool) -> (Frame, bool) {
@@ -1043,9 +1047,8 @@ pub fn inst_frame(i: &mut Instance, t_ms: f64) -> Frame {
     let has_motion = !i.doc.bind_node.is_empty() || !i.doc.trans_node.is_empty();
     let needs_solve = i.dirty || !i.solved || i.ms.active || has_motion && t_ms != i.last_t;
     if !needs_solve {
-        return flatten::flatten(&i.doc, &i.st, &i.lay, &i.ds, i.root_pi);
+        return flatten::flatten(&i.doc, &i.st, &i.lay, &i.ds, &i.ms, i.root_pi);
     }
-
     let (mut frame, divider_unsettled) = solve_frame_settled(i, t_ms, true);
     i.dirty = divider_unsettled;
     i.solved = true;

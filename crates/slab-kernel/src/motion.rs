@@ -260,6 +260,12 @@ pub struct MSt {
     /// binding, empty until a driver lifts. Lifted bindings contribute no
     /// overlay and no activity.
     pub lifted: Vec<bool>,
+    /// Nodes that require a stable browser-owned compositing wrapper for
+    /// lifted animation channels; indexed by document node.
+    pub lift_node: Vec<bool>,
+    /// Nodes whose lifted `bg` track needs a transparent rect paint target;
+    /// indexed by document node.
+    pub lift_bg: Vec<bool>,
     /// Whether motion requires another frame after the current solve.
     pub active: bool,
 }
@@ -303,6 +309,8 @@ pub fn mst_new() -> MSt {
         sp_slot: HashMap::new(),
         sp_by_node: HashMap::new(),
         lifted: Vec::new(),
+        lift_node: Vec::new(),
+        lift_bg: Vec::new(),
         active: false,
     }
 }
@@ -753,8 +761,8 @@ pub struct LiftStop {
     pub opacity: Option<f64>,
     /// Animated `rotate` in degrees (absolute, not a delta), when driven.
     pub rotate: Option<f64>,
-    /// Animated uniform `scale` factor (absolute), when driven.
-    pub scale: Option<f64>,
+    /// Animated scale factors (absolute, not deltas), when driven.
+    pub scale: Option<(f64, f64)>,
     /// Animated solid `bg` as a SLIR-packed RGBA word, when driven.
     pub bg: Option<u32>,
     /// Animated text `color` as a SLIR-packed RGBA word, when driven.
@@ -984,6 +992,105 @@ fn refine_colors(
     }
 }
 
+fn lift_leaf(kind: u32) -> bool {
+    matches!(
+        kind,
+        slir::K_TEXT | slir::K_RECT | slir::K_IMG | slir::K_PATH
+    )
+}
+
+fn lift_container(kind: u32) -> bool {
+    matches!(
+        kind,
+        slir::K_ROW
+            | slir::K_COL
+            | slir::K_WRAP
+            | slir::K_GRID
+            | slir::K_STACK
+            | slir::K_CANVAS
+            | slir::K_GROUP
+    )
+}
+
+fn in_subtree(d: &Doc, mut node: u32, root: u32) -> bool {
+    loop {
+        if node == root {
+            return true;
+        }
+        let parent = d.node_parent[index(i32::try_from(node).expect("node index exceeds i32"))];
+        if parent == slir::NONE {
+            return false;
+        }
+        node = parent;
+    }
+}
+
+/// Geometry replay is observable through retained hit regions, scroll routing,
+/// detached paint, holes, or nodes materialized after the CSS clock starts.
+fn geometry_subtree_safe(d: &Doc, root: u32) -> bool {
+    for candidate in 0..d.node_kind.len() {
+        let node = u32::try_from(candidate).expect("node index exceeds u32");
+        if !in_subtree(d, node, root) {
+            continue;
+        }
+        let flags = d.node_flags[candidate];
+        if matches!(d.node_kind[candidate], slir::K_EACH | slir::K_HOLE)
+            || flags
+                & (slir::F_SCROLL
+                    | slir::F_SCROLL_CROSS
+                    | slir::F_FOCUSABLE
+                    | slir::F_DETACHED
+                    | slir::F_STICKY
+                    | slir::F_DRAG_GHOST)
+                != 0
+            || d.patch_node.contains(&node)
+            || d.sign_node.contains(&node)
+            || slir::base_attr(d, node, slir::A_ACT) >= 0
+            || slir::base_attr(d, node, slir::A_ATTACH) >= 0
+        {
+            return false;
+        }
+    }
+    true
+}
+
+/// Paint-only replay may coexist with unrelated patches. Flags can remove and
+/// recreate the CSS clock; paint-channel patches can switch the DOM/SVG
+/// channel underneath a lifted color track.
+fn paint_patches_safe(d: &Doc, node: u32, attrs: &[u32]) -> bool {
+    for (patch, &owner) in d.patch_node.iter().enumerate() {
+        if owner != node {
+            continue;
+        }
+        let start = d.patch_attr_off[patch];
+        let end = start.wrapping_add(d.patch_attr_len[patch]);
+        for entry in start..end {
+            let attr = d.wattr_id[index(entry)];
+            if attr == slir::A_FLAGS
+                || attrs.contains(&slir::A_BG) && matches!(attr, slir::A_BG | slir::A_SMOOTH)
+                || attrs.contains(&slir::A_COLOR) && attr == slir::A_COLOR
+            {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+fn static_square(d: &Doc, node: u32) -> bool {
+    if [slir::A_MIN_W, slir::A_MAX_W, slir::A_MIN_H, slir::A_MAX_H]
+        .iter()
+        .any(|&attr| slir::base_attr(d, node, attr) >= 0)
+    {
+        return false;
+    }
+    let fixed = |attr: u32| {
+        let value = value::decode(d, slir::base_attr(d, node, attr));
+        matches!(value.tag, slir::T_NUM | slir::T_SIZE_FIXED).then_some(value.num)
+    };
+    matches!((fixed(slir::A_W), fixed(slir::A_H)), (Some(w), Some(h)) if w == h)
+}
+
 /// Builds the lift description for one binding, or `None` when it must stay
 /// kernel-driven.
 fn lift_of(d: &Doc, binding: usize) -> Option<Lift> {
@@ -994,31 +1101,20 @@ fn lift_of(d: &Doc, binding: usize) -> Option<Lift> {
         return None;
     }
 
-    // Leaf paints only: transforming a container natively would leave its
-    // separately-painted children behind.
-    let kind = d.node_kind[index(i32::try_from(node).expect("node index exceeds i32"))];
-    if !matches!(
-        kind,
-        slir::K_TEXT | slir::K_RECT | slir::K_IMG | slir::K_PATH
-    ) {
+    let node_index = index(i32::try_from(node).expect("node index exceeds i32"));
+    let kind = d.node_kind[node_index];
+    let leaf = lift_leaf(kind);
+    let container = lift_container(kind);
+    if !leaf && !container {
         return None;
     }
-    let mut ancestor = d.node_parent[index(i32::try_from(node).expect("node index exceeds i32"))];
+    let mut ancestor = d.node_parent[node_index];
     while ancestor != slir::NONE {
         let ai = index(i32::try_from(ancestor).expect("node index exceeds i32"));
         if d.node_kind[ai] == slir::K_EACH {
             return None;
         }
         ancestor = d.node_parent[ai];
-    }
-
-    // Interaction and patches keep the kernel authoritative: hover states,
-    // actions, and signals hit-test against retained (unlifted) geometry.
-    if d.patch_node.contains(&node) || d.sign_node.contains(&node) {
-        return None;
-    }
-    if slir::base_attr(d, node, slir::A_ACT) >= 0 {
-        return None;
     }
 
     // Animated attributes, in first-appearance order across stops. Every
@@ -1030,6 +1126,7 @@ fn lift_of(d: &Doc, binding: usize) -> Option<Lift> {
     let stop_end = stop_start.wrapping_add(d.anim_stop_len[animation]);
     let mut positions = Vec::new();
     let mut rotate_track = Vec::new();
+    let mut scale_tuple = None;
     for stop in stop_start..stop_end {
         let stop = index(stop);
         let position = d.anim_stop_pos[stop];
@@ -1052,8 +1149,20 @@ fn lift_of(d: &Doc, binding: usize) -> Option<Lift> {
             );
             let static_ok = match attr {
                 slir::A_OFFSET => v.tag == slir::T_TUPLE && v.ln >= 2,
-                slir::A_OPACITY | slir::A_ROTATE | slir::A_SCALE => v.tag == slir::T_NUM,
-                slir::A_BG | slir::A_COLOR => is_colorlike(v.tag),
+                slir::A_OPACITY => v.tag == slir::T_NUM,
+                slir::A_ROTATE if leaf => v.tag == slir::T_NUM,
+                slir::A_SCALE if leaf => {
+                    let tuple = v.tag == slir::T_TUPLE && v.ln >= 2;
+                    if v.tag != slir::T_NUM && !tuple
+                        || scale_tuple.is_some_and(|previous| previous != tuple)
+                    {
+                        false
+                    } else {
+                        scale_tuple = Some(tuple);
+                        true
+                    }
+                }
+                slir::A_BG | slir::A_COLOR if leaf => is_colorlike(v.tag),
                 _ => return None,
             };
             if !static_ok {
@@ -1071,18 +1180,29 @@ fn lift_of(d: &Doc, binding: usize) -> Option<Lift> {
         return None;
     }
 
+    let geometry = attrs
+        .iter()
+        .any(|attr| matches!(*attr, slir::A_OFFSET | slir::A_ROTATE | slir::A_SCALE));
+    if geometry {
+        if !geometry_subtree_safe(d, node) {
+            return None;
+        }
+    } else if !paint_patches_safe(d, node, &attrs) {
+        return None;
+    }
+
     let base_of = |attr: u32| value::decode(d, slir::base_attr(d, node, attr));
     let transforms_ok = matches!(kind, slir::K_RECT | slir::K_IMG | slir::K_PATH);
     let base_rot = base_of(slir::A_ROTATE);
     let base_sc = base_of(slir::A_SCALE);
     let has_tilt = slir::base_attr(d, node, slir::A_TILT) >= 0;
 
-    // Translation deltas must not pass through retained transform groups
-    // (rotate/scale/tilt wrap the leaf about its *base* center).
-    if attrs.contains(&slir::A_OFFSET)
-        && (base_rot.tag != value::V_MISSING || base_sc.tag != value::V_MISSING || has_tilt)
-    {
-        return None;
+    if geometry {
+        match base_rot.tag {
+            value::V_MISSING => {}
+            slir::T_NUM if !hits_quarter_turn(base_rot.num, base_rot.num) => {}
+            _ => return None,
+        }
     }
 
     let mut base_rotate = 0.0;
@@ -1095,19 +1215,17 @@ fn lift_of(d: &Doc, binding: usize) -> Option<Lift> {
             slir::T_NUM => base_rot.num,
             _ => return None,
         };
-        // Uniform animated scale commutes with rotation; anything else on the
-        // scale channel must keep the kernel authoritative.
+        // The leaf-local delta sits inside retained scale groups. Only a
+        // uniform base scale commutes with that rotation.
         if !matches!(base_sc.tag, value::V_MISSING | slir::T_NUM) {
             return None;
         }
-        // The kernel re-solves quarter turns (±0.5° of 90/270 mod 360) in the
-        // rotated bounding box; ink-only replay would not.
         let quarter = match rotate_track.as_slice() {
             [] => false,
             [only] => hits_quarter_turn(*only, *only),
             track => track.windows(2).any(|w| hits_quarter_turn(w[0], w[1])),
         };
-        if quarter {
+        if quarter && !static_square(d, node) {
             return None;
         }
     }
@@ -1229,7 +1347,17 @@ fn lift_of(d: &Doc, binding: usize) -> Option<Lift> {
             opacity: has(slir::A_OPACITY)
                 .then(|| track_num(d, animation, slir::A_OPACITY, pos, -1)),
             rotate: has(slir::A_ROTATE).then(|| track_num(d, animation, slir::A_ROTATE, pos, -1)),
-            scale: has(slir::A_SCALE).then(|| track_num(d, animation, slir::A_SCALE, pos, -1)),
+            scale: has(slir::A_SCALE).then(|| {
+                if scale_tuple == Some(true) {
+                    (
+                        track_num(d, animation, slir::A_SCALE, pos, 0),
+                        track_num(d, animation, slir::A_SCALE, pos, 1),
+                    )
+                } else {
+                    let scale = track_num(d, animation, slir::A_SCALE, pos, -1);
+                    (scale, scale)
+                }
+            }),
             bg: has(slir::A_BG).then(|| track_rgba(d, animation, slir::A_BG, pos)),
             color: has(slir::A_COLOR).then(|| track_rgba(d, animation, slir::A_COLOR, pos)),
         })

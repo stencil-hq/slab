@@ -5,7 +5,7 @@
 //! `research/tests/test_app.py`.
 
 use crate::{
-    dispatch, edit, flatten, frame, layout,
+    dispatch, edit, flatten, frame, layout, motion,
     slir::{self, Doc},
     style, textm,
 };
@@ -361,7 +361,14 @@ pub fn test_field_scroll_offsets_text_and_forces_clip() {
     style::begin_solve(&doc, &mut st);
     let mut lay = layout::lay_new();
     let root = layout::solve(&doc, &mut st, &mut lay, 100.0, 100.0, true);
-    let frame = flatten::flatten(&doc, &st, &lay, &dispatch::dstate_new(), root);
+    let frame = flatten::flatten(
+        &doc,
+        &st,
+        &lay,
+        &dispatch::dstate_new(),
+        &motion::mst_new(),
+        root,
+    );
     assert_ne!(
         frame.scene[0].flags & slir::F_CLIP,
         0,
@@ -383,7 +390,14 @@ pub fn test_overwide_field_stays_clipped_at_zero_scroll() {
     style::begin_solve(&doc, &mut st);
     let mut lay = layout::lay_new();
     let root = layout::solve(&doc, &mut st, &mut lay, 100.0, 100.0, true);
-    let frame = flatten::flatten(&doc, &st, &lay, &dispatch::dstate_new(), root);
+    let frame = flatten::flatten(
+        &doc,
+        &st,
+        &lay,
+        &dispatch::dstate_new(),
+        &motion::mst_new(),
+        root,
+    );
     assert_eq!(
         style::field_scroll_x(&st, 0),
         0.0,
@@ -418,7 +432,7 @@ pub fn test_selection_bands_for_wrapped_two_lines() {
     style::begin_solve(&doc, &mut st);
     let mut lay = layout::lay_new();
     let root = layout::solve(&doc, &mut st, &mut lay, 100.0, 100.0, true);
-    let frame = flatten::flatten(&doc, &st, &lay, &ds, root);
+    let frame = flatten::flatten(&doc, &st, &lay, &ds, &motion::mst_new(), root);
 
     let text_color = frame
         .ops

@@ -30,7 +30,11 @@ fn solve_source(
     base_dir: &Path,
     width: f64,
 ) -> (kframe::Instance, Frame, Vec<Vec<u8>>) {
-    let opts = slab_compile::Options { embed_assets: true, base_dir: base_dir.to_path_buf(), ..slab_compile::Options::default() };
+    let opts = slab_compile::Options {
+        embed_assets: true,
+        base_dir: base_dir.to_path_buf(),
+        ..slab_compile::Options::default()
+    };
     let (slir, diags) = slab_compile::compile(src, &opts);
     let slir = slir.unwrap_or_else(|| panic!("{name} failed to compile: {:?}", diags.0));
     let bytes = slab_slir::write(&slir);
@@ -368,7 +372,11 @@ fn renders_layered_examples() {
         let path = base.join(format!("{name}.slab"));
         let src =
             std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
-        let opts = slab_compile::Options { embed_assets: true, base_dir: base.clone(), ..slab_compile::Options::default() };
+        let opts = slab_compile::Options {
+            embed_assets: true,
+            base_dir: base.clone(),
+            ..slab_compile::Options::default()
+        };
         let (slir, diags) = slab_compile::compile(&src, &opts);
         let slir = slir.unwrap_or_else(|| panic!("{name} failed to compile: {:?}", diags.0));
         let bytes = slab_slir::write(&slir);

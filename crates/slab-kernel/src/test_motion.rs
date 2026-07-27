@@ -237,9 +237,10 @@ fn atuple(d: &mut slir::Doc, x: f64, y: f64) -> u32 {
 /// (green to red), `2` drives offset at 0%/50%/100% and opacity at 50%/100%
 /// (clamped start), `3` drives `w` (layout, unliftable). Bindings: `0` lifts
 /// (leaf rect, static values, whole-cycle ease-in-out), `1` lifts as color
-/// keyframes, `2` binds a container, `3` binds a patched node, `4`+`5` share
-/// a node where only one would lift, `6` lifts with clamped stops, and `7`
-/// lifts a non-linear easing over interior stops via time remapping.
+/// keyframes, `2` binds a render-only container, `3` binds a patched geometry
+/// node, `4`+`5` share a node where only one would lift, `6` lifts with clamped
+/// stops, and `7` lifts a non-linear easing over interior stops via time
+/// remapping.
 fn lift_doc() -> slir::Doc {
     let mut d = slir::doc_new();
     d.ok = true;
@@ -363,8 +364,8 @@ pub fn test_lifts_classification() {
     let bindings: Vec<usize> = lifted.iter().map(|l| l.binding).collect();
     assert_eq!(
         bindings,
-        [0, 1, 6, 7],
-        "static ink bindings lift; layout, containers, patches, and shared nodes stay"
+        [0, 1, 2, 6, 7],
+        "static ink leaves and render-only containers lift; patched geometry, layout, and shared nodes stay"
     );
 
     let drift = &lifted[0];
@@ -402,7 +403,7 @@ pub fn test_lifts_classification() {
         "ease-in-out emits its quad-in/quad-out segment curves"
     );
 
-    let clamped = &lifted[2];
+    let clamped = &lifted[3];
     assert_eq!(clamped.node, 6, "clamped lift names its node");
     assert_eq!(
         clamped.base_offset,
@@ -509,9 +510,9 @@ pub fn test_lift_color_subdivision() {
 /// gradient base `bg`, `7` text. Bindings: `0` animates rotate 0→45 on `1`
 /// (lifts against the base delta), `1` spins `2` through a quarter turn
 /// (refused), `2` rotates the text `3` (refused — per-line runs), `3` scales
-/// `4` (lifts with the tuple base), `4` translates `5` (refused — the base
-/// rotation group would distort deltas), `5` animates `bg` over a gradient
-/// base (refused), and `6` animates text `color` on `7` (lifts).
+/// `4` (lifts with the tuple base), `4` translates `5` outside its static base
+/// rotation group, `5` animates `bg` over a gradient base (refused), and `6`
+/// animates text `color` on `7` (lifts).
 fn transform_doc() -> slir::Doc {
     let mut d = slir::doc_new();
     d.ok = true;
@@ -605,8 +606,8 @@ pub fn test_lift_transform_tracks() {
     let bindings: Vec<usize> = lifted.iter().map(|l| l.binding).collect();
     assert_eq!(
         bindings,
-        [0, 3, 6],
-        "rotate/scale/text-color lift; spins, text transforms, wrapped offsets, and gradient bases stay"
+        [0, 3, 4, 6],
+        "rotate/scale/text-color and wrapper translation lift; spins, text transforms, and gradient bases stay"
     );
 
     let rotated = &lifted[0];
@@ -624,10 +625,14 @@ pub fn test_lift_transform_tracks() {
         (2.0, 1.0),
         "scale lifts carry the static per-axis base"
     );
-    let track: Vec<Option<f64>> = scaled.stops.iter().map(|s| s.scale).collect();
-    assert_eq!(track, [Some(1.0), Some(1.4)], "scale stops are absolute");
+    let track: Vec<Option<(f64, f64)>> = scaled.stops.iter().map(|s| s.scale).collect();
+    assert_eq!(
+        track,
+        [Some((1.0, 1.0)), Some((1.4, 1.4))],
+        "uniform scale stops expand to per-axis factors"
+    );
 
-    let inked = &lifted[2];
+    let inked = &lifted[3];
     assert_eq!(inked.kind, slir::K_TEXT, "text color lift names its kind");
     assert_eq!(
         (

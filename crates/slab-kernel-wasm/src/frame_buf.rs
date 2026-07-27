@@ -132,7 +132,7 @@ impl FrameBuf {
                 }
                 FrameOp::ClipPop => u32s.push(CLIP_POP),
                 FrameOp::GroupPush(group) => {
-                    u32s.extend([GROUP_PUSH, group.mask_kind, group.mask]);
+                    u32s.extend([GROUP_PUSH, group.node, group.mask_kind, group.mask]);
                     f64s.extend([
                         group.opacity,
                         group.blur,

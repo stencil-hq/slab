@@ -10,7 +10,11 @@ fn cases_dir() -> PathBuf {
 
 fn compile_case(path: &PathBuf) -> slab_slir::Slir {
     let src = std::fs::read_to_string(path).unwrap();
-    let opts = Options { embed_assets: true, base_dir: path.parent().unwrap().to_path_buf(), ..Options::default() };
+    let opts = Options {
+        embed_assets: true,
+        base_dir: path.parent().unwrap().to_path_buf(),
+        ..Options::default()
+    };
     let (slir, diags) = compile(&src, &opts);
     assert!(!diags.has_errors(), "{}: {:?}", path.display(), diags.0);
     slir.unwrap()
@@ -100,7 +104,11 @@ tokens { color { bg #ffffff } }
 theme dusk { color { bg #121826 } }
 rect id=panel w=20 h=20 bg=color.bg
 "#;
-    let opts = Options { embed_assets: false, base_dir: PathBuf::new(), ..Options::default() };
+    let opts = Options {
+        embed_assets: false,
+        base_dir: PathBuf::new(),
+        ..Options::default()
+    };
     let (slir, diags) = compile(src, &opts);
     assert!(!diags.has_errors(), "{:?}", diags.0);
     let slir = slir.unwrap();
@@ -157,7 +165,11 @@ col {
   each param.items key=list
 }
 "#;
-    let opts = Options { embed_assets: false, base_dir: PathBuf::new(), ..Options::default() };
+    let opts = Options {
+        embed_assets: false,
+        base_dir: PathBuf::new(),
+        ..Options::default()
+    };
     let (slir, diags) = compile(src, &opts);
     assert!(!diags.has_errors(), "{:?}", diags.0);
     let slir = slir.unwrap();
@@ -241,7 +253,11 @@ col {
   text "x" submit=bad
 }
 "#;
-    let opts = Options { embed_assets: false, base_dir: PathBuf::new(), ..Options::default() };
+    let opts = Options {
+        embed_assets: false,
+        base_dir: PathBuf::new(),
+        ..Options::default()
+    };
     let (slir, diags) = compile(src, &opts);
     assert!(slir.is_none());
     let codes: Vec<_> = diags.0.iter().map(|diag| diag.code).collect();
@@ -272,7 +288,11 @@ canvas w=40 h=20 {
   path param.route bg=none stroke=#654321
 }
 "#;
-    let opts = Options { embed_assets: false, base_dir: PathBuf::new(), ..Options::default() };
+    let opts = Options {
+        embed_assets: false,
+        base_dir: PathBuf::new(),
+        ..Options::default()
+    };
     let (slir, diags) = compile(src, &opts);
     assert!(!diags.has_errors(), "{:?}", diags.0);
     let slir = slir.unwrap();
@@ -336,7 +356,11 @@ row color=#2563EB {
   icon missing size=16
 }
 "#;
-    let opts = Options { embed_assets: false, base_dir: PathBuf::new(), ..Options::default() };
+    let opts = Options {
+        embed_assets: false,
+        base_dir: PathBuf::new(),
+        ..Options::default()
+    };
     let (slir, diags) = compile(src, &opts);
     assert!(!diags.has_errors(), "{:?}", diags.0);
     let slir = slir.unwrap();

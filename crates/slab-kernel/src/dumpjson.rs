@@ -338,7 +338,9 @@ pub fn emit_op(out: &mut Vec<u32>, d: &slir::Doc, fr: &flatten::Frame, index: i3
             emit(out, "{\"op\":\"ClipPop\"}");
         }
         flatten::FrameOp::GroupPush(g) => {
-            emit(out, "{\"op\":\"GroupPush\",\"opacity\":");
+            emit(out, "{\"op\":\"GroupPush\",\"node\":");
+            emit_u32(out, g.node);
+            emit(out, ",\"opacity\":");
             emit_num(out, g.opacity);
             emit(out, ",\"blur\":");
             emit_num(out, g.blur);

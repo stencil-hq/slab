@@ -3,7 +3,7 @@
    "private": true,
    "workspaces": ["clients/web", "packages/dslab", "packages/slab", "tree-sitter-slab"],
    "devDependencies": {
-      "@biomejs/biome": "^2.0.0",
+      "@biomejs/biome": "^2.5.5",
       "@codemirror/commands": "^6.10.4",
       "@codemirror/lang-json": "^6.0.2",
       "@codemirror/language": "^6.12.4",
@@ -13,11 +13,11 @@
       "@codemirror/view": "^6.43.6",
       "@lezer/highlight": "^1.2.3",
       "@stencil-hq/wslab": "workspace:*",
-      "@types/node": "^20.0.0",
+      "@types/node": "^26.1.1",
       "codemirror": "^6.0.2",
       "ghostty-web": "^0.4.0",
-      "playwright": "^1.58.2",
+      "playwright": "^1.62.0",
       "stream-parser": "^0.3.1",
-      "typescript": "^5.7.0"
+      "typescript": "^7.0.2"
    }
 }

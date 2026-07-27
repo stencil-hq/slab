@@ -317,32 +317,40 @@ const LINEAR_Y2 = 2 / 3;
 
 // SLIR node kinds whose lifted color keyframes target distinct CSS channels.
 const KIND_PATH = 12;
+const NO_NODE = 0xffffffff;
+
+type AnimationTarget = 'group' | 'paint';
 
 /**
- * Declarations one lifted keyframe contributes. Transforms use the individual
- * `translate`/`rotate`/`scale` properties — their fixed CSS composition order
- * mirrors the kernel's offset-then-rotate-then-scale grouping about the node
- * center — as deltas against the binding's static bases, which the painted
- * geometry already includes. Colors are absolute and land on the paint
- * channel the node kind uses (rect background, path fill, text ink).
+ * Declarations one lifted keyframe contributes. Offset and opacity belong to
+ * the node-sized compositing wrapper so they move/fade every paint operation;
+ * leaf-local rotate/scale and paint colors stay on their native element.
  */
-function stopCss(anim: LiftedAnimation, stop: LiftedStop, last: boolean): string {
+function stopCss(
+   anim: LiftedAnimation,
+   stop: LiftedStop,
+   last: boolean,
+   target: AnimationTarget,
+): string {
    let css = '';
-   if (stop.offset) {
-      const [bx, by] = anim.base_offset;
-      css += `translate:${fmt(stop.offset[0] - bx)}px ${fmt(stop.offset[1] - by)}px;`;
+   if (target === 'group') {
+      if (stop.offset) {
+         const [bx, by] = anim.base_offset;
+         css += `translate:${fmt(stop.offset[0] - bx)}px ${fmt(stop.offset[1] - by)}px;`;
+      }
+      if (stop.opacity !== null) css += `opacity:${fmt(stop.opacity)};`;
+   } else {
+      if (stop.rotate !== null) css += `rotate:${fmt(stop.rotate - anim.base_rotate)}deg;`;
+      if (stop.scale !== null) {
+         const sx = stop.scale[0] / anim.base_scale[0];
+         const sy = stop.scale[1] / anim.base_scale[1];
+         css += sx === sy ? `scale:${fmt(sx)};` : `scale:${fmt(sx)} ${fmt(sy)};`;
+      }
+      if (stop.bg !== null) {
+         css += `${anim.kind === KIND_PATH ? 'fill' : 'background-color'}:${rgbaCss(stop.bg)};`;
+      }
+      if (stop.color !== null) css += `color:${rgbaCss(stop.color)};`;
    }
-   if (stop.rotate !== null) css += `rotate:${fmt(stop.rotate - anim.base_rotate)}deg;`;
-   if (stop.scale !== null) {
-      const sx = stop.scale / anim.base_scale[0];
-      const sy = stop.scale / anim.base_scale[1];
-      css += sx === sy ? `scale:${fmt(sx)};` : `scale:${fmt(sx)} ${fmt(sy)};`;
-   }
-   if (stop.opacity !== null) css += `opacity:${fmt(stop.opacity)};`;
-   if (stop.bg !== null) {
-      css += `${anim.kind === KIND_PATH ? 'fill' : 'background-color'}:${rgbaCss(stop.bg)};`;
-   }
-   if (stop.color !== null) css += `color:${rgbaCss(stop.color)};`;
    const [y1, y2] = stop.ctrl;
    if (!last && !(y1 === LINEAR_Y1 && y2 === LINEAR_Y2)) {
       css += `animation-timing-function:cubic-bezier(${fmt(LINEAR_Y1)},${fmt(y1)},${fmt(LINEAR_Y2)},${fmt(y2)});`;
@@ -350,40 +358,64 @@ function stopCss(anim: LiftedAnimation, stop: LiftedStop, last: boolean): string
    return css;
 }
 
+function animationDeclaration(items: Map<number, string[]>): Map<number, string> {
+   const result = new Map<number, string>();
+   for (const [node, animations] of items) {
+      result.set(node, `animation:${animations.join(',')};`);
+   }
+   return result;
+}
+
 /**
- * Translates lifted bindings into CSS: `rules` holds one `@keyframes` per
- * binding, `byNode` maps each animated node to the `animation:` declaration
- * the painter appends to its cssText.
- *
- * The kernel has already normalized whole-cycle Slab easing into time-domain
- * stop positions with exact per-segment Bézier curves, so translation is 1:1:
- * one keyframe per stop, an `animation-timing-function` on every non-linear
- * segment, and `alternate` cycles replay the same curves mirrored — matching
- * the kernel's `ease(1 - t)` on odd cycles.
+ * Translates normalized lifts into CSS. Group tracks own offset/opacity;
+ * paint tracks own rotate/scale/colors. Splitting a binding preserves the same
+ * timing and segment curves on both targets while avoiding per-frame DOM
+ * writes and per-paint opacity multiplication.
  */
 export function liftedAnimationCss(lifted: LiftedAnimation[]): {
    rules: string;
    byNode: Map<number, string>;
+   byGroup: Map<number, string>;
 } {
    let rules = '';
    const perNode = new Map<number, string[]>();
+   const perGroup = new Map<number, string[]>();
    for (const anim of lifted) {
-      const name = `slab-b${anim.binding}`;
-      let frames = '';
-      for (let i = 0; i < anim.stops.length; i++) {
-         const last = i === anim.stops.length - 1;
-         frames += `${fmt(anim.stops[i].pos * 100)}%{${stopCss(anim, anim.stops[i], last)}}`;
-      }
-      rules += `@keyframes ${name}{${frames}}`;
+      const first = anim.stops[0];
+      if (!first) continue;
       const count = anim.mode === 1 ? '1' : 'infinite';
       const direction = anim.mode === 2 ? 'alternate' : 'normal';
-      const items = perNode.get(anim.node) ?? [];
-      items.push(`${anim.dur}ms linear ${anim.delay}ms ${count} ${direction} both ${name}`);
-      perNode.set(anim.node, items);
+      const timing = `${anim.dur}ms linear ${anim.delay}ms ${count} ${direction} both`;
+      const targets: [AnimationTarget, boolean, Map<number, string[]>][] = [
+         ['group', first.offset !== null || first.opacity !== null, perGroup],
+         [
+            'paint',
+            first.rotate !== null ||
+               first.scale !== null ||
+               first.bg !== null ||
+               first.color !== null,
+            perNode,
+         ],
+      ];
+      for (const [target, present, declarations] of targets) {
+         if (!present) continue;
+         const name = `slab-b${anim.binding}-${target === 'group' ? 'g' : 'p'}`;
+         let frames = '';
+         for (let i = 0; i < anim.stops.length; i++) {
+            const last = i === anim.stops.length - 1;
+            frames += `${fmt(anim.stops[i].pos * 100)}%{${stopCss(anim, anim.stops[i], last, target)}}`;
+         }
+         rules += `@keyframes ${name}{${frames}}`;
+         const items = declarations.get(anim.node) ?? [];
+         items.push(`${timing} ${name}`);
+         declarations.set(anim.node, items);
+      }
    }
-   const byNode = new Map<number, string>();
-   for (const [node, items] of perNode) byNode.set(node, `animation:${items.join(',')};`);
-   return { rules, byNode };
+   return {
+      rules,
+      byNode: animationDeclaration(perNode),
+      byGroup: animationDeclaration(perGroup),
+   };
 }
 
 const OBJECT_FIT = ['cover', 'contain', 'fill'];
@@ -509,8 +541,10 @@ export class Painter {
    fonts: (FontCss | null)[] = [];
    /** Object URLs per IMGS entry (null = not embedded; falls back to src). */
    imageUrls: (string | null)[] = [];
-   /** `animation:` declaration per lifted node (see [liftedAnimationCss]). */
+   /** Paint-element `animation:` declaration per lifted node. */
    animations = new Map<number, string>();
+   /** Compositing-group `animation:` declaration per lifted node. */
+   groupAnimations = new Map<number, string>();
    /** Reads unified runtime image metadata from the owning element. */
    imageInfo: ((image: number) => ImageInfo | null) | null = null;
    /** Copies encoded or raw runtime image bytes from the owning element. */
@@ -1023,28 +1057,23 @@ export class Painter {
             }
             case 'GroupPush': {
                const o = op.v;
-               const el = take('G', 'div');
-               let css: string;
-               let originX = ox;
-               let originY = oy;
+               const el = take(o.node === NO_NODE ? 'G' : `G${o.node}`, 'div');
+               let css = `position:absolute;left:${o.mx - ox}px;top:${o.my - oy}px;width:${o.mw}px;height:${o.mh}px;overflow:visible;`;
                if (o.mask_kind !== 0) {
-                  // W7: the wrapper becomes box-sized and the subtree's alpha
-                  // is multiplied by the paint over the mask box (contract
-                  // §6.3); ink outside the box is masked to zero.
+                  // W7: the subtree's alpha is multiplied by the paint over
+                  // the owning node's border box (contract §6.3); ink outside
+                  // the box is masked to zero.
                   const paint =
                      o.mask_kind === 1
                         ? `linear-gradient(${rgbaCss(o.mask)} 0 0)`
                         : gradientCss(doc, o.mask, o.mw, o.mh);
-                  css = `position:absolute;left:${o.mx - ox}px;top:${o.my - oy}px;width:${o.mw}px;height:${o.mh}px;overflow:visible;mask-image:${paint};-webkit-mask-image:${paint};mask-repeat:no-repeat;-webkit-mask-repeat:no-repeat;mask-size:100% 100%;-webkit-mask-size:100% 100%;`;
-                  originX = o.mx;
-                  originY = o.my;
-               } else {
-                  css = 'position:absolute;left:0;top:0;width:0;height:0;overflow:visible;';
+                  css += `mask-image:${paint};-webkit-mask-image:${paint};mask-repeat:no-repeat;-webkit-mask-repeat:no-repeat;mask-size:100% 100%;-webkit-mask-size:100% 100%;`;
                }
                if (o.opacity !== 1) css += `opacity:${o.opacity};`;
                if (o.blur > 0) css += `filter:blur(${o.blur / 2}px);`;
+               css += this.groupAnimations.get(o.node) ?? '';
                setCss(el, css);
-               stack.push({ el, ox: originX, oy: originY, prev: null });
+               stack.push({ el, ox: o.mx, oy: o.my, prev: null });
                break;
             }
             case 'RotatePush': {

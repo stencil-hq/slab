@@ -616,9 +616,10 @@ export class SlabElement extends HTMLElement {
       if (!SlabElement.lift) return;
       const lifted: LiftedAnimation[] = JSON.parse(inst.lift_animations_json());
       if (lifted.length === 0) return;
-      const { rules, byNode } = liftedAnimationCss(lifted);
+      const { rules, byNode, byGroup } = liftedAnimationCss(lifted);
       this.#animSheet.replaceSync(rules);
       painter.animations = byNode;
+      painter.groupAnimations = byGroup;
    }
 
    /** Resize observer + env media listeners; idempotent across swaps. */

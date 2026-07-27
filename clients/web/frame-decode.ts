@@ -185,6 +185,7 @@ export function decodeFrame(frame: FrameBuf): Frame {
                ops.push({
                   tag: 'GroupPush',
                   v: {
+                     node: u32('GroupPush.node'),
                      mask_kind: u32('GroupPush.mask_kind'),
                      mask: u32('GroupPush.mask'),
                      opacity: f64('GroupPush.opacity'),

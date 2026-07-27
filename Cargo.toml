@@ -21,28 +21,28 @@ edition = "2024"
 license = "MIT"
 
 [workspace.dependencies]
-logos = "0.15"
+logos = "0.16"
 ttf-parser = "0.25"
-tiny-skia = "0.11"
+tiny-skia = "0.12"
 png = "0.18"
 lyon = "1"
 winit = "0.30"
-wgpu = "25"
+wgpu = "30"
 accesskit = "0.24.1"
 accesskit_winit = "0.33.2"
 ab_glyph = "0.2"
 bytemuck = { version = "1", features = ["derive"] }
-pollster = "0.4"
+pollster = "1.0"
 crossterm = "0.29"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 anyhow = "1"
-rustc-hash = "1.1"
+rustc-hash = "2.1"
 
-prost = "0.13"
+prost = "0.14"
 snap = "1"
-prost-build = "0.13"
-protox = "0.7"
+prost-build = "0.14"
+protox = "0.9"
 [profile.release]
 lto = "thin"
 

@@ -79,7 +79,7 @@ export interface LiftedStop {
    offset: [number, number] | null;
    opacity: number | null;
    rotate: number | null;
-   scale: number | null;
+   scale: [number, number] | null;
    bg: number | null;
    color: number | null;
 }
@@ -300,12 +300,14 @@ export interface OpClip {
 }
 
 export interface OpGroup {
+   /** Document node owning this group; `0xffffffff` marks a host envelope. */
+   node: number;
    opacity: number;
    blur: number;
    /** 0 = none, 1 = solid (`mask` is packed RGBA), 2 = gradient (GRAD handle). */
    mask_kind: number;
    mask: number;
-   /** Mask box = the node's border box (all 0 when `mask_kind` is 0). */
+   /** Compositing box = the owning node's border box. */
    mx: number;
    my: number;
    mw: number;

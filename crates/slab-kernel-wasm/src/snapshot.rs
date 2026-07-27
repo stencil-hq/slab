@@ -58,7 +58,7 @@ struct LiftStopSnapshot {
     offset: Option<(f64, f64)>,
     opacity: Option<f64>,
     rotate: Option<f64>,
-    scale: Option<f64>,
+    scale: Option<(f64, f64)>,
     bg: Option<u32>,
     color: Option<u32>,
 }
