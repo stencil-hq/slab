@@ -479,30 +479,17 @@ pub fn stroke_fg(grid: &CellGrid, column: i32, row: i32, rgba: u32, opacity: f64
         blend_rgb(base, rgb_of(rgba), alpha)
     }
 }
-/// One text run's cell footprint, prescanned by [`cells_from_frame`] so
-/// shallow rect outlines can route their horizontal border to a text-free row.
-#[derive(Clone, Copy, Debug)]
-pub struct TextSpan {
-    pub row: i32,
-    pub col0: i32,
-    /// Exclusive end column.
-    pub col1: i32,
-}
-
 /// Rasterizes a rectangle as a fill, outline, or one-cell hairline.
 ///
 /// Fills sample gradients and composite alpha per cell. Outlines use
 /// box-drawing characters, with rounded corners for radii of at least four
-/// layout units and dashed variants when requested. Outlines only one or two
-/// cells tall degrade to a three-sided well: the row carrying text keeps
-/// plain side verticals so the border never fights the glyphs.
+/// layout units and dashed variants when requested.
 pub fn draw_rect(
     doc: &Doc,
     grid: &mut CellGrid,
     rect: &flatten::OpRect,
     opacity: f64,
     masks: &[MaskCtx],
-    text_spans: &[TextSpan],
 ) {
     let left = cell_col(rect.x);
     let top = cell_row(rect.y);
@@ -600,8 +587,48 @@ pub fn draw_rect(
         }
     }
 
-    // Outline strokes use rounded corners at radius >= 4.
-    if rect.stroke_kind == 0 || right.wrapping_sub(left) < 2 || bottom.wrapping_sub(top) < 1 {
+    draw_rect_outline(doc, grid, rect, opacity, masks, OutlineClaim::Any);
+}
+
+/// Which ring cells an outline pass may claim.
+#[derive(Clone, Copy, PartialEq)]
+enum OutlineClaim {
+    /// The initial paint claims every ring cell; later ops may cover it.
+    Any,
+    /// The post-clip re-assertion refills only cells left without a glyph,
+    /// so children that legitimately painted over the ring keep their ink.
+    Vacant,
+}
+
+fn claims(grid: &CellGrid, claim: OutlineClaim, column: i32, row: i32) -> bool {
+    match claim {
+        OutlineClaim::Any => true,
+        OutlineClaim::Vacant => cell_index(grid, column, row)
+            .is_some_and(|index| grid.ch[index] == 32 && grid.flags[index] & CF_FG == 0),
+    }
+}
+
+/// Rasterizes a rectangle's stroke outline — the box-drawing edge and corner
+/// pass of [`draw_rect`]. Outlines use rounded corners at radius >= 4.
+///
+/// [`cells_from_frame`] re-runs it with [`OutlineClaim::Vacant`] when a
+/// stroked clip container closes: the stroke band is sub-cell, so a child
+/// fill flush with the box (artwork, images) wipes the border glyphs and
+/// would otherwise leave the frame open.
+fn draw_rect_outline(
+    doc: &Doc,
+    grid: &mut CellGrid,
+    rect: &flatten::OpRect,
+    opacity: f64,
+    masks: &[MaskCtx],
+    claim: OutlineClaim,
+) {
+    let left = cell_col(rect.x);
+    let top = cell_row(rect.y);
+    let right = cell_col(rect.x + rect.w);
+    let bottom = cell_row(rect.y + rect.h);
+    let effective_opacity = opacity * rect.opacity;
+    if rect.stroke_kind == 0 || right.wrapping_sub(left) < 2 || bottom.wrapping_sub(top) < 2 {
         return;
     }
     let (top_left, top_right, bottom_left, bottom_right) = if rect.radius >= 4.0 {
@@ -617,181 +644,105 @@ pub fn draw_rect(
     let last_row = bottom.wrapping_sub(1);
     let last_column = right.wrapping_sub(1);
 
-    // A shallow outline (one or two cell rows) cannot sandwich its content
-    // row between two border rows: centered text lands on a border row,
-    // erases the horizontal run, and strands the corners. Give the row that
-    // holds text plain side verticals and the other row — when one exists —
-    // a corner-capped border, forming a coherent three-sided well. A two-row
-    // outline with no text on either row keeps its closed box.
-    if bottom.wrapping_sub(top) <= 2 {
-        let stroke_cell = |grid: &mut CellGrid, column: i32, row: i32, x: f64, y: f64, glyph| {
-            let rgba = paint_rgba_at(
+    for column in left.wrapping_add(1)..last_column {
+        let point_x = (f64::from(column) + 0.5) * CW;
+        if claims(grid, claim, column, top) {
+            let top_rgba = paint_rgba_at(
                 doc,
                 rect.stroke_kind,
                 rect.stroke,
-                x,
-                y,
+                point_x,
+                rect.y,
                 rect.x,
                 rect.y,
                 rect.w,
                 rect.h,
             );
-            let foreground = stroke_fg(
+            let top_fg = stroke_fg(
                 grid,
                 column,
-                row,
-                rgba,
-                effective_opacity * mask_alpha_at(doc, masks, x, y),
+                top,
+                top_rgba,
+                effective_opacity * mask_alpha_at(doc, masks, point_x, rect.y),
             );
-            if foreground != NO_COLOR {
-                put(grid, column, row, glyph, foreground, NO_COLOR);
+            if top_fg != NO_COLOR {
+                put(grid, column, top, horizontal, top_fg, NO_COLOR);
             }
-        };
-        let overlaps = |row: i32| {
-            text_spans
-                .iter()
-                .any(|span| span.row == row && span.col1 > left && span.col0 <= last_column)
-        };
-        let content_row = if bottom.wrapping_sub(top) < 2 {
-            Some(top)
-        } else {
-            match (overlaps(top), overlaps(last_row)) {
-                (true, false) => Some(top),
-                (false, true) => Some(last_row),
-                (false, false) => None,
-                // Both rows carry text: keep the border away from the box's
-                // pixel center, where the primary content sits.
-                (true, true) => {
-                    Some(cell_row(rect.y + rect.h / 2.0 - CH / 2.0).clamp(top, last_row))
-                }
-            }
-        };
-        if let Some(content_row) = content_row {
-            let point_y = (f64::from(content_row) + 0.5) * CH;
-            stroke_cell(grid, left, content_row, rect.x, point_y, vertical);
-            stroke_cell(
+        }
+
+        if claims(grid, claim, column, last_row) {
+            let bottom_rgba = paint_rgba_at(
+                doc,
+                rect.stroke_kind,
+                rect.stroke,
+                point_x,
+                rect.y + rect.h,
+                rect.x,
+                rect.y,
+                rect.w,
+                rect.h,
+            );
+            let bottom_fg = stroke_fg(
                 grid,
-                last_column,
-                content_row,
-                rect.x + rect.w,
-                point_y,
-                vertical,
+                column,
+                last_row,
+                bottom_rgba,
+                effective_opacity * mask_alpha_at(doc, masks, point_x, rect.y + rect.h),
             );
-            if bottom.wrapping_sub(top) == 2 {
-                let border_row = if content_row == top { last_row } else { top };
-                let border_y = if border_row == top {
-                    rect.y
-                } else {
-                    rect.y + rect.h
-                };
-                for column in left.wrapping_add(1)..last_column {
-                    let point_x = (f64::from(column) + 0.5) * CW;
-                    stroke_cell(grid, column, border_row, point_x, border_y, horizontal);
-                }
-                let (left_corner, right_corner) = if border_row == top {
-                    (top_left, top_right)
-                } else {
-                    (bottom_left, bottom_right)
-                };
-                // Corners share the box-origin sample, like the closed box.
-                stroke_cell(grid, left, border_row, rect.x, rect.y, left_corner);
-                stroke_cell(grid, last_column, border_row, rect.x, rect.y, right_corner);
+            if bottom_fg != NO_COLOR {
+                put(grid, column, last_row, horizontal, bottom_fg, NO_COLOR);
             }
-            return;
-        }
-    }
-
-    for column in left.wrapping_add(1)..last_column {
-        let point_x = (f64::from(column) + 0.5) * CW;
-        let top_rgba = paint_rgba_at(
-            doc,
-            rect.stroke_kind,
-            rect.stroke,
-            point_x,
-            rect.y,
-            rect.x,
-            rect.y,
-            rect.w,
-            rect.h,
-        );
-        let top_fg = stroke_fg(
-            grid,
-            column,
-            top,
-            top_rgba,
-            effective_opacity * mask_alpha_at(doc, masks, point_x, rect.y),
-        );
-        if top_fg != NO_COLOR {
-            put(grid, column, top, horizontal, top_fg, NO_COLOR);
-        }
-
-        let bottom_rgba = paint_rgba_at(
-            doc,
-            rect.stroke_kind,
-            rect.stroke,
-            point_x,
-            rect.y + rect.h,
-            rect.x,
-            rect.y,
-            rect.w,
-            rect.h,
-        );
-        let bottom_fg = stroke_fg(
-            grid,
-            column,
-            last_row,
-            bottom_rgba,
-            effective_opacity * mask_alpha_at(doc, masks, point_x, rect.y + rect.h),
-        );
-        if bottom_fg != NO_COLOR {
-            put(grid, column, last_row, horizontal, bottom_fg, NO_COLOR);
         }
     }
 
     for row in top.wrapping_add(1)..last_row {
         let point_y = (f64::from(row) + 0.5) * CH;
-        let left_rgba = paint_rgba_at(
-            doc,
-            rect.stroke_kind,
-            rect.stroke,
-            rect.x,
-            point_y,
-            rect.x,
-            rect.y,
-            rect.w,
-            rect.h,
-        );
-        let left_fg = stroke_fg(
-            grid,
-            left,
-            row,
-            left_rgba,
-            effective_opacity * mask_alpha_at(doc, masks, rect.x, point_y),
-        );
-        if left_fg != NO_COLOR {
-            put(grid, left, row, vertical, left_fg, NO_COLOR);
+        if claims(grid, claim, left, row) {
+            let left_rgba = paint_rgba_at(
+                doc,
+                rect.stroke_kind,
+                rect.stroke,
+                rect.x,
+                point_y,
+                rect.x,
+                rect.y,
+                rect.w,
+                rect.h,
+            );
+            let left_fg = stroke_fg(
+                grid,
+                left,
+                row,
+                left_rgba,
+                effective_opacity * mask_alpha_at(doc, masks, rect.x, point_y),
+            );
+            if left_fg != NO_COLOR {
+                put(grid, left, row, vertical, left_fg, NO_COLOR);
+            }
         }
 
-        let right_rgba = paint_rgba_at(
-            doc,
-            rect.stroke_kind,
-            rect.stroke,
-            rect.x + rect.w,
-            point_y,
-            rect.x,
-            rect.y,
-            rect.w,
-            rect.h,
-        );
-        let right_fg = stroke_fg(
-            grid,
-            last_column,
-            row,
-            right_rgba,
-            effective_opacity * mask_alpha_at(doc, masks, rect.x + rect.w, point_y),
-        );
-        if right_fg != NO_COLOR {
-            put(grid, last_column, row, vertical, right_fg, NO_COLOR);
+        if claims(grid, claim, last_column, row) {
+            let right_rgba = paint_rgba_at(
+                doc,
+                rect.stroke_kind,
+                rect.stroke,
+                rect.x + rect.w,
+                point_y,
+                rect.x,
+                rect.y,
+                rect.w,
+                rect.h,
+            );
+            let right_fg = stroke_fg(
+                grid,
+                last_column,
+                row,
+                right_rgba,
+                effective_opacity * mask_alpha_at(doc, masks, rect.x + rect.w, point_y),
+            );
+            if right_fg != NO_COLOR {
+                put(grid, last_column, row, vertical, right_fg, NO_COLOR);
+            }
         }
     }
 
@@ -816,17 +767,25 @@ pub fn draw_rect(
         effective_opacity * mask_alpha_at(doc, masks, rect.x, rect.y),
     );
     if corner_fg != NO_COLOR {
-        put(grid, left, top, top_left, corner_fg, NO_COLOR);
-        put(grid, last_column, top, top_right, corner_fg, NO_COLOR);
-        put(grid, left, last_row, bottom_left, corner_fg, NO_COLOR);
-        put(
-            grid,
-            last_column,
-            last_row,
-            bottom_right,
-            corner_fg,
-            NO_COLOR,
-        );
+        if claims(grid, claim, left, top) {
+            put(grid, left, top, top_left, corner_fg, NO_COLOR);
+        }
+        if claims(grid, claim, last_column, top) {
+            put(grid, last_column, top, top_right, corner_fg, NO_COLOR);
+        }
+        if claims(grid, claim, left, last_row) {
+            put(grid, left, last_row, bottom_left, corner_fg, NO_COLOR);
+        }
+        if claims(grid, claim, last_column, last_row) {
+            put(
+                grid,
+                last_column,
+                last_row,
+                bottom_right,
+                corner_fg,
+                NO_COLOR,
+            );
+        }
     }
 }
 
@@ -1310,37 +1269,12 @@ pub fn cells_from_frame(doc: &Doc, frame: &flatten::Frame, width: f64, height: f
     let mut masks: Vec<MaskCtx> = Vec::new();
     // Parallel to `opacity_stack` minus the root: whether each group pushed a mask.
     let mut group_masked: Vec<bool> = Vec::new();
-    // Prescan text cell footprints so shallow rect outlines can route their
-    // horizontal border to a text-free row (rects paint before their text).
-    let mut text_spans: Vec<TextSpan> = Vec::new();
-    let mut prescan_rotation: i32 = 0;
-    for operation in &frame.ops {
-        match operation {
-            flatten::FrameOp::RotatePush(_) | flatten::FrameOp::TiltPush(_) => {
-                prescan_rotation = prescan_rotation.wrapping_add(1);
-            }
-            flatten::FrameOp::RotatePop | flatten::FrameOp::TiltPop => {
-                if prescan_rotation > 0 {
-                    prescan_rotation = prescan_rotation.wrapping_sub(1);
-                }
-            }
-            flatten::FrameOp::Text(text) if prescan_rotation == 0 => {
-                let value = &frame.strings[index(text.str_ref)];
-                let columns = text_columns_before(value, count(value.len()));
-                if columns > 0 {
-                    let col0 = cell_col(text.x);
-                    text_spans.push(TextSpan {
-                        row: cell_row(text.y_baseline - 12.0),
-                        col0,
-                        col1: col0.wrapping_add(columns),
-                    });
-                }
-            }
-            _ => {}
-        }
-    }
+    // Stroked clip containers re-assert their outline when the clip closes:
+    // the stroke band is sub-cell, so a child fill flush with the box wipes
+    // the border glyphs and would otherwise leave the frame open.
+    let mut clip_outlines: Vec<Option<&flatten::OpRect>> = Vec::new();
 
-    for operation in &frame.ops {
+    for (op_index, operation) in frame.ops.iter().enumerate() {
         match operation {
             flatten::FrameOp::RotatePush(_) => {
                 rotation_depth = rotation_depth.wrapping_add(1);
@@ -1400,7 +1334,6 @@ pub fn cells_from_frame(doc: &Doc, frame: &flatten::Frame, width: f64, height: f
                     rect,
                     *opacity_stack.last().expect("opacity stack has a root"),
                     &masks,
-                    &text_spans,
                 );
             }
             flatten::FrameOp::Text(text) if rotation_depth == 0 => {
@@ -1427,6 +1360,19 @@ pub fn cells_from_frame(doc: &Doc, frame: &flatten::Frame, width: f64, height: f
                 );
             }
             flatten::FrameOp::ClipPush(clip) if rotation_depth == 0 => {
+                let outlined = match op_index.checked_sub(1).map(|i| &frame.ops[i]) {
+                    Some(flatten::FrameOp::Rect(rect))
+                        if rect.stroke_kind != 0
+                            && rect.x == clip.x
+                            && rect.y == clip.y
+                            && rect.w == clip.w
+                            && rect.h == clip.h =>
+                    {
+                        Some(rect)
+                    }
+                    _ => None,
+                };
+                clip_outlines.push(outlined);
                 push_clip(
                     &mut grid,
                     cell_col(clip.x),
@@ -1435,7 +1381,19 @@ pub fn cells_from_frame(doc: &Doc, frame: &flatten::Frame, width: f64, height: f
                     cell_row(clip.y + clip.h),
                 );
             }
-            flatten::FrameOp::ClipPop if rotation_depth == 0 => pop_clip(&mut grid),
+            flatten::FrameOp::ClipPop if rotation_depth == 0 => {
+                pop_clip(&mut grid);
+                if let Some(Some(rect)) = clip_outlines.pop() {
+                    draw_rect_outline(
+                        doc,
+                        &mut grid,
+                        rect,
+                        *opacity_stack.last().expect("opacity stack has a root"),
+                        &masks,
+                        OutlineClaim::Vacant,
+                    );
+                }
+            }
             flatten::FrameOp::GroupPush(group) => {
                 opacity_stack
                     .push(*opacity_stack.last().expect("opacity stack has a root") * group.opacity);

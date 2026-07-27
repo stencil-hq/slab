@@ -4,7 +4,7 @@
 
 use crate::{
     cells::{self, CellGrid},
-    flatten::{self, FrameOp, OpRect, OpText},
+    flatten::{self, FrameOp, OpClip, OpRect, OpText},
     rt::str_eq,
     slir,
 };
@@ -316,71 +316,85 @@ pub fn test_hairlines_and_borders() {
     assert_eq!(ch_at(&g, 0, 4), 0x2502, "left border");
 }
 
-/// Verifies the shallow-outline degradation: one- and two-row stroked boxes
-/// become three-sided wells whose horizontal border avoids the text row,
-/// while an empty two-row box keeps its closed border.
-pub fn test_shallow_outline_wells() {
+/// Verifies that a stroked clip container re-asserts its outline after its
+/// children paint: an opaque fill flush with the box wipes the border glyphs
+/// (the stroke band is sub-cell), and the matching clip pop refills exactly
+/// the vacated ring cells while glyphs children drew on the ring survive.
+pub fn test_clip_outline_reassert() {
     let doc = slir::doc_new();
-    let stroke = rgba(0, 0, 255, 255);
-    // Rows 0..2 (y 0, h 28); radius >= 4 selects rounded corners.
-    let shallow_box = || solid_rect(0.0, 0.0, 64.0, 28.0, 6.0, 0, 0, stroke, 1, false);
+    let card = || {
+        solid_rect(
+            0.0,
+            0.0,
+            96.0,
+            64.0,
+            6.0,
+            rgba(9, 18, 13, 255),
+            1,
+            rgba(0, 0, 255, 255),
+            1,
+            false,
+        )
+    };
+    let clip_of = |x: f64, y: f64, w: f64, h: f64| OpClip {
+        x,
+        y,
+        w,
+        h,
+        radius: 6.0,
+        smooth: 0.0,
+    };
+    // Opaque artwork flush with the card top: wipes ring glyphs on rows 0-1.
+    let artwork = || {
+        solid_rect(
+            0.0,
+            0.0,
+            96.0,
+            32.0,
+            0.0,
+            rgba(30, 60, 40, 255),
+            1,
+            0,
+            0,
+            false,
+        )
+    };
 
-    // Text on the top row: side verticals up top, corner-capped bottom.
     let mut fr = flatten::frame_new();
-    fr.strings.push("Hi".to_owned());
-    fr.ops.push(FrameOp::Rect(shallow_box()));
-    fr.ops.push(FrameOp::Text(text_op(16.0, 12.0, 0, stroke)));
-    let g = cells::cells_from_frame(&doc, &fr, 96.0, 96.0);
-    assert!(
-        ch_at(&g, 0, 0) == 0x2502 && ch_at(&g, 7, 0) == 0x2502,
-        "verticals flank the text row"
-    );
-    assert!(
-        ch_at(&g, 0, 1) == 0x2570 && ch_at(&g, 7, 1) == 0x256F && ch_at(&g, 3, 1) == 0x2500,
-        "bottom row keeps the capped border"
-    );
-    assert_eq!(ch_at(&g, 2, 0), 72, "text survives inside the well");
-
-    // Text on the bottom row mirrors the well: cap on top, verticals below.
-    let mut fr = flatten::frame_new();
-    fr.strings.push("Hi".to_owned());
-    fr.ops.push(FrameOp::Rect(shallow_box()));
-    fr.ops.push(FrameOp::Text(text_op(16.0, 28.0, 0, stroke)));
-    let g = cells::cells_from_frame(&doc, &fr, 96.0, 96.0);
-    assert!(
-        ch_at(&g, 0, 0) == 0x256D && ch_at(&g, 7, 0) == 0x256E && ch_at(&g, 3, 0) == 0x2500,
-        "top row keeps the capped border"
-    );
-    assert!(
-        ch_at(&g, 0, 1) == 0x2502 && ch_at(&g, 7, 1) == 0x2502,
-        "verticals flank the bottom text row"
-    );
-
-    // No text on either row: the two-row box stays closed.
-    let mut fr = flatten::frame_new();
-    fr.ops.push(FrameOp::Rect(shallow_box()));
-    let g = cells::cells_from_frame(&doc, &fr, 96.0, 96.0);
-    assert!(
-        ch_at(&g, 0, 0) == 0x256D && ch_at(&g, 7, 0) == 0x256E && ch_at(&g, 3, 0) == 0x2500,
-        "empty shallow box keeps its top border"
-    );
-    assert!(
-        ch_at(&g, 0, 1) == 0x2570 && ch_at(&g, 7, 1) == 0x256F && ch_at(&g, 3, 1) == 0x2500,
-        "empty shallow box keeps its bottom border"
-    );
-
-    // A one-row outline (h 18 -> a single cell row, too tall for a hairline)
-    // draws side verticals instead of disappearing.
-    let mut fr = flatten::frame_new();
-    fr.ops.push(FrameOp::Rect(solid_rect(
-        0.0, 0.0, 64.0, 18.0, 6.0, 0, 0, stroke, 1, false,
+    fr.strings.push("T".to_owned());
+    fr.ops.push(FrameOp::Rect(card()));
+    fr.ops
+        .push(FrameOp::ClipPush(clip_of(0.0, 0.0, 96.0, 64.0)));
+    fr.ops.push(FrameOp::Rect(artwork()));
+    // A child glyph on the bottom border row must survive the re-assertion.
+    fr.ops.push(FrameOp::Text(text_op(
+        40.0,
+        60.0,
+        0,
+        rgba(255, 255, 255, 255),
     )));
+    fr.ops.push(FrameOp::ClipPop);
     let g = cells::cells_from_frame(&doc, &fr, 96.0, 96.0);
-    assert!(
-        ch_at(&g, 0, 0) == 0x2502 && ch_at(&g, 7, 0) == 0x2502,
-        "one-row outline keeps side verticals"
+    assert_eq!(ch_at(&g, 3, 0), 0x2500, "wiped top border re-asserted");
+    assert_eq!(ch_at(&g, 0, 0), 0x256D, "wiped top-left corner re-asserted");
+    assert_eq!(
+        ch_at(&g, 11, 0),
+        0x256E,
+        "wiped top-right corner re-asserted"
     );
-    assert_eq!(ch_at(&g, 3, 0), 32, "one-row outline has no horizontal run");
+    assert_eq!(ch_at(&g, 0, 1), 0x2502, "wiped left border re-asserted");
+    assert_eq!(ch_at(&g, 5, 3), 84, "ring glyph a child drew survives");
+    assert_eq!(ch_at(&g, 2, 3), 0x2500, "uncovered bottom border intact");
+
+    // A clip whose box differs from the preceding rect re-asserts nothing.
+    let mut fr = flatten::frame_new();
+    fr.ops.push(FrameOp::Rect(card()));
+    fr.ops
+        .push(FrameOp::ClipPush(clip_of(0.0, 0.0, 96.0, 48.0)));
+    fr.ops.push(FrameOp::Rect(artwork()));
+    fr.ops.push(FrameOp::ClipPop);
+    let g = cells::cells_from_frame(&doc, &fr, 96.0, 96.0);
+    assert_eq!(ch_at(&g, 3, 0), 32, "mismatched clip leaves the wipe alone");
 }
 
 /// Verifies text placement, background fills, and translucent glyphs.

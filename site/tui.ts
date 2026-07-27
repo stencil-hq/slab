@@ -26,10 +26,10 @@ const FONT_SIZE = 12;
  * through the VT, so the terminal runs at ~30fps while the canvas keeps 60. */
 const MIN_FRAME_MS = 32;
 
-/** Home the cursor, end a row, erase the rest of the screen. */
-const HOME = '\x1b[H';
-const EOL = '\x1b[K\r\n';
-const BELOW = '\x1b[J';
+/** Address a row (1-based) and erase it before its content is written. */
+const rowHome = (row: number): string => `\x1b[${row};1H\x1b[K`;
+/** Erase from the addressed row to the bottom of the screen. */
+const eraseBelow = (row: number): string => `\x1b[${row};1H\x1b[J`;
 /** The kernel paints its own caret cell — the VT cursor would double it. */
 const HIDE_CURSOR = '\x1b[?25l';
 
@@ -109,8 +109,18 @@ export function createTui(host: TuiHost): Tui {
       painted = ansi;
       // Trailing blank rows collapse out of the ANSI; the grid keeps them, so
       // erase forward instead of scrolling a newline past the last row.
+      // Each row is addressed absolutely and erased BEFORE its content: a
+      // full-width row leaves the cursor on the last column in the deferred-
+      // wrap state, where a trailing erase would eat the just-written cell
+      // (the document's right border column).
       const body = ansi.endsWith('\n') ? ansi.slice(0, -1) : ansi;
-      term.write(HOME + body.replaceAll('\n', EOL) + BELOW);
+      const lines = body.split('\n');
+      let out = '';
+      for (let i = 0; i < lines.length; i++) {
+         out += rowHome(i + 1) + lines[i];
+      }
+      if (lines.length < term.rows) out += eraseBelow(lines.length + 1);
+      term.write(out);
    }
 
    function paint(): void {
