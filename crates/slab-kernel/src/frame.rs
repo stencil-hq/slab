@@ -932,6 +932,12 @@ pub fn inst_set_hole_size(i: &mut Instance, hole: u32, w: f64, h: f64) {
 
 /// Solves and lowers one frame, optionally applying motion overlays.
 pub fn solve_frame(i: &mut Instance, t_ms: f64, with_motion: bool) -> Frame {
+    let mut frame = flatten::frame_new();
+    solve_frame_into(i, t_ms, with_motion, &mut frame);
+    frame
+}
+
+fn solve_frame_into(i: &mut Instance, t_ms: f64, with_motion: bool, frame: &mut Frame) {
     style::begin_solve(&i.doc, &mut i.st);
     if dispatch::prune_vanished(&i.doc, &mut i.st, &mut i.ds) {
         // A surviving Drop target changed state after list identity pruning;
@@ -959,20 +965,25 @@ pub fn solve_frame(i: &mut Instance, t_ms: f64, with_motion: bool) -> Frame {
         viewport_width,
         viewport_height,
     );
-    flatten::flatten(&i.doc, &i.st, &i.lay, &i.ds, &i.ms, i.root_pi)
+    flatten::flatten_into(&i.doc, &i.st, &i.lay, &i.ds, &i.ms, i.root_pi, frame);
 }
+
 // A non-fixed divider handle can change after its pane overlay is clamped.
 // Iterate only to the layout solver's EPS tolerance and keep each frame call bounded.
-fn solve_frame_settled(i: &mut Instance, t_ms: f64, with_motion: bool) -> (Frame, bool) {
+fn solve_frame_settled(
+    i: &mut Instance,
+    t_ms: f64,
+    with_motion: bool,
+    frame: &mut Frame,
+) -> bool {
     const LIMIT: usize = 16;
-    let mut frame = solve_frame(i, t_ms, with_motion);
-    for _ in 1..LIMIT {
+    for _ in 0..LIMIT {
+        solve_frame_into(i, t_ms, with_motion, frame);
         if !i.st.divider_footprint_changed {
-            return (frame, false);
+            return false;
         }
-        frame = solve_frame(i, t_ms, with_motion);
     }
-    (frame, i.st.divider_footprint_changed)
+    i.st.divider_footprint_changed
 }
 
 /// Solves if needed and lowers the result to a frame.
@@ -985,6 +996,17 @@ fn solve_frame_settled(i: &mut Instance, t_ms: f64, with_motion: bool) -> (Frame
 /// After a solve, scroll offsets are clamped against the fresh scene and
 /// vanished focus is restored. Either may mark the instance dirty for the next
 /// frame.
+fn refresh_virtual_window(i: &mut Instance, each: u32) -> bool {
+    let Some((_, _, parent)) = list::virtual_config(&i.doc, &i.st.lists, each) else {
+        return false;
+    };
+    let Some((viewport, _, origin)) = virtual_scene_geometry(i, parent, each) else {
+        return false;
+    };
+    let off = style::scroll_get(&i.st, parent);
+    list::set_virtual_viewport(&i.doc, &mut i.st.lists, each, viewport, off, origin)
+}
+
 fn refresh_virtual_windows(i: &mut Instance) -> bool {
     let mut changed = false;
     for each_index in 0..i.doc.node_kind.len() {
@@ -994,14 +1016,21 @@ fn refresh_virtual_windows(i: &mut Instance) -> bool {
             continue;
         }
         let each = u32::try_from(each_index).expect("node index exceeds u32");
-        let Some((_, _, parent)) = list::virtual_config(&i.doc, &i.st.lists, each) else {
+        changed |= refresh_virtual_window(i, each);
+    }
+    let materialized_len = list::materialized(&i.st.lists).len();
+    for index in 0..materialized_len {
+        let each = list::materialized(&i.st.lists)[index];
+        let base = list::base(&i.st.lists, &i.doc, each);
+        let Ok(base_index) = usize::try_from(base) else {
             continue;
         };
-        let Some((viewport, _, origin)) = virtual_scene_geometry(i, parent, each) else {
+        if i.doc.node_kind.get(base_index) != Some(&slir::K_EACH)
+            || i.doc.node_flags.get(base_index).copied().unwrap_or(0) & slir::F_VIRTUAL == 0
+        {
             continue;
-        };
-        let off = style::scroll_get(&i.st, parent);
-        changed |= list::set_virtual_viewport(&i.doc, &mut i.st.lists, each, viewport, off, origin);
+        }
+        changed |= refresh_virtual_window(i, each);
     }
     changed
 }
@@ -1035,30 +1064,49 @@ fn clamp_retained_scrolls(i: &mut Instance) -> bool {
     changed
 }
 
+/// Updates a caller-retained frame when solving or animation changes its output.
+///
+/// `frame` must remain paired with this instance from its first call. A clean
+/// instance leaves it untouched and returns `false`, preserving every backing
+/// allocation and avoiding a redundant flatten pass.
+pub fn inst_frame_update(i: &mut Instance, t_ms: f64, frame: &mut Frame) -> bool {
+    write_frame(i, t_ms, frame, true)
+}
+
 /// Solves if needed and lowers the result to a frame at the supplied motion clock.
 ///
 /// Fresh virtual-list viewport geometry marks the instance dirty for one
 /// settling frame, without pruning identities outside the materialized window.
 pub fn inst_frame(i: &mut Instance, t_ms: f64) -> Frame {
+    let mut frame = flatten::frame_new();
+    write_frame(i, t_ms, &mut frame, false);
+    frame
+}
+
+fn write_frame(i: &mut Instance, t_ms: f64, frame: &mut Frame, retain_clean: bool) -> bool {
     if !i.ok {
-        return flatten::frame_new();
+        frame.clear();
+        return true;
     }
 
     let has_motion = !i.doc.bind_node.is_empty() || !i.doc.trans_node.is_empty();
     let needs_solve = i.dirty || !i.solved || i.ms.active || has_motion && t_ms != i.last_t;
     if !needs_solve {
-        return flatten::flatten(&i.doc, &i.st, &i.lay, &i.ds, &i.ms, i.root_pi);
+        if retain_clean {
+            return false;
+        }
+        flatten::flatten_into(&i.doc, &i.st, &i.lay, &i.ds, &i.ms, i.root_pi, frame);
+        return true;
     }
-    let (mut frame, divider_unsettled) = solve_frame_settled(i, t_ms, true);
+
+    let divider_unsettled = solve_frame_settled(i, t_ms, true, frame);
     i.dirty = divider_unsettled;
     i.solved = true;
     i.last_t = t_ms;
-    scene::load(&mut i.sc, &frame);
+    scene::load(&mut i.sc, frame);
     if dispatch::cancel_invalid_drag(&i.doc, &mut i.st, &i.sc, &mut i.ds) {
-        let settled = solve_frame_settled(i, t_ms, true);
-        frame = settled.0;
-        i.dirty |= settled.1;
-        scene::load(&mut i.sc, &frame);
+        i.dirty |= solve_frame_settled(i, t_ms, true, frame);
+        scene::load(&mut i.sc, frame);
     }
     if refresh_virtual_windows(i) {
         i.dirty = true;
@@ -1071,10 +1119,8 @@ pub fn inst_frame(i: &mut Instance, t_ms: f64) -> Frame {
     // Editing dispatch used the previous layout. Follow once more against the
     // freshly wrapped lines, then settle any changed scroll inputs immediately.
     if dispatch::follow_caret_fresh(&i.doc, &mut i.st, &i.lay, &i.sc, &mut i.ds) {
-        let settled = solve_frame_settled(i, t_ms, true);
-        frame = settled.0;
-        i.dirty = settled.1;
-        scene::load(&mut i.sc, &frame);
+        i.dirty = solve_frame_settled(i, t_ms, true, frame);
+        scene::load(&mut i.sc, frame);
         if refresh_virtual_windows(i) {
             i.dirty = true;
         }
@@ -1091,49 +1137,59 @@ pub fn inst_frame(i: &mut Instance, t_ms: f64) -> Frame {
         i.dirty = true;
     }
     focus::refresh(&i.sc, &mut i.ds.fs);
-    frame
+    true
 }
 
 /// Solves without animation or transition overlays for static exporters.
 ///
 /// Current parameters, conditions, fields, and scroll offsets still apply.
 pub fn inst_frame_static(i: &mut Instance) -> Frame {
+    let mut frame = flatten::frame_new();
     if !i.ok {
-        return flatten::frame_new();
+        return frame;
     }
-    let (mut frame, _) = solve_frame_settled(i, 0.0, false);
+    solve_frame_settled(i, 0.0, false, &mut frame);
     scene::load(&mut i.sc, &frame);
     if refresh_virtual_windows(i) {
-        frame = solve_frame_settled(i, 0.0, false).0;
+        solve_frame_settled(i, 0.0, false, &mut frame);
         scene::load(&mut i.sc, &frame);
     }
     if clamp_retained_scrolls(i) {
         refresh_virtual_windows(i);
-        frame = solve_frame_settled(i, 0.0, false).0;
+        solve_frame_settled(i, 0.0, false, &mut frame);
         scene::load(&mut i.sc, &frame);
     }
     frame
 }
 
-/// Returns hole rectangles in absolute coordinates for the current solve.
+/// Solves pending changes and returns the resulting hole rectangles.
 pub fn inst_holes(i: &mut Instance) -> Vec<HoleRect> {
     if !i.ok {
         return Vec::new();
     }
-    let last_t = i.last_t;
-    let frame = inst_frame(i, last_t);
+    if i.dirty || !i.solved || i.ms.active {
+        let _ = inst_frame(i, i.last_t);
+    }
+    inst_holes_retained(i)
+}
+
+/// Returns hole rectangles from the most recently solved scene without re-solving.
+pub fn inst_holes_retained(i: &Instance) -> Vec<HoleRect> {
+    if !i.ok {
+        return Vec::new();
+    }
     let mut holes = Vec::new();
     for hole in 0..i.doc.hole_name.len() {
         let node = i.doc.hole_node[hole];
-        for scene_node in &frame.scene {
-            if scene_node.node == node {
+        for (scene_index, scene_node) in i.sc.node.iter().copied().enumerate() {
+            if scene_node == node {
                 holes.push(HoleRect {
                     hole: u32::try_from(hole).expect("too many document holes"),
-                    x: scene_node.x,
-                    y: scene_node.y,
-                    w: scene_node.w,
-                    h: scene_node.h,
-                    clip: scene_node.flags & (slir::F_CLIP | slir::F_SCROLL) != 0,
+                    x: i.sc.x[scene_index],
+                    y: i.sc.y[scene_index],
+                    w: i.sc.w[scene_index],
+                    h: i.sc.h[scene_index],
+                    clip: i.sc.flags[scene_index] & (slir::F_CLIP | slir::F_SCROLL) != 0,
                 });
             }
         }

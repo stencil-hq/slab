@@ -1158,6 +1158,25 @@ pub fn base(s: &State, d: &slir::Doc, node: u32) -> u32 {
     synthetic_slot(s, node).map_or(slir::NONE, |slot| s.sy_tpl[slot])
 }
 
+/// Resolves a node's concrete parent within its synthetic list instance.
+pub(crate) fn parent(s: &State, d: &slir::Doc, node: u32) -> u32 {
+    if signed(node) >= 0 && signed(node) < len_i32(&d.node_kind) {
+        return d.node_parent[index(signed(node))];
+    }
+    let Some(slot) = synthetic_slot(s, node) else {
+        return slir::NONE;
+    };
+    let template_parent = d.node_parent[s.sy_tpl[slot] as usize];
+    if template_parent == slir::NONE {
+        return slir::NONE;
+    }
+    s.sy_identity
+        .get(&(s.sy_each[slot], template_parent))
+        .and_then(|items| items.get(&s.sy_key[slot]))
+        .copied()
+        .unwrap_or(template_parent)
+}
+
 #[inline]
 /// Returns the concrete each instance owning a synthetic node.
 pub fn each_of(s: &State, d: &slir::Doc, node: u32) -> u32 {
@@ -1378,7 +1397,7 @@ fn base_num_attr(d: &slir::Doc, node: u32, attr: u32, default: f64) -> f64 {
     }
 }
 
-/// Returns virtual-list extent, overscan, and authored scroll parent.
+/// Returns virtual-list extent, overscan, and concrete scroll parent.
 pub fn virtual_config(d: &slir::Doc, s: &State, each: u32) -> Option<(f64, i32, u32)> {
     let base = base(s, d, each);
     let base_ix = usize::try_from(base).ok()?;
@@ -1392,7 +1411,7 @@ pub fn virtual_config(d: &slir::Doc, s: &State, each: u32) -> Option<(f64, i32, 
         return None;
     }
     let overscan = truncate_i32(base_num_attr(d, base, slir::A_OVERSCAN, 4.0)).max(0);
-    Some((extent, overscan, d.node_parent[base_ix]))
+    Some((extent, overscan, parent(s, d, each)))
 }
 
 fn window_slot(s: &State, each: u32) -> i32 {

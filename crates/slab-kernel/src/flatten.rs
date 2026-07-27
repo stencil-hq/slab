@@ -313,6 +313,18 @@ pub struct Frame {
     pub paths_rt: Vec<RtPath>,
 }
 
+impl Frame {
+    /// Removes all frame output while retaining the backing allocations.
+    pub fn clear(&mut self) {
+        self.width = 0.0;
+        self.height = 0.0;
+        self.ops.clear();
+        self.scene.clear();
+        self.strings.clear();
+        self.paths_rt.clear();
+    }
+}
+
 /// Creates an empty frame with zero dimensions.
 pub fn frame_new() -> Frame {
     Frame {
@@ -1378,15 +1390,29 @@ fn append_drag_ghost(d: &slir::Doc, st: &St, l: &Lay, ds: &DState, ms: &MSt, fra
     frame.ops.push(FrameOp::GroupPop);
 }
 
-/// Lowers the placed tree rooted at `root_pi` into a frame.
-pub fn flatten(d: &slir::Doc, st: &St, l: &Lay, ds: &DState, ms: &MSt, root_pi: i32) -> Frame {
+/// Lowers the placed tree rooted at `root_pi` into a reusable frame.
+pub fn flatten_into(
+    d: &slir::Doc,
+    st: &St,
+    l: &Lay,
+    ds: &DState,
+    ms: &MSt,
+    root_pi: i32,
+    frame: &mut Frame,
+) {
     let root = index(root_pi);
-    let mut frame = frame_new();
+    frame.clear();
     frame.width = l.p_w[root];
     frame.height = l.p_h[root];
     walk(
-        d, st, l, ds, ms, &mut frame, root_pi, 0.0, 0.0, -1, false, false, 0.0, 0.0, 0.0,
+        d, st, l, ds, ms, frame, root_pi, 0.0, 0.0, -1, false, false, 0.0, 0.0, 0.0,
     );
-    append_drag_ghost(d, st, l, ds, ms, &mut frame);
+    append_drag_ghost(d, st, l, ds, ms, frame);
+}
+
+/// Lowers the placed tree rooted at `root_pi` into a newly allocated frame.
+pub fn flatten(d: &slir::Doc, st: &St, l: &Lay, ds: &DState, ms: &MSt, root_pi: i32) -> Frame {
+    let mut frame = frame_new();
+    flatten_into(d, st, l, ds, ms, root_pi, &mut frame);
     frame
 }

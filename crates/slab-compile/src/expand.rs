@@ -2328,15 +2328,10 @@ fn expand_each(
         ),
     });
     if virtual_flag {
-        if matches!(&attrs[0].val, TVal::Prop(_))
-            || ctx.each_depth != 0
-            || parent_flags & fl::SCROLL == 0
-            || !matches!(parent_kind, nk::ROW | nk::COL)
-        {
+        if parent_flags & fl::SCROLL == 0 || !matches!(parent_kind, nk::ROW | nk::COL) {
             ctx.error(
                 "virtual-ctx",
-                "`virtual` requires a top-level root-param each directly inside a main-axis scroll row or col"
-                    .into(),
+                "`virtual` requires an each directly inside a main-axis scroll row or col".into(),
                 a.line,
             );
         }

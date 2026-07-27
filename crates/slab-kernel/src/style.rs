@@ -304,6 +304,14 @@ pub fn prune_node_state(d: &crate::slir::Doc, st: &mut crate::style::St) {
     }
 }
 
+fn refresh_virtual_window(d: &crate::slir::Doc, st: &mut crate::style::St, each: u32) {
+    let Some((_, _, parent)) = crate::list::virtual_config(d, &st.lists, each) else {
+        return;
+    };
+    let off = crate::style::scroll_get(st, parent);
+    crate::list::materialized_window(d, &mut st.lists, each, off);
+}
+
 fn refresh_virtual_windows(d: &crate::slir::Doc, st: &mut crate::style::St) {
     for each_index in 0..d.node_kind.len() {
         if d.node_kind[each_index] != crate::slir::K_EACH
@@ -312,11 +320,21 @@ fn refresh_virtual_windows(d: &crate::slir::Doc, st: &mut crate::style::St) {
             continue;
         }
         let each = u32::try_from(each_index).expect("node index exceeds u32");
-        let Some((_, _, parent)) = crate::list::virtual_config(d, &st.lists, each) else {
+        refresh_virtual_window(d, st, each);
+    }
+    let materialized_len = crate::list::materialized(&st.lists).len();
+    for index in 0..materialized_len {
+        let each = crate::list::materialized(&st.lists)[index];
+        let base = crate::list::base(&st.lists, d, each);
+        let Ok(base_index) = usize::try_from(base) else {
             continue;
         };
-        let off = crate::style::scroll_get(st, parent);
-        crate::list::materialized_window(d, &mut st.lists, each, off);
+        if d.node_kind.get(base_index) != Some(&crate::slir::K_EACH)
+            || d.node_flags.get(base_index).copied().unwrap_or(0) & crate::slir::F_VIRTUAL == 0
+        {
+            continue;
+        }
+        refresh_virtual_window(d, st, each);
     }
 }
 
