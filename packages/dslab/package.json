@@ -1,11 +1,22 @@
 {
    "name": "@stencil-hq/dslab",
-   "version": "1.0.0",
+   "version": "0.1.0",
+   "description": "Typed client and CLI for the Slab Drive Protocol (SDP) — drive a live slab kernel over TCP or stdio",
+   "keywords": [
+      "slab",
+      "sdp",
+      "drive",
+      "automation",
+      "cli"
+   ],
    "type": "module",
    "license": "MIT",
+   "homepage": "https://github.com/stencil-hq/slab",
+   "bugs": "https://github.com/stencil-hq/slab/issues",
    "repository": {
       "type": "git",
-      "url": "https://github.com/stencil-hq/slab"
+      "url": "https://github.com/stencil-hq/slab",
+      "directory": "packages/dslab"
    },
    "publishConfig": {
       "access": "public"

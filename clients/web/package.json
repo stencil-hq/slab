@@ -1,11 +1,22 @@
 {
    "name": "@stencil-hq/wslab",
    "version": "0.1.0",
+   "description": "Slab web driver — SlabElement base class, DOM painter, and Rust-kernel WASM glue for generated web components",
+   "keywords": [
+      "slab",
+      "ui",
+      "web-components",
+      "wasm",
+      "renderer"
+   ],
    "type": "module",
    "license": "MIT",
+   "homepage": "https://github.com/stencil-hq/slab",
+   "bugs": "https://github.com/stencil-hq/slab/issues",
    "repository": {
       "type": "git",
-      "url": "https://github.com/stencil-hq/slab"
+      "url": "https://github.com/stencil-hq/slab",
+      "directory": "clients/web"
    },
    "publishConfig": {
       "access": "public"

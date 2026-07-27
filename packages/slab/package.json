@@ -1,11 +1,23 @@
 {
    "name": "@stencil-hq/slab",
    "version": "0.1.0",
+   "description": "Slab compiler, static renderer, and code-generation CLI — WASM-bundled, no Rust toolchain required",
+   "keywords": [
+      "slab",
+      "ui",
+      "design-language",
+      "wasm",
+      "compiler",
+      "cli"
+   ],
    "type": "module",
    "license": "MIT",
+   "homepage": "https://github.com/stencil-hq/slab",
+   "bugs": "https://github.com/stencil-hq/slab/issues",
    "repository": {
       "type": "git",
-      "url": "https://github.com/stencil-hq/slab"
+      "url": "https://github.com/stencil-hq/slab",
+      "directory": "packages/slab"
    },
    "publishConfig": {
       "access": "public"
