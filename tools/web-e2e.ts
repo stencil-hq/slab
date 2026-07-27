@@ -937,13 +937,13 @@ const nestedReplay = await page.evaluate(() => {
          msg: 'Replay root',
          author: 'alice',
          active: true,
-         tags: [{ key: 'root', label: 'Stale root child', tone: '#9ca3af' }],
+         tags: [{ key: 'root', tag_label: 'Stale root child', tone: '#9ca3af' }],
          lines: [],
       },
    ]);
    const childAccepted = host.setList('commits', '0.tags', [
-      { key: 'direct-a', label: 'Direct child A', tone: '#22c55e' },
-      { key: 'direct-b', label: 'Direct child B', tone: '#3b82f6' },
+      { key: 'direct-a', tag_label: 'Direct child A', tone: '#22c55e' },
+      { key: 'direct-b', tag_label: 'Direct child B', tone: '#3b82f6' },
    ]);
    const ctor = host.constructor;
    if (!('slir' in ctor)) return { rootAccepted, childAccepted, loaded: false, cached: null };
@@ -959,9 +959,14 @@ const nestedReplay = await page.evaluate(() => {
    return { rootAccepted, childAccepted, loaded, cached: host.getList('commits', '0.tags') };
 });
 await page.waitForFunction(() => {
-   const host = document.getElementById('showcase-host');
-   const text = host?.shadowRoot?.querySelector('.slab-ops')?.textContent ?? '';
-   return text.includes('Direct child A') && text.includes('Direct child B');
+   const keys = [
+      ...(document
+         .getElementById('showcase-host')
+         ?.shadowRoot?.querySelectorAll<HTMLElement>('.slab-a11y-node') ?? []),
+   ].map((element) => element.dataset.slabKey ?? '');
+   return ['direct-a', 'direct-b'].every((key) =>
+      keys.some((sceneKey) => sceneKey.includes(`/tags~${key}/`)),
+   );
 });
 check(
    '(l) live swap replays parent before direct nested writes',

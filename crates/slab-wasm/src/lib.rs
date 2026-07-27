@@ -140,6 +140,7 @@ fn opts_with_assets(embed: bool, base_dir: &str, assets_json: &str) -> Options {
         embed_assets: embed,
         base_dir: base_dir.into(),
         assets,
+        fonts: HashMap::new(),
     }
 }
 

@@ -527,6 +527,7 @@ pub fn test_host_focus_binds_field_and_rejects_inert() {
     let mut eff = dispatch::effects_new();
     dispatch::caret_effects(&inst.doc, &inst.st, &inst.lay, &inst.sc, &inst.ds, &mut eff);
     assert!(eff.has_caret, "caret effects present after host focus");
+    assert_eq!(eff.focus, 0, "caret effects retain the focused field");
     assert!(
         frame::inst_set_focus(&mut inst, "", false),
         "empty key clears focus"

@@ -246,7 +246,7 @@ const mountedElements = new Set<SlabElement>();
 let fontSeq = 0;
 const CURSORS: readonly string[] = ['', 'pointer', 'text', 'col-resize', 'row-resize'];
 const F_FOCUSABLE = 1 << 6;
-const F_INERT = 1 << 7;
+const F_INERT = 1 << 5;
 const sceneKeyEncoder = new TextEncoder();
 
 /** Encodes every UTF-8 byte so stable scene identity, never synthetic node id, owns DOM identity. */

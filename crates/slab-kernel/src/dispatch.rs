@@ -784,6 +784,7 @@ pub fn caret_effects(d: &Doc, st: &St, lay: &Lay, sc: &Scene, ds: &DState, eff: 
     let advance = crate::textm::str_slice_w(d, font, size, tracking, &text, line_start, caret);
     let content_width = sc.w[scene_index] - pad_left - pad_right;
     let origin = sc.x[scene_index] + pad_left + (content_width - line_width) * align;
+    eff.focus = node;
     eff.has_caret = true;
     eff.caret_x = origin + advance - ds.ed[edit_index].scroll_x;
     eff.caret_y = sc.y[scene_index] + pad_top + f64::from(line) * line_height;
