@@ -9,6 +9,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      # npm trusted publishing exchanges this OIDC token for a scoped publish credential
+      id-token: write
     steps:
       - uses: actions/checkout@v7
       - uses: oven-sh/setup-bun@v2
@@ -20,7 +22,19 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - uses: extractions/setup-just@v4
       - run: bun install
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      # trusted publishing requires npm >= 11.5.1
+      - run: npm install -g npm@latest
       - run: just pack
+      - run: bunx playwright install chromium --with-deps
+      - run: bun scripts/pack-e2e.ts
+      - name: publish npm packages via trusted publishing
+        run: |
+          (cd clients/web && npm publish)
+          (cd packages/dslab && npm publish)
+          (cd packages/slab && npm publish)
       - run: just editors
       - name: attach editor plugins to the release
         run: |
