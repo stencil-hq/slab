@@ -262,8 +262,8 @@ fn insert_base_attr(d: &mut slir::Doc, node: usize, attr: u32, value: u32) {
 /// (leaf rect, static values, whole-cycle ease-in-out), `1` lifts as color
 /// keyframes, `2` binds a render-only container, `3` binds a patched geometry
 /// node, `4`+`5` share a node where only one would lift, `6` lifts with clamped
-/// stops, and `7` lifts a non-linear easing over interior stops via time
-/// remapping.
+/// stops, and `7` lifts a multi-op paragraph with non-linear easing over
+/// interior stops via time remapping.
 fn lift_doc() -> slir::Doc {
     let mut d = slir::doc_new();
     d.ok = true;
@@ -289,7 +289,7 @@ fn lift_doc() -> slir::Doc {
         slir::K_RECT,
         slir::K_RECT,
         slir::K_RECT,
-        slir::K_RECT,
+        slir::K_PARA,
     ]);
     d.node_flags.extend([0; 8]);
     d.node_parent.extend([slir::NONE, 0, 0, 0, 0, 0, 0, 0]);

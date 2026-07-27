@@ -993,7 +993,14 @@ fn refine_colors(
 fn lift_leaf(kind: u32) -> bool {
     matches!(
         kind,
-        slir::K_TEXT | slir::K_RECT | slir::K_IMG | slir::K_PATH
+        slir::K_TEXT
+            | slir::K_RECT
+            | slir::K_IMG
+            | slir::K_PATH
+            | slir::K_ICON
+            | slir::K_PARA
+            | slir::K_DIVIDER
+            | slir::K_SPACER
     )
 }
 
