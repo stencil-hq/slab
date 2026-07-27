@@ -492,6 +492,8 @@ mod wave0_api {
         instance.doc.strs[1] = "scroll".into();
         instance.doc.node_key[0] = 1;
         instance.doc.node_flags[0] = slir::F_SCROLL | slir::F_SCROLL_CROSS;
+        // Rebuild the key index after patching the fixture doc post-load.
+        crate::list::init(&instance.doc, &mut instance.st.lists);
 
         assert!(!frame::inst_set_scroll(&mut instance, "scroll", 2, 10.0));
         assert_eq!(frame::inst_get_scroll(&instance, "scroll", 2), 0.0);
@@ -525,6 +527,8 @@ mod wave0_api {
         instance.doc.strs[1] = "scroll".into();
         instance.doc.node_key[0] = 1;
         instance.doc.node_flags[0] = slir::F_SCROLL | slir::F_SCROLL_CROSS;
+        // Rebuild the key index after patching the fixture doc post-load.
+        crate::list::init(&instance.doc, &mut instance.st.lists);
         assert!(frame::inst_set_scroll(&mut instance, "scroll", 0, 150.0));
         assert!(frame::inst_set_scroll(&mut instance, "scroll", 1, 80.0));
         frame::inst_set_env(&mut instance, 100.0, 50.0, 0, false, false);

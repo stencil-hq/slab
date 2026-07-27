@@ -253,6 +253,61 @@ pub fn focusables(sc: &Scene, out: &mut Vec<u32>) {
 /// hosts can address `#diff-scroll` as `"diff-scroll"` without knowing the
 /// instantiation path.
 pub fn node_by_key(d: &Doc, lists: &State, key: &str) -> u32 {
+    if !key.is_empty() && list::key_index_ready(lists) {
+        if let Some(node) = list::key_index_get(lists, key) {
+            return node;
+        }
+        for &node in &lists.sy_id {
+            if list::item_ix(lists, d, node) >= 0 && key_eq(d, lists, node, key) {
+                return node;
+            }
+        }
+        if !key.contains('/') {
+            let want = key.strip_prefix('#').unwrap_or(key);
+            if let Some(node) = list::key_leaf_get(lists, want) {
+                return node;
+            }
+        }
+        return NONE;
+    }
+    node_by_key_scan(d, lists, key)
+}
+
+/// Reports whether a synthetic node's hierarchical key equals `key` without
+/// materializing it. Mirrors the `prefix~item/relative` shape built by
+/// [`key_of`].
+fn key_eq(d: &Doc, lists: &State, node: u32, key: &str) -> bool {
+    let each = list::each_of(lists, d, node);
+    if each == NONE {
+        let Some(&key_ref) = d
+            .node_key
+            .get(usize::try_from(node).expect("node id fits usize"))
+        else {
+            return false;
+        };
+        let key_index = usize::try_from(key_ref).expect("string reference does not fit usize");
+        return d.strs[key_index] == key;
+    }
+    let base = list::base(lists, d, node);
+    let relative_ref = d.node_key[usize::try_from(base).expect("base node id fits usize")];
+    let relative = &d.strs[usize::try_from(relative_ref).expect("string reference fits usize")];
+    let Some(prefix_item) = key.strip_suffix(relative.as_str()) else {
+        return false;
+    };
+    let Some(prefix_item) = prefix_item.strip_suffix('/') else {
+        return false;
+    };
+    let Some(each_key) = prefix_item.strip_suffix(list::item_key_ref(lists, d, node)) else {
+        return false;
+    };
+    let Some(each_key) = each_key.strip_suffix('~') else {
+        return false;
+    };
+    key_eq(d, lists, each, each_key)
+}
+
+/// Linear key resolution for states built without [`list::init`]'s index.
+fn node_by_key_scan(d: &Doc, lists: &State, key: &str) -> u32 {
     for (node, &key_ref) in d.node_key.iter().enumerate() {
         let key_index = usize::try_from(key_ref).expect("string reference does not fit usize");
         if d.strs[key_index] == key {

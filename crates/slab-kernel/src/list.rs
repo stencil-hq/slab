@@ -68,6 +68,13 @@ pub struct State {
     sy_deleted: Vec<u32>,
     prune_pending: bool,
     pub(crate) patches_by_node: Vec<Vec<usize>>,
+    /// Static authored keys mapped to their node; populated by [`init`].
+    key_index: HashMap<String, u32>,
+    /// First node per authored key's final `/` segment (with `#` stripped),
+    /// enabling bare-key lookup without a full scan.
+    key_leaf_index: HashMap<String, u32>,
+    /// Set by [`init`]; un-initialized states resolve keys by linear scan.
+    key_index_ready: bool,
     pub win_each: Vec<u32>,
     pub win_start: Vec<i32>,
     pub win_end: Vec<i32>,
@@ -205,6 +212,9 @@ pub fn state_new() -> State {
         sy_deleted: Vec::new(),
         prune_pending: false,
         patches_by_node: Vec::new(),
+        key_index: HashMap::default(),
+        key_leaf_index: HashMap::default(),
+        key_index_ready: false,
         win_each: Vec::new(),
         win_start: Vec::new(),
         win_end: Vec::new(),
@@ -1119,6 +1129,21 @@ pub fn init(d: &slir::Doc, s: &mut State) {
     for (patch, &node) in d.patch_node.iter().enumerate() {
         s.patches_by_node[usize::try_from(node).expect("node index exceeds usize")].push(patch);
     }
+    // First entry in node order wins, mirroring the linear key scans.
+    for (node, &key_ref) in d.node_key.iter().enumerate() {
+        let key = &d.strs[usize::try_from(key_ref).expect("string reference does not fit usize")];
+        if key.is_empty() {
+            continue;
+        }
+        let node = u32::try_from(node).expect("document has more than u32::MAX nodes");
+        s.key_index.entry(key.clone()).or_insert(node);
+        let leaf = key.rsplit('/').next().unwrap_or(key);
+        let leaf = leaf.strip_prefix('#').unwrap_or(leaf);
+        if !leaf.is_empty() {
+            s.key_leaf_index.entry(leaf.to_owned()).or_insert(node);
+        }
+    }
+    s.key_index_ready = true;
     s.li_next = u32::try_from(d.parm_type.len()).expect("parameter count exceeds u32");
     s.sy_next = u32::try_from(d.node_kind.len()).expect("node count exceeds u32");
     for param_ix in 0..d.parm_type.len() {
@@ -1188,10 +1213,30 @@ pub fn each_of(s: &State, d: &slir::Doc, node: u32) -> u32 {
 
 /// Returns the innermost stable item key represented by a synthetic node.
 pub fn item_key(s: &State, d: &slir::Doc, node: u32) -> String {
+    item_key_ref(s, d, node).to_owned()
+}
+
+/// Borrows the innermost stable item key represented by a synthetic node.
+pub fn item_key_ref<'a>(s: &'a State, d: &slir::Doc, node: u32) -> &'a str {
     if signed(node) >= 0 && signed(node) < len_i32(&d.node_kind) {
-        return String::new();
+        return "";
     }
-    synthetic_slot(s, node).map_or_else(String::new, |slot| s.sy_key[slot].clone())
+    synthetic_slot(s, node).map_or("", |slot| s.sy_key[slot].as_str())
+}
+
+/// Returns whether [`init`] populated the static key indexes.
+pub(crate) fn key_index_ready(s: &State) -> bool {
+    s.key_index_ready
+}
+
+/// Returns the indexed node for a full authored key.
+pub(crate) fn key_index_get(s: &State, key: &str) -> Option<u32> {
+    s.key_index.get(key).copied()
+}
+
+/// Returns the first node whose authored key's final segment matches `leaf`.
+pub(crate) fn key_leaf_get(s: &State, leaf: &str) -> Option<u32> {
+    s.key_leaf_index.get(leaf).copied()
 }
 
 fn synthetic_location(s: &State, d: &slir::Doc, node: u32) -> Option<(u32, i32)> {
