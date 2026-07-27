@@ -45,7 +45,7 @@
       "name": "tree-sitter-slab",
       "version": "0.1.0",
       "devDependencies": {
-        "tree-sitter-cli": "latest",
+        "tree-sitter-cli": "^0.26.11",
       },
     },
   },
