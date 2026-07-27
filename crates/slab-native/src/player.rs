@@ -861,10 +861,21 @@ impl App {
         let frame_tex = match surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(texture)
             | wgpu::CurrentSurfaceTexture::Suboptimal(texture) => texture,
-            wgpu::CurrentSurfaceTexture::Lost | wgpu::CurrentSurfaceTexture::Outdated => {
-                self.configure_surface();
+            // The drawable pool is exhausted; retry on the next display cycle
+            // instead of dropping the frame (an animating doc reschedules only
+            // after a successful draw).
+            wgpu::CurrentSurfaceTexture::Timeout => {
+                window.request_redraw();
                 return;
             }
+            wgpu::CurrentSurfaceTexture::Lost | wgpu::CurrentSurfaceTexture::Outdated => {
+                self.configure_surface();
+                window.request_redraw();
+                return;
+            }
+            // Occluded windows repaint via `WindowEvent::Occluded(false)`;
+            // retrying here would spin while hidden.
+            wgpu::CurrentSurfaceTexture::Occluded => return,
             error => {
                 eprintln!("slab-native: surface error: {error:?}");
                 return;
@@ -997,6 +1008,7 @@ impl ApplicationHandler<a11y::Event> for App {
                 return;
             }
         };
+        crate::surface::enable_transactional_presents(&surface);
         let Some((adapter, device, queue)) = crate::request_device(&instance, Some(&surface))
         else {
             eprintln!("slab-native: no wgpu adapter");
@@ -1046,13 +1058,18 @@ impl ApplicationHandler<a11y::Event> for App {
             }
             WindowEvent::Resized(_) => {
                 self.configure_surface();
-                if let Some(w) = &self.window {
-                    w.request_redraw();
-                }
+                // Draw inside the resize transaction so the frame commits with
+                // the new window bounds (see `surface::enable_transactional_presents`).
+                self.draw();
             }
             WindowEvent::ScaleFactorChanged { .. } => {
                 self.cursor_sample = None;
                 self.configure_surface();
+                self.draw();
+            }
+            WindowEvent::Occluded(false) => {
+                // Draws skipped while hidden never queue retries; repaint as
+                // soon as the window is visible again.
                 if let Some(window) = &self.window {
                     window.request_redraw();
                 }

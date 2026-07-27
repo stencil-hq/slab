@@ -18,6 +18,7 @@ pub mod gen_settings;
 pub mod holes;
 pub mod player;
 pub mod renderer;
+pub mod surface;
 pub mod tess;
 pub mod view;
 
