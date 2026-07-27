@@ -488,6 +488,11 @@ fn count(value: usize) -> i32 {
 }
 
 // Accessors and font metric selection.
+/// Borrows string-pool entry `i`.
+pub fn str_ref(d: &Doc, i: u32) -> &str {
+    d.strs[u32_index(i)].as_str()
+}
+
 /// Returns a copy of string-pool entry `i`.
 pub fn str_at(d: &Doc, i: u32) -> String {
     d.strs[u32_index(i)].clone()

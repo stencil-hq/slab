@@ -100,6 +100,10 @@ pub struct St {
     pub mo_off: Vec<i32>,
     pub mo_ln: Vec<i32>,
     pub mo_f: Vec<f64>,
+    /// Last overlay slot per (node, attr); mirrors the parallel arrays above.
+    mo_index: FxHashMap<(u32, u32), usize>,
+    /// Per-node text measurement results, valid only for identical inputs.
+    pub text_layout_cache: FxHashMap<u32, crate::textm::TextCacheEntry>,
     pub rs: Vec<crate::style::RStyle>,
     /// Grid track kinds: fixed, hug, fill, or percentage.
     pub track_kind: Vec<u32>,
@@ -164,6 +168,8 @@ pub fn st_new() -> crate::style::St {
         mo_off: vec![],
         mo_ln: vec![],
         mo_f: vec![],
+        mo_index: FxHashMap::default(),
+        text_layout_cache: FxHashMap::default(),
         rs: vec![],
         track_kind: vec![],
         track_v: vec![],
@@ -212,6 +218,8 @@ pub fn init_params(d: &crate::slir::Doc, st: &mut crate::style::St) {
     st.base_attr_values.clear();
     st.font_selection.clear();
     st.family_index.clear();
+    // Node ids and font indices alias across a doc swap; drop stale text.
+    st.text_layout_cache.clear();
     st.base_attr_values
         .extend((0..d.node_kind.len()).map(|node| authored_attr_values(d, node)));
     crate::list::init(d, &mut st.lists);
@@ -369,6 +377,7 @@ pub fn begin_solve(d: &crate::slir::Doc, st: &mut crate::style::St) {
     st.mo_off.clear();
     st.mo_ln.clear();
     st.mo_f.clear();
+    st.mo_index.clear();
     st.rs.clear();
     st.track_kind.clear();
     st.track_v.clear();
@@ -777,6 +786,7 @@ pub fn ov_push(
     st.mo_h.push(h);
     st.mo_off.push(off);
     st.mo_ln.push(ln);
+    st.mo_index.insert((node, attr), st.mo_node.len() - 1);
 }
 
 /// Reads a tuple element from the document, the motion overlay, or a
@@ -956,12 +966,7 @@ pub fn attr_ix(d: &crate::slir::Doc, st: &crate::style::St, node: u32, attr: u32
 /// Returns the last motion overlay value for a node attribute.
 #[inline]
 pub fn overlay_val(st: &crate::style::St, node: u32, attr: u32) -> crate::value::V {
-    let Some(index) = st
-        .mo_node
-        .iter()
-        .zip(&st.mo_attr)
-        .rposition(|(&candidate, &candidate_attr)| candidate == node && candidate_attr == attr)
-    else {
+    let Some(&index) = st.mo_index.get(&(node, attr)) else {
         return crate::value::missing();
     };
 
@@ -1145,12 +1150,22 @@ pub fn attr_num(
 
 /// Returns an enum keyword, or an empty string when absent or not an enum.
 pub fn attr_enum(d: &crate::slir::Doc, st: &crate::style::St, node: u32, attr: u32) -> String {
+    crate::style::attr_enum_ref(d, st, node, attr).into_owned()
+}
+
+/// Borrows an enum keyword, or an empty string when absent or not an enum.
+pub fn attr_enum_ref<'a>(
+    d: &'a crate::slir::Doc,
+    st: &'a crate::style::St,
+    node: u32,
+    attr: u32,
+) -> std::borrow::Cow<'a, str> {
     let v = crate::style::attr_val(d, st, node, attr);
     if v.tag == crate::slir::T_ENUM_SYM {
-        return crate::slir::str_at(d, v.h);
+        return std::borrow::Cow::Borrowed(crate::slir::str_ref(d, v.h));
     }
     if v.tag == crate::slir::T_PARAM_REF && d.parm_type[index_u32(v.h)] == 5 {
-        return st.pv_sym[index_u32(v.h)].clone();
+        return std::borrow::Cow::Borrowed(st.pv_sym[index_u32(v.h)].as_str());
     }
     if v.tag == crate::slir::T_PROP_REF {
         let x = crate::list::get_ref(
@@ -1160,20 +1175,30 @@ pub fn attr_enum(d: &crate::slir::Doc, st: &crate::style::St, node: u32, attr: u
             v.h,
         );
         if x.kind == 5u32 {
-            return x.sym.to_string();
+            return std::borrow::Cow::Borrowed(x.sym);
         }
     }
-    String::new()
+    std::borrow::Cow::Borrowed("")
 }
 
 /// Returns a string attribute, or an empty string when absent or not a string.
 pub fn attr_str(d: &crate::slir::Doc, st: &crate::style::St, node: u32, attr: u32) -> String {
+    crate::style::attr_str_ref(d, st, node, attr).into_owned()
+}
+
+/// Borrows a string attribute, or an empty string when absent or not a string.
+pub fn attr_str_ref<'a>(
+    d: &'a crate::slir::Doc,
+    st: &'a crate::style::St,
+    node: u32,
+    attr: u32,
+) -> std::borrow::Cow<'a, str> {
     let v = crate::style::attr_val(d, st, node, attr);
     if v.tag == crate::slir::T_STR {
-        return crate::slir::str_at(d, v.h);
+        return std::borrow::Cow::Borrowed(crate::slir::str_ref(d, v.h));
     }
     if v.tag == crate::slir::T_PARAM_REF && d.parm_type[index_u32(v.h)] == 0 {
-        return st.pv_str[index_u32(v.h)].clone();
+        return std::borrow::Cow::Borrowed(st.pv_str[index_u32(v.h)].as_str());
     }
     if v.tag == crate::slir::T_PROP_REF {
         let x = crate::list::get_ref(
@@ -1183,10 +1208,10 @@ pub fn attr_str(d: &crate::slir::Doc, st: &crate::style::St, node: u32, attr: u3
             v.h,
         );
         if x.kind == 0u32 {
-            return x.s.to_string();
+            return std::borrow::Cow::Borrowed(x.s);
         }
     }
-    String::new()
+    std::borrow::Cow::Borrowed("")
 }
 
 /// Resolves one authored image name against the runtime table before compiled sources.
@@ -1948,6 +1973,8 @@ pub fn is_container(kind: u32) -> bool {
 pub(crate) fn invalidate_font_selection(st: &mut crate::style::St) {
     st.font_selection.clear();
     st.family_index.clear();
+    // Font indices may alias different metrics after a table rebuild.
+    st.text_layout_cache.clear();
 }
 
 fn cached_family(d: &crate::slir::Doc, st: &mut crate::style::St, name: &str) -> Option<u32> {
@@ -2004,7 +2031,7 @@ pub fn build_rstyle(
     // Node kind supplies the axis default; an active axis attribute may
     // override it.
     let mut is_row = kind == crate::slir::K_ROW;
-    let ax = crate::style::attr_enum(d, st, node, crate::slir::A_AXIS);
+    let ax = crate::style::attr_enum_ref(d, st, node, crate::slir::A_AXIS);
     if crate::rt::str_eq(&ax, "row") {
         is_row = true;
     } else if crate::rt::str_eq(&ax, "col") {
@@ -2071,12 +2098,24 @@ pub fn build_rstyle(
     } else {
         st.rs[ri].gap = crate::value::num_of(&gap, 0.0f64);
     }
-    st.rs[ri].pack =
-        crate::style::pack_code(&crate::style::attr_enum(d, st, node, crate::slir::A_PACK));
-    st.rs[ri].align =
-        crate::style::align_code(&crate::style::attr_enum(d, st, node, crate::slir::A_ALIGN));
-    st.rs[ri].self_align =
-        crate::style::align_code(&crate::style::attr_enum(d, st, node, crate::slir::A_SELF));
+    st.rs[ri].pack = crate::style::pack_code(&crate::style::attr_enum_ref(
+        d,
+        st,
+        node,
+        crate::slir::A_PACK,
+    ));
+    st.rs[ri].align = crate::style::align_code(&crate::style::attr_enum_ref(
+        d,
+        st,
+        node,
+        crate::slir::A_ALIGN,
+    ));
+    st.rs[ri].self_align = crate::style::align_code(&crate::style::attr_enum_ref(
+        d,
+        st,
+        node,
+        crate::slir::A_SELF,
+    ));
     let off = crate::style::attr_val(d, st, node, crate::slir::A_OFFSET);
     if crate::style::is_tuple_v(off.tag) {
         st.rs[ri].offset_x = crate::style::tup_at(d, st, &off, 0i32);
@@ -2088,17 +2127,21 @@ pub fn build_rstyle(
         st.rs[ri].at_y = crate::style::tup_at(d, st, &at, 1i32);
         st.rs[ri].has_at = true;
     }
-    st.rs[ri].anchor =
-        crate::style::align_code(&crate::style::attr_enum(d, st, node, crate::slir::A_ANCHOR));
+    st.rs[ri].anchor = crate::style::align_code(&crate::style::attr_enum_ref(
+        d,
+        st,
+        node,
+        crate::slir::A_ANCHOR,
+    ));
     let has_attach = crate::style::attr_ix(d, st, node, crate::slir::A_ATTACH) >= 0;
     let attach = crate::style::attr_str(d, st, node, crate::slir::A_ATTACH);
-    let gravity = gravity_of(&crate::style::attr_enum(
+    let gravity = gravity_of(&crate::style::attr_enum_ref(
         d,
         st,
         node,
         crate::slir::A_GRAVITY,
     ));
-    let collide = crate::style::attr_enum(d, st, node, crate::slir::A_COLLIDE) != "none";
+    let collide = crate::style::attr_enum_ref(d, st, node, crate::slir::A_COLLIDE) != "none";
     st.rs[ri].has_attach = has_attach;
     st.rs[ri].attach = attach;
     st.rs[ri].gravity = gravity;
@@ -2147,7 +2190,7 @@ pub fn build_rstyle(
         st.rs[ri].stroke_h = sk.h;
     }
     st.rs[ri].stroke_w = crate::style::attr_num(d, st, node, crate::slir::A_STROKE_W, 1.0f64);
-    st.rs[ri].stroke_align = crate::style::stroke_align_code(&crate::style::attr_enum(
+    st.rs[ri].stroke_align = crate::style::stroke_align_code(&crate::style::attr_enum_ref(
         d,
         st,
         node,
@@ -2209,7 +2252,7 @@ pub fn build_rstyle(
             st.rs[ri].bmask_h = bmask.h;
         }
     }
-    st.rs[ri].scrollbar = crate::style::scrollbar_code(&crate::style::attr_enum(
+    st.rs[ri].scrollbar = crate::style::scrollbar_code(&crate::style::attr_enum_ref(
         d,
         st,
         node,
@@ -2241,11 +2284,16 @@ pub fn build_rstyle(
         family.tag,
         crate::slir::T_PARAM_REF | crate::slir::T_PROP_REF
     ) {
-        dynamic_family = crate::style::attr_str(d, st, node, crate::slir::A_FAMILY);
-        if let Some(index) = cached_family(d, st, &dynamic_family) {
+        let name = crate::style::attr_str_ref(d, st, node, crate::slir::A_FAMILY);
+        if let Some(&index) = st.family_index.get(name.as_ref()) {
             fam = index;
         } else {
-            dynamic_family_uninterned = true;
+            dynamic_family = name.into_owned();
+            if let Some(index) = cached_family(d, st, &dynamic_family) {
+                fam = index;
+            } else {
+                dynamic_family_uninterned = true;
+            }
         }
     }
     st.rs[ri].fam = fam;
@@ -2270,7 +2318,7 @@ pub fn build_rstyle(
     } else {
         cached_font(d, st, fam, weight)
     };
-    st.rs[ri].talign = crate::style::talign_code(&crate::style::attr_enum(
+    st.rs[ri].talign = crate::style::talign_code(&crate::style::attr_enum_ref(
         d,
         st,
         node,
@@ -2329,8 +2377,12 @@ pub fn build_rstyle(
         let line = st.rs[ri].line;
         st.rs[ri].img = resolve_image(d, st, node, line);
     }
-    st.rs[ri].fit =
-        crate::style::fit_code(&crate::style::attr_enum(d, st, node, crate::slir::A_FIT));
+    st.rs[ri].fit = crate::style::fit_code(&crate::style::attr_enum_ref(
+        d,
+        st,
+        node,
+        crate::slir::A_FIT,
+    ));
     let path_attr = crate::style::attr_ix(d, st, node, crate::slir::A_D);
     let encoded_path = crate::value::decode(d, path_attr);
     let path = if path_attr < 0 {
@@ -2356,21 +2408,24 @@ pub fn build_rstyle(
         st.rs[ri].path_min_y = min_y;
     }
     if kind == crate::slir::K_ICON {
-        let name = crate::style::attr_str(d, st, node, crate::slir::A_SRC);
+        let name = crate::style::attr_str_ref(d, st, node, crate::slir::A_SRC);
         if let Some(index) = d
             .icon_name
             .iter()
-            .rposition(|&candidate| crate::rt::str_eq(&crate::slir::str_at(d, candidate), &name))
+            .rposition(|&candidate| crate::slir::str_ref(d, candidate) == name)
         {
             st.rs[ri].icon = i32::try_from(index).expect("icon index exceeds i32");
-        } else if st.icon_missing.insert(name.clone()) {
-            let line = st.rs[ri].line;
-            crate::style::warn(
-                st,
-                "icon-missing",
-                &format!("icon '{name}' is not declared"),
-                line,
-            );
+        } else {
+            let owned = name.into_owned();
+            if st.icon_missing.insert(owned.clone()) {
+                let line = st.rs[ri].line;
+                crate::style::warn(
+                    st,
+                    "icon-missing",
+                    &format!("icon '{owned}' is not declared"),
+                    line,
+                );
+            }
         }
     }
     let cols = crate::style::attr_val(d, st, node, crate::slir::A_COLS);
