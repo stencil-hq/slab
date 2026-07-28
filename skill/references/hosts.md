@@ -378,6 +378,42 @@ browser's text actions. The textarea returns to the kernel IME rectangle after
 the event. An authored `context=field_menu` still emits its named
 `CustomEvent`; do not add a second pointer handler or cancel that signal.
 
+### Bundler plugins & React wrappers
+
+Import `.slab` files directly in JS/TS using Vite or Bun plugins:
+
+```ts
+// vite.config.ts
+import slab from '@stencil-hq/slab/vite';
+export default { plugins: [slab()] };
+```
+
+```ts
+// bunfig.toml or plugin registration
+import slab from '@stencil-hq/slab/bun';
+Bun.plugin(slab());
+```
+
+Bundler imports compile the `.slab` source at build/serve time via the WASM compiler, returning the web-component JS module while generating typed declaration files (`<name>.d.slab.ts`). Enable `"allowArbitraryExtensions": true` in `tsconfig.json` for typed imports. In Vite dev mode, hot updates reload the SLIR bytes live through `SlabElement.hotReplaceSlir(bytes)` on mounted DOM elements without re-registering custom elements.
+
+Generate typed React component wrappers with `slab gen react FILE -o DIR`:
+
+```tsx
+import { Settings } from './dist/settings';
+
+function App() {
+  return (
+    <Settings
+      title="Preferences"
+      compact={true}
+      onSave={(detail) => console.log('Saved', detail.item)}
+    />
+  );
+}
+```
+
+The generated TSX wraps the underlying custom element, passing params as properties and wiring signal listeners cleanly via React effects.
+
 ## Rust hosts
 
 `slab gen rust FILE -o OUT.rs` emits a typed `Doc` with scalar setters,
@@ -391,6 +427,28 @@ shared `SignalMeta`, and these clean-cutover methods:
 and `dispatch`. `Doc.inst` remains public for the complete kernel API and
 scene-string pool. `crates/slab-native` is the reference winit/wgpu driver;
 `slab-tui` is the reference terminal driver.
+
+### Proc macro (`include_doc!`)
+
+Compile `.slab` sources directly into Rust binaries at compile time without offline codegen:
+
+```rust
+use slab_macro::include_doc;
+
+// Emits a module named `settings` from `ui/settings.slab`
+include_doc!("ui/settings.slab");
+
+// Or specify an explicit module name:
+// include_doc!(SettingsDoc, "ui/settings.slab");
+
+fn main() {
+    let mut doc = settings::Doc::new();
+    doc.set_title("App Settings");
+}
+```
+
+The macro resolves paths relative to `CARGO_MANIFEST_DIR`, compiles via `slab-compile`, formats compiler diagnostics at the callsite if compilation fails, and includes bytes for Cargo rebuild tracking.
+
 
 ### Depending on Slab
 
@@ -482,6 +540,29 @@ let ui = Ui {
     gallery: None,
 };
 slab_tui::run(&mut inst, &mut app, images, &ui)?;
+```
+
+### Ratatui integration (`slab-ratatui`)
+
+Embed Slab documents inside existing Ratatui TUI applications using `SlabWidget` and `SlabState`:
+
+```rust
+use ratatui::Frame;
+use slab_ratatui::{SlabState, SlabWidget};
+
+let mut slab_state = SlabState::from_file(Path::new("ui/dashboard.slab"))?;
+
+// In Ratatui render loop:
+frame.render_stateful_widget(SlabWidget, area, &mut slab_state);
+
+// In Ratatui event loop:
+slab_state.handle_event(&crossterm_event, area);
+for signal in slab_state.drain_signals() {
+    match signal {
+        slab_tui::Signal::Button { key, .. } => handle_click(&key),
+        _ => {}
+    }
+}
 ```
 
 Use `Terminal`, `Painter`, `translate`, and `resize` directly for a custom

@@ -1,6 +1,6 @@
 ---
 name: slab
-description: "Writing, editing, and rendering Slab documents (.slab) — the declarative design language for app screens, posters, terminal UIs, and interactive components. Use when authoring or modifying .slab files, rendering via the slab CLI (`bunx @stencil-hq/slab` or `slab-cli`: svg/png/apng/tui), embedding via generated web components (`slab gen wc`) or typed Rust modules (`slab gen rust`), declaring the typed host surface (params, list/each, holes, signals, themes), working on the conformance corpus, or debugging Slab diagnostics and layout."
+description: "Writing, editing, and rendering Slab documents (.slab) — the declarative design language for app screens, posters, terminal UIs, and interactive components. Use when authoring or modifying .slab files, rendering via the slab CLI (`bunx @stencil-hq/slab` or `slab-cli`: svg/png/apng/tui), bundling via Vite/Bun plugins (`@stencil-hq/slab/vite`, `@stencil-hq/slab/bun`), embedding via generated web components (`slab gen wc`), typed React components (`slab gen react`), typed Rust modules (`slab gen rust`), `include_doc!` proc-macros, or Ratatui widgets (`slab-ratatui`), declaring the typed host surface (params, list/each, holes, signals, themes), working on the conformance corpus, or debugging Slab diagnostics and layout."
 ---
 
 # Slab
@@ -60,8 +60,9 @@ bunx @stencil-hq/slab check doc.slab      # ALWAYS run after editing
 
 Output kind infers from the extension (`.svg .png .apng .txt`); `--client tui`
 with no `-o` prints cells to stdout. `check` validates the main document and
-each `export` definition through its standalone path. Diagnostics keep the
-source filename and identify the export. In this repo the native CLI is
+each `export` definition through its standalone path. Code generators produce
+typed web components (`slab gen wc`), React wrappers (`slab gen react`), or
+Rust modules (`slab gen rust`). In this repo the native CLI is
 `cargo run -p slab-cli --` (adds `fmt`, `conformance`, `lsp`, `--theme`,
 `--font`).
 
