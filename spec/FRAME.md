@@ -417,7 +417,7 @@ Rect(OpRect)         { node, x, y, w, h, radius,
 Text(OpText)         { node, x, y_baseline, str_ref, measured_w,
                        font (FONT table index, -1 none), size,
                        weight (the selected table's weight),
-                       tracking, color, opacity,           // one op PER LINE
+                       tracking, color, opacity, strike,   // one op PER LINE
                        color_kind (1 solid: color = rgba8 |
                                    2 gradient: color = GRAD index),
                        gx, gy, gw, gh }   // gradient box = the text NODE's
@@ -450,6 +450,11 @@ SceneNode { node, parent_ix (scene index, -1 root), kind (SLIR kind),
             modal, live, live_atomic, level, pos_in_set, set_size,
             disabled, focused }
 ```
+
+`OpText.strike` defaults to false. When true, the renderer paints one
+line-through across `measured_w`. A renderer without native deterministic text
+decoration draws a horizontal rule centered at `y_baseline - 0.3·size`, with
+thickness `max(1 device pixel, size/16)`, using the text paint and opacity.
 
 - **Paint** is a `(kind, handle)` pair instead of a nested enum:
   `0 none | 1 solid (handle = rgba8) | 2 gradient (handle = GRAD index)`.

@@ -516,6 +516,7 @@ Small closed set; everything else is composition.
 | `color` | text | text color **or gradient paint** — gradient text maps the paint over the text node's content box (all lines share one box). **Inherits** |
 | `family` | text | authored family name. **Inherits**; runtime registration may provide its actual face (§11.1) |
 | `size`, `weight`, `leading`, `tracking` | text | font metrics. **Inherit** (leading = line-height multiplier, default 1.4; tracking = letter-spacing in u, after every glyph) |
+| `strike` | text | boolean line-through decoration (default `false`). **Inherits**; bare `strike` means `true` |
 | `style` | any node | token group applied as an attribute bundle, e.g. `style=text.title`, `style=card.raised`. Explicit attrs win |
 | `align-text` | text | `start\|center\|end` within the text box |
 | `rotate` | any node | rotation in degrees about the node's center. **Quarter turns (±90/270) are layout-aware**: the node measures against swapped constraints and occupies its rotated bounding box — a spine caption authors in place inside its strip. **Arbitrary angles are ink-only** (§6.1's third overlap opt-in): geometry untouched, paint tilts. TUI skips rotated subtrees (`cap-transform`) — redesign with `when tui` |
@@ -795,7 +796,7 @@ Ops carry absolute document coordinates.
 | op | payload (abridged; exact fields in spec/FRAME.md) |
 |---|---|
 | `Rect` | x y w h radius smooth; bg/stroke paint; stroke w/align/sides/dash; shadow run; opacity; grain amount/size |
-| `Text` | x, y_baseline, string ref, measured width, font table index, size/weight/tracking, color (solid rgba8 or gradient handle + gradient box), opacity — one op per line |
+| `Text` | x, y_baseline, string ref, measured width, font table index, size/weight/tracking, color (solid rgba8 or gradient handle + gradient box), opacity, strike — one op per line |
 | `Image` | x y w h, image handle, fit, radius, opacity, smooth |
 | `PathDraw` | dx dy, path handle (`>=0` document PATH, `<0` complemented `paths_rt` index), bg/stroke paint, stroke-w, dash, opacity |
 | `ClipPush {x y w h radius smooth}` / `ClipPop` | rounded/squircle-rect clip chain |

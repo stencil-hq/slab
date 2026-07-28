@@ -238,7 +238,7 @@ The attribute id mapping is shared by `crates/slab-slir/src/attrs.rs` and
 74 checked      75 expanded      76 selected      77 active-descendant
 78 controls     79 value-now     80 value-min     81 value-max     82 value-text
 83 modal        84 live          85 live-atomic   86 level         87 pos-in-set
-88 set-size      89 animate
+88 set-size      89 animate       90 strike
 ```
 
 `style=`, `key=`, and `transition=` do not appear in attribute runs: styles
@@ -246,8 +246,8 @@ are folded at compile time, keys become `node_key`, and transitions use their
 motion fields. Signal binders and `animate=` are registered in their static
 signal or binding pools and also encode their selected name as a `Str` in the
 corresponding base or `when` patch attribute channel. Attribute 89 is the
-internal animation-binding channel. `each` is `Num(parameter index)` on an
-`Each` node.
+internal animation-binding channel. Attribute 90 is the authorable inherited
+boolean `strike` text style. `each` is `Num(parameter index)` on an `Each` node.
 
 `family` is `Str` carrying the authored family name. `src` is `Str` and has a
 matching image row. The remaining AVAL forms follow the source-language rules:

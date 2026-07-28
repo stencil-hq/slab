@@ -371,14 +371,12 @@ state. Cmd/Ctrl-A, C, X, and V keep the hidden selection, system clipboard,
 and kernel field synchronized.
 
 Secondary pointer down reaches the kernel as `button=2` and does not clear
-field focus or selection. The component does not cancel the browser
-`contextmenu` event. However, Slab visuals are painted elements and the
-invisible textarea is not the pointer event target. Therefore, browsers show
-their ordinary page menu, not a dependable native text-edit menu. For an
-editing menu, author `context=field_menu` and listen for that named
-`CustomEvent`; use `detail.meta.key` with `fieldText`/`setFieldText`, and use
-the Clipboard API for host menu commands. Do not add a second pointer handler
-or cancel the authored Context signal.
+field focus or selection. Before `contextmenu`, the component places the
+invisible textarea under the pointer while preserving its selection. The
+uncancelled browser event therefore targets the native editor and exposes the
+browser's text actions. The textarea returns to the kernel IME rectangle after
+the event. An authored `context=field_menu` still emits its named
+`CustomEvent`; do not add a second pointer handler or cancel that signal.
 
 ## Rust hosts
 
