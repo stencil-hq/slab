@@ -5,7 +5,7 @@
 //! become 5, 2.5, 8, and 6 units.
 
 use crate::{
-	flatten::{self, FrameOp},
+	flatten::{self, FrameGlyph, FrameOp},
 	frame, graphemes,
 	slir::{self, Doc},
 	test_cells,
@@ -184,8 +184,13 @@ pub fn test_default_advance() {
 	instance.doc = modifier_doc;
 	let mut output = flatten::frame_new();
 	output.strings.push("\u{200D}\u{FE0E}".to_owned());
+	output.glyphs.extend([
+		FrameGlyph { font: 0, gid: 0, cluster: 0, x: 10.0, y: 12.0, size: 10.0 },
+		FrameGlyph { font: 0, gid: 0, cluster: 1, x: 10.0, y: 12.0, size: 10.0 },
+	]);
 	let mut op = test_cells::text_op(10.0, 12.0, 0, 0);
 	op.font = 0;
+	op.glyph_len = 2;
 	output.ops.push(FrameOp::Text(op));
 	let glyphs = frame::text_glyphs(&instance, &output, 0);
 	assert_eq!(glyphs.len(), 2, "both modifiers remain addressable");
@@ -266,6 +271,91 @@ pub fn test_fallback_advance_eaw() {
 		textm::char_w(&doc, 0, 10.0, 0.0, 97),
 		5.0,
 		"covered advances ignore the family class"
+	);
+}
+
+/// Verifies visual bidi reordering while source clusters remain logical.
+pub fn test_bidi_visual_order() {
+	let doc = font_doc();
+	let chars: Vec<u32> = "abc אבג".chars().map(u32::from).collect();
+	let shaped = textm::shape_line(
+		&doc,
+		0,
+		10.0,
+		0.0,
+		&chars,
+		0,
+		0,
+		i32::try_from(chars.len()).expect("text fits i32"),
+	);
+	let starts: Vec<i32> = shaped.clusters.iter().map(|cluster| cluster.start).collect();
+	assert_eq!(starts, [0, 1, 2, 3, 6, 5, 4], "RTL clusters paint in visual order");
+	assert!(shaped.runs.iter().any(|run| run.rtl), "frame splits an RTL shaped run");
+	let layout = measure(&doc, "abc אבג", 200.0, false, false, -1);
+	let mut editor = crate::edit::es_new(0, "abc אבג");
+	editor.caret = 7;
+	editor.anchor = 7;
+	crate::edit::visual_step(&mut editor, &layout, 1, false);
+	assert_eq!(editor.caret, 6, "ArrowRight follows the RTL visual run");
+	crate::edit::visual_step(&mut editor, &layout, -1, false);
+	assert_eq!(editor.caret, 7, "ArrowLeft reverses the same visual step");
+}
+
+/// Verifies grapheme clusters are indivisible for wrapping and caret geometry.
+pub fn test_cluster_aware_wrap_and_caret() {
+	let doc = font_doc();
+	let layout = measure(&doc, "a\u{301}b", 6.0, true, false, -1);
+	assert_eq!(layout.ls.len(), 2, "oversized grapheme stays intact");
+	assert_eq!(line_str(&layout, 0), "a\u{301}", "hard wrap does not split combining marks");
+	assert_eq!(
+		layout.shaped[0]
+			.clusters
+			.iter()
+			.map(|cluster| (cluster.start, cluster.end))
+			.collect::<Vec<_>>(),
+		[(0, 2)],
+		"base and combining mark expose one caret cluster"
+	);
+	assert_eq!(
+		textm::caret_x(&layout, 0, 1),
+		layout.shaped[0].width,
+		"an interior source offset snaps past the cluster"
+	);
+	assert_eq!(
+		textm::selection_bands(&layout, 0, 1, 2),
+		[(0.0, layout.shaped[0].width)],
+		"partial logical selection paints the whole cluster"
+	);
+}
+
+/// Verifies missing graphemes select the next registered font table.
+pub fn test_font_fallback_splits_shaped_runs() {
+	let mut doc = font_doc();
+	doc.font_family.push(0);
+	doc.font_class.push(0);
+	doc.font_weight.push(400);
+	doc.font_upem.push(1000);
+	doc.font_ascent.push(800);
+	doc.font_descent.push(-200);
+	doc.font_line_gap.push(0);
+	doc.font_default_adv.push(600);
+	doc.font_cmap_off
+		.push(i32::try_from(doc.font_cmap_cp.len()).expect("cmap fits i32"));
+	doc.font_cmap_len.push(1);
+	doc.font_cmap_cp.push(0x2715);
+	doc.font_cmap_gid.push(99);
+	doc.font_adv.push(500);
+
+	let chars: Vec<u32> = "a✕b".chars().map(u32::from).collect();
+	let shaped = textm::shape_line(&doc, 0, 10.0, 0.0, &chars, 0, 0, 3);
+	assert_eq!(
+		shaped.runs.iter().map(|run| run.font).collect::<Vec<_>>(),
+		[0, 1, 0],
+		"fallback face becomes a distinct positioned run"
+	);
+	assert_eq!(
+		shaped.runs[1].glyphs[0].gid, 99,
+		"fallback cmap supplies the emitted glyph"
 	);
 }
 

@@ -3,7 +3,7 @@
 //! and structural `when` branches on bool list fields select per item.
 
 use slab_compile::{Options, compile};
-use slab_kernel::{flatten::FrameOp, frame};
+use slab_kernel::{flatten::FrameOp, frame, textm};
 
 fn compile_instance(source: &str, width: f64, height: f64) -> frame::Instance {
 	let (slir, diagnostics) =
@@ -445,5 +445,61 @@ col {
 			.all(|diagnostic| diagnostic.code != "glyph-missing"),
 		"{:?}",
 		second.diagnostics
+	);
+}
+
+#[test]
+fn kernel_shapes_kerning_and_emits_visual_bidi_runs() {
+	let mut instance = compile_instance(
+		r#"col w=300 h=60 { text "AV office אבג" nowrap }"#,
+		300.0,
+		60.0,
+	);
+	let rendered = frame::inst_frame(&mut instance, 0.0);
+	let runs: Vec<_> = rendered
+		.ops
+		.iter()
+		.filter_map(|operation| match operation {
+			FrameOp::Text(text) => Some((text, &rendered.strings[text.str_ref as usize])),
+			_ => None,
+		})
+		.collect();
+	let (latin, _) = runs
+		.iter()
+		.find(|(_, content)| content.contains("AV"))
+		.expect("Latin shaped run");
+	let nominal_width: f64 = runs
+		.iter()
+		.find(|(_, content)| content.contains("AV"))
+		.expect("Latin shaped run")
+		.1
+		.chars()
+		.map(|codepoint| {
+			textm::char_w(
+				instance.doc(),
+				latin.font,
+				latin.size,
+				latin.tracking,
+				u32::from(codepoint),
+			)
+		})
+		.sum();
+	assert!(
+		(latin.measured_w - nominal_width).abs() > 0.01,
+		"OpenType kerning must replace nominal codepoint advances"
+	);
+	let (rtl, _) = runs
+		.iter()
+		.find(|(text, content)| text.rtl && content.contains('א'))
+		.expect("RTL shaped run");
+	let start = usize::try_from(rtl.glyph_off).expect("glyph offset");
+	let end = start + usize::try_from(rtl.glyph_len).expect("glyph count");
+	let clusters: Vec<_> = rendered.glyphs[start..end]
+		.iter()
+		.map(|glyph| glyph.cluster)
+		.collect();
+	assert!(
+		clusters.windows(2).all(|pair| pair[0] >= pair[1]),
+		"RTL glyph clusters must be in visual order: {clusters:?}"
 	);
 }

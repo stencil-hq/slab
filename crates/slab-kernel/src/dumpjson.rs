@@ -252,6 +252,9 @@ pub fn emit_text(out: &mut Vec<u32>, fr: &flatten::Frame, t: &flatten::OpText) {
 		emit_num(out, t.underline_thickness);
 		out.push(OBJECT_CLOSE);
 	}
+	if t.rtl {
+		emit(out, ",\"rtl\":true");
+	}
 	if t.uncov_len > 0 {
 		emit(out, ",\"uncovered\":[");
 		for run in 0..t.uncov_len {

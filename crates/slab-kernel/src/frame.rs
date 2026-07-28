@@ -24,7 +24,6 @@ use crate::{
 	scene::Scene,
 	slir::{self, Doc},
 	style::{self, St},
-	textm,
 };
 
 /// Mutable state for one decoded document and its most recent solve.
@@ -1733,41 +1732,35 @@ pub fn inst_take_signals(i: &mut Instance) -> Effects {
 	dispatch::take_pending_signals(&mut i.ds)
 }
 
-/// Returns glyph positions for a text frame operation.
+/// Returns the OpenType-shaped glyph positions for a text frame operation.
 ///
-/// GPU drivers receive a per-codepoint advance walk using the same font table
-/// as the solver. `op` indexes `fr.ops` and must name a text operation; any
-/// other index or operation yields an empty vector.
-pub fn text_glyphs(i: &Instance, fr: &Frame, op: i32) -> Vec<GlyphPos> {
+/// `op` indexes `fr.ops` and must name a text operation; any other index or
+/// operation yields an empty vector. Positions are already in visual order,
+/// including bidi reordering, kerning, ligatures, and font fallback.
+pub fn text_glyphs(_i: &Instance, fr: &Frame, op: i32) -> Vec<GlyphPos> {
 	let Ok(op) = usize::try_from(op) else {
 		return Vec::new();
 	};
 	let Some(FrameOp::Text(text)) = fr.ops.get(op) else {
 		return Vec::new();
 	};
-	if text.font < 0 {
+	let (Ok(start), Ok(length)) = (
+		usize::try_from(text.glyph_off),
+		usize::try_from(text.glyph_len),
+	) else {
 		return Vec::new();
-	}
-
-	let string_index = usize::try_from(text.str_ref).expect("negative frame string index");
-	let mut x = text.x;
-	fr.strings[string_index]
-		.chars()
-		.map(|character| {
-			let codepoint = u32::from(character);
-			let glyph = GlyphPos {
-				font: text.font,
-				gid: if graphemes::is_glyph_modifier(codepoint) {
-					0
-				} else {
-					slir::font_gid(&i.doc, text.font, codepoint)
-				},
-				x,
-				y: text.y_baseline,
-				size: text.size,
-			};
-			x += textm::char_w(&i.doc, text.font, text.size, text.tracking, codepoint);
-			glyph
+	};
+	let Some(glyphs) = fr.glyphs.get(start..start.saturating_add(length)) else {
+		return Vec::new();
+	};
+	glyphs
+		.iter()
+		.map(|glyph| GlyphPos {
+			font: glyph.font,
+			gid: glyph.gid,
+			x: glyph.x,
+			y: glyph.y,
+			size: glyph.size,
 		})
 		.collect()
 }

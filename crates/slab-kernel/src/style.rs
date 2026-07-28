@@ -2922,7 +2922,7 @@ mod attribute_cache_tests {
 
 		// 1. Query attr_ix before prepare_attrs (effective_attr_node is NONE)
 		assert_eq!(st.effective_attr_node, crate::slir::NONE);
-		assert_eq!(attr_ix(&doc, &st, 0, crate::slir::A_CANCEL), 0);
+		assert_eq!(attr_ix(&doc, &st, 0, crate::slir::A_UNDERLINE), 0);
 
 		// 2. Prepare effective attrs for node 0 (active effective_attr_node path)
 		prepare_attrs(&doc, &mut st, 0);

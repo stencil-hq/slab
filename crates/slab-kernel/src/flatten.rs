@@ -92,6 +92,12 @@ pub struct OpText {
 	pub uncov_off:  i32,
 	/// Number of uncovered-glyph codepoint runs in [`Frame::uncovered`].
 	pub uncov_len:  i32,
+	/// Start of this run's positioned glyphs in [`Frame::glyphs`].
+	pub glyph_off:  i32,
+	/// Number of positioned glyphs in [`Frame::glyphs`].
+	pub glyph_len:  i32,
+	/// Whether this run has right-to-left glyph order.
+	pub rtl:        bool,
 }
 
 /// A positioned image operation.
@@ -286,6 +292,17 @@ pub struct SceneNode {
 	pub editable:       bool,
 }
 
+/// One frame-local shaped glyph.
+#[derive(Clone, Debug, Serialize)]
+pub struct FrameGlyph {
+	pub font:    i32,
+	pub gid:     u32,
+	pub cluster: i32,
+	pub x:       f64,
+	pub y:       f64,
+	pub size:    f64,
+}
+
 /// One frame-local runtime path.
 #[derive(Clone, Debug, Serialize)]
 pub struct RtPath {
@@ -315,6 +332,8 @@ pub struct Frame {
 	/// Flat `[start, end)` codepoint-offset pairs of uncovered-glyph runs,
 	/// addressed by [`OpText::uncov_off`] and [`OpText::uncov_len`].
 	pub uncovered:   Vec<u32>,
+	/// Positioned glyphs addressed by [`OpText::glyph_off`] and [`OpText::glyph_len`].
+	pub glyphs:      Vec<FrameGlyph>,
 	/// Runtime paths referenced by negative [`OpPath::path`] values.
 	pub paths_rt:    Vec<RtPath>,
 	/// Diagnostics observed for this frame. Runtime notes may be one-shot.
@@ -340,6 +359,7 @@ impl Frame {
 		self.scene.clear();
 		self.string_pool.append(&mut self.strings);
 		self.uncovered.clear();
+		self.glyphs.clear();
 		self.path_pool.append(&mut self.paths_rt);
 		self.diagnostics.clear();
 		self.p_ox.clear();
@@ -356,6 +376,7 @@ pub const fn frame_new() -> Frame {
 		scene:         Vec::new(),
 		strings:       Vec::new(),
 		uncovered:     Vec::new(),
+		glyphs:        Vec::new(),
 		paths_rt:      Vec::new(),
 		diagnostics:   Vec::new(),
 		string_pool:   Vec::new(),
@@ -489,6 +510,25 @@ pub fn push_str_slice(fr: &mut Frame, chars: &[u32], a: i32, b: i32) -> i32 {
 	}
 	fr.strings.push(pooled);
 	count(fr.strings.len()).wrapping_sub(1)
+}
+
+fn push_shaped_glyphs(
+	fr: &mut Frame,
+	run: &textm::ShapedRun,
+	origin_x: f64,
+	baseline: f64,
+	size: f64,
+) -> (i32, i32) {
+	let offset = count(fr.glyphs.len());
+	fr.glyphs.extend(run.glyphs.iter().map(|glyph| FrameGlyph {
+		font: glyph.font,
+		gid: glyph.gid,
+		cluster: glyph.cluster,
+		x: origin_x + glyph.x,
+		y: baseline + glyph.y,
+		size,
+	}));
+	(offset, count(fr.glyphs.len()).wrapping_sub(offset))
 }
 
 /// Emits a visible, undecorated solid rectangle.
@@ -1068,11 +1108,6 @@ fn walk_node(
 		let text_layout = &l.tls[index(l.p_tl[pi])];
 		let content_width = w - padding_left - padding_right;
 		let alignment = text_alignment_factor(rule.talign);
-		let font_weight = if rule.font >= 0 {
-			d.font_weight[index(rule.font)]
-		} else {
-			truncate_u32(rule.weight)
-		};
 
 		// The focused field's selection paints as one half-alpha band of
 		// the text color per visual line, before the glyphs (SPEC §15.6).
@@ -1124,52 +1159,64 @@ fn walk_node(
 
 		for line in 0..count(text_layout.ls.len()) {
 			let line_index = index(line);
-			let start = text_layout.ls[line_index];
-			let end = text_layout.le[line_index];
-			if end <= start {
-				continue;
+			let line_origin = (content_width - text_layout.line_w[line_index])
+				.mul_add(alignment, x + padding_left)
+				- field_scroll_x;
+			let baseline = f64::from(line)
+				.mul_add(text_layout.line_h, y + padding_top + text_layout.ascent);
+			for run in &text_layout.shaped[line_index].runs {
+				if run.end <= run.start {
+					continue;
+				}
+				let string_ref = push_str_slice(fr, &text_layout.chars, run.start, run.end);
+				let (uncov_off, uncov_len) = push_uncovered_runs(d, fr, run.font, string_ref);
+				let (glyph_off, glyph_len) =
+					push_shaped_glyphs(fr, run, line_origin, baseline, rule.size);
+				let (underline_offset, underline_thickness) =
+					textm::underline_geometry(d, run.font, rule.size);
+				let font_weight = if run.font >= 0 {
+					d.font_weight[index(run.font)]
+				} else {
+					truncate_u32(rule.weight)
+				};
+				let mut text_op = OpText {
+					node,
+					x: line_origin + run.x,
+					y_baseline: baseline,
+					str_ref: string_ref,
+					measured_w: run.width,
+					font: run.font,
+					size: rule.size,
+					weight: font_weight,
+					tracking: rule.tracking,
+					color: rule.color,
+					opacity: 1.0,
+					strike: rule.strike,
+					italic: rule.italic,
+					underline: rule.underline,
+					underline_offset,
+					underline_thickness,
+					color_kind: rule.color_kind,
+					gx: 0.0,
+					gy: 0.0,
+					gw: 0.0,
+					gh: 0.0,
+					uncov_off,
+					uncov_len,
+					glyph_off,
+					glyph_len,
+					rtl: run.rtl,
+				};
+				if rule.color_kind == 2 {
+					// The gradient spans the node's content box so every line
+					// samples one continuous ramp.
+					text_op.gx = x + padding_left;
+					text_op.gy = y + padding_top;
+					text_op.gw = content_width;
+					text_op.gh = h - padding_top - padding_bottom;
+				}
+				fr.ops.push(FrameOp::Text(text_op));
 			}
-			let string_ref = push_str_slice(fr, &text_layout.chars, start, end);
-			let measured_width = text_layout.line_w[line_index];
-			let (uncov_off, uncov_len) = push_uncovered_runs(d, fr, rule.font, string_ref);
-			let (underline_offset, underline_thickness) =
-				textm::underline_geometry(d, rule.font, rule.size);
-			let mut text_op = OpText {
-				node,
-				x: (content_width - measured_width).mul_add(alignment, x + padding_left)
-					- field_scroll_x,
-				y_baseline: f64::from(line)
-					.mul_add(text_layout.line_h, y + padding_top + text_layout.ascent),
-				str_ref: string_ref,
-				measured_w: measured_width,
-				font: rule.font,
-				size: rule.size,
-				weight: font_weight,
-				tracking: rule.tracking,
-				color: rule.color,
-				opacity: 1.0,
-				strike: rule.strike,
-				italic: rule.italic,
-				underline: rule.underline,
-				underline_offset,
-				underline_thickness,
-				color_kind: rule.color_kind,
-				gx: 0.0,
-				gy: 0.0,
-				gw: 0.0,
-				gh: 0.0,
-				uncov_off,
-				uncov_len,
-			};
-			if rule.color_kind == 2 {
-				// The gradient spans the node's content box so every line of
-				// the run samples one continuous ramp.
-				text_op.gx = x + padding_left;
-				text_op.gy = y + padding_top;
-				text_op.gw = content_width;
-				text_op.gh = h - padding_top - padding_bottom;
-			}
-			fr.ops.push(FrameOp::Text(text_op));
 		}
 	}
 
@@ -1192,20 +1239,13 @@ fn walk_node(
 			let segment_end = first_segment.wrapping_add(l.pl_seg_len[line_index]);
 			for segment in first_segment..segment_end {
 				let segment_index = index(segment);
-				let string_ref =
-					push_str_slice(fr, &l.para_chars, l.seg_a[segment_index], l.seg_b[segment_index]);
-				let font = l.seg_font[segment_index];
-				let font_weight = if font >= 0 {
-					d.font_weight[index(font)]
-				} else {
-					truncate_u32(l.seg_weight[segment_index])
-				};
+				let segment_origin = x + padding_left + leading + l.seg_x[segment_index];
+				let baseline = baseline_y + l.pl_asc[line_index];
 				let seg_kind = l.seg_color_kind[segment_index];
-				let (uncov_off, uncov_len) = push_uncovered_runs(d, fr, font, string_ref);
 				if l.seg_bg_kind[segment_index] != 0 && l.seg_w[segment_index] > 0.0 {
 					let mut background = unstyled_rect(
 						node,
-						x + padding_left + leading + l.seg_x[segment_index],
+						segment_origin,
 						baseline_y,
 						l.seg_w[segment_index],
 						l.pl_h[line_index],
@@ -1215,41 +1255,61 @@ fn walk_node(
 					background.bg = l.seg_bg[segment_index];
 					fr.ops.push(FrameOp::Rect(background));
 				}
-				let (underline_offset, underline_thickness) =
-					textm::underline_geometry(d, font, l.seg_size[segment_index]);
-				let mut text_op = OpText {
-					node,
-					x: x + padding_left + leading + l.seg_x[segment_index],
-					y_baseline: baseline_y + l.pl_asc[line_index],
-					str_ref: string_ref,
-					measured_w: l.seg_w[segment_index],
-					font,
-					size: l.seg_size[segment_index],
-					weight: font_weight,
-					tracking: l.seg_tracking[segment_index],
-					color: l.seg_color[segment_index],
-					opacity: 1.0,
-					strike: l.seg_strike[segment_index],
-					italic: l.seg_italic[segment_index],
-					underline: l.seg_underline[segment_index],
-					underline_offset,
-					underline_thickness,
-					color_kind: seg_kind,
-					gx: 0.0,
-					gy: 0.0,
-					gw: 0.0,
-					gh: 0.0,
-					uncov_off,
-					uncov_len,
-				};
-				if seg_kind == 2 {
-					// Paragraph segments share the paragraph's content box.
-					text_op.gx = x + padding_left;
-					text_op.gy = y + padding_top;
-					text_op.gw = content_width;
-					text_op.gh = h - padding_top - padding_bottom;
+				for run in &l.seg_shaped[segment_index].runs {
+					let string_ref = push_str_slice(fr, &l.para_chars, run.start, run.end);
+					let (uncov_off, uncov_len) =
+						push_uncovered_runs(d, fr, run.font, string_ref);
+					let (glyph_off, glyph_len) = push_shaped_glyphs(
+						fr,
+						run,
+						segment_origin,
+						baseline,
+						l.seg_size[segment_index],
+					);
+					let (underline_offset, underline_thickness) =
+						textm::underline_geometry(d, run.font, l.seg_size[segment_index]);
+					let font_weight = if run.font >= 0 {
+						d.font_weight[index(run.font)]
+					} else {
+						truncate_u32(l.seg_weight[segment_index])
+					};
+					let mut text_op = OpText {
+						node,
+						x: segment_origin + run.x,
+						y_baseline: baseline,
+						str_ref: string_ref,
+						measured_w: run.width,
+						font: run.font,
+						size: l.seg_size[segment_index],
+						weight: font_weight,
+						tracking: l.seg_tracking[segment_index],
+						color: l.seg_color[segment_index],
+						opacity: 1.0,
+						strike: l.seg_strike[segment_index],
+						italic: l.seg_italic[segment_index],
+						underline: l.seg_underline[segment_index],
+						underline_offset,
+						underline_thickness,
+						color_kind: seg_kind,
+						gx: 0.0,
+						gy: 0.0,
+						gw: 0.0,
+						gh: 0.0,
+						uncov_off,
+						uncov_len,
+						glyph_off,
+						glyph_len,
+						rtl: run.rtl,
+					};
+					if seg_kind == 2 {
+						// Paragraph segments share the paragraph's content box.
+						text_op.gx = x + padding_left;
+						text_op.gy = y + padding_top;
+						text_op.gw = content_width;
+						text_op.gh = h - padding_top - padding_bottom;
+					}
+					fr.ops.push(FrameOp::Text(text_op));
 				}
-				fr.ops.push(FrameOp::Text(text_op));
 			}
 			baseline_y += l.pl_h[line_index];
 		}

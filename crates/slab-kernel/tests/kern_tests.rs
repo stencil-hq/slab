@@ -161,8 +161,11 @@ kernel_tests! {
 	 test_multiline__test_visual_arrows_home_end_and_caret_geometry => slab_kernel::test_multiline::test_visual_arrows_home_end_and_caret_geometry;
 
 	 test_textm__test_default_advance => slab_kernel::test_textm::test_default_advance;
+	 test_textm__test_bidi_visual_order => slab_kernel::test_textm::test_bidi_visual_order;
+	 test_textm__test_cluster_aware_wrap_and_caret => slab_kernel::test_textm::test_cluster_aware_wrap_and_caret;
 	 test_textm__test_cumulative_diagnostics_survive_resolves => slab_kernel::test_textm::test_cumulative_diagnostics_survive_resolves;
 	 test_textm__test_fallback_advance_eaw => slab_kernel::test_textm::test_fallback_advance_eaw;
+	 test_textm__test_font_fallback_splits_shaped_runs => slab_kernel::test_textm::test_font_fallback_splits_shaped_runs;
 	 test_textm__test_hard_break_long_word => slab_kernel::test_textm::test_hard_break_long_word;
 	 test_textm__test_hard_newline => slab_kernel::test_textm::test_hard_newline;
 	 test_textm__test_max_lines => slab_kernel::test_textm::test_max_lines;

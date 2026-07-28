@@ -113,6 +113,7 @@ impl FrameBuf {
 						signed_word(text.uncov_len),
 						u32::from(text.italic),
 						u32::from(text.underline),
+						u32::from(text.rtl),
 					]);
 					f64s.extend([
 						text.x,

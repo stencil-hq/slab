@@ -16,6 +16,7 @@
 //! to the window surface or reads back for headless PNG/probes. f64 model
 //! values narrow to f32 ONLY here, at instance packing.
 
+use slab_kernel::textm;
 use std::collections::{HashMap, HashSet};
 
 use bytemuck::Zeroable;
@@ -1661,32 +1662,35 @@ impl Renderer {
 						let hi = lo + t.uncov_len.max(0) as usize * 2;
 						let runs = li.frame.uncovered.get(lo..hi).unwrap_or(&[]);
 						for pair in runs.as_chunks::<2>().0 {
-							let from = pair[0] as usize;
-							let to = (pair[1] as usize).min(glyphs.len());
-							for j in from..to {
-								let x0 = glyphs[j].x;
-								let x1 = glyphs.get(j + 1).map_or(t.x + t.measured_w, |next| next.x);
-								let adv = x1 - x0;
-								if adv <= 0.05 {
-									continue; // zero-advance modifiers
-								}
-								let inset = (adv * 0.08).min(1.5);
-								let bw = 2.0f64.mul_add(-inset, adv);
-								let bh = t.size * 0.68;
-								let cx = ((x0 + adv / 2.0) as f32 + ox) * s;
-								let cy = ((t.y_baseline - bh / 2.0) as f32 + oy) * s;
-								fb.push_rect(clip.scissor, RectI {
-									mabcd: [mat.a, mat.b, mat.c, mat.d],
-									mtc: [mat.tx, mat.ty, cx, cy],
-									hrs: [(bw / 2.0) as f32 * s, (bh / 2.0) as f32 * s, 0.0, hw],
-									sg: [0.0, 0.0, -1.0, 0.0],
-									dc: [0.0, clip.radius, clip.sdf[0], clip.sdf[1]],
-									c2: [clip.sdf[2], clip.sdf[3], 0.0, 0.0],
-									fill: [0.0; 4],
-									stroke,
-									g2: [0.0, 1.0, -1.0, 0.0],
-								});
+							let string_index = usize::try_from(t.str_ref).unwrap_or(0);
+							let op_text = li.frame.strings.get(string_index).map_or("", String::as_str);
+							let cps: Vec<u32> = op_text.chars().map(u32::from).collect();
+							let start = (pair[0] as usize).min(cps.len());
+							let end = (pair[1] as usize).min(cps.len());
+							if start >= end {
+								continue;
 							}
+							let x0 = t.x + textm::str_slice_w(li.inst.doc(), t.font, t.size, t.tracking, op_text, 0, pair[0] as i32);
+							let adv = textm::str_slice_w(li.inst.doc(), t.font, t.size, t.tracking, op_text, pair[0] as i32, pair[1] as i32);
+							if adv <= 0.05 {
+								continue;
+							}
+							let inset = (adv * 0.08).min(1.5);
+							let bw = 2.0f64.mul_add(-inset, adv);
+							let bh = t.size * 0.68;
+							let cx = ((x0 + adv / 2.0) as f32 + ox) * s;
+							let cy = ((t.y_baseline - bh / 2.0) as f32 + oy) * s;
+							fb.push_rect(clip.scissor, RectI {
+								mabcd: [mat.a, mat.b, mat.c, mat.d],
+								mtc: [mat.tx, mat.ty, cx, cy],
+								hrs: [(bw / 2.0) as f32 * s, (bh / 2.0) as f32 * s, 0.0, hw],
+								sg: [0.0, 0.0, -1.0, 0.0],
+								dc: [0.0, clip.radius, clip.sdf[0], clip.sdf[1]],
+								c2: [clip.sdf[2], clip.sdf[3], 0.0, 0.0],
+								fill: [0.0; 4],
+								stroke,
+								g2: [0.0, 1.0, -1.0, 0.0],
+							});
 						}
 					}
 					for (enabled, center, logical_thickness) in [

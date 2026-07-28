@@ -426,44 +426,68 @@ pub fn visual_line(tl: &TextLayout, caret: i32) -> i32 {
 		.wrapping_sub(1)
 }
 
-/// Finds the nearest grapheme-boundary caret on `line` for horizontal `goal`.
-// Keeping the text-metric inputs explicit makes this state transition
-// auditable.
+/// Finds the nearest shaped-cluster caret on `line` for horizontal `goal`.
+// The legacy metric arguments remain explicit for callers that already own
+// them; shaped layout is the sole geometry authority.
 pub fn caret_for_x(
-	d: &Doc,
-	es: &EditState,
+	_d: &Doc,
+	_es: &EditState,
 	tl: &TextLayout,
 	line: i32,
-	font: i32,
-	size: f64,
-	tracking: f64,
+	_font: i32,
+	_size: f64,
+	_tracking: f64,
 	goal: f64,
 ) -> i32 {
-	let line = usize::try_from(line).expect("negative visual line");
-	let start = tl.src_ls[line];
-	let end = tl.src_le[line];
+	textm::caret_for_visual_x(
+		tl,
+		usize::try_from(line).expect("negative visual line"),
+		goal,
+	)
+}
 
-	let mut boundaries = Vec::new();
-	graphemes::boundaries(&es.text, &mut boundaries);
-	let chars: Vec<u32> = es.text.chars().map(u32::from).collect();
-	let mut previous = start;
-	let mut x = 0.0;
-
-	for current in boundaries {
-		if current <= start {
+/// Moves one caret stop in visual order across shaped lines.
+pub fn visual_step(es: &mut EditState, tl: &TextLayout, delta: i32, select: bool) {
+	history_barrier(es);
+	es.goal_x = NO_GOAL_X;
+	let mut previous = None;
+	let mut last = None;
+	let mut found = false;
+	let mut target = es.caret;
+	let mut done = false;
+	let mut visit = |boundary: i32| {
+		if done || last == Some(boundary) {
+			return;
+		}
+		if delta < 0 && boundary == es.caret {
+			target = previous.unwrap_or(boundary);
+			done = true;
+		} else if delta >= 0 && found {
+			target = boundary;
+			done = true;
+		} else if boundary == es.caret {
+			found = true;
+		}
+		previous = Some(boundary);
+		last = Some(boundary);
+	};
+	for (line, shaped) in tl.shaped.iter().enumerate() {
+		if shaped.clusters.is_empty() {
+			visit(tl.src_ls[line]);
 			continue;
 		}
-		if current > end {
-			break;
+		for cluster in &shaped.clusters {
+			visit(if cluster.rtl { cluster.end } else { cluster.start });
+			visit(if cluster.rtl { cluster.start } else { cluster.end });
 		}
-		let cluster_width = textm::slice_w(d, font, size, tracking, &chars, previous, current);
-		if goal < x + cluster_width / 2.0 {
-			return previous;
-		}
-		x += cluster_width;
-		previous = current;
 	}
-	end
+	if !done && delta >= 0 {
+		target = previous.unwrap_or(es.caret);
+	}
+	es.caret = target;
+	if !select {
+		es.anchor = es.caret;
+	}
 }
 
 /// Moves vertically by visual lines while preserving the desired x position.
@@ -483,8 +507,7 @@ pub fn visual_move(
 	let line = visual_line(tl, es.caret);
 	if es.goal_x < 0.0 {
 		let line_index = usize::try_from(line).expect("negative visual line");
-		es.goal_x =
-			textm::str_slice_w(d, font, size, tracking, &es.text, tl.src_ls[line_index], es.caret);
+		es.goal_x = textm::caret_x(tl, line_index, es.caret);
 	}
 
 	let target = line.wrapping_add(delta);
@@ -505,7 +528,7 @@ pub fn visual_move(
 pub fn visual_home(es: &mut EditState, tl: &TextLayout, select: bool) {
 	history_barrier(es);
 	let line = usize::try_from(visual_line(tl, es.caret)).expect("negative visual line");
-	es.caret = tl.src_ls[line];
+	es.caret = textm::caret_for_visual_x(tl, line, f64::NEG_INFINITY);
 	es.goal_x = NO_GOAL_X;
 	if !select {
 		es.anchor = es.caret;
@@ -516,7 +539,7 @@ pub fn visual_home(es: &mut EditState, tl: &TextLayout, select: bool) {
 pub fn visual_end(es: &mut EditState, tl: &TextLayout, select: bool) {
 	history_barrier(es);
 	let line = usize::try_from(visual_line(tl, es.caret)).expect("negative visual line");
-	es.caret = tl.src_le[line];
+	es.caret = textm::caret_for_visual_x(tl, line, f64::INFINITY);
 	es.goal_x = NO_GOAL_X;
 	if !select {
 		es.anchor = es.caret;

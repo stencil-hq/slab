@@ -1170,6 +1170,7 @@ export class Painter {
                let css = `left:${o.x - ox}px;top:${o.y_baseline - oy - asc}px;width:${o.measured_w}px;line-height:${lineH}px;font-size:${o.size}px;`;
                if (o.weight !== 400) css += `font-weight:${o.weight};`;
                if (o.italic) css += 'font-style:italic;';
+               if (o.rtl) css += 'direction:rtl;unicode-bidi:isolate;';
                if (o.color_kind === 2) {
                   // W5 gradient text: the paint spans the node's content box
                   // (contract §6.7), offset per line from the span's own

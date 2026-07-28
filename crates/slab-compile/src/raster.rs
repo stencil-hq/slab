@@ -16,10 +16,7 @@
 // signatures rather than inventing structs for one call site each.
 
 use slab_fonts;
-use slab_kernel::{
-	flatten::{Frame, FrameOp, OpRect, OpText},
-	graphemes,
-};
+use slab_kernel::flatten::{Frame, FrameGlyph, FrameOp, OpRect, OpText};
 use slab_slir::Slir;
 use tiny_skia::{
 	Color, FillRule, GradientStop, IntSize, LinearGradient, Mask, Paint, Path, PathBuilder, Pixmap,
@@ -1304,45 +1301,33 @@ impl<'a> Raster<'a> {
 		}
 	}
 
-	/// Combined glyph-run outline (device px); positions/advances from the
-	/// SLIR FONT table (the solver's own metrics), outlines from the
-	/// matching vendored TTF. One path for the whole run so gradient text
-	/// paints with cross-glyph continuity.
-	fn text_outline(&self, text: &str, op: &OpText) -> Option<Path> {
-		let font_ix = op.font;
-		let doc = self.s;
-		let fe = doc
-			.fonts
-			.get(font_ix.max(0) as usize)
-			.filter(|_| font_ix >= 0)?;
-		let (upem, default_adv) = (fe.upem as f64, fe.default_advance as f64);
-		let cmap = &fe.cmap;
-		let advances = &fe.advances;
-		let face = self.face(font_ix)?;
+	/// Combined shaped-glyph outline in device pixels.
+	///
+	/// Positions, glyph IDs, bidi order, and fallback faces come from the
+	/// kernel. One path for the whole run preserves gradient continuity.
+	fn text_outline(&self, glyphs: &[FrameGlyph], op: &OpText) -> Option<Path> {
 		let s = self.scale;
-		let size_px = op.size * s;
-		let scale_units = size_px / upem;
 		let mut sink = GlyphSink {
 			pb:   PathBuilder::new(),
-			s:    scale_units as f32,
+			s:    1.0,
 			dx:   0.0,
-			dy:   (op.y_baseline * s) as f32,
+			dy:   0.0,
 			skew: if op.italic { 0.2 } else { 0.0 },
 		};
-		let mut pen = op.x * s;
-		for ch in text.chars() {
-			let cp = ch as u32;
-			let ix = cmap.binary_search_by_key(&cp, |&(c, _)| c).ok();
-			let gid = ix.map_or(0, |i| cmap[i].1);
-			if graphemes::is_glyph_modifier(cp) {
+		for glyph in glyphs {
+			if glyph.gid == 0 {
 				continue;
 			}
-			if gid != 0 && ch != ' ' {
-				sink.dx = pen as f32;
-				face.outline_glyph(ttf_parser::GlyphId(gid), &mut sink);
-			}
-			let adv_units = ix.map_or(default_adv, |i| advances[i] as f64);
-			pen += op.tracking.mul_add(s, adv_units * size_px / upem);
+			let Some(font) = self.s.fonts.get(glyph.font.max(0) as usize) else {
+				continue;
+			};
+			let Some(face) = self.face(glyph.font) else {
+				continue;
+			};
+			sink.s = (glyph.size * s / f64::from(font.upem)) as f32;
+			sink.dx = (glyph.x * s) as f32;
+			sink.dy = (glyph.y * s) as f32;
+			face.outline_glyph(ttf_parser::GlyphId(glyph.gid as u16), &mut sink);
 		}
 		for (enabled, center, thickness) in [
 			(
@@ -1370,8 +1355,8 @@ impl<'a> Raster<'a> {
 
 	/// Draw one text run: solid fill, gradient fill over the node's content
 	/// box (`gx..gh`, contract §6.7), or per-pixel conic.
-	fn draw_text(&self, surf: &mut Layer, t: &OpText, text: &str) {
-		let Some(path) = self.text_outline(text, t) else {
+	fn draw_text(&self, surf: &mut Layer, t: &OpText, glyphs: &[FrameGlyph]) {
+		let Some(path) = self.text_outline(glyphs, t) else {
 			return;
 		};
 		let s = self.scale;
@@ -1618,12 +1603,13 @@ impl<'a> Raster<'a> {
 			match op {
 				FrameOp::Rect(r) => self.draw_rect(stack.last_mut().unwrap(), r),
 				FrameOp::Text(t) => {
-					let text = frame
-						.strings
-						.get(t.str_ref as usize)
-						.cloned()
+					let start = usize::try_from(t.glyph_off).unwrap_or(0);
+					let length = usize::try_from(t.glyph_len).unwrap_or(0);
+					let glyphs = frame
+						.glyphs
+						.get(start..start.saturating_add(length))
 						.unwrap_or_default();
-					self.draw_text(stack.last_mut().unwrap(), t, &text);
+					self.draw_text(stack.last_mut().unwrap(), t, glyphs);
 				},
 				FrameOp::Image(im) => self.draw_image(stack.last_mut().unwrap(), im),
 				FrameOp::PathDraw(p) => {

@@ -1749,15 +1749,23 @@ pub fn route_edit_key(
 		"ArrowLeft" => {
 			if command {
 				edit::home(&mut ds.ed[index], selecting);
+			} else if alt {
+				edit::move_caret(&mut ds.ed[index], -1, selecting, true);
+			} else if let Some(text_layout) = text_layout {
+				edit::visual_step(&mut ds.ed[index], text_layout, -1, selecting);
 			} else {
-				edit::move_caret(&mut ds.ed[index], -1, selecting, alt);
+				edit::move_caret(&mut ds.ed[index], -1, selecting, false);
 			}
 		},
 		"ArrowRight" => {
 			if command {
 				edit::end(&mut ds.ed[index], selecting);
+			} else if alt {
+				edit::move_caret(&mut ds.ed[index], 1, selecting, true);
+			} else if let Some(text_layout) = text_layout {
+				edit::visual_step(&mut ds.ed[index], text_layout, 1, selecting);
 			} else {
-				edit::move_caret(&mut ds.ed[index], 1, selecting, alt);
+				edit::move_caret(&mut ds.ed[index], 1, selecting, false);
 			}
 		},
 		"ArrowUp" | "ArrowDown" if is_multiline => {

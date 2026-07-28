@@ -275,6 +275,8 @@ export interface OpText {
    underline_offset: number;
    /** Underline thickness in layout units. */
    underline_thickness: number;
+   /** Whether this operation shapes right-to-left. */
+   rtl: boolean;
    /** Offset of this op's uncovered-run pairs in `Frame.uncovered`. */
    uncov_off: number;
    /** Number of uncovered runs (0 = every cluster covered by `font`). */

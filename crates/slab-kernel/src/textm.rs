@@ -350,38 +350,49 @@ fn shape_font_run(
 		);
 	}
 
-	let indices: Box<dyn Iterator<Item = usize>> = if rtl {
-		Box::new((start..end).rev())
+	let text: String = chars[start..end]
+		.iter()
+		.map(|&codepoint| char::from_u32(codepoint).expect("valid codepoint"))
+		.collect();
+	let mut boundaries = Vec::new();
+	graphemes::boundaries(&text, &mut boundaries);
+	let ranges: Box<dyn Iterator<Item = &[i32]>> = if rtl {
+		Box::new(boundaries.windows(2).rev())
 	} else {
-		Box::new(start..end)
+		Box::new(boundaries.windows(2))
 	};
 	let mut cursor = line_x;
-	for index in indices {
-		let codepoint = chars[index];
-		let cluster = output_start.wrapping_add(i32::try_from(index).expect("text exceeds i32"));
-		let width = char_w(d, font, size, tracking, codepoint);
-		glyphs.push(ShapedGlyph {
-			font,
-			gid: if graphemes::is_glyph_modifier(codepoint) {
-				0
-			} else {
-				slir::font_gid(d, font, codepoint)
-			},
-			cluster: cluster.wrapping_add(source_delta),
-			x: cursor,
-			y: 0.0,
-		});
+	for pair in ranges {
+		let cluster_start = start + usize::try_from(pair[0]).expect("negative grapheme boundary");
+		let cluster_end = start + usize::try_from(pair[1]).expect("negative grapheme boundary");
+		let cluster =
+			output_start.wrapping_add(i32::try_from(cluster_start).expect("text exceeds i32"));
+		let x0 = cursor;
+		for &codepoint in &chars[cluster_start..cluster_end] {
+			let width = char_w(d, font, size, tracking, codepoint);
+			glyphs.push(ShapedGlyph {
+				font,
+				gid: if font < 0 || graphemes::is_glyph_modifier(codepoint) {
+					0
+				} else {
+					slir::font_gid(d, font, codepoint)
+				},
+				cluster: cluster.wrapping_add(source_delta),
+				x: cursor,
+				y: 0.0,
+			});
+			cursor += width;
+		}
 		push_cluster(
 			&mut clusters,
 			cluster,
-			cluster.wrapping_add(1),
+			output_start.wrapping_add(i32::try_from(cluster_end).expect("text exceeds i32")),
+			x0,
 			cursor,
-			cursor + width,
 			rtl,
 			source_delta,
 			source_end,
 		);
-		cursor += width;
 	}
 	(
 		ShapedRun {
@@ -503,7 +514,10 @@ pub fn caret_for_visual_x(layout: &TextLayout, line: usize, goal: f64) -> i32 {
 			return if cluster.rtl { cluster.start } else { cluster.end };
 		}
 	}
-	layout.src_le.get(line).copied().unwrap_or(0)
+	shaped.clusters.last().map_or_else(
+		|| layout.src_ls.get(line).copied().unwrap_or(0),
+		|cluster| if cluster.rtl { cluster.start } else { cluster.end },
+	)
 }
 
 /// Returns coalesced visual bands for a logical source selection on one line.
@@ -621,8 +635,10 @@ pub const fn is_strippable(cp: u32) -> bool {
 	matches!(cp, 32 | 9 | 10 | 13 | NBSP)
 }
 
-/// Truncates `chars[a..b]` with an ellipsis. Source offsets continue to refer
-/// to the original line rather than the synthesized output buffer.
+/// Truncates `chars[a..b]` at a grapheme boundary and appends an ellipsis.
+///
+/// Source offsets continue to refer to the original line rather than the
+/// synthesized output buffer.
 // The arguments are the complete text-metric and source-range inputs to this
 // standalone kernel operation; grouping them would only move the same data.
 pub fn cut_line(
@@ -637,56 +653,65 @@ pub fn cut_line(
 	src_b: i32,
 	max_w: f64,
 ) {
-	let ellipsis_width = char_w(d, f, size, tracking, ELLIPSIS);
-	let mut width = 0.0;
-	let mut i = a;
-
-	while i < b {
-		let char_width = char_w(
+	let start = usize::try_from(a).expect("nonnegative character index");
+	let end = usize::try_from(b).expect("nonnegative character index");
+	let text: String = tl.chars[start..end]
+		.iter()
+		.map(|&codepoint| char::from_u32(codepoint).expect("valid codepoint"))
+		.collect();
+	let mut boundaries = Vec::new();
+	graphemes::boundaries(&text, &mut boundaries);
+	let mut candidate = Vec::with_capacity(end.saturating_sub(start) + 1);
+	let mut retained = a;
+	for &boundary in boundaries.iter().skip(1) {
+		let candidate_end = a.wrapping_add(boundary);
+		candidate.clear();
+		candidate.extend_from_slice(
+			&tl.chars[start..usize::try_from(candidate_end).expect("nonnegative boundary")],
+		);
+		candidate.push(ELLIPSIS);
+		let width = slice_w(
 			d,
 			f,
 			size,
 			tracking,
-			tl.chars[usize::try_from(i).expect("nonnegative character index")],
+			&candidate,
+			0,
+			i32::try_from(candidate.len()).expect("candidate exceeds i32"),
 		);
-		if width + char_width + ellipsis_width > max_w + WIDTH_EPSILON {
-			let mut end = i;
-			while end > a
-				&& is_strippable(
-					tl.chars[usize::try_from(end.wrapping_sub(1)).expect("nonnegative character index")],
-				) {
-				end = end.wrapping_sub(1);
-			}
-
-			let output_start = i32::try_from(tl.chars.len()).expect("text exceeds i32");
-			for k in a..end {
-				let cp = tl.chars[usize::try_from(k).expect("nonnegative character index")];
-				tl.chars.push(cp);
-			}
-			tl.chars.push(ELLIPSIS);
-			tl.ls.push(output_start);
-			tl.le
-				.push(i32::try_from(tl.chars.len()).expect("text exceeds i32"));
-			tl.src_ls.push(src_a);
-			tl.src_le
-				.push(src_a.wrapping_add(end.wrapping_sub(a)).min(src_b));
-			tl.line_w
-				.push(slice_w(d, f, size, tracking, &tl.chars, a, end) + ellipsis_width);
-			return;
+		if width > max_w + WIDTH_EPSILON {
+			break;
 		}
-		width += char_width;
-		i = i.wrapping_add(1);
+		retained = candidate_end;
 	}
 
-	tl.ls.push(a);
-	tl.le.push(b);
+	let mut retained_end = retained;
+	while retained_end > a
+		&& is_strippable(
+			tl.chars[usize::try_from(retained_end.wrapping_sub(1))
+				.expect("nonnegative character index")],
+		)
+	{
+		retained_end = retained_end.wrapping_sub(1);
+	}
+	let output_start = i32::try_from(tl.chars.len()).expect("text exceeds i32");
+	for k in a..retained_end {
+		tl.chars
+			.push(tl.chars[usize::try_from(k).expect("nonnegative character index")]);
+	}
+	tl.chars.push(ELLIPSIS);
+	let output_end = i32::try_from(tl.chars.len()).expect("text exceeds i32");
+	tl.ls.push(output_start);
+	tl.le.push(output_end);
 	tl.src_ls.push(src_a);
-	tl.src_le.push(src_b);
-	tl.line_w.push(width);
+	tl.src_le
+		.push(src_a.wrapping_add(retained_end.wrapping_sub(a)).min(src_b));
+	tl.line_w
+		.push(slice_w(d, f, size, tracking, &tl.chars, output_start, output_end));
 }
 
-/// Greedily wraps one hard line at spaces, hard-breaking words wider than
-/// `max_w`. Empty words are preserved by the space-splitting behavior.
+/// Greedily wraps one hard line at spaces and hard-breaks oversized words at
+/// grapheme-cluster boundaries.
 // The arguments preserve the public wrapping primitive's explicit metric,
 // source-range, and width inputs.
 pub fn wrap_hard(
@@ -700,7 +725,6 @@ pub fn wrap_hard(
 	b: i32,
 	max_w: f64,
 ) {
-	let space_width = char_w(d, f, size, tracking, 32);
 	let mut line_start = i32::try_from(tl.chars.len()).expect("text exceeds i32");
 	let mut source_start = a;
 	let mut line_width = 0.0;
@@ -716,34 +740,45 @@ pub fn wrap_hard(
 
 		let word_width = slice_w(d, f, size, tracking, src, word_start, word_end);
 		let line_nonempty = i32::try_from(tl.chars.len()).expect("text exceeds i32") > line_start;
-		let mut added_width = if line_nonempty {
-			word_width + space_width
-		} else {
-			word_width
-		};
-
-		if line_nonempty && line_width + added_width > max_w + WIDTH_EPSILON {
+		let candidate_width = slice_w(d, f, size, tracking, src, source_start, word_end);
+		if line_nonempty && candidate_width > max_w + WIDTH_EPSILON {
 			finish_line(tl, line_start, source_start, word_start.wrapping_sub(1), line_width);
 			line_start = i32::try_from(tl.chars.len()).expect("text exceeds i32");
 			source_start = word_start;
 			line_width = 0.0;
-			added_width = word_width;
 		}
 
 		if word_width > max_w + WIDTH_EPSILON {
-			for k in word_start..word_end {
-				let cp = src[usize::try_from(k).expect("nonnegative character index")];
-				let char_width = char_w(d, f, size, tracking, cp);
+			let word: String = src[usize::try_from(word_start).expect("nonnegative word start")
+				..usize::try_from(word_end).expect("nonnegative word end")]
+				.iter()
+				.map(|&codepoint| char::from_u32(codepoint).expect("valid codepoint"))
+				.collect();
+			let mut boundaries = Vec::new();
+			graphemes::boundaries(&word, &mut boundaries);
+			for pair in boundaries.windows(2) {
+				let cluster_start = word_start.wrapping_add(pair[0]);
+				let cluster_end = word_start.wrapping_add(pair[1]);
+				let candidate_width =
+					slice_w(d, f, size, tracking, src, source_start, cluster_end);
 				let line_nonempty =
 					i32::try_from(tl.chars.len()).expect("text exceeds i32") > line_start;
-				if line_nonempty && line_width + char_width > max_w + WIDTH_EPSILON {
-					finish_line(tl, line_start, source_start, k, line_width);
+				if line_nonempty && candidate_width > max_w + WIDTH_EPSILON {
+					finish_line(
+						tl,
+						line_start,
+						source_start,
+						cluster_start,
+						line_width,
+					);
 					line_start = i32::try_from(tl.chars.len()).expect("text exceeds i32");
-					source_start = k;
-					line_width = 0.0;
+					source_start = cluster_start;
 				}
-				tl.chars.push(cp);
-				line_width += char_width;
+				for k in cluster_start..cluster_end {
+					tl.chars
+						.push(src[usize::try_from(k).expect("nonnegative character index")]);
+				}
+				line_width = slice_w(d, f, size, tracking, src, source_start, cluster_end);
 			}
 		} else {
 			if i32::try_from(tl.chars.len()).expect("text exceeds i32") > line_start {
@@ -753,7 +788,8 @@ pub fn wrap_hard(
 				tl.chars
 					.push(src[usize::try_from(k).expect("nonnegative character index")]);
 			}
-			line_width += added_width;
+			let output_end = i32::try_from(tl.chars.len()).expect("text exceeds i32");
+			line_width = slice_w(d, f, size, tracking, &tl.chars, line_start, output_end);
 		}
 
 		if word_end >= b {
@@ -895,17 +931,25 @@ pub fn measure_text(
 				== ELLIPSIS;
 
 		if !ends_with_ellipsis {
-			let ellipsis_width = char_w(d, f, size, tracking, ELLIPSIS);
-			if layout.line_w[last] + ellipsis_width <= max_w + WIDTH_EPSILON {
+			let mut candidate = layout.chars[usize::try_from(start).expect("nonnegative line start")
+				..usize::try_from(end).expect("nonnegative line end")]
+				.to_vec();
+			candidate.push(ELLIPSIS);
+			let candidate_width = slice_w(
+				d,
+				f,
+				size,
+				tracking,
+				&candidate,
+				0,
+				i32::try_from(candidate.len()).expect("candidate exceeds i32"),
+			);
+			if candidate_width <= max_w + WIDTH_EPSILON {
 				let output_start = i32::try_from(layout.chars.len()).expect("text exceeds i32");
-				for k in start..end {
-					let cp = layout.chars[usize::try_from(k).expect("nonnegative character index")];
-					layout.chars.push(cp);
-				}
-				layout.chars.push(ELLIPSIS);
+				layout.chars.extend_from_slice(&candidate);
 				layout.ls[last] = output_start;
 				layout.le[last] = i32::try_from(layout.chars.len()).expect("text exceeds i32");
-				layout.line_w[last] += ellipsis_width;
+				layout.line_w[last] = candidate_width;
 			} else {
 				let source_start = layout.src_ls[last];
 				let source_end = layout.src_le[last];
