@@ -403,6 +403,9 @@ pub struct Doc {
 	pub font_default_adv:      Vec<u32>,
 	pub font_cmap_off:         Vec<i32>,
 	pub font_cmap_len:         Vec<i32>,
+	pub font_data_off:       Vec<i32>,
+	pub font_data_len:       Vec<i32>,
+	pub font_data:           Vec<u8>,
 	pub font_cmap_cp:          Vec<u32>,
 	pub font_cmap_gid:         Vec<u32>,
 	pub font_adv:              Vec<u32>,
@@ -589,6 +592,23 @@ pub fn font_gid(d: &Doc, font: i32, codepoint: u32) -> u32 {
 	} else {
 		d.font_cmap_gid[i32_index(index)]
 	}
+}
+
+/// Returns the sfnt bytes for one font table, or an empty slice when absent.
+pub fn font_data(d: &Doc, font: i32) -> &[u8] {
+	let Ok(font) = usize::try_from(font) else {
+		return &[];
+	};
+	let Some((&offset, &length)) = d.font_data_off.get(font).zip(d.font_data_len.get(font)) else {
+		return &[];
+	};
+	let Ok(start) = usize::try_from(offset) else {
+		return &[];
+	};
+	let Ok(length) = usize::try_from(length) else {
+		return &[];
+	};
+	d.font_data.get(start..start.saturating_add(length)).unwrap_or(&[])
 }
 
 /// Folds an ASCII uppercase codepoint to lowercase, leaving all others intact.

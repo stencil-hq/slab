@@ -698,6 +698,7 @@ fn register_fonts(inst: &mut Instance, fonts: &[RegisteredFont]) {
 			i32::from(metrics.underline_position),
 			i32::from(metrics.underline_thickness),
 			u32::from(metrics.default_advance),
+			&font.bytes,
 			&metrics.cps,
 			&metrics.gids,
 			&metrics.advances,

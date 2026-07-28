@@ -32,6 +32,7 @@ pub fn build_table(class: u8, weight: u16, bytes: &[u8]) -> FontE {
 		default_advance: metrics.default_advance,
 		underline_position: metrics.underline_position,
 		underline_thickness: metrics.underline_thickness,
+		data: bytes.to_vec(),
 		cmap,
 		advances,
 	}

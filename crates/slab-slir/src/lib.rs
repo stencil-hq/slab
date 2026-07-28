@@ -217,6 +217,8 @@ pub struct FontE {
 	pub underline_position: i16,
 	/// Recommended underline thickness in font units.
 	pub underline_thickness: i16,
+	/// Complete sfnt data used for OpenType shaping.
+	pub data:             Vec<u8>,
 	/// (codepoint, glyph id), sorted by codepoint.
 	pub cmap:            Vec<(u32, u16)>,
 	/// Advance widths in font units, parallel to `cmap`.

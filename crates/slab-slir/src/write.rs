@@ -171,6 +171,13 @@ pub(crate) fn to_pb(s: &Slir) -> pb::Doc {
 		doc.font_underline_thickness
 			.push(i32::from(font.underline_thickness));
 		push_run(
+			&mut doc.font_data_off,
+			&mut doc.font_data_len,
+			doc.font_data.len(),
+			font.data.len(),
+		);
+		doc.font_data.extend_from_slice(&font.data);
+		push_run(
 			&mut doc.font_cmap_off,
 			&mut doc.font_cmap_len,
 			doc.font_cmap_cp.len(),

@@ -140,4 +140,7 @@ message Doc {
   repeated uint32 token_theme_repr = 137; // STRS ref parallel to `token_theme_val`
   repeated int32 font_underline_position = 138;
   repeated int32 font_underline_thickness = 139;
+  repeated int32 font_data_off = 140;
+  repeated int32 font_data_len = 141;
+  bytes font_data = 142; // sfnt bytes sliced by font_data_off/len
 }

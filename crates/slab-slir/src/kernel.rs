@@ -58,6 +58,9 @@ pub fn decode_doc(bytes: &[u8]) -> Result<(slab_kernel::slir::Doc, Vec<Vec<u8>>)
 	doc.font_default_adv = std::mem::take(&mut wire.font_default_adv);
 	doc.font_underline_position = std::mem::take(&mut wire.font_underline_position);
 	doc.font_underline_thickness = std::mem::take(&mut wire.font_underline_thickness);
+	doc.font_data_off = std::mem::take(&mut wire.font_data_off);
+	doc.font_data_len = std::mem::take(&mut wire.font_data_len);
+	doc.font_data = std::mem::take(&mut wire.font_data);
 	doc.font_cmap_off = std::mem::take(&mut wire.font_cmap_off);
 	doc.font_cmap_len = std::mem::take(&mut wire.font_cmap_len);
 	doc.font_cmap_cp = std::mem::take(&mut wire.font_cmap_cp);
@@ -155,6 +158,22 @@ pub fn decode_doc(bytes: &[u8]) -> Result<(slab_kernel::slir::Doc, Vec<Vec<u8>>)
 				.iter()
 				.map(|upem| i32::try_from((*upem / 20).max(1)).expect("font upem fits i32")),
 		);
+	}
+	if doc.font_data_off.is_empty() && doc.font_data_len.is_empty() {
+		doc.font_data_off.resize(font_count, 0);
+		doc.font_data_len.resize(font_count, 0);
+	}
+	if doc.font_data_off.len() != font_count || doc.font_data_len.len() != font_count {
+		return Err("font data: parallel arrays have mismatched lengths".into());
+	}
+	for (&offset, &length) in doc.font_data_off.iter().zip(&doc.font_data_len) {
+		let end = offset
+			.checked_add(length)
+			.ok_or_else(|| "font data: range overflow".to_string())?;
+		if offset < 0 || length < 0 || usize::try_from(end).map_or(true, |end| end > doc.font_data.len())
+		{
+			return Err("font data: range is out of bounds".into());
+		}
 	}
 	if doc.font_underline_position.len() != font_count
 		|| doc.font_underline_thickness.len() != font_count

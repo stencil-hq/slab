@@ -331,6 +331,7 @@ pub fn inst_font_register(
 	underline_position: i32,
 	underline_thickness: i32,
 	default_adv: u32,
+	data: &[u8],
 	cmap_cp: &[u32],
 	cmap_gid: &[u32],
 	adv: &[u32],
@@ -350,6 +351,13 @@ pub fn inst_font_register(
 	i.doc.font_underline_position.push(underline_position);
 	i.doc.font_underline_thickness.push(underline_thickness);
 	i.doc.font_default_adv.push(default_adv);
+	i.doc
+		.font_data_off
+		.push(i32::try_from(i.doc.font_data.len()).expect("font data is too large"));
+	i.doc
+		.font_data_len
+		.push(i32::try_from(data.len()).expect("font data is too large"));
+	i.doc.font_data.extend_from_slice(data);
 	i.doc.font_cmap_off.push(cmap_off);
 	i.doc
 		.font_cmap_len

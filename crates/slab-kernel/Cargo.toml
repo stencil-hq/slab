@@ -10,6 +10,8 @@ workspace = true
 [dependencies]
 png.workspace = true
 rustc-hash.workspace = true
+rustybuzz.workspace = true
 serde.workspace = true
+unicode-bidi.workspace = true
 [dev-dependencies]
 slab-slir.workspace = true

@@ -484,6 +484,7 @@ para w=200 h=40 { each param.runs key=runs }
 		&[],
 		&[],
 		&[],
+		&[],
 	);
 	frame::inst_set_env(&mut instance, 200.0, 40.0, 0, false, false);
 	let frame = frame::inst_frame(&mut instance, 0.0);

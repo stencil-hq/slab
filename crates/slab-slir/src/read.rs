@@ -291,6 +291,13 @@ fn from_pb(mut doc: pb::Doc) -> Result<Slir, String> {
 				.map(|upem| i16::try_from((*upem / 20).max(1)).expect("font upem fits i16")),
 		);
 	}
+	let mut font_data_off = nonnegative("font_data_off", std::mem::take(&mut doc.font_data_off))?;
+	let mut font_data_len = nonnegative("font_data_len", std::mem::take(&mut doc.font_data_len))?;
+	let font_data = std::mem::take(&mut doc.font_data);
+	if font_data_off.is_empty() && font_data_len.is_empty() {
+		font_data_off.resize(font_upem.len(), 0);
+		font_data_len.resize(font_upem.len(), 0);
+	}
 	let font_cmap_off = nonnegative("font_cmap_off", std::mem::take(&mut doc.font_cmap_off))?;
 	let font_cmap_len = nonnegative("font_cmap_len", std::mem::take(&mut doc.font_cmap_len))?;
 	let font_cmap_cp = std::mem::take(&mut doc.font_cmap_cp);
@@ -312,6 +319,8 @@ fn from_pb(mut doc: pb::Doc) -> Result<Slir, String> {
 		font_underline_thickness.len(),
 		font_cmap_off.len(),
 		font_cmap_len.len(),
+		font_data_off.len(),
+		font_data_len.len(),
 	])?;
 	let mut fonts = Vec::with_capacity(font_count);
 	for index in 0..font_count {
@@ -319,6 +328,8 @@ fn from_pb(mut doc: pb::Doc) -> Result<Slir, String> {
 			index_range(font_cmap_off[index], font_cmap_len[index], font_cmap_cp.len(), "font cmap")?;
 		let advance_range =
 			index_range(font_cmap_off[index], font_cmap_len[index], font_adv.len(), "font advances")?;
+		let data_range =
+			index_range(font_data_off[index], font_data_len[index], font_data.len(), "font data")?;
 		fonts.push(FontE {
 			family:          font_family[index],
 			class:           font_class[index],
@@ -330,6 +341,7 @@ fn from_pb(mut doc: pb::Doc) -> Result<Slir, String> {
 			default_advance: font_default_adv[index],
 			underline_position: font_underline_position[index],
 			underline_thickness: font_underline_thickness[index],
+			data:             font_data[data_range].to_vec(),
 			cmap:            font_cmap_cp[cmap_range]
 				.iter()
 				.copied()
@@ -869,6 +881,7 @@ mod tests {
 				default_advance: 600,
 				underline_position: -100,
 				underline_thickness: 50,
+				data:             vec![0, 1, 2, 3],
 				cmap:            vec![(65, 3)],
 				advances:        vec![600],
 			}],

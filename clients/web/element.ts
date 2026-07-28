@@ -857,6 +857,7 @@ export class SlabElement extends HTMLElement {
          metrics.underlinePosition,
          metrics.underlineThickness,
          metrics.defaultAdvance,
+         face.bytes,
          metrics.cps,
          metrics.gids,
          metrics.advs,

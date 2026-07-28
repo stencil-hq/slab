@@ -282,4 +282,11 @@ pub struct Doc {
 	pub font_underline_position: ::prost::alloc::vec::Vec<i32>,
 	#[prost(int32, repeated, tag = "139")]
 	pub font_underline_thickness: ::prost::alloc::vec::Vec<i32>,
+	#[prost(int32, repeated, tag = "140")]
+	pub font_data_off: ::prost::alloc::vec::Vec<i32>,
+	#[prost(int32, repeated, tag = "141")]
+	pub font_data_len: ::prost::alloc::vec::Vec<i32>,
+	/// sfnt bytes sliced by font_data_off/len
+	#[prost(bytes = "vec", tag = "142")]
+	pub font_data: ::prost::alloc::vec::Vec<u8>,
 }

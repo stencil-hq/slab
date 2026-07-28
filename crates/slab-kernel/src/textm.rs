@@ -27,6 +27,47 @@ pub const ELLIPSIS: u32 = 0x2026;
 pub const NBSP: u32 = 0xa0;
 const WIDTH_EPSILON: f64 = 1e-6;
 
+/// One glyph emitted by OpenType shaping, positioned relative to its visual line.
+#[derive(Clone, Debug)]
+pub struct ShapedGlyph {
+	pub font:    i32,
+	pub gid:     u32,
+	pub cluster: i32,
+	pub x:       f64,
+	pub y:       f64,
+}
+
+/// One visually contiguous font and direction run.
+#[derive(Clone, Debug)]
+pub struct ShapedRun {
+	/// Slice into [`TextLayout::chars`] in logical order.
+	pub start:  i32,
+	pub end:    i32,
+	pub font:   i32,
+	pub rtl:    bool,
+	pub x:      f64,
+	pub width:  f64,
+	pub glyphs: Vec<ShapedGlyph>,
+}
+
+/// A shaped caret unit with visual geometry and logical source bounds.
+#[derive(Clone, Debug)]
+pub struct ShapedCluster {
+	pub start: i32,
+	pub end:   i32,
+	pub x0:    f64,
+	pub x1:    f64,
+	pub rtl:   bool,
+}
+
+/// Shaped visual runs and caret clusters for one output line.
+#[derive(Clone, Debug, Default)]
+pub struct ShapedLine {
+	pub runs:     Vec<ShapedRun>,
+	pub clusters: Vec<ShapedCluster>,
+	pub width:    f64,
+}
+
 /// A measured and optionally wrapped text layout.
 ///
 /// Output lines are slices `chars[ls[i]..le[i]]`. `src_ls` and `src_le` hold
@@ -47,6 +88,8 @@ pub struct TextLayout {
 	pub src_le:    Vec<i32>,
 	/// Measured advance for each line.
 	pub line_w:    Vec<f64>,
+	/// OpenType-shaped runs and visual caret clusters, parallel to `line_w`.
+	pub shaped:    Vec<ShapedLine>,
 	/// Maximum measured line width.
 	pub w:         f64,
 	/// Total layout height.
@@ -88,6 +131,7 @@ pub const fn tl_new() -> TextLayout {
 		src_ls:    Vec::new(),
 		src_le:    Vec::new(),
 		line_w:    Vec::new(),
+		shaped:    Vec::new(),
 		w:         0.0,
 		h:         0.0,
 		ascent:    0.0,
@@ -135,38 +179,390 @@ pub fn char_w(d: &Doc, f: i32, size: f64, tracking: f64, cp: u32) -> f64 {
 	f64::from(d.font_adv[cmap_index]) * size / upem + tracking
 }
 
-/// Measures a codepoint slice without allocating another character buffer.
-pub fn slice_w(d: &Doc, f: i32, size: f64, tracking: f64, chars: &[u32], a: i32, b: i32) -> f64 {
-	let mut width = 0.0;
-	for i in a..b {
-		width += char_w(
-			d,
-			f,
-			size,
-			tracking,
-			chars[usize::try_from(i).expect("nonnegative character index")],
+fn font_covers(d: &Doc, font: i32, chars: &[u32]) -> bool {
+	font >= 0
+		&& chars
+			.iter()
+			.all(|&codepoint| !graphemes::requires_glyph(codepoint) || slir::font_gid(d, font, codepoint) != 0)
+}
+
+fn fallback_font(d: &Doc, primary: i32, chars: &[u32]) -> i32 {
+	if font_covers(d, primary, chars) {
+		return primary;
+	}
+	for font in (0..d.font_upem.len()).rev() {
+		let font = i32::try_from(font).expect("font table exceeds i32");
+		if font != primary && font_covers(d, font, chars) {
+			return font;
+		}
+	}
+	primary
+}
+
+fn font_assignments(d: &Doc, primary: i32, text: &str, chars: &[u32]) -> Vec<i32> {
+	let mut assigned = vec![primary; chars.len()];
+	let mut boundaries = Vec::new();
+	graphemes::boundaries(text, &mut boundaries);
+	for pair in boundaries.windows(2) {
+		let start = usize::try_from(pair[0]).expect("negative grapheme boundary");
+		let end = usize::try_from(pair[1]).expect("negative grapheme boundary");
+		let font = fallback_font(d, primary, &chars[start..end]);
+		if font_covers(d, font, &chars[start..end]) {
+			assigned[start..end].fill(font);
+		} else {
+			for index in start..end {
+				assigned[index] = fallback_font(d, primary, &chars[index..=index]);
+			}
+		}
+	}
+	assigned
+}
+
+fn push_cluster(
+	clusters: &mut Vec<ShapedCluster>,
+	start: i32,
+	end: i32,
+	x0: f64,
+	x1: f64,
+	rtl: bool,
+	source_delta: i32,
+	source_end: i32,
+) {
+	clusters.push(ShapedCluster {
+		start: start.wrapping_add(source_delta).min(source_end),
+		end: end.wrapping_add(source_delta).min(source_end),
+		x0,
+		x1,
+		rtl,
+	});
+}
+
+fn shape_font_run(
+	d: &Doc,
+	chars: &[u32],
+	start: usize,
+	end: usize,
+	font: i32,
+	size: f64,
+	tracking: f64,
+	rtl: bool,
+	line_x: f64,
+	output_start: i32,
+	source_delta: i32,
+	source_end: i32,
+) -> (ShapedRun, Vec<ShapedCluster>) {
+	let run_start = output_start.wrapping_add(i32::try_from(start).expect("text exceeds i32"));
+	let run_end = output_start.wrapping_add(i32::try_from(end).expect("text exceeds i32"));
+	let mut glyphs = Vec::new();
+	let mut clusters = Vec::new();
+	let data = slir::font_data(d, font);
+	let upem = usize::try_from(font)
+		.ok()
+		.and_then(|index| d.font_upem.get(index))
+		.copied()
+		.unwrap_or(0);
+	if upem > 0
+		&& let Some(mut face) = rustybuzz::Face::from_slice(data, 0)
+	{
+		if let Some(weight) = usize::try_from(font)
+			.ok()
+			.and_then(|index| d.font_weight.get(index))
+			&& let Ok(variation) = format!("wght={weight}").parse::<rustybuzz::Variation>()
+		{
+			face.set_variations(&[variation]);
+		}
+		let mut buffer = rustybuzz::UnicodeBuffer::new();
+		for (local, &codepoint) in chars[start..end].iter().enumerate() {
+			buffer.add(
+				char::from_u32(codepoint).unwrap_or(char::REPLACEMENT_CHARACTER),
+				u32::try_from(
+					run_start.wrapping_add(i32::try_from(local).expect("text exceeds i32")),
+				)
+				.expect("negative shape cluster"),
+			);
+		}
+		buffer.set_cluster_level(rustybuzz::BufferClusterLevel::MonotoneGraphemes);
+		buffer.set_direction(if rtl {
+			rustybuzz::Direction::RightToLeft
+		} else {
+			rustybuzz::Direction::LeftToRight
+		});
+		buffer.guess_segment_properties();
+		let shaped = rustybuzz::shape(&face, &[], buffer);
+		let infos = shaped.glyph_infos();
+		let positions = shaped.glyph_positions();
+		let scale = size / f64::from(upem);
+		let mut cursor = line_x;
+		let mut group_cluster = None;
+		let mut group_x = cursor;
+		let mut groups = Vec::new();
+		for (index, (info, position)) in infos.iter().zip(positions).enumerate() {
+			let cluster = i32::try_from(info.cluster).expect("shape cluster exceeds i32");
+			if group_cluster.is_some_and(|current| current != cluster) {
+				cursor += tracking;
+				groups.push((group_cluster.expect("shape cluster"), group_x, cursor));
+				group_x = cursor;
+			}
+			group_cluster = Some(cluster);
+			glyphs.push(ShapedGlyph {
+				font,
+				gid: info.glyph_id,
+				cluster: cluster.wrapping_add(source_delta),
+				x: cursor + f64::from(position.x_offset) * scale,
+				y: -f64::from(position.y_offset) * scale,
+			});
+			cursor += f64::from(position.x_advance) * scale;
+			if index + 1 == infos.len() {
+				cursor += tracking;
+				groups.push((cluster, group_x, cursor));
+			}
+		}
+		let mut logical_starts: Vec<i32> = groups.iter().map(|group| group.0).collect();
+		logical_starts.sort_unstable();
+		logical_starts.dedup();
+		for (cluster, x0, x1) in groups {
+			let logical = logical_starts
+				.binary_search(&cluster)
+				.expect("shape cluster is in logical starts");
+			let end = logical_starts.get(logical + 1).copied().unwrap_or(run_end);
+			push_cluster(
+				&mut clusters,
+				cluster,
+				end,
+				x0,
+				x1,
+				rtl,
+				source_delta,
+				source_end,
+			);
+		}
+		return (
+			ShapedRun {
+				start: run_start,
+				end: run_end,
+				font,
+				rtl,
+				x: line_x,
+				width: cursor - line_x,
+				glyphs,
+			},
+			clusters,
 		);
 	}
-	width
+
+	let indices: Box<dyn Iterator<Item = usize>> = if rtl {
+		Box::new((start..end).rev())
+	} else {
+		Box::new(start..end)
+	};
+	let mut cursor = line_x;
+	for index in indices {
+		let codepoint = chars[index];
+		let cluster = output_start.wrapping_add(i32::try_from(index).expect("text exceeds i32"));
+		let width = char_w(d, font, size, tracking, codepoint);
+		glyphs.push(ShapedGlyph {
+			font,
+			gid: if graphemes::is_glyph_modifier(codepoint) {
+				0
+			} else {
+				slir::font_gid(d, font, codepoint)
+			},
+			cluster: cluster.wrapping_add(source_delta),
+			x: cursor,
+			y: 0.0,
+		});
+		push_cluster(
+			&mut clusters,
+			cluster,
+			cluster.wrapping_add(1),
+			cursor,
+			cursor + width,
+			rtl,
+			source_delta,
+			source_end,
+		);
+		cursor += width;
+	}
+	(
+		ShapedRun {
+			start: run_start,
+			end: run_end,
+			font,
+			rtl,
+			x: line_x,
+			width: cursor - line_x,
+			glyphs,
+		},
+		clusters,
+	)
+}
+
+/// Shapes and visually reorders one logical line.
+pub fn shape_line(
+	d: &Doc,
+	primary_font: i32,
+	size: f64,
+	tracking: f64,
+	chars: &[u32],
+	output_start: i32,
+	source_start: i32,
+	source_end: i32,
+) -> ShapedLine {
+	if chars.is_empty() {
+		return ShapedLine::default();
+	}
+	let text: String = chars
+		.iter()
+		.map(|&codepoint| char::from_u32(codepoint).unwrap_or(char::REPLACEMENT_CHARACTER))
+		.collect();
+	let assigned = font_assignments(d, primary_font, &text, chars);
+	let mut byte_offsets: Vec<usize> = text.char_indices().map(|(offset, _)| offset).collect();
+	byte_offsets.push(text.len());
+	let bidi = unicode_bidi::BidiInfo::new(&text, None);
+	let Some(paragraph) = bidi.paragraphs.first() else {
+		return ShapedLine::default();
+	};
+	let (levels, visual_runs) = bidi.visual_runs(paragraph, paragraph.range.clone());
+	let source_delta = source_start.wrapping_sub(output_start);
+	let mut line = ShapedLine::default();
+	for visual in visual_runs {
+		let start = byte_offsets
+			.binary_search(&visual.start)
+			.expect("bidi run starts at a character boundary");
+		let end = byte_offsets
+			.binary_search(&visual.end)
+			.expect("bidi run ends at a character boundary");
+		let rtl = levels.get(visual.start).is_some_and(|level| level.is_rtl());
+		let mut logical_runs = Vec::new();
+		let mut run_start = start;
+		while run_start < end {
+			let font = assigned[run_start];
+			let mut run_end = run_start + 1;
+			while run_end < end && assigned[run_end] == font {
+				run_end += 1;
+			}
+			logical_runs.push((run_start, run_end, font));
+			run_start = run_end;
+		}
+		if rtl {
+			logical_runs.reverse();
+		}
+		for (start, end, font) in logical_runs {
+			let (run, mut clusters) = shape_font_run(
+				d,
+				chars,
+				start,
+				end,
+				font,
+				size,
+				tracking,
+				rtl,
+				line.width,
+				output_start,
+				source_delta,
+				source_end,
+			);
+			line.width += run.width;
+			line.runs.push(run);
+			line.clusters.append(&mut clusters);
+		}
+	}
+	line
+}
+
+/// Returns the visual caret coordinate for a source position on one line.
+pub fn caret_x(layout: &TextLayout, line: usize, at: i32) -> f64 {
+	let Some(shaped) = layout.shaped.get(line) else {
+		return 0.0;
+	};
+	for cluster in &shaped.clusters {
+		if at == cluster.start {
+			return if cluster.rtl { cluster.x1 } else { cluster.x0 };
+		}
+		if at == cluster.end {
+			return if cluster.rtl { cluster.x0 } else { cluster.x1 };
+		}
+		if at > cluster.start && at < cluster.end {
+			return if cluster.rtl { cluster.x0 } else { cluster.x1 };
+		}
+	}
+	if at <= layout.src_ls[line] { 0.0 } else { shaped.width }
+}
+
+/// Finds the nearest shaped-cluster caret on one visual line.
+pub fn caret_for_visual_x(layout: &TextLayout, line: usize, goal: f64) -> i32 {
+	let Some(shaped) = layout.shaped.get(line) else {
+		return layout.src_ls.get(line).copied().unwrap_or(0);
+	};
+	for cluster in &shaped.clusters {
+		let midpoint = f64::midpoint(cluster.x0, cluster.x1);
+		if goal < midpoint {
+			return if cluster.rtl { cluster.end } else { cluster.start };
+		}
+		if goal <= cluster.x1 {
+			return if cluster.rtl { cluster.start } else { cluster.end };
+		}
+	}
+	layout.src_le.get(line).copied().unwrap_or(0)
+}
+
+/// Returns coalesced visual bands for a logical source selection on one line.
+pub fn selection_bands(layout: &TextLayout, line: usize, lo: i32, hi: i32) -> Vec<(f64, f64)> {
+	let Some(shaped) = layout.shaped.get(line) else {
+		return Vec::new();
+	};
+	let mut spans: Vec<(f64, f64)> = shaped
+		.clusters
+		.iter()
+		.filter(|cluster| cluster.end > lo && cluster.start < hi)
+		.map(|cluster| (cluster.x0, cluster.x1))
+		.collect();
+	spans.sort_by(|left, right| left.0.total_cmp(&right.0));
+	let mut bands: Vec<(f64, f64)> = Vec::new();
+	for span in spans {
+		if let Some(last) = bands.last_mut()
+			&& span.0 <= last.1 + WIDTH_EPSILON
+		{
+			last.1 = last.1.max(span.1);
+		} else {
+			bands.push(span);
+		}
+	}
+	bands
+}
+fn shape_layout(d: &Doc, font: i32, size: f64, tracking: f64, layout: &mut TextLayout) {
+	layout.shaped.clear();
+	for line in 0..layout.ls.len() {
+		let start = usize::try_from(layout.ls[line]).expect("negative line start");
+		let end = usize::try_from(layout.le[line]).expect("negative line end");
+		let shaped = shape_line(
+			d,
+			font,
+			size,
+			tracking,
+			&layout.chars[start..end],
+			layout.ls[line],
+			layout.src_ls[line],
+			layout.src_le[line],
+		);
+		layout.line_w[line] = shaped.width;
+		layout.shaped.push(shaped);
+	}
+}
+
+
+/// Measures a codepoint slice without allocating another character buffer.
+pub fn slice_w(d: &Doc, f: i32, size: f64, tracking: f64, chars: &[u32], a: i32, b: i32) -> f64 {
+	let start = usize::try_from(a).expect("negative character index");
+	let end = usize::try_from(b).expect("negative character index");
+	shape_line(d, f, size, tracking, &chars[start..end], a, a, b).width
 }
 
 /// Measures a string's codepoint slice without materializing codepoints.
 pub fn str_slice_w(d: &Doc, f: i32, size: f64, tracking: f64, text: &str, a: i32, b: i32) -> f64 {
 	assert!(!(a < 0 || b < a), "invalid string slice");
-
-	let mut width = 0.0;
-	let mut i = 0_i32;
-	for cp in text.chars().map(u32::from) {
-		if i >= b {
-			break;
-		}
-		if i >= a {
-			width += char_w(d, f, size, tracking, cp);
-		}
-		i = i.wrapping_add(1);
-	}
-	assert!(i >= b, "string slice out of bounds");
-	width
+	let chars: Vec<u32> = text.chars().map(u32::from).collect();
+	slice_w(d, f, size, tracking, &chars, a, b)
 }
 
 /// Computes the line height from font size and leading.
@@ -530,6 +926,7 @@ pub fn measure_text(
 		}
 	}
 
+	shape_layout(d, f, size, tracking, &mut layout);
 	layout.w = layout.line_w.iter().copied().fold(0.0_f64, f64::max);
 	layout.h = layout.line_h * f64::from(line_count(&layout)).max(1.0);
 	layout
