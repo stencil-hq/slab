@@ -370,13 +370,32 @@ fn font_covers(d: &Doc, font: i32, chars: &[u32]) -> bool {
 		})
 }
 
+/// Whether `font` publishes a cmap the kernel can check coverage against.
+///
+/// A runtime registration may carry metrics only (no cmap), which declares no
+/// coverage: FRAME.md makes the selected font's cmap authoritative, so such a
+/// font keeps every cluster and reports them as uncovered runs for driver-side
+/// fallback paint instead of being swapped for another family.
+fn coverage_known(d: &Doc, font: i32) -> bool {
+	usize::try_from(font)
+		.ok()
+		.and_then(|index| d.font_cmap_len.get(index))
+		.is_some_and(|&len| len > 0)
+}
+
+/// Whether `chars` stay on `primary` — either it proves coverage or it
+/// publishes none for the kernel to fall back from.
+fn keeps_primary(d: &Doc, primary: i32, chars: &[u32]) -> bool {
+	primary >= 0 && (!coverage_known(d, primary) || font_covers(d, primary, chars))
+}
+
 fn fallback_font(d: &Doc, primary: i32, chars: &[u32]) -> i32 {
-	if font_covers(d, primary, chars) {
+	if keeps_primary(d, primary, chars) {
 		return primary;
 	}
 	for font in (0..d.font_upem.len()).rev() {
 		let font = i32::try_from(font).expect("font table exceeds i32");
-		if font != primary && font_covers(d, font, chars) {
+		if font != primary && coverage_known(d, font) && font_covers(d, font, chars) {
 			return font;
 		}
 	}
@@ -385,7 +404,7 @@ fn fallback_font(d: &Doc, primary: i32, chars: &[u32]) -> i32 {
 
 fn font_assignments(d: &Doc, primary: i32, text: &str, chars: &[u32]) -> Vec<i32> {
 	let mut assigned = vec![primary; chars.len()];
-	if font_covers(d, primary, chars) {
+	if keeps_primary(d, primary, chars) {
 		return assigned;
 	}
 	let mut boundaries = Vec::new();
@@ -623,7 +642,7 @@ fn shape_line_uncached(
 	if chars.is_empty() {
 		return ShapedLine::default();
 	}
-	if chars.iter().all(|&codepoint| codepoint <= 0x7f) && font_covers(d, primary_font, chars) {
+	if chars.iter().all(|&codepoint| codepoint <= 0x7f) && keeps_primary(d, primary_font, chars) {
 		let (run, clusters) = shape_font_run(
 			d,
 			chars,

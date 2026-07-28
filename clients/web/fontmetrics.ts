@@ -163,7 +163,9 @@ export function parseFontMetrics(bytes: Uint8Array): FontMetrics | null {
       const underlinePosition =
          post && post.length >= 12 ? view.getInt16(post.offset + 8) : -Math.round(upem / 10);
       const underlineThickness =
-         post && post.length >= 12 ? view.getInt16(post.offset + 10) : Math.max(1, Math.round(upem / 20));
+         post && post.length >= 12
+            ? view.getInt16(post.offset + 10)
+            : Math.max(1, Math.round(upem / 20));
       return {
          weight: os2 && os2.length >= 6 ? view.getUint16(os2.offset + 4) : 400,
          upem,

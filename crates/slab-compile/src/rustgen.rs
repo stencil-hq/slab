@@ -544,7 +544,7 @@ col#app { col#items { each param.rows } }
 		assert!(module.contains("pub fn clear_focus(&mut self)"));
 		assert!(module.contains("pub fn focus_item(&mut self, each_key: &str, index: i32)"));
 		assert!(module.contains("pub fn focus_note(&self) -> &str"));
-		assert!(module.contains("#[allow(clippy::missing_const_for_fn)]"));
+		assert!(module.contains("clippy::missing_const_for_fn,"));
 		assert!(module.contains("pub fn invalidate_caches(&mut self)"));
 		assert!(module.contains("self.rows_cache = None"));
 	}

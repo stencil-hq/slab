@@ -342,20 +342,6 @@ export interface FrameGlyph {
    size: number;
 }
 
-export interface Frame {
-   width: number;
-   height: number;
-   ops: FrameOp[];
-   scene: SceneNode[];
-   strings: string[];
-   uncovered: number[];
-   glyphs: FrameGlyph[];
-   pathsRt: RtPath[];
-   dirty: boolean;
-   motionActive: boolean;
-   diagnostics: FrameDiagnostic[];
-}
-
 export interface OpGroup {
    /** Document node owning this group; `0xffffffff` marks a host envelope. */
    node: number;
@@ -464,4 +450,6 @@ export interface Frame {
    diagnostics: FrameDiagnostic[];
    /** Flat `[start, end)` codepoint-offset pairs indexed by `OpText.uncov_off`. */
    uncovered: Uint32Array;
+   /** Shaped glyph pool indexed by `OpText.glyph_off`/`glyph_len`. */
+   glyphs: FrameGlyph[];
 }

@@ -1051,7 +1051,7 @@ mod tests {
 		root_source.sem.controls = 1;
 		let mut child_source = source(1, 0, slir::K_TEXT, slir::F_FOCUSABLE);
 		child_source.focused = true;
-		let first = frame(vec![root_source.clone(), child_source.clone()]);
+		let first = frame(vec![root_source, child_source]);
 		let mut bridge = Bridge::default();
 		bridge.refresh("test", 200.0, 100.0, 2.0, &[SceneLayer::new(7, &instance, &first)]);
 		let initial = bridge.prepare_update(false).unwrap();
@@ -1083,7 +1083,7 @@ mod tests {
 		bridge.refresh("test", 200.0, 100.0, 2.0, &[SceneLayer::new(7, &instance, &first)]);
 		assert!(bridge.prepare_update(false).is_none());
 
-		let absent = frame(vec![root_source.clone()]);
+		let absent = frame(vec![root_source]);
 		bridge.refresh("test", 200.0, 100.0, 2.0, &[SceneLayer::new(7, &instance, &absent)]);
 		assert!(bridge.prepare_update(false).is_some());
 		assert!(

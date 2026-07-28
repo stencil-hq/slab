@@ -243,7 +243,10 @@ impl Doc {
     /// Drop generated list reconciliation snapshots after an external document reload.
     /// Call this when a host-mounted `RequestPump` reports `reloaded == true`,
     /// before re-synchronizing typed list setters. Safe and idempotent.
-    #[allow(clippy::missing_const_for_fn)]
+    #[allow(
+        clippy::missing_const_for_fn,
+        reason = "documents without list params leave this body empty"
+    )]
     pub fn invalidate_caches(&mut self) {
 {%- for list in list_params %}
         self.{{ list.cache_name }} = None;

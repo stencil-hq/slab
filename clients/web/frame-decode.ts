@@ -1,4 +1,4 @@
-import type { Frame, FrameDiagnostic, FrameOp, RtPath } from './kernel.ts';
+import type { Frame, FrameDiagnostic, FrameGlyph, FrameOp, RtPath } from './kernel.ts';
 import type { FrameBuf } from './wasm/slab_kernel.js';
 
 function signedWord(word: number): number {
@@ -75,7 +75,6 @@ function decodeGlyphs(json: string): FrameGlyph[] {
    if (!Array.isArray(value)) throw new Error('invalid FrameBuf glyphs: expected an array');
    return value as FrameGlyph[];
 }
-
 
 /** Consumes a bindgen frame buffer and reconstructs the painter operation stream. */
 export function decodeFrame(frame: FrameBuf): Frame {
@@ -314,7 +313,6 @@ export function decodeFrame(frame: FrameBuf): Frame {
          width,
          height,
          ops,
-         scene: [],
          strings,
          uncovered,
          glyphs,

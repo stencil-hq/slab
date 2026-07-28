@@ -1,7 +1,11 @@
 //! Profiling loop: `cargo bench -p slab-cli --bench profile_loop` re-solves
 //! one example for ~20s so an external sampler (`sample <pid>`) can attach.
 
-use std::{hint::black_box, path::Path, time::Instant};
+use std::{
+	hint::black_box,
+	path::Path,
+	time::{Duration, Instant},
+};
 
 fn main() {
 	let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
@@ -11,7 +15,10 @@ fn main() {
 	let src = std::fs::read_to_string(&path).expect("read example");
 	let opts = slab_compile::Options {
 		embed_assets: true,
-		base_dir:     path.parent().unwrap_or(Path::new(".")).to_path_buf(),
+		base_dir:     path
+			.parent()
+			.unwrap_or_else(|| Path::new("."))
+			.to_path_buf(),
 		assets:       None,
 		sources:      None,
 		fonts:        std::collections::HashMap::new(),
@@ -26,7 +33,7 @@ fn main() {
 	println!("pid {}", std::process::id());
 	let start = Instant::now();
 	let mut n = 0u64;
-	while start.elapsed().as_secs_f64() < 20.0 {
+	while start.elapsed() < Duration::from_secs(20) {
 		inst.dirty = true;
 		black_box(slab_kernel::frame::inst_frame_update(&mut inst, n as f64, &mut fr));
 		n += 1;
