@@ -1,5 +1,5 @@
 {"repaint":true,"signals":[],"caret":[11.669,0,1,19.6],"ime":[11.669,0,1,19.6],"cursor":0,"focus":"col@0/text@0","scrolls":[]}
-{"repaint":true,"signals":[{"name":"name","text":"hi👩‍👩‍👧","item":"","meta":{"x":-1,"y":-1,"dx":0,"dy":0,"drag_dx":0,"drag_dy":0,"mods":0,"button":0,"clicks":0,"key":"col@0/text@0","src_key":"","src_item":"","cancelled":false,"dropped":false}}],"caret":[57.606,0,1,19.6],"ime":[57.606,0,1,19.6],"cursor":0,"focus":"col@0/text@0","scrolls":[]}
+{"repaint":true,"signals":[{"name":"name","text":"hi👩‍👩‍👧","item":"","meta":{"x":-1,"y":-1,"dx":0,"dy":0,"drag_dx":0,"drag_dy":0,"mods":0,"button":0,"clicks":0,"key":"col@0/text@0","src_key":"","src_item":"","cancelled":false,"dropped":false}}],"caret":[39.231,0,1,19.6],"ime":[39.231,0,1,19.6],"cursor":0,"focus":"col@0/text@0","scrolls":[]}
 {"tick":true}
 {"repaint":true,"signals":[{"name":"name","text":"hi","item":"","meta":{"x":-1,"y":-1,"dx":0,"dy":0,"drag_dx":0,"drag_dy":0,"mods":0,"button":0,"clicks":0,"key":"col@0/text@0","src_key":"","src_item":"","cancelled":false,"dropped":false}}],"caret":[11.669,0,1,19.6],"ime":[11.669,0,1,19.6],"cursor":0,"focus":"col@0/text@0","scrolls":[]}
 {"tick":true}

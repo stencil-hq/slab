@@ -38,8 +38,7 @@ pub fn is_glyph_modifier(cp: u32) -> bool {
 /// [`is_glyph_modifier`] separately because ordinary controls retain the
 /// document's fallback-advance policy even though they do not emit warnings.
 pub fn requires_glyph(cp: u32) -> bool {
-    !is_glyph_modifier(cp)
-        && char::from_u32(cp).is_some_and(|character| !character.is_control())
+    !is_glyph_modifier(cp) && char::from_u32(cp).is_some_and(|character| !character.is_control())
 }
 
 /// First regional-indicator codepoint.

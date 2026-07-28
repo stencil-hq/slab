@@ -889,10 +889,7 @@ fn required_str<'a>(object: &'a Map<String, Value>, name: &str) -> ProtocolResul
         .ok_or_else(|| invalid(format!("'{name}' must be a string")))
 }
 
-fn optional_str<'a>(
-    object: &'a Map<String, Value>,
-    name: &str,
-) -> ProtocolResult<Option<&'a str>> {
+fn optional_str<'a>(object: &'a Map<String, Value>, name: &str) -> ProtocolResult<Option<&'a str>> {
     match object.get(name) {
         Some(value) => value
             .as_str()

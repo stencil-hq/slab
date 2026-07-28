@@ -3,8 +3,10 @@
 //! default advance of 600. At size 10, these become 5, 2.5, 8, and 6 units.
 
 use crate::{
-    graphemes,
+    flatten::{self, FrameOp},
+    frame, graphemes,
     slir::{self, Doc},
+    test_cells,
     textm::{self, TextLayout},
 };
 
@@ -176,6 +178,28 @@ pub fn test_default_advance() {
         textm::char_w(&doc, 0, 10.0, 1.5, 97),
         6.5,
         "tracking after glyph"
+    );
+
+    let mut modifier_doc = font_doc();
+    modifier_doc.font_cmap_cp.insert(6, graphemes::ZWJ);
+    modifier_doc.font_cmap_gid.insert(6, 91);
+    modifier_doc.font_adv.insert(6, 600);
+    modifier_doc.font_cmap_cp.push(graphemes::VS15);
+    modifier_doc.font_cmap_gid.push(92);
+    modifier_doc.font_adv.push(600);
+    modifier_doc.font_cmap_len[0] += 2;
+    let mut instance = frame::inst_shell();
+    instance.doc = modifier_doc;
+    let mut output = flatten::frame_new();
+    output.strings.push("\u{200D}\u{FE0E}".to_owned());
+    let mut op = test_cells::text_op(10.0, 12.0, 0, 0);
+    op.font = 0;
+    output.ops.push(FrameOp::Text(op));
+    let glyphs = frame::text_glyphs(&instance, &output, 0);
+    assert_eq!(glyphs.len(), 2, "both modifiers remain addressable");
+    assert!(
+        glyphs.iter().all(|glyph| glyph.gid == 0 && glyph.x == 10.0),
+        "glyph modifiers neither paint nor advance: {glyphs:?}"
     );
 }
 

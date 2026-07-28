@@ -1625,7 +1625,11 @@ pub fn text_glyphs(i: &Instance, fr: &Frame, op: i32) -> Vec<GlyphPos> {
             let codepoint = u32::from(character);
             let glyph = GlyphPos {
                 font: text.font,
-                gid: slir::font_gid(&i.doc, text.font, codepoint),
+                gid: if graphemes::is_glyph_modifier(codepoint) {
+                    0
+                } else {
+                    slir::font_gid(&i.doc, text.font, codepoint)
+                },
                 x,
                 y: text.y_baseline,
                 size: text.size,

@@ -1453,12 +1453,12 @@ impl<'a> Raster<'a> {
             let cp = ch as u32;
             let ix = cmap.binary_search_by_key(&cp, |&(c, _)| c).ok();
             let gid = ix.map(|i| cmap[i].1).unwrap_or(0);
+            if graphemes::is_glyph_modifier(cp) {
+                continue;
+            }
             if gid != 0 && ch != ' ' {
                 sink.dx = pen as f32;
                 face.outline_glyph(ttf_parser::GlyphId(gid), &mut sink);
-            }
-            if graphemes::is_glyph_modifier(cp) {
-                continue;
             }
             let adv_units = ix.map(|i| advances[i] as f64).unwrap_or(default_adv);
             pen += adv_units * size_px / upem + tracking * s;
