@@ -34,7 +34,7 @@ commands:
   gen wc FILE -o DIR [--tag NAME] [--separate-ir]   emit a web-component module
   gen react FILE -o DIR [--tag NAME]       emit a web component + typed React wrapper
   gen rust FILE -o OUT.rs                  emit a typed Rust module (native client)
-  gen go FILE -o OUT.go [--package NAME]   emit a typed Go module (slab-go runtime)
+  gen go FILE -o OUT.go [--package NAME]   emit a typed Go module (clients/go runtime)
 ";
 const CHECK_USAGE: &str = "\
 usage: slab check FILE [--width N] [--height N] [--state a,b]

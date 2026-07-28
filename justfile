@@ -88,6 +88,10 @@ freshness:
 pack: gen
     bun scripts/pack.ts
 
+# browser web-component integration through installed package tarballs
+web-e2e: pack
+    bun scripts/pack-e2e.ts
+
 # publish the three npm packages (pack + tarball e2e first); e.g. `just publish --dry-run`
 publish *flags: pack
     bun scripts/pack-e2e.ts

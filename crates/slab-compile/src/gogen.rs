@@ -1,4 +1,4 @@
-//! Typed Go module generation for the `slab-go` runtime. Produces a single
+//! Typed Go module generation for the Go client runtime (`clients/go`). Produces a single
 //! deterministic Go file that wraps a `*slab.Session` and drives it over the
 //! Slab Drive Protocol (SDP): typed param setters route through `param.set`,
 //! typed list setters reconcile through `list.set_len`, `list.set_key`, and
@@ -578,7 +578,7 @@ fn emit_module(slir: &Slir, bytes: &[u8], src_name: &str, package: &str) -> Stri
     if has_list {
         o.push_str("\t\"strconv\"\n");
     }
-    o.push_str("\n\t\"github.com/stencil-hq/slab-go/slab\"\n)\n\n");
+    o.push_str("\n\t\"github.com/stencil-hq/slab/clients/go/slab\"\n)\n\n");
 
     let _ = writeln!(
         o,
