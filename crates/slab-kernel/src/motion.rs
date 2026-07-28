@@ -9,8 +9,8 @@
 //! are always discrete.
 
 use crate::{color, ease, list, slir, style, value};
+use rustc_hash::FxHashMap as HashMap;
 use slir::Doc;
-use std::collections::HashMap;
 use style::St;
 use value::V;
 
@@ -238,6 +238,40 @@ pub fn keyframe_v(d: &Doc, st: &mut St, anim: i32, attr: u32, p: f64) -> V {
         .unwrap_or_else(value::missing)
 }
 
+/// A resolved scalar transition endpoint: value tag, number, and packed color.
+///
+/// Numbers and percentages live in `num`; colors and solid paints live in
+/// `rgba`. The tag decides which half is meaningful.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct VEnd {
+    /// Resolved value tag (`T_NUM`, `T_PCT`, `T_COLOR`, …).
+    pub tag: u32,
+    /// Numeric payload for number- and percent-like tags.
+    pub num: f64,
+    /// SLIR-packed RGBA payload for color-like tags.
+    pub rgba: u32,
+}
+
+/// One host-value transition clock.
+///
+/// A `transition=` node whose resolved base numeric/pct/color attribute
+/// changes between solves (host param writes, theme flips) tweens from the
+/// previously painted value instead of snapping. The clock is stamped with
+/// the observing solve's time, exactly like state-flip clocks.
+#[derive(Clone, Debug)]
+pub struct VClock {
+    /// Document node carrying the `transition=`.
+    pub node: u32,
+    /// Attribute identifier on that node.
+    pub attr: u32,
+    /// Resolved value observed at the latest solve (the tween target).
+    pub last: VEnd,
+    /// Tween origin captured when the value last changed.
+    pub from: VEnd,
+    /// Solve time of the latest observed change, or [`NEVER`].
+    pub flip: f64,
+}
+
 /// Motion state retained between solves.
 #[derive(Clone, Debug)]
 pub struct MSt {
@@ -261,6 +295,12 @@ pub struct MSt {
     pub sp_flip: Vec<f64>,
     sp_slot: HashMap<(u32, i32), usize>,
     sp_by_node: HashMap<u32, Vec<i32>>,
+    /// Host-value transition clocks for `transition=` nodes, keyed by
+    /// `(node, attr)`; see [`VClock`].
+    pub v_clocks: Vec<VClock>,
+    v_slot: HashMap<(u32, u32), usize>,
+    /// Reusable attribute-order scratch for the per-solve overlay loops.
+    scratch_attrs: Vec<u32>,
     /// Bindings the driver replays natively (see [`lifts`]); indexed by
     /// binding, empty until a driver lifts. Lifted bindings contribute no
     /// overlay and no activity.
@@ -311,8 +351,11 @@ pub fn mst_new() -> MSt {
         sp_last: Vec::new(),
         sp_prev: Vec::new(),
         sp_flip: Vec::new(),
-        sp_slot: HashMap::new(),
-        sp_by_node: HashMap::new(),
+        sp_slot: HashMap::default(),
+        sp_by_node: HashMap::default(),
+        v_clocks: Vec::new(),
+        v_slot: HashMap::default(),
+        scratch_attrs: Vec::new(),
         lifted: Vec::new(),
         lift_node: Vec::new(),
         lift_bg: Vec::new(),
@@ -415,6 +458,18 @@ pub fn sync_synthetic_clocks(d: &Doc, st: &St, ms: &mut MSt, t: f64) {
 ///
 /// Returns whether any patch on the instance remains in flight.
 pub fn synthetic_transition(d: &Doc, st: &mut St, ms: &MSt, tr: i32, node: u32, t: f64) -> bool {
+    synthetic_transition_scratch(d, st, ms, tr, node, t, &mut Vec::new())
+}
+
+fn synthetic_transition_scratch(
+    d: &Doc,
+    st: &mut St,
+    ms: &MSt,
+    tr: i32,
+    node: u32,
+    t: f64,
+    attrs: &mut Vec<u32>,
+) -> bool {
     let transition = index(tr);
     let base = list::base(&st.lists, d, node);
     let base_index = usize::try_from(base).expect("node index exceeds usize");
@@ -439,7 +494,7 @@ pub fn synthetic_transition(d: &Doc, st: &mut St, ms: &MSt, tr: i32, node: u32, 
         return false;
     }
 
-    let mut attrs = Vec::new();
+    attrs.clear();
     for position in 0..patch_count {
         let patch = st.lists.patches_by_node[base_index][position];
         let start = d.patch_attr_off[patch];
@@ -452,7 +507,7 @@ pub fn synthetic_transition(d: &Doc, st: &mut St, ms: &MSt, tr: i32, node: u32, 
         }
     }
 
-    for attr in attrs {
+    for &attr in attrs.iter() {
         let base_ix = slir::base_attr(d, base, attr);
         let mut has_value = base_ix >= 0;
         let mut current = pv(d, st, &value::decode(d, base_ix));
@@ -549,6 +604,153 @@ fn animation_binding_active(d: &Doc, st: &St, node: u32, animation: i32) -> bool
     value.tag == slir::T_STR && value.h == d.anim_name[index(animation)]
 }
 
+/// Classifies a resolved value as a host-value transition endpoint.
+///
+/// Only scalar numbers, percentages, and colors participate; everything else
+/// (strings, enums, tuples, gradients) snaps as before.
+fn vend_of(resolved: &V) -> Option<VEnd> {
+    if is_numlike(resolved.tag) || is_pctlike(resolved.tag) {
+        return Some(VEnd {
+            tag: resolved.tag,
+            num: resolved.num,
+            rgba: 0,
+        });
+    }
+    if is_colorlike(resolved.tag) {
+        return Some(VEnd {
+            tag: resolved.tag,
+            num: 0.0,
+            rgba: resolved.h,
+        });
+    }
+    None
+}
+
+/// Interpolates two host-value endpoints with the transition weight.
+fn vend_lerp(from: VEnd, to: VEnd, weight: f64) -> VEnd {
+    if weight <= 0.0 {
+        return from;
+    }
+    if weight >= 1.0 {
+        return to;
+    }
+    if is_colorlike(from.tag) && is_colorlike(to.tag) {
+        return VEnd {
+            tag: to.tag,
+            num: 0.0,
+            rgba: lerp_rgba(from.rgba, to.rgba, weight),
+        };
+    }
+    VEnd {
+        tag: to.tag,
+        num: from.num + (to.num - from.num) * weight,
+        rgba: 0,
+    }
+}
+
+/// Reports whether an active patch on `node` currently writes `attr`, in
+/// which case the patch value owns the attribute and the base must not tween
+/// underneath it.
+fn active_patch_writes(d: &Doc, st: &St, node: u32, attr: u32) -> bool {
+    let node_index = usize::try_from(node).expect("node index exceeds usize");
+    st.lists.patches_by_node[node_index].iter().any(|&patch| {
+        st.patch_on[patch]
+            && patch_attr_ix(
+                d,
+                i32::try_from(patch).expect("patch index exceeds i32"),
+                attr,
+            ) >= 0
+    })
+}
+
+/// Detects host-driven base-value changes on `transition=` nodes and pushes
+/// the in-flight tween overlays. Returns whether any tween remains in flight.
+fn value_transitions(d: &Doc, st: &mut St, ms: &mut MSt, t: f64) -> bool {
+    let mut active = false;
+    for transition in 0..d.trans_node.len() {
+        let dur = d.trans_dur[transition];
+        if dur <= 0.0 {
+            continue;
+        }
+        let node = d.trans_node[transition];
+        let node_index = usize::try_from(node).expect("node index exceeds usize");
+        let delay = d.trans_delay[transition];
+        let easing = d.trans_easing[transition];
+        let lo = d.attr_index[node_index];
+        let hi = d.attr_index[node_index.wrapping_add(1)];
+        for entry in lo..hi {
+            let entry = index(i32::try_from(entry).expect("attribute index exceeds i32"));
+            let attr = d.attr_id[entry];
+            if attr == slir::A_FLAGS {
+                continue;
+            }
+            let value_ix = i32::from_ne_bytes(d.attr_val[entry].to_ne_bytes());
+            let resolved = pv(d, st, &value::decode(d, value_ix));
+            let Some(now) = vend_of(&resolved) else {
+                continue;
+            };
+            let slot = if let Some(&slot) = ms.v_slot.get(&(node, attr)) {
+                slot
+            } else {
+                let slot = ms.v_clocks.len();
+                ms.v_slot.insert((node, attr), slot);
+                ms.v_clocks.push(VClock {
+                    node,
+                    attr,
+                    last: now,
+                    from: now,
+                    flip: NEVER,
+                });
+                slot
+            };
+            let clock = &mut ms.v_clocks[slot];
+            if now != clock.last {
+                // Chain from the currently painted value so a write landing
+                // mid-tween continues smoothly instead of jumping.
+                let age = t - clock.flip - delay;
+                clock.from = if clock.flip > NEVER && age < dur {
+                    vend_lerp(
+                        clock.from,
+                        clock.last,
+                        ease_code(easing, 0.0f64.max(age) / dur),
+                    )
+                } else {
+                    clock.last
+                };
+                clock.last = now;
+                clock.flip = t;
+            }
+            let age = t - clock.flip - delay;
+            if clock.flip <= NEVER || age >= dur {
+                continue;
+            }
+            let from = clock.from;
+            let to = clock.last;
+            active = true;
+            if active_patch_writes(d, st, node, attr) {
+                continue;
+            }
+            let weight = ease_code(easing, 0.0f64.max(age) / dur);
+            let sample = vend_lerp(from, to, weight);
+            style::ov_push(
+                st,
+                node,
+                attr,
+                sample.tag,
+                sample.num,
+                if is_colorlike(sample.tag) {
+                    sample.rgba
+                } else {
+                    0
+                },
+                0,
+                0,
+            );
+        }
+    }
+    active
+}
+
 /// Builds the motion overlay for one solve.
 ///
 /// Call this after [`style::begin_solve`] has seeded patch activity and before
@@ -567,6 +769,8 @@ pub fn apply(d: &Doc, st: &mut St, ms: &mut MSt, t: f64) -> bool {
         ms.p_prev
             .extend_from_slice(&st.patch_on[..d.patch_node.len()]);
         ms.p_flip.resize(d.patch_node.len(), NEVER);
+        ms.v_clocks.clear();
+        ms.v_slot.clear();
         ms.inited = true;
     } else {
         for patch in 0..d.patch_node.len() {
@@ -581,6 +785,12 @@ pub fn apply(d: &Doc, st: &mut St, ms: &mut MSt, t: f64) -> bool {
     }
     prune_deleted_synthetic_clocks(st, ms);
     sync_synthetic_clocks(d, st, ms, t);
+
+    // Host-value transitions run before the patch folds below so a
+    // simultaneous state flip still owns its attributes (last write wins).
+    if value_transitions(d, st, ms, t) {
+        ms.active = true;
+    }
 
     // Authored transition nodes fold the base and patches in document order.
     for transition in 0..d.trans_node.len() {
@@ -607,7 +817,8 @@ pub fn apply(d: &Doc, st: &mut St, ms: &mut MSt, t: f64) -> bool {
         ms.active = true;
 
         // Preserve first-appearance order for deterministic overlay output.
-        let mut attrs = Vec::new();
+        let mut attrs = std::mem::take(&mut ms.scratch_attrs);
+        attrs.clear();
         for position in 0..patch_count {
             let patch = st.lists.patches_by_node[node_index][position];
             let start = d.patch_attr_off[patch];
@@ -620,7 +831,7 @@ pub fn apply(d: &Doc, st: &mut St, ms: &mut MSt, t: f64) -> bool {
             }
         }
 
-        for attr in attrs {
+        for &attr in &attrs {
             let base_ix = slir::base_attr(d, node, attr);
             let mut current = pv(d, st, &value::decode(d, base_ix));
             let mut has_value = base_ix >= 0;
@@ -690,9 +901,11 @@ pub fn apply(d: &Doc, st: &mut St, ms: &mut MSt, t: f64) -> bool {
                 }
             }
         }
+        ms.scratch_attrs = attrs;
     }
 
     // Template transitions need distinct clocks and overlays per synthetic instance.
+    let mut attrs = std::mem::take(&mut ms.scratch_attrs);
     for transition in 0..d.trans_node.len() {
         let base = d.trans_node[transition];
         let tr = i32::try_from(transition).expect("transition index exceeds i32");
@@ -701,12 +914,13 @@ pub fn apply(d: &Doc, st: &mut St, ms: &mut MSt, t: f64) -> bool {
             let node = list::materialized(&st.lists)[synthetic];
             note_synthetic_work();
             if list::base(&st.lists, d, node) == base
-                && synthetic_transition(d, st, ms, tr, node, t)
+                && synthetic_transition_scratch(d, st, ms, tr, node, t, &mut attrs)
             {
                 ms.active = true;
             }
         }
     }
+    ms.scratch_attrs = attrs;
 
     // Running animations are time-indexed patches applied before layout.
     for binding in 0..d.bind_node.len() {
@@ -742,7 +956,8 @@ pub fn apply(d: &Doc, st: &mut St, ms: &mut MSt, t: f64) -> bool {
         let progress = ease_code(d.bind_easing[binding], cycle_progress(t, dur, mode, delay));
 
         // Preserve each attribute's first-appearance order across animation stops.
-        let mut attrs = Vec::new();
+        let mut attrs = std::mem::take(&mut ms.scratch_attrs);
+        attrs.clear();
         let stop_start = d.anim_stop_off[index(animation)];
         let stop_end = stop_start.wrapping_add(d.anim_stop_len[index(animation)]);
         for stop in stop_start..stop_end {
@@ -757,7 +972,7 @@ pub fn apply(d: &Doc, st: &mut St, ms: &mut MSt, t: f64) -> bool {
             }
         }
 
-        for attr in attrs {
+        for &attr in &attrs {
             let v = keyframe_v(d, st, animation, attr, progress);
             if v.tag == value::V_MISSING {
                 continue;
@@ -777,6 +992,7 @@ pub fn apply(d: &Doc, st: &mut St, ms: &mut MSt, t: f64) -> bool {
                 }
             }
         }
+        ms.scratch_attrs = attrs;
         if dur > 0.0 && (mode != 1 || t - delay < dur) {
             ms.active = true;
         }

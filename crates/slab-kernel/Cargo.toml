@@ -7,3 +7,6 @@ license = "MIT"
 [dependencies]
 png = { workspace = true }
 rustc-hash = { workspace = true }
+
+[dev-dependencies]
+slab-slir = { path = "../slab-slir" }

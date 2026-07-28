@@ -214,8 +214,8 @@ pub fn emit_rect(out: &mut Vec<u32>, d: &slir::Doc, r: &flatten::OpRect) {
     out.push(125u32);
 }
 
-/// Appends a text draw operation.
-pub fn emit_text(out: &mut Vec<u32>, t: &flatten::OpText) {
+/// Appends a text draw operation, resolving uncovered runs from `fr`.
+pub fn emit_text(out: &mut Vec<u32>, fr: &flatten::Frame, t: &flatten::OpText) {
     emit(out, "{\"op\":\"Text\",\"node\":");
     emit_u32(out, t.node);
     emit(out, ",\"x\":");
@@ -240,6 +240,22 @@ pub fn emit_text(out: &mut Vec<u32>, t: &flatten::OpText) {
     emit_num(out, t.opacity);
     if t.strike {
         emit(out, ",\"strike\":true");
+    }
+    if t.uncov_len > 0 {
+        emit(out, ",\"uncovered\":[");
+        for run in 0..t.uncov_len {
+            if run > 0 {
+                out.push(COMMA);
+            }
+            let pair = usize::try_from(t.uncov_off.wrapping_add(run.wrapping_mul(2)))
+                .expect("uncovered offset fits usize");
+            out.push(ARRAY_OPEN);
+            emit_u32(out, fr.uncovered[pair]);
+            out.push(COMMA);
+            emit_u32(out, fr.uncovered[pair + 1]);
+            out.push(ARRAY_CLOSE);
+        }
+        out.push(ARRAY_CLOSE);
     }
     if t.color_kind == 2 {
         emit(out, ",\"grad_box\":[");
@@ -317,7 +333,7 @@ pub fn emit_op(out: &mut Vec<u32>, d: &slir::Doc, fr: &flatten::Frame, index: i3
     let index = usize::try_from(index).expect("frame operation index is non-negative");
     match &fr.ops[index] {
         flatten::FrameOp::Rect(rect) => emit_rect(out, d, rect),
-        flatten::FrameOp::Text(text) => emit_text(out, text),
+        flatten::FrameOp::Text(text) => emit_text(out, fr, text),
         flatten::FrameOp::Image(image) => emit_image(out, image),
         flatten::FrameOp::PathDraw(path) => emit_path(out, path),
         flatten::FrameOp::ClipPush(c) => {
@@ -515,6 +531,10 @@ pub fn emit_scene(out: &mut Vec<u32>, fr: &flatten::Frame, index: i32) {
     emit_bool(out, node.disabled);
     emit(out, ",\"focused\":");
     emit_bool(out, node.focused);
+    // Conditional so pre-editable goldens stay stable, like the FX-kit keys.
+    if node.editable {
+        emit(out, ",\"editable\":true");
+    }
     out.push(OBJECT_CLOSE);
 }
 
@@ -553,7 +573,7 @@ fn emit_param_list(out: &mut Vec<u32>, d: &slir::Doc, st: &style::St, param: u32
                 u32::try_from(field.wrapping_sub(field_off)).expect("negative list field offset");
             let name = slir::str_at(d, d.list_field_name[absolute]);
             out.push(COMMA);
-            emit_jstr(out, &name);
+            emit_jstr(out, name);
             out.push(u32::from(b':'));
             let kind = d.list_field_type[absolute];
             if kind == slir::PARAM_LIST {
@@ -706,7 +726,7 @@ pub fn dump_effects(d: &slir::Doc, st: &style::St, effects: &dispatch::Effects) 
         }
         let meta = &effects.sig_meta[index];
         emit(&mut out, "{\"name\":");
-        emit_jstr(&mut out, &slir::str_at(d, *name));
+        emit_jstr(&mut out, slir::str_at(d, *name));
         emit(&mut out, ",\"text\":");
         emit_jstr(&mut out, &effects.sig_text[index]);
         emit(&mut out, ",\"item\":");
@@ -731,6 +751,14 @@ pub fn dump_effects(d: &slir::Doc, st: &style::St, effects: &dispatch::Effects) 
         emit_u32(&mut out, meta.clicks);
         emit(&mut out, ",\"key\":");
         emit_jstr(&mut out, &meta.key);
+        if !meta.hit_key.is_empty() {
+            emit(&mut out, ",\"hit_key\":");
+            emit_jstr(&mut out, &meta.hit_key);
+        }
+        if !meta.pressed_key.is_empty() {
+            emit(&mut out, ",\"pressed_key\":");
+            emit_jstr(&mut out, &meta.pressed_key);
+        }
         emit(&mut out, ",\"src_key\":");
         emit_jstr(&mut out, &meta.src_key);
         emit(&mut out, ",\"src_item\":");
@@ -824,7 +852,7 @@ pub fn dump_trace_summary(d: &slir::Doc, st: &style::St, instance: &frame::Insta
             }
             first = false;
             emit(&mut out, "{\"name\":");
-            emit_jstr(&mut out, &slir::str_at(d, d.sign_name[signal]));
+            emit_jstr(&mut out, slir::str_at(d, d.sign_name[signal]));
             emit(&mut out, ",\"text\":");
             emit_jstr(&mut out, &edit::text_str(&instance.ds.ed[edit_index]));
             emit(&mut out, ",\"item\":");

@@ -24,6 +24,9 @@ macro_rules! attr_table {
 
         /// Every `(id, name)` pair, ascending.
         pub const ATTRS: &[(u16, &str)] = &[ $( ($id, $name), )* ];
+
+        /// Total number of normative SLIR attributes defined in the table.
+        pub const ATTR_COUNT: usize = ATTRS.len();
     };
 }
 
@@ -119,4 +122,5 @@ attr_table! {
     SET_SIZE = 88, "set-size";
     ANIMATE = 89, "animate";
     STRIKE = 90, "strike";
+    CANCEL = 91, "cancel";
 }

@@ -21,6 +21,7 @@ use crate::{
     style::{self, St},
     textm,
 };
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::BTreeSet;
 
 /// Mutable state for one decoded document and its most recent solve.
@@ -54,6 +55,12 @@ pub struct Instance {
     focus_note: String,
     /// Runtime glyph notes already surfaced, keyed by authored family and codepoint.
     glyph_warned: BTreeSet<(String, u32)>,
+    /// Text-op contents already scanned for glyph coverage, keyed by font index.
+    /// Never iterated; invalidated when the font table changes.
+    glyph_scanned: FxHashMap<i32, FxHashSet<String>>,
+    /// Every distinct diagnostic observed since the document was assigned, in
+    /// first-occurrence order. Solves append; only [`inst_init`] clears.
+    diags_cum: Vec<FrameDiagnostic>,
 }
 
 /// One stable runtime image slot; inactive slots retain their unified index.
@@ -147,6 +154,8 @@ pub fn inst_shell() -> Instance {
         root_pi: -1,
         focus_note: String::new(),
         glyph_warned: BTreeSet::new(),
+        glyph_scanned: FxHashMap::default(),
+        diags_cum: Vec::new(),
     }
 }
 
@@ -154,6 +163,8 @@ pub fn inst_shell() -> Instance {
 pub fn inst_init(i: &mut Instance) {
     i.ok = i.doc.ok;
     i.glyph_warned.clear();
+    i.glyph_scanned.clear();
+    i.diags_cum.clear();
     i.focus_note.clear();
     i.solved = false;
     i.dirty = true;
@@ -161,6 +172,16 @@ pub fn inst_init(i: &mut Instance) {
         style::init_params(&i.doc, &mut i.st);
     }
 }
+/// Returns every distinct diagnostic observed since the document was
+/// assigned, in first-occurrence order.
+///
+/// Unlike [`Frame::diagnostics`], whose runtime notes are one-shot and may be
+/// consumed by an intermediate solve, this cumulative set stays queryable at
+/// any time. It resets only when a new document initializes via [`inst_init`].
+pub fn inst_diags(i: &Instance) -> &[FrameDiagnostic] {
+    &i.diags_cum
+}
+
 fn finish_frame_diagnostics(i: &mut Instance, frame: &mut Frame) {
     frame.diagnostics.clear();
     frame.diagnostics.extend(
@@ -175,6 +196,18 @@ fn finish_frame_diagnostics(i: &mut Instance, frame: &mut Frame) {
             }),
     );
 
+    if !i.doc.font_family.is_empty() {
+        scan_glyph_coverage(i, frame);
+    }
+
+    for diagnostic in &frame.diagnostics {
+        if !i.diags_cum.contains(diagnostic) {
+            i.diags_cum.push(diagnostic.clone());
+        }
+    }
+}
+
+fn scan_glyph_coverage(i: &mut Instance, frame: &mut Frame) {
     for op in &frame.ops {
         let FrameOp::Text(text) = op else {
             continue;
@@ -195,6 +228,12 @@ fn finish_frame_diagnostics(i: &mut Instance, frame: &mut Frame) {
         let Some(content) = frame.strings.get(text.str_ref as usize) else {
             continue;
         };
+        if i.glyph_scanned
+            .get(&text.font)
+            .is_some_and(|scanned| scanned.contains(content.as_str()))
+        {
+            continue;
+        }
         for character in content.chars() {
             let codepoint = u32::from(character);
             if !graphemes::requires_glyph(codepoint)
@@ -217,6 +256,10 @@ fn finish_frame_diagnostics(i: &mut Instance, frame: &mut Frame) {
                 ),
             });
         }
+        i.glyph_scanned
+            .entry(text.font)
+            .or_default()
+            .insert(content.clone());
     }
 }
 
@@ -281,6 +324,7 @@ pub fn inst_font_register(
     i.doc.font_cmap_gid.extend_from_slice(cmap_gid);
     i.doc.font_adv.extend_from_slice(adv);
     style::invalidate_font_selection(&mut i.st);
+    i.glyph_scanned.clear();
     i.dirty = true;
 
     i32::try_from(i.doc.font_family.len())
@@ -821,6 +865,50 @@ fn translate_reveal_corners(corners: &mut RevealCorners, physical_x: bool, delta
     }
 }
 
+/// Extent of `scroll_index`'s pinned sticky children covering its viewport
+/// start on the given physical axis.
+///
+/// Sticky children pin over the viewport start once their flow position
+/// scrolls past, so a reveal that parks a target at the raw start edge hides
+/// it underneath them. The child scene index the reveal chain arrived from is
+/// excluded so revealing a sticky node never blocks on itself.
+fn sticky_start_cover(
+    sc: &Scene,
+    scroll_index: usize,
+    exclude_child: usize,
+    physical_x: bool,
+) -> f64 {
+    let viewport_start = if physical_x {
+        sc.x[scroll_index]
+    } else {
+        sc.y[scroll_index]
+    };
+    let parent_ix = i32::try_from(scroll_index).expect("scene index exceeds i32");
+    let mut cover = 0.0_f64;
+    for child in 0..sc.node.len() {
+        if child == exclude_child
+            || sc.parent[child] != parent_ix
+            || sc.flags[child] & slir::F_STICKY == 0
+        {
+            continue;
+        }
+        let (child_start, child_end) = if physical_x {
+            (sc.x[child], sc.x[child] + sc.w[child])
+        } else {
+            (sc.y[child], sc.y[child] + sc.h[child])
+        };
+        // A sticky painted within its own extent of the viewport start is
+        // pinned there (or pins as soon as the reveal scrolls past it); its
+        // pinned offset is at most the container's start padding, so the
+        // painted end bounds the covered strip. A sticky pushed deeper by a
+        // follower or still far down in flow does not cover the start edge.
+        if child_start - viewport_start < child_end - child_start {
+            cover = cover.max(child_end - viewport_start);
+        }
+    }
+    cover.max(0.0)
+}
+
 /// Scrolls every active-axis ancestor minimally to reveal a current scene node.
 ///
 /// The nonnegative finite margin is applied on every active scroll axis.
@@ -871,8 +959,17 @@ pub fn inst_reveal(i: &mut Instance, key: &str, margin: f64) -> bool {
             } else {
                 (i.sc.y[index], i.sc.y[index] + i.sc.h[index])
             };
-            let desired = if start < viewport_start {
-                old + start - viewport_start
+            // Sticky children pinned at the viewport start would cover a
+            // target parked at the raw start edge; reveal below them instead.
+            let cover = if i.sc.flags[child] & slir::F_STICKY != 0 {
+                // Revealing a sticky child (or its content) never scrolls
+                // against its own pinned position.
+                0.0
+            } else {
+                sticky_start_cover(&i.sc, index, child, physical_x)
+            };
+            let desired = if start < viewport_start + cover {
+                old + start - viewport_start - cover
             } else if end > viewport_end {
                 old + end - viewport_end
             } else {
@@ -890,7 +987,7 @@ pub fn inst_reveal(i: &mut Instance, key: &str, margin: f64) -> bool {
     true
 }
 
-fn virtual_scene_geometry(i: &Instance, parent: u32, each: u32) -> Option<(f64, f64, f64)> {
+fn virtual_scene_geometry(i: &Instance, parent: u32, each: u32) -> Option<(f64, f64, f64, f64)> {
     let parent_index = scene::index_of(&i.sc, parent);
     let each_index = scene::index_of(&i.sc, each);
     if parent_index < 0 || each_index < 0 {
@@ -910,7 +1007,8 @@ fn virtual_scene_geometry(i: &Instance, parent: u32, each: u32) -> Option<(f64, 
         i.sc.y[each_index] - i.sc.y[parent_index]
     };
     let origin = painted_origin + style::scroll_get(&i.st, parent);
-    Some((viewport, i.sc.content_main[parent_index], origin))
+    let cover = sticky_start_cover(&i.sc, parent_index, each_index, row);
+    Some((viewport, i.sc.content_main[parent_index], origin, cover))
 }
 
 /// Reveals an item in a virtual `each`; non-virtual and unknown lists return `false`.
@@ -929,20 +1027,24 @@ pub fn inst_reveal_item(i: &mut Instance, each_key: &str, item_index: i32, align
     {
         return false;
     }
-    let Some((viewport, content, origin)) = virtual_scene_geometry(i, parent, each) else {
+    let Some((viewport, content, origin, cover)) = virtual_scene_geometry(i, parent, each) else {
         return false;
     };
     if viewport <= 0.0 {
         return false;
     }
+    // Sticky siblings pinned at the viewport start (e.g. a list header) cover
+    // the first `cover` units, so start-side alignments land below them and
+    // centering happens within the uncovered region.
+    let cover = cover.min((viewport - extent).max(0.0));
     let old = style::scroll_get(&i.st, parent);
     let start = origin + f64::from(item_index) * extent;
     let end = start + extent;
     let target = match align {
-        0 => start,
-        1 => start - (viewport - extent) / 2.0,
+        0 => start - cover,
+        1 => start - cover - (viewport - cover - extent) / 2.0,
         2 => end - viewport,
-        3 if start < old => start,
+        3 if start - cover < old => start - cover,
         3 if end > old + viewport => end - viewport,
         3 => old,
         _ => unreachable!("align was validated"),
@@ -960,7 +1062,7 @@ fn first_focusable_template(i: &mut Instance, each: u32, mut template: u32, item
         let flags = style::eff_flags(&i.doc, &i.st, node);
         if flags & slir::F_FOCUSABLE != 0
             && flags & slir::F_INERT == 0
-            && !style::node_state_on(&i.doc, &i.st, node, "disabled")
+            && !style::node_disabled(&i.st, node)
         {
             return node;
         }
@@ -1050,6 +1152,9 @@ pub fn inst_set_param(i: &mut Instance, param: u32, v: &ParamValue) -> bool {
                 return true;
             }
             i.st.pv_str[param_index] = v.s.clone();
+            // A host write to a field-synced text param resets non-composing
+            // edit buffers so the painted field follows the parameter.
+            dispatch::reset_synced_edits(&i.doc, &mut i.st, &mut i.ds, param_index, &v.s);
         }
         1 | 2 => {
             if i.st.pv_num[param_index] == v.num {
@@ -1351,7 +1456,7 @@ fn refresh_virtual_window(i: &mut Instance, each: u32) -> bool {
     let Some((_, _, parent)) = list::virtual_config(&i.doc, &i.st.lists, each) else {
         return false;
     };
-    let Some((viewport, _, origin)) = virtual_scene_geometry(i, parent, each) else {
+    let Some((viewport, _, origin, _)) = virtual_scene_geometry(i, parent, each) else {
         return false;
     };
     let off = style::scroll_get(&i.st, parent);
@@ -1489,7 +1594,7 @@ fn write_frame(i: &mut Instance, t_ms: f64, frame: &mut Frame, retain_clean: boo
     {
         i.dirty = true;
     }
-    focus::refresh(&i.sc, &mut i.ds.fs);
+    focus::refresh(&i.doc, &i.st, &i.sc, &mut i.ds.fs);
     finish_frame_diagnostics(i, frame);
     true
 }

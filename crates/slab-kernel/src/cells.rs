@@ -56,6 +56,12 @@ pub const CW: f64 = 8.0;
 /// Height of one terminal cell in layout units.
 pub const CH: f64 = 16.0;
 
+/// Tolerance, in cells, when deciding whether a rect fully covers a cell.
+///
+/// Absorbs accumulated f64 error from layout sums so a nominally cell-exact
+/// edge still counts as covering its boundary cell.
+const COVER_EPS: f64 = 1e-6;
+
 /// Sentinel for no color.
 ///
 /// Cell colors are packed as `0xRRGGBB`, so a value with its high byte set
@@ -631,12 +637,28 @@ fn draw_rect_outline(
     masks: &[MaskCtx],
     claim: OutlineClaim,
 ) {
-    let left = cell_col(rect.x);
-    let top = cell_row(rect.y);
-    let right = cell_col(rect.x + rect.w);
-    let bottom = cell_row(rect.y + rect.h);
+    if rect.stroke_kind == 0 {
+        return;
+    }
+    // Border glyphs must stay inside the node's cell band: only cells the
+    // rect covers completely may carry box-drawing characters, otherwise the
+    // outline melts into rows and columns shared with neighbouring content.
+    // Half-covered edge cells therefore never receive border ink.
+    let left = truncate_i32((rect.x / CW - COVER_EPS).ceil());
+    let top = truncate_i32((rect.y / CH - COVER_EPS).ceil());
+    let right = truncate_i32(((rect.x + rect.w) / CW + COVER_EPS).floor());
+    let bottom = truncate_i32(((rect.y + rect.h) / CH + COVER_EPS).floor());
     let effective_opacity = opacity * rect.opacity;
-    if rect.stroke_kind == 0 || right.wrapping_sub(left) < 2 || bottom.wrapping_sub(top) < 2 {
+    if right.wrapping_sub(left) < 2 || bottom.wrapping_sub(top) < 2 {
+        // The band cannot hold a closed box without corrupting neighbours;
+        // report the degradation once instead of painting a broken frame.
+        if claim == OutlineClaim::Any && !grid.diag_code.iter().any(|code| code == "stroke-band") {
+            note(
+                grid,
+                "stroke-band",
+                "tui stroke outline needs two fully covered cell rows and columns; border suppressed (align the node to the 8x16 cell grid, give it more room, or use bg cues)",
+            );
+        }
         return;
     }
     let (top_left, top_right, bottom_left, bottom_right) = if rect.radius >= 4.0 {
@@ -830,10 +852,10 @@ pub fn draw_text(
         let start = boundary_pair[0];
         let end = boundary_pair[1];
         let wide = graphemes::cluster_wide(text, start, end);
-        let mut cluster = crate::rt::str_slice(text, start, end);
-        cluster.retain(|character| {
-            text_op.font < 0 || slir::font_gid(doc, text_op.font, u32::from(character)) != 0
-        });
+        // Codepoints outside the font's cmap pass through raw: the terminal
+        // owns glyph rendering, so it paints them with its own font stack
+        // while the grid keeps the East-Asian-Width cell advance.
+        let cluster = crate::rt::str_slice(text, start, end);
         if cluster.is_empty() {
             column_offset = column_offset.wrapping_add(if wide { 2 } else { 1 });
             continue;
@@ -896,7 +918,6 @@ pub fn draw_text(
             }
         }
 
-        let cluster = cluster;
         let first = cluster.chars().next().map_or(32, u32::from);
         let full_cluster = if end.wrapping_sub(start) > 1 {
             cluster
@@ -908,12 +929,17 @@ pub fn draw_text(
         } else {
             put_cluster(grid, column, row, first, &full_cluster, foreground);
         }
+        // Strike decoration is ink: it must honor the same clip as the glyph
+        // writes above, or a scrolled-away run leaves SGR-9 over blank cells.
         if text_op.strike {
-            if let Some(index) = cell_index(grid, column, row) {
-                grid.flags[index] |= CF_STRIKE;
-            }
-            if wide && let Some(index) = cell_index(grid, column.wrapping_add(1), row) {
-                grid.flags[index] |= CF_STRIKE;
+            let both_in = !wide || is_clipped_in(grid, column.wrapping_add(1), row);
+            if is_clipped_in(grid, column, row) && both_in {
+                if let Some(index) = cell_index(grid, column, row) {
+                    grid.flags[index] |= CF_STRIKE;
+                }
+                if wide && let Some(index) = cell_index(grid, column.wrapping_add(1), row) {
+                    grid.flags[index] |= CF_STRIKE;
+                }
             }
         }
         column_offset = column_offset.wrapping_add(if wide { 2 } else { 1 });
@@ -1239,7 +1265,7 @@ pub fn draw_image(doc: &Doc, grid: &mut CellGrid, image: &flatten::OpImage, mask
     let source = if image.img >= 0 && image.img < count(doc.img_src.len()) {
         crate::slir::str_at(doc, doc.img_src[index(image.img)])
     } else {
-        String::new()
+        ""
     };
     let source_codepoints: Vec<u32> = source.chars().map(u32::from).collect();
     let basename_start = source_codepoints
@@ -1588,6 +1614,80 @@ pub fn cells_to_text(grid: &CellGrid, plain: bool) -> String {
     crate::rt::str_from_chars(&output)
 }
 
+/// Serializes a grid's attribute plane for conformance goldens.
+///
+/// One line per row that carries any explicit attribute, listing maximal runs
+/// of identical attributes as `START-END` inclusive cell columns followed by
+/// `fg=#RRGGBB`, `bg=#RRGGBB`, and `strike` markers, runs separated by `;`:
+///
+/// ```text
+/// row 003: 2-9 fg=#E9EEF6 bg=#161B24; 10-42 strike
+/// ```
+///
+/// Attribute-only regressions (an SGR-9 strike run over blank cells, a
+/// background leaking past a clip) are invisible in the plain golden, which
+/// compares glyphs alone; this plane freezes exactly the state the ANSI
+/// serializer encodes, in a diffable form. A grid with no attributes at all
+/// serializes as `(no attributes)` so goldens are never empty.
+pub fn cells_attrs_text(grid: &CellGrid) -> String {
+    use std::fmt::Write as _;
+    const EMPTY: (u32, u32, bool) = (NO_COLOR, NO_COLOR, false);
+    let mut out = String::new();
+    for row in 0..grid.rows {
+        let mut line = String::new();
+        let mut start = 0i32;
+        let mut key = EMPTY;
+        // one sentinel column past the end flushes the final open run
+        for column in 0..=grid.cols {
+            let next = if column < grid.cols {
+                let cell = index(row.wrapping_mul(grid.cols).wrapping_add(column));
+                let flags = grid.flags[cell];
+                (
+                    if flags & CF_FG != 0 {
+                        grid.fg[cell]
+                    } else {
+                        NO_COLOR
+                    },
+                    if flags & CF_BG != 0 {
+                        grid.bg[cell]
+                    } else {
+                        NO_COLOR
+                    },
+                    flags & CF_STRIKE != 0,
+                )
+            } else {
+                EMPTY
+            };
+            if next == key {
+                continue;
+            }
+            if key != EMPTY {
+                let _ = write!(line, " {}-{}", start, column.wrapping_sub(1));
+                if key.0 != NO_COLOR {
+                    let _ = write!(line, " fg=#{:06X}", key.0);
+                }
+                if key.1 != NO_COLOR {
+                    let _ = write!(line, " bg=#{:06X}", key.1);
+                }
+                if key.2 {
+                    line.push_str(" strike");
+                }
+                line.push(';');
+            }
+            key = next;
+            start = column;
+        }
+        if !line.is_empty() {
+            line.pop();
+            let _ = writeln!(out, "row {row:03}:{line}");
+        }
+    }
+    if out.is_empty() {
+        out.push_str("(no attributes)\n");
+    }
+    out
+}
+
 /// Cell grid for a solved frame with the kernel caret overlaid — the grid a
 /// terminal client paints (`slab-tui`, the playground's TUI view).
 pub fn cells_with_caret(inst: &frame::Instance, fr: &flatten::Frame) -> CellGrid {
@@ -1657,5 +1757,63 @@ fn overlay_caret(inst: &frame::Instance, fr: &flatten::Frame, grid: &mut CellGri
         grid.ch[at] = 0x258F; // ▏ left one-eighth block
         grid.fg[at] = 0x00E8_EEF6;
         grid.flags[at] |= CF_FG;
+    }
+}
+
+#[cfg(test)]
+mod attrs_tests {
+    use super::{CF_BG, CF_FG, CF_STRIKE, CellGrid, NO_COLOR, cells_attrs_text};
+
+    fn grid(cols: i32, rows: i32) -> CellGrid {
+        let n = usize::try_from(cols.wrapping_mul(rows)).expect("test grid dims");
+        CellGrid {
+            cols,
+            rows,
+            ch: vec![32; n],
+            cl: vec![String::new(); n],
+            fg: vec![NO_COLOR; n],
+            bg: vec![NO_COLOR; n],
+            flags: vec![0; n],
+            diag_code: Vec::new(),
+            diag_msg: Vec::new(),
+            clip_x0: vec![0],
+            clip_y0: vec![0],
+            clip_x1: vec![cols],
+            clip_y1: vec![rows],
+        }
+    }
+
+    #[test]
+    fn attrs_plane_reports_strike_and_color_runs() {
+        let mut g = grid(8, 2);
+        // a strike-over-blank run: exactly the T15 class of regression
+        for cell in 2..5 {
+            g.flags[cell] = CF_STRIKE;
+        }
+        g.flags[9] = CF_FG | CF_BG;
+        g.fg[9] = 0x00E9_EEF6;
+        g.bg[9] = 0x0016_1B24;
+        assert_eq!(
+            cells_attrs_text(&g),
+            "row 000: 2-4 strike\nrow 001: 1-1 fg=#E9EEF6 bg=#161B24\n"
+        );
+    }
+
+    #[test]
+    fn attrs_plane_splits_runs_on_any_attribute_change() {
+        let mut g = grid(4, 1);
+        for cell in 0..4 {
+            g.flags[cell] = CF_FG;
+            g.fg[cell] = if cell < 2 { 0xFF0000 } else { 0x00FF00 };
+        }
+        assert_eq!(
+            cells_attrs_text(&g),
+            "row 000: 0-1 fg=#FF0000; 2-3 fg=#00FF00\n"
+        );
+    }
+
+    #[test]
+    fn attrs_plane_of_plain_grid_is_stable() {
+        assert_eq!(cells_attrs_text(&grid(4, 1)), "(no attributes)\n");
     }
 }

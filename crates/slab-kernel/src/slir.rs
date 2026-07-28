@@ -305,6 +305,12 @@ pub const A_ANIMATE: u32 = 89u32;
 /// Inherited boolean text strike-through style.
 pub const A_STRIKE: u32 = 90u32;
 
+/// Field cancel binder channel fired on escape-blur.
+pub const A_CANCEL: u32 = 91u32;
+
+/// Total number of normative SLIR attributes (highest attribute ID + 1).
+pub const ATTR_COUNT: usize = (A_CANCEL as usize) + 1;
+
 /// Parameter types stored in [`Doc::parm_type`] and host parameter values.
 pub const PARAM_TEXT: u32 = 0u32;
 
@@ -511,9 +517,9 @@ pub fn str_ref(d: &Doc, i: u32) -> &str {
     d.strs[u32_index(i)].as_str()
 }
 
-/// Returns a copy of string-pool entry `i`.
-pub fn str_at(d: &Doc, i: u32) -> String {
-    d.strs[u32_index(i)].clone()
+/// Borrows string-pool entry `i`.
+pub fn str_at(d: &Doc, i: u32) -> &str {
+    &d.strs[u32_index(i)]
 }
 
 /// Finds an attribute-value index in a node's base attribute run.
@@ -561,16 +567,6 @@ pub fn font_gid(d: &Doc, font: i32, codepoint: u32) -> u32 {
         0
     } else {
         d.font_cmap_gid[i32_index(index)]
-    }
-}
-
-/// Returns a codepoint's advance width in font units.
-pub fn font_advance_units(d: &Doc, font: i32, codepoint: u32) -> u32 {
-    let index = font_cmap_ix(d, font, codepoint);
-    if index < 0 {
-        d.font_default_adv[i32_index(font)]
-    } else {
-        d.font_adv[i32_index(index)]
     }
 }
 

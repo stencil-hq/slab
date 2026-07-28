@@ -126,6 +126,9 @@ pub fn uses(doc: &Doc, frame: &Frame, feature: &str) -> bool {
             .iter()
             .any(|op| matches!(op, FrameOp::Text(text) if text.strike)),
         "text-raster" => ops.iter().any(|op| matches!(op, FrameOp::Text(_))),
+        "glyph-fallback" => ops
+            .iter()
+            .any(|op| matches!(op, FrameOp::Text(text) if text.uncov_len > 0)),
         _ => false,
     }
 }

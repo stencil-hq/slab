@@ -25,6 +25,9 @@ pub struct Env {
     pub theme: String,
 }
 
+/// Kernel client code for the terminal cell renderer (see [`client_code`]).
+pub const CLIENT_TUI: u32 = 2;
+
 /// Returns an environment with web selected and all other values empty.
 pub fn env_default() -> Env {
     Env {
@@ -119,7 +122,7 @@ pub fn eval_cond(
     let sym = d.cond_sym[ci];
     let active = match kind {
         slir::C_STATE => state_active(d, sym, states, pv_num),
-        slir::C_ENV => match slir::str_at(d, sym).as_str() {
+        slir::C_ENV => match slir::str_at(d, sym) {
             "portrait" => env.vw < env.vh,
             // This is deliberately the inverse of portrait. Expressing the
             // partial order explicitly keeps equal and unordered (NaN)
@@ -131,7 +134,7 @@ pub fn eval_cond(
         },
         slir::C_CLIENT => {
             let client = i32::from_ne_bytes(env.client.to_ne_bytes());
-            client_code(&slir::str_at(d, sym)) == client
+            client_code(slir::str_at(d, sym)) == client
         }
         slir::C_THEME => env.theme == slir::str_at(d, sym),
         slir::C_WCMP => cmp(cw, d.cond_op[ci], d.cond_num[ci]),

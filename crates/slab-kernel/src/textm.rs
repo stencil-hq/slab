@@ -74,7 +74,7 @@ pub struct TextCacheEntry {
     pub max_lines: i32,
     /// Resolved text content at measurement time.
     pub content: String,
-    pub layout: TextLayout,
+    pub layout: std::rc::Rc<TextLayout>,
 }
 
 /// Creates an empty text layout.
@@ -101,6 +101,12 @@ pub fn line_count(tl: &TextLayout) -> i32 {
 
 /// Returns one codepoint's advance, including letter spacing after the glyph,
 /// matching CSS letter-spacing semantics.
+///
+/// A codepoint the cmap does not cover charges a deterministic fallback
+/// advance: the font's default advance, doubled for East-Asian-Width wide
+/// codepoints in mono-class families so uncovered CJK and emoji reserve the
+/// two terminal cells the grid gives them. Vector families keep the single
+/// replacement advance. Fallback painters fill exactly this charged width.
 pub fn char_w(d: &Doc, f: i32, size: f64, tracking: f64, cp: u32) -> f64 {
     if graphemes::is_glyph_modifier(cp) {
         return 0.0;
@@ -115,7 +121,16 @@ pub fn char_w(d: &Doc, f: i32, size: f64, tracking: f64, cp: u32) -> f64 {
         return 0.6 * size + tracking;
     }
 
-    f64::from(slir::font_advance_units(d, f, cp)) * size / upem + tracking
+    let cmap_index = slir::font_cmap_ix(d, f, cp);
+    if cmap_index < 0 {
+        let mut advance = f64::from(d.font_default_adv[font]);
+        if d.font_class[font] == 1 && graphemes::cp_wide(cp) {
+            advance *= 2.0;
+        }
+        return advance * size / upem + tracking;
+    }
+    let cmap_index = usize::try_from(cmap_index).expect("nonnegative cmap index");
+    f64::from(d.font_adv[cmap_index]) * size / upem + tracking
 }
 
 /// Measures a codepoint slice without allocating another character buffer.
@@ -376,7 +391,8 @@ pub fn measure_text(
     ellipsis: bool,
     max_lines: i32,
 ) -> TextLayout {
-    let src: Vec<u32> = text.chars().map(u32::from).collect();
+    let mut src: Vec<u32> = Vec::with_capacity(text.len());
+    src.extend(text.chars().map(u32::from));
     let mut layout = tl_new();
     layout.line_h = line_h(size, leading);
     layout.ascent = ascent(d, f, size, leading);

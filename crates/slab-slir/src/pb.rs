@@ -221,6 +221,10 @@ pub struct Doc {
     pub sign_name: ::prost::alloc::vec::Vec<u32>,
     #[prost(uint32, repeated, tag = "110")]
     pub sign_node: ::prost::alloc::vec::Vec<u32>,
+    /// Binder kind per signal: 0 activate, 1 change, 2 submit, 3 press,
+    /// 4 context, 5 dblclick, 6 drag-start, 7 drop, 8 resize, 9 pointer-move,
+    /// 10 pointer-up, 11 drag-update, 12 drag-end, 13 typed-keys activate,
+    /// 14 cancel (escape-blur discard; carries the retained buffer text).
     #[prost(uint32, repeated, tag = "111")]
     pub sign_trigger: ::prost::alloc::vec::Vec<u32>,
     #[prost(uint32, repeated, tag = "112")]

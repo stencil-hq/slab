@@ -90,6 +90,8 @@ pub struct Scene {
     pub disabled: Vec<bool>,
     /// Whether each node currently owns kernel focus.
     pub focused: Vec<bool>,
+    /// Whether each node is a text leaf with an active `field=` binder.
+    pub editable: Vec<bool>,
 }
 
 /// Creates an empty retained scene.
@@ -142,6 +144,7 @@ pub fn load(sc: &mut Scene, fr: &Frame) {
     sc.set_size.clear();
     sc.disabled.clear();
     sc.focused.clear();
+    sc.editable.clear();
 
     for entry in &fr.scene {
         sc.node.push(entry.node);
@@ -181,6 +184,7 @@ pub fn load(sc: &mut Scene, fr: &Frame) {
         sc.set_size.push(entry.set_size);
         sc.disabled.push(entry.disabled);
         sc.focused.push(entry.focused);
+        sc.editable.push(entry.editable);
     }
 
     sc.authored_order.extend(0..fr.scene.len());
@@ -370,24 +374,23 @@ fn edit_distance(left: &str, right: &str) -> usize {
     previous[right.len()]
 }
 
-fn key_distance(candidate: &str, query: &str) -> usize {
-    let wanted = query.strip_prefix('#').unwrap_or(query);
-    let leaf = candidate.rsplit('/').next().unwrap_or(candidate);
-    let leaf = leaf.strip_prefix('#').unwrap_or(leaf);
-    let mut score = edit_distance(candidate, query).min(edit_distance(leaf, wanted));
-    if query.starts_with('#')
-        && let Some(id_start) = candidate
-            .split('/')
-            .scan(0_usize, |offset, segment| {
-                let start = *offset;
-                *offset += segment.len() + 1;
-                Some((start, segment))
-            })
-            .find_map(|(start, segment)| segment.starts_with('#').then_some(start))
-    {
-        score = score.min(edit_distance(&candidate[id_start..], query));
-    }
-    score
+/// Scores one candidate key against an unresolved query.
+///
+/// The primary score is the best edit distance between any candidate path
+/// segment (authored `#` stripped) and the query's final segment, so an id
+/// typo such as `#fal` ranks every key routed through `#fall` first, and a
+/// query missing one interior segment still ranks keys whose last segment
+/// matches exactly at the top. The secondary score is the whole-key edit
+/// distance, which prefers the shortest containing key among segment ties.
+fn key_distance(candidate: &str, query: &str) -> (usize, usize) {
+    let wanted = query.rsplit('/').next().unwrap_or(query);
+    let wanted = wanted.strip_prefix('#').unwrap_or(wanted);
+    let segment = candidate
+        .split('/')
+        .map(|segment| edit_distance(segment.strip_prefix('#').unwrap_or(segment), wanted))
+        .min()
+        .unwrap_or(usize::MAX);
+    (segment, edit_distance(candidate, query))
 }
 
 /// Resolves an exact canonical key or an author-friendly unique locator.
@@ -468,7 +471,7 @@ pub fn resolve_key(d: &Doc, lists: &State, key: &str) -> KeyResolution {
     }
 
     let all = unique_keys(d, lists, &nodes);
-    let mut scored: Vec<(usize, String)> = all
+    let mut scored: Vec<((usize, usize), String)> = all
         .into_iter()
         .map(|candidate| (key_distance(&candidate, key), candidate))
         .collect();

@@ -253,15 +253,28 @@ pub fn length(_d: &slir::Doc, s: &State, list: u32) -> i32 {
 
 /// Returns an item's assigned key, its decimal index by default, or empty out of range.
 pub fn key_at(d: &slir::Doc, s: &State, list: u32, item_index: i32) -> String {
+    let mut key = String::new();
+    key_at_into(d, s, list, item_index, &mut key);
+    key
+}
+
+/// Writes an item's key into `out`, allocating only when `out` must grow.
+///
+/// `out` is cleared first; the contents match [`key_at`].
+pub(crate) fn key_at_into(d: &slir::Doc, s: &State, list: u32, item_index: i32, out: &mut String) {
+    out.clear();
     let n = length(d, s, list);
     if item_index < 0 || item_index >= n {
-        return String::new();
+        return;
     }
     note_lookup();
-    s.lk_slot.get(&(list, item_index)).map_or_else(
-        || unsigned(item_index).to_string(),
-        |&slot| s.lk_key[slot].clone(),
-    )
+    match s.lk_slot.get(&(list, item_index)) {
+        Some(&slot) => out.push_str(&s.lk_key[slot]),
+        None => {
+            use std::fmt::Write;
+            let _ = write!(out, "{}", unsigned(item_index));
+        }
+    }
 }
 
 /// Returns the schema row for a root list parameter, or `-1` when absent.
@@ -399,11 +412,11 @@ pub fn val_from_aval(d: &slir::Doc, kind: u32, ix: i32) -> Val {
     let decoded = value::decode(d, ix);
     let mut out = empty_val(kind);
     match kind {
-        0 if decoded.tag == slir::T_STR => out.s = slir::str_at(d, decoded.h),
+        0 if decoded.tag == slir::T_STR => out.s = slir::str_at(d, decoded.h).to_owned(),
         1 | 2 => out.num = decoded.num,
         3 => out.rgba = decoded.h,
         4 => out.num = if decoded.num == 0.0 { 0.0 } else { 1.0 },
-        5 if decoded.tag == slir::T_ENUM_SYM => out.sym = slir::str_at(d, decoded.h),
+        5 if decoded.tag == slir::T_ENUM_SYM => out.sym = slir::str_at(d, decoded.h).to_owned(),
         _ => {}
     }
     out
@@ -606,7 +619,11 @@ fn remove_key_lookup(s: &mut State, list: u32, item: i32, key: &str) {
     }
 }
 
-fn item_index_for_key(d: &slir::Doc, s: &State, list: u32, key: &str) -> i32 {
+/// Returns the item index carrying a stable key in a concrete list, or `-1`.
+///
+/// Explicit assigned keys win; a purely numeric key falls back to the item at
+/// that decimal index when it holds no assigned key.
+pub fn item_index_for_key(d: &slir::Doc, s: &State, list: u32, key: &str) -> i32 {
     note_lookup();
     let explicit = s
         .lk_key_index
@@ -1386,8 +1403,9 @@ fn sync_each(d: &slir::Doc, s: &mut State, each: u32) {
     } else {
         (0, list_len)
     };
+    let mut key = String::new();
     for item in range.0..range.1 {
-        let key = key_at(d, s, list, item);
+        key_at_into(d, s, list, item, &mut key);
         let mut template = template_first(d, s, each);
         while template != slir::NONE {
             sync_template(d, s, each, template, &key, list, item);

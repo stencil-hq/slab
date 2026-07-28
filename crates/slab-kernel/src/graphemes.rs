@@ -187,12 +187,18 @@ fn is_in_ranges(cp: u32, lower: &[u32], upper: &[u32]) -> bool {
 /// Returns whether `cp` is a combining mark (general category `Mn`, `Mc`, or
 /// `Me`).
 pub fn is_mark(cp: u32) -> bool {
+    if cp < MARK_LO[0] {
+        return false;
+    }
     is_in_ranges(cp, &MARK_LO, &MARK_HI)
 }
 
 /// Returns whether `cp` occupies two terminal cells according to the Unicode
 /// 16.0.0 width table.
 pub fn cp_wide(cp: u32) -> bool {
+    if cp < WIDE_LO[0] {
+        return false;
+    }
     is_in_ranges(cp, &WIDE_LO, &WIDE_HI)
 }
 

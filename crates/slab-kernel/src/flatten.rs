@@ -5,11 +5,11 @@
 
 use crate::{
     dispatch::{self, DState},
-    edit,
+    edit, graphemes,
     layout::Lay,
     list,
     motion::MSt,
-    rt, slir,
+    slir,
     style::{self, RStyle, St},
     textm,
 };
@@ -51,7 +51,7 @@ pub struct OpRect {
 }
 
 /// A positioned text run referencing the frame-local string pool.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct OpText {
     pub node: u32,
     pub x: f64,
@@ -75,6 +75,10 @@ pub struct OpText {
     pub gy: f64,
     pub gw: f64,
     pub gh: f64,
+    /// Start of this run's pairs in [`Frame::uncovered`]; `0` when `uncov_len` is `0`.
+    pub uncov_off: i32,
+    /// Number of uncovered-glyph codepoint runs in [`Frame::uncovered`].
+    pub uncov_len: i32,
 }
 
 /// A positioned image operation.
@@ -291,6 +295,9 @@ pub struct SceneNode {
     pub disabled: bool,
     /// Whether the node currently owns kernel focus.
     pub focused: bool,
+    /// Whether the node is a text leaf with an active `field=` binder, i.e.
+    /// kernel-editable; adapters expose it as textbox semantics.
+    pub editable: bool,
 }
 
 /// One frame-local runtime path.
@@ -319,10 +326,19 @@ pub struct Frame {
     pub scene: Vec<SceneNode>,
     /// Per-frame text pool addressed by [`OpText::str_ref`].
     pub strings: Vec<String>,
+    /// Flat `[start, end)` codepoint-offset pairs of uncovered-glyph runs,
+    /// addressed by [`OpText::uncov_off`] and [`OpText::uncov_len`].
+    pub uncovered: Vec<u32>,
     /// Runtime paths referenced by negative [`OpPath::path`] values.
     pub paths_rt: Vec<RtPath>,
     /// Diagnostics observed for this frame. Runtime notes may be one-shot.
     pub diagnostics: Vec<FrameDiagnostic>,
+    /// Recycled string allocations drained from `strings` on [`Frame::clear`].
+    string_pool: Vec<String>,
+    /// Recycled runtime-path allocations drained from `paths_rt` on [`Frame::clear`].
+    path_pool: Vec<RtPath>,
+    /// Retained authored-order scratch reused across flattening traversals.
+    order_scratch: Vec<u32>,
 }
 
 impl Frame {
@@ -332,8 +348,9 @@ impl Frame {
         self.height = 0.0;
         self.ops.clear();
         self.scene.clear();
-        self.strings.clear();
-        self.paths_rt.clear();
+        self.string_pool.append(&mut self.strings);
+        self.uncovered.clear();
+        self.path_pool.append(&mut self.paths_rt);
         self.diagnostics.clear();
     }
 }
@@ -346,8 +363,12 @@ pub fn frame_new() -> Frame {
         ops: Vec::new(),
         scene: Vec::new(),
         strings: Vec::new(),
+        uncovered: Vec::new(),
         paths_rt: Vec::new(),
         diagnostics: Vec::new(),
+        string_pool: Vec::new(),
+        path_pool: Vec::new(),
+        order_scratch: Vec::new(),
     }
 }
 
@@ -466,7 +487,12 @@ pub fn push_str_slice(fr: &mut Frame, chars: &[u32], a: i32, b: i32) -> i32 {
     } else {
         &chars[index(a)..index(b)]
     };
-    fr.strings.push(rt::str_from_chars(codepoints));
+    let mut pooled = fr.string_pool.pop().unwrap_or_default();
+    pooled.clear();
+    for &codepoint in codepoints {
+        pooled.push(char::from_u32(codepoint).expect("invalid codepoint"));
+    }
+    fr.strings.push(pooled);
     count(fr.strings.len()).wrapping_sub(1)
 }
 
@@ -499,10 +525,15 @@ fn frame_path_ref(d: &slir::Doc, st: &St, fr: &mut Frame, path: i32) -> Option<i
         return Some(!count(index));
     }
     let index = count(fr.paths_rt.len());
-    fr.paths_rt.push(RtPath {
-        verbs: verbs.to_vec(),
-        coords: coords.to_vec(),
+    let mut pooled = fr.path_pool.pop().unwrap_or_else(|| RtPath {
+        verbs: Vec::new(),
+        coords: Vec::new(),
     });
+    pooled.verbs.clear();
+    pooled.verbs.extend_from_slice(verbs);
+    pooled.coords.clear();
+    pooled.coords.extend_from_slice(coords);
+    fr.paths_rt.push(pooled);
     Some(!index)
 }
 
@@ -685,14 +716,55 @@ fn push_scrollbar_axis(
     }
 }
 
-/// Returns whether `node` is the editable text node of a field signal.
+/// Returns whether `node` is the editable text node of a currently active
+/// `field=` binder.
+///
+/// Activity follows signal resolution: a binder authored inside an inactive
+/// `when` patch does not exist for paint, so its text renders as plain text
+/// (no editor clip, scroll offset, selection band, or caret).
 pub fn is_field(d: &slir::Doc, st: &St, node: u32) -> bool {
-    let base = list::base(&st.lists, d, node);
-    base != slir::NONE
-        && d.sign_name
-            .iter()
-            .enumerate()
-            .any(|(signal, _)| d.sign_node[signal] == base && d.sign_trigger[signal] == 1)
+    dispatch::sig_of(d, st, node, dispatch::TR_CHANGE) >= 0
+}
+
+/// Appends uncovered-glyph codepoint runs for the string at `str_ref`.
+///
+/// Returns `(uncov_off, uncov_len)` for [`OpText`]: `uncov_len` counts the
+/// half-open `[start, end)` codepoint ranges appended to [`Frame::uncovered`]
+/// as flat pairs. A grapheme cluster is uncovered when any of its codepoints
+/// requires a glyph the font's cmap does not map; adjacent uncovered clusters
+/// coalesce into one run. Fallback drivers paint these runs themselves at the
+/// kernel-charged replacement advances.
+fn push_uncovered_runs(d: &slir::Doc, fr: &mut Frame, font: i32, str_ref: i32) -> (i32, i32) {
+    if font < 0 || str_ref < 0 {
+        return (0, 0);
+    }
+    let Frame {
+        strings, uncovered, ..
+    } = fr;
+    let text = strings[index(str_ref)].as_str();
+    let covered = |cp: u32| !graphemes::requires_glyph(cp) || slir::font_gid(d, font, cp) != 0;
+    if text.chars().map(u32::from).all(covered) {
+        return (0, 0);
+    }
+    let cps: Vec<u32> = text.chars().map(u32::from).collect();
+    let mut bounds = Vec::new();
+    graphemes::boundaries(text, &mut bounds);
+    let off = count(uncovered.len());
+    for pair in bounds.windows(2) {
+        let (start, end) = (pair[0], pair[1]);
+        if cps[index(start)..index(end)].iter().all(|&cp| covered(cp)) {
+            continue;
+        }
+        let start = u32::from_ne_bytes(start.to_ne_bytes());
+        let end = u32::from_ne_bytes(end.to_ne_bytes());
+        if uncovered.len() > index(off) && *uncovered.last().expect("run pool is nonempty") == start
+        {
+            *uncovered.last_mut().expect("run pool is nonempty") = end;
+        } else {
+            uncovered.extend([start, end]);
+        }
+    }
+    (off, count(uncovered.len()).wrapping_sub(off) / 2)
 }
 
 #[derive(Clone, Copy)]
@@ -730,13 +802,6 @@ fn mark_authored_order(l: &Lay, pi: i32, next: &mut u32, order: &mut [u32]) {
     }
 }
 
-fn authored_order(l: &Lay, root: i32) -> Vec<u32> {
-    let mut order = vec![u32::MAX; l.p_node.len()];
-    let mut next = 0;
-    mark_authored_order(l, root, &mut next, &mut order);
-    order
-}
-
 /// Flattens one placed node and its descendants into `fr`.
 ///
 /// The positional context and inherited state are kept as individual
@@ -765,7 +830,11 @@ pub fn walk(
         cx: in_cx,
         cy: in_cy,
     });
-    let authored_order = authored_order(l, pi);
+    let mut authored_order = core::mem::take(&mut fr.order_scratch);
+    authored_order.clear();
+    authored_order.resize(l.p_node.len(), u32::MAX);
+    let mut next = 0;
+    mark_authored_order(l, pi, &mut next, &mut authored_order);
     walk_node(
         d,
         st,
@@ -783,6 +852,7 @@ pub fn walk(
             rotation,
         },
     );
+    fr.order_scratch = authored_order;
 }
 
 #[allow(clippy::too_many_arguments)] // The recursive kernel already groups all inherited traversal state.
@@ -917,8 +987,9 @@ fn walk_node(
         level: rule.level,
         pos_in_set: rule.pos_in_set,
         set_size: rule.set_size,
-        disabled: style::node_state_on(d, st, node, "disabled"),
+        disabled: style::node_disabled(st, node),
         focused: ds.fs.focus == node,
+        editable: kind == slir::K_TEXT && is_field(d, st, node),
     });
     let scene_index = fr.scene.len() - 1;
     let scene_index_i32 = count(scene_index);
@@ -1122,6 +1193,7 @@ fn walk_node(
             }
             let string_ref = push_str_slice(fr, &text_layout.chars, start, end);
             let measured_width = text_layout.line_w[line_index];
+            let (uncov_off, uncov_len) = push_uncovered_runs(d, fr, rule.font, string_ref);
             let mut text_op = OpText {
                 node,
                 x: x + padding_left + (content_width - measured_width) * alignment - field_scroll_x,
@@ -1143,6 +1215,8 @@ fn walk_node(
                 gy: 0.0,
                 gw: 0.0,
                 gh: 0.0,
+                uncov_off,
+                uncov_len,
             };
             if rule.color_kind == 2 {
                 // The gradient spans the node's content box so every line of
@@ -1187,6 +1261,7 @@ fn walk_node(
                     font_weight = d.font_weight[index(font)];
                 }
                 let seg_kind = l.seg_color_kind[segment_index];
+                let (uncov_off, uncov_len) = push_uncovered_runs(d, fr, font, string_ref);
                 let mut text_op = OpText {
                     node,
                     x: x + padding_left + leading + l.seg_x[segment_index],
@@ -1205,6 +1280,8 @@ fn walk_node(
                     gy: 0.0,
                     gw: 0.0,
                     gh: 0.0,
+                    uncov_off,
+                    uncov_len,
                 };
                 if seg_kind == 2 {
                     // Paragraph segments share the paragraph's content box.

@@ -11,7 +11,7 @@ pub const FULL: u8 = 2;
 pub const CLIENTS: [&str; 5] = ["web", "gpu", "tui", "svg", "png"];
 
 /// Feature rows, chart order.
-pub const FEATURES: [&str; 41] = [
+pub const FEATURES: [&str; 42] = [
     "radius",
     "shadow",
     "blur",
@@ -53,56 +53,58 @@ pub const FEATURES: [&str; 41] = [
     "text-edit",
     "text-strike",
     "text-raster",
+    "glyph-fallback",
 ];
 
 /// `LEVELS[feature][client]`.
-pub const LEVELS: [[u8; 5]; 41] = [
-    [FULL, FULL, DEGRADED, FULL, FULL],             // radius
-    [FULL, DEGRADED, NONE, DEGRADED, FULL],         // shadow
-    [FULL, FULL, NONE, FULL, FULL],                 // blur
-    [FULL, FULL, NONE, DEGRADED, FULL],             // backdrop
-    [DEGRADED, DEGRADED, DEGRADED, FULL, FULL],     // gradient
-    [FULL, DEGRADED, DEGRADED, DEGRADED, FULL],     // gradient-conic
-    [FULL, DEGRADED, DEGRADED, FULL, FULL],         // gradient-text
-    [FULL, FULL, DEGRADED, FULL, FULL],             // path
-    [FULL, FULL, DEGRADED, FULL, FULL],             // path-runtime
-    [FULL, FULL, DEGRADED, FULL, FULL],             // icon
-    [FULL, FULL, DEGRADED, FULL, FULL],             // image
-    [FULL, FULL, DEGRADED, FULL, FULL],             // img-runtime
-    [FULL, FULL, NONE, FULL, FULL],                 // rotation
-    [FULL, FULL, NONE, FULL, FULL],                 // scale
-    [FULL, FULL, NONE, DEGRADED, FULL],             // tilt
-    [DEGRADED, DEGRADED, DEGRADED, FULL, FULL],     // smooth
-    [FULL, FULL, NONE, DEGRADED, FULL],             // grain
-    [FULL, FULL, DEGRADED, FULL, FULL],             // mask
-    [DEGRADED, DEGRADED, NONE, DEGRADED, DEGRADED], // backdrop-fade
-    [FULL, FULL, FULL, DEGRADED, DEGRADED],         // animation
-    [FULL, FULL, FULL, DEGRADED, FULL],             // text-keyframes
-    [FULL, FULL, FULL, NONE, NONE],                 // transition
-    [FULL, FULL, FULL, FULL, FULL],                 // themes
-    [FULL, FULL, DEGRADED, NONE, NONE],             // input
-    [FULL, DEGRADED, NONE, NONE, NONE],             // ime
-    [FULL, FULL, FULL, NONE, NONE],                 // scroll
-    [FULL, FULL, FULL, NONE, NONE],                 // scroll-cross
-    [FULL, FULL, FULL, NONE, NONE],                 // scroll-reveal
-    [FULL, FULL, FULL, NONE, NONE],                 // sticky
-    [FULL, FULL, FULL, DEGRADED, DEGRADED],         // divider
-    [FULL, FULL, NONE, DEGRADED, DEGRADED],         // holes
-    [FULL, FULL, FULL, FULL, FULL],                 // lists
-    [FULL, FULL, FULL, FULL, FULL],                 // lists-nested
-    [FULL, FULL, FULL, FULL, FULL],                 // para-runs
-    [FULL, FULL, FULL, FULL, FULL],                 // lists-virtual
-    [FULL, FULL, FULL, FULL, FULL],                 // popover
-    [FULL, FULL, FULL, NONE, NONE],                 // signals
-    [FULL, FULL, NONE, NONE, NONE],                 // a11y
-    [FULL, DEGRADED, FULL, NONE, NONE],             // text-edit
-    [FULL, FULL, FULL, FULL, FULL],                 // text-strike
-    [DEGRADED, FULL, DEGRADED, DEGRADED, FULL],     // text-raster
+pub const LEVELS: [[u8; 5]; 42] = [
+    [FULL, FULL, DEGRADED, FULL, FULL],                 // radius
+    [FULL, DEGRADED, NONE, DEGRADED, FULL],             // shadow
+    [FULL, FULL, NONE, FULL, FULL],                     // blur
+    [FULL, FULL, NONE, DEGRADED, FULL],                 // backdrop
+    [DEGRADED, DEGRADED, DEGRADED, FULL, FULL],         // gradient
+    [FULL, DEGRADED, DEGRADED, DEGRADED, FULL],         // gradient-conic
+    [FULL, DEGRADED, DEGRADED, FULL, FULL],             // gradient-text
+    [FULL, FULL, DEGRADED, FULL, FULL],                 // path
+    [FULL, FULL, DEGRADED, FULL, FULL],                 // path-runtime
+    [FULL, FULL, DEGRADED, FULL, FULL],                 // icon
+    [FULL, FULL, DEGRADED, FULL, FULL],                 // image
+    [FULL, FULL, DEGRADED, FULL, FULL],                 // img-runtime
+    [FULL, FULL, NONE, FULL, FULL],                     // rotation
+    [FULL, FULL, NONE, FULL, FULL],                     // scale
+    [FULL, FULL, NONE, DEGRADED, FULL],                 // tilt
+    [DEGRADED, DEGRADED, DEGRADED, FULL, FULL],         // smooth
+    [FULL, FULL, NONE, DEGRADED, FULL],                 // grain
+    [FULL, FULL, DEGRADED, FULL, FULL],                 // mask
+    [DEGRADED, DEGRADED, NONE, DEGRADED, DEGRADED],     // backdrop-fade
+    [FULL, FULL, FULL, DEGRADED, DEGRADED],             // animation
+    [FULL, FULL, FULL, DEGRADED, FULL],                 // text-keyframes
+    [FULL, FULL, FULL, NONE, NONE],                     // transition
+    [FULL, FULL, FULL, FULL, FULL],                     // themes
+    [FULL, FULL, DEGRADED, NONE, NONE],                 // input
+    [FULL, DEGRADED, NONE, NONE, NONE],                 // ime
+    [FULL, FULL, FULL, NONE, NONE],                     // scroll
+    [FULL, FULL, FULL, NONE, NONE],                     // scroll-cross
+    [FULL, FULL, FULL, NONE, NONE],                     // scroll-reveal
+    [FULL, FULL, FULL, NONE, NONE],                     // sticky
+    [FULL, FULL, FULL, DEGRADED, DEGRADED],             // divider
+    [FULL, FULL, NONE, DEGRADED, DEGRADED],             // holes
+    [FULL, FULL, FULL, FULL, FULL],                     // lists
+    [FULL, FULL, FULL, FULL, FULL],                     // lists-nested
+    [FULL, FULL, FULL, FULL, FULL],                     // para-runs
+    [FULL, FULL, FULL, FULL, FULL],                     // lists-virtual
+    [FULL, FULL, FULL, FULL, FULL],                     // popover
+    [FULL, FULL, FULL, NONE, NONE],                     // signals
+    [FULL, FULL, NONE, NONE, NONE],                     // a11y
+    [FULL, DEGRADED, FULL, NONE, NONE],                 // text-edit
+    [FULL, FULL, FULL, FULL, FULL],                     // text-strike
+    [DEGRADED, FULL, DEGRADED, DEGRADED, FULL],         // text-raster
+    [DEGRADED, DEGRADED, DEGRADED, DEGRADED, DEGRADED], // glyph-fallback
 ];
 
 /// `NOTES[feature][client]`: `""` for full, the degradation sentence
 /// for degraded, the `cap-*` diag code for none.
-pub const NOTES: [[&str; 5]; 41] = [
+pub const NOTES: [[&str; 5]; 42] = [
     // radius
     [
         "",
@@ -322,6 +324,14 @@ pub const NOTES: [[&str; 5]; 41] = [
         "wide clusters (EAW W/F, emoji presentation) occupy two cells; runs re-quantize to columns under the real font metrics",
         "viewer-rasterized glyphs; textLength force-fits each run to the kernel-measured width",
         "",
+    ],
+    // glyph-fallback
+    [
+        "uncovered runs paint with the browser's system font stack at kernel-charged fallback advances",
+        "uncovered runs paint as tofu boxes filling the kernel-charged fallback advances",
+        "uncovered codepoints pass through raw so the terminal paints them with its own fonts; the grid charges East-Asian-Width cell advances",
+        "uncovered runs render as viewer-resolved text force-fit to the kernel-charged fallback advances",
+        "uncovered runs reserve kernel-charged fallback advances but rasterize blank (no embedded fallback face)",
     ],
 ];
 

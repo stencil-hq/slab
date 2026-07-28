@@ -10,9 +10,9 @@
 //! and motion's per-solve interpolated attribute inputs. Motion values precede
 //! patches and base attributes so layout always re-solves from interpolated
 //! inputs. Overlay tuples are stored in [`St::mo_f`] under [`T_OV_TUPLE`].
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
-const ATTR_COUNT: usize = 91;
+pub use crate::slir::ATTR_COUNT;
 
 /// Mutable style-resolution state owned by an instance.
 ///
@@ -30,6 +30,9 @@ pub struct St {
     /// Per-node dispatch states, parallel with [`Self::ns_sym`].
     pub ns_node: Vec<u32>,
     pub ns_sym: Vec<u32>,
+    /// Nodes carrying the interned "disabled" state; mirrors matching entries
+    /// in [`Self::ns_node`] and [`Self::ns_sym`].
+    disabled_nodes: FxHashSet<u32>,
     /// Scroll owners, parallel with [`Self::scroll_off`].
     pub scroll_node: Vec<u32>,
     pub scroll_off: Vec<f64>,
@@ -87,6 +90,8 @@ pub struct St {
     effective_attr_values: [i32; ATTR_COUNT],
     font_selection: FxHashMap<(u32, u32), i32>,
     family_index: FxHashMap<String, u32>,
+    /// Precomputed keyword codes per string-pool entry, parallel with `Doc::strs`.
+    kw_codes: Vec<KwCodes>,
     /// Synthetic-node size-condition results keyed by node and patch.
     pub wh_node: Vec<u32>,
     pub wh_patch: Vec<i32>,
@@ -106,6 +111,8 @@ pub struct St {
     mo_index: FxHashMap<(u32, u32), usize>,
     /// Per-node text measurement results, valid only for identical inputs.
     pub text_layout_cache: FxHashMap<u32, crate::textm::TextCacheEntry>,
+    /// Previous text-cache generation, probed on miss and dropped at the next swap.
+    pub text_layout_cache_cold: FxHashMap<u32, crate::textm::TextCacheEntry>,
     pub rs: Vec<crate::style::RStyle>,
     /// Grid track kinds: fixed, hug, fill, or percentage.
     pub track_kind: Vec<u32>,
@@ -125,6 +132,7 @@ pub fn st_new() -> crate::style::St {
         states: vec![],
         ns_node: vec![],
         ns_sym: vec![],
+        disabled_nodes: FxHashSet::default(),
         scroll_node: vec![],
         scroll_off: vec![],
         scroll_cross_node: vec![],
@@ -160,6 +168,7 @@ pub fn st_new() -> crate::style::St {
         effective_attr_values: [-1; ATTR_COUNT],
         font_selection: FxHashMap::default(),
         family_index: FxHashMap::default(),
+        kw_codes: vec![],
         wh_node: vec![],
         wh_patch: vec![],
         wh_on: vec![],
@@ -173,6 +182,7 @@ pub fn st_new() -> crate::style::St {
         mo_f: vec![],
         mo_index: FxHashMap::default(),
         text_layout_cache: FxHashMap::default(),
+        text_layout_cache_cold: FxHashMap::default(),
         rs: vec![],
         track_kind: vec![],
         track_v: vec![],
@@ -233,20 +243,23 @@ pub fn init_params(d: &crate::slir::Doc, st: &mut crate::style::St) {
     st.family_index.clear();
     // Node ids and font indices alias across a doc swap; drop stale text.
     st.text_layout_cache.clear();
+    st.text_layout_cache_cold.clear();
     st.base_attr_values
         .extend((0..d.node_kind.len()).map(|node| authored_attr_values(d, node)));
+    st.kw_codes.clear();
+    st.kw_codes.extend(d.strs.iter().map(|s| kw_codes_of(s)));
     crate::list::init(d, &mut st.lists);
     for &encoded in &d.parm_default {
         let v = crate::value::decode(d, i32::from_ne_bytes(encoded.to_ne_bytes()));
         st.pv_num.push(v.num);
         st.pv_str.push(if v.tag == crate::slir::T_STR {
-            crate::slir::str_at(d, v.h)
+            crate::slir::str_at(d, v.h).to_owned()
         } else {
             String::new()
         });
         st.pv_h.push(v.h);
         st.pv_sym.push(if v.tag == crate::slir::T_ENUM_SYM {
-            crate::slir::str_at(d, v.h)
+            crate::slir::str_at(d, v.h).to_owned()
         } else {
             String::new()
         });
@@ -265,8 +278,11 @@ pub fn prune_node_state(d: &crate::slir::Doc, st: &mut crate::style::St) {
     while index > 0 {
         index -= 1;
         if crate::style::stale_synthetic(d, st, st.ns_node[index]) {
-            st.ns_node.swap_remove(index);
-            st.ns_sym.swap_remove(index);
+            let node = st.ns_node.swap_remove(index);
+            let sym = st.ns_sym.swap_remove(index);
+            if crate::rt::str_eq(crate::slir::str_at(d, sym), "disabled") {
+                st.disabled_nodes.remove(&node);
+            }
         }
     }
 
@@ -376,6 +392,12 @@ pub fn begin_solve(d: &crate::slir::Doc, st: &mut crate::style::St) {
     refresh_virtual_windows(d, st);
     crate::list::sync(d, &mut st.lists);
     crate::style::prune_node_state(d, st);
+    st.disabled_nodes.clear();
+    for (&node, &sym) in st.ns_node.iter().zip(&st.ns_sym) {
+        if crate::rt::str_eq(crate::slir::str_at(d, sym), "disabled") {
+            st.disabled_nodes.insert(node);
+        }
+    }
     st.divider_footprint_changed = false;
     st.cond_on.clear();
     st.patch_on.clear();
@@ -523,11 +545,17 @@ pub fn set_node_state(
         (true, None) => {
             st.ns_node.push(node);
             st.ns_sym.push(sym);
+            if crate::rt::str_eq(name, "disabled") {
+                st.disabled_nodes.insert(node);
+            }
             true
         }
         (false, Some(index)) => {
             st.ns_node.swap_remove(index);
             st.ns_sym.swap_remove(index);
+            if crate::rt::str_eq(name, "disabled") {
+                st.disabled_nodes.remove(&node);
+            }
             true
         }
         _ => false,
@@ -537,8 +565,13 @@ pub fn set_node_state(
 /// Returns whether `node` carries the named, interned state.
 pub fn node_state_on(d: &crate::slir::Doc, st: &crate::style::St, node: u32, name: &str) -> bool {
     st.ns_node.iter().zip(&st.ns_sym).any(|(&candidate, &sym)| {
-        candidate == node && crate::rt::str_eq(&crate::slir::str_at(d, sym), name)
+        candidate == node && crate::rt::str_eq(crate::slir::str_at(d, sym), name)
     })
+}
+
+/// Returns whether `node` carries the interned "disabled" state.
+pub fn node_disabled(st: &crate::style::St, node: u32) -> bool {
+    st.disabled_nodes.contains(&node)
 }
 
 /// Returns a node's scroll offset, or zero when unset.
@@ -979,6 +1012,9 @@ pub fn attr_ix(d: &crate::slir::Doc, st: &crate::style::St, node: u32, attr: u32
 /// Returns the last motion overlay value for a node attribute.
 #[inline]
 pub fn overlay_val(st: &crate::style::St, node: u32, attr: u32) -> crate::value::V {
+    if st.mo_index.is_empty() {
+        return crate::value::missing();
+    }
     let Some(&index) = st.mo_index.get(&(node, attr)) else {
         return crate::value::missing();
     };
@@ -1304,9 +1340,9 @@ fn checked_code(d: &crate::slir::Doc, st: &crate::style::St, node: u32) -> u32 {
     if boolean != 0 {
         return boolean;
     }
-    let mut value = crate::style::attr_enum(d, st, node, crate::slir::A_CHECKED);
+    let mut value = crate::style::attr_enum_ref(d, st, node, crate::slir::A_CHECKED);
     if value.is_empty() {
-        value = crate::style::attr_str(d, st, node, crate::slir::A_CHECKED);
+        value = crate::style::attr_str_ref(d, st, node, crate::slir::A_CHECKED);
     }
     if crate::rt::str_eq(&value, "false") {
         1
@@ -1320,9 +1356,9 @@ fn checked_code(d: &crate::slir::Doc, st: &crate::style::St, node: u32) -> u32 {
 }
 
 fn live_code(d: &crate::slir::Doc, st: &crate::style::St, node: u32) -> u32 {
-    let mut value = crate::style::attr_enum(d, st, node, crate::slir::A_LIVE);
+    let mut value = crate::style::attr_enum_ref(d, st, node, crate::slir::A_LIVE);
     if value.is_empty() {
-        value = crate::style::attr_str(d, st, node, crate::slir::A_LIVE);
+        value = crate::style::attr_str_ref(d, st, node, crate::slir::A_LIVE);
     }
     if crate::rt::str_eq(&value, "off") {
         1
@@ -1359,7 +1395,7 @@ fn semantic_number(
 pub fn content_str(d: &crate::slir::Doc, st: &crate::style::St, node: u32) -> String {
     let mv = crate::style::overlay_val(st, node, crate::slir::A_CONTENT);
     if mv.tag == crate::slir::T_STR {
-        return crate::slir::str_at(d, mv.h);
+        return crate::slir::str_at(d, mv.h).to_owned();
     }
     if mv.tag == crate::slir::T_PARAM_REF && d.parm_type[index_u32(mv.h)] == 0 {
         return st.pv_str[index_u32(mv.h)].clone();
@@ -1377,7 +1413,7 @@ pub fn content_str(d: &crate::slir::Doc, st: &crate::style::St, node: u32) -> St
         crate::style::attr_ix(d, st, node, crate::slir::A_CONTENT),
     );
     if v.tag == crate::slir::T_STR {
-        return crate::slir::str_at(d, v.h);
+        return crate::slir::str_at(d, v.h).to_owned();
     }
     if v.tag == crate::slir::T_PARAM_REF && d.parm_type[index_u32(v.h)] == 0 {
         return st.pv_str[index_u32(v.h)].clone();
@@ -1490,8 +1526,9 @@ pub fn children(d: &crate::slir::Doc, st: &mut crate::style::St, node: u32, out:
         } else {
             (0, crate::list::length(d, &st.lists, list))
         };
+        let mut key = String::new();
         for item in range.0..range.1 {
-            let key = crate::list::key_at(d, &st.lists, list, item);
+            crate::list::key_at_into(d, &st.lists, list, item, &mut key);
             let mut template = crate::list::template_first(d, &st.lists, node);
             while template != crate::slir::NONE {
                 out.push(crate::list::synthetic(
@@ -1554,6 +1591,44 @@ pub fn children(d: &crate::slir::Doc, st: &mut crate::style::St, node: u32, out:
             }
         }
     }
+}
+
+/// Derives a control's accessible name from its rendered descendant text.
+///
+/// Concatenates the resolved content of attached descendant text and para
+/// nodes (string literals, params, item props, and edit overrides) in
+/// document order, single-space separated with whitespace-only runs skipped.
+/// `each` subtrees do not contribute: a collection's items are content, not
+/// the collection control's name.
+pub fn name_from_content(d: &crate::slir::Doc, st: &mut crate::style::St, root: u32) -> String {
+    let mut name = String::new();
+    let mut stack: Vec<u32> = Vec::new();
+    let mut scratch: Vec<u32> = Vec::new();
+    crate::style::children(d, st, root, &mut scratch);
+    stack.extend(scratch.iter().rev());
+    while let Some(node) = stack.pop() {
+        let base = crate::list::base(&st.lists, d, node);
+        if base == crate::slir::NONE {
+            continue;
+        }
+        let kind = d.node_kind[index_u32(base)];
+        if kind == crate::slir::K_EACH {
+            continue;
+        }
+        if kind == crate::slir::K_TEXT || kind == crate::slir::K_PARA {
+            let text = crate::style::content_str(d, st, node);
+            let trimmed = text.trim();
+            if !trimmed.is_empty() {
+                if !name.is_empty() {
+                    name.push(' ');
+                }
+                name.push_str(trimmed);
+            }
+        }
+        crate::style::children(d, st, node, &mut scratch);
+        stack.extend(scratch.iter().rev());
+    }
+    name
 }
 
 /// Maps the unified alignment vocabulary to its stable integer codes.
@@ -1695,6 +1770,72 @@ pub fn scrollbar_code(s: &str) -> u32 {
     0u32
 }
 
+/// Precomputed keyword codes for one string-pool entry.
+///
+/// Built once per document by [`init_params`] from the keyword parsers above;
+/// [`build_rstyle`] indexes it by pool reference instead of re-parsing keyword
+/// strings per node per solve.
+#[derive(Clone, Copy, Debug)]
+struct KwCodes {
+    pack: u8,
+    align: i8,
+    stroke_align: u8,
+    fit: u8,
+    talign: u8,
+    scrollbar: u8,
+    gravity: Gravity,
+}
+
+fn kw_codes_of(s: &str) -> KwCodes {
+    KwCodes {
+        pack: u8::try_from(crate::style::pack_code(s)).expect("pack code exceeds u8"),
+        align: i8::try_from(crate::style::align_code(s)).expect("align code exceeds i8"),
+        stroke_align: u8::try_from(crate::style::stroke_align_code(s))
+            .expect("stroke-align code exceeds u8"),
+        fit: u8::try_from(crate::style::fit_code(s)).expect("fit code exceeds u8"),
+        talign: u8::try_from(crate::style::talign_code(s)).expect("talign code exceeds u8"),
+        scrollbar: u8::try_from(crate::style::scrollbar_code(s))
+            .expect("scrollbar code exceeds u8"),
+        gravity: gravity_of(s),
+    }
+}
+
+/// Resolves a keyword attribute to its precomputed pool codes when possible.
+///
+/// Parameter- and property-sourced strings (and pool references beyond the
+/// table, which cannot occur for a table built from the same document) fall
+/// back to the keyword string for the parsers.
+#[inline]
+fn kw_at<'a>(
+    d: &'a crate::slir::Doc,
+    st: &'a crate::style::St,
+    node: u32,
+    attr: u32,
+) -> Result<&'a KwCodes, &'a str> {
+    let v = crate::style::attr_val(d, st, node, attr);
+    if v.tag == crate::slir::T_ENUM_SYM {
+        if let Some(kw) = st.kw_codes.get(index_u32(v.h)) {
+            return Ok(kw);
+        }
+        return Err(crate::slir::str_ref(d, v.h));
+    }
+    if v.tag == crate::slir::T_PARAM_REF && d.parm_type[index_u32(v.h)] == 5 {
+        return Err(st.pv_sym[index_u32(v.h)].as_str());
+    }
+    if v.tag == crate::slir::T_PROP_REF {
+        let x = crate::list::get_ref(
+            &st.lists,
+            u32::from_ne_bytes(crate::list::param_of(&st.lists, d, node).to_ne_bytes()),
+            crate::list::item_ix(&st.lists, d, node),
+            v.h,
+        );
+        if x.kind == 5u32 {
+            return Err(x.sym);
+        }
+    }
+    Err("")
+}
+
 /// Returns the stable diagnostic name for a node kind.
 pub fn kind_name(kind: u32) -> String {
     if ((kind == crate::slir::K_ROW) || (kind == crate::slir::K_COL))
@@ -1751,10 +1892,7 @@ pub fn label(d: &crate::slir::Doc, st: &crate::style::St, node: u32) -> String {
     let kn = crate::style::kind_name(d.node_kind[base]);
     let id = d.node_id[base];
     if id != 0u32 {
-        return crate::rt::str_concat(
-            &crate::rt::str_concat(&kn, "#"),
-            &crate::slir::str_at(d, id),
-        );
+        return crate::rt::str_concat(&crate::rt::str_concat(&kn, "#"), crate::slir::str_at(d, id));
     }
     kn
 }
@@ -2027,6 +2165,7 @@ pub(crate) fn invalidate_font_selection(st: &mut crate::style::St) {
     st.family_index.clear();
     // Font indices may alias different metrics after a table rebuild.
     st.text_layout_cache.clear();
+    st.text_layout_cache_cold.clear();
 }
 
 fn cached_family(d: &crate::slir::Doc, st: &mut crate::style::St, name: &str) -> Option<u32> {
@@ -2151,24 +2290,18 @@ pub fn build_rstyle(
     } else {
         st.rs[ri].gap = crate::value::num_of(&gap, 0.0f64);
     }
-    st.rs[ri].pack = crate::style::pack_code(&crate::style::attr_enum_ref(
-        d,
-        st,
-        node,
-        crate::slir::A_PACK,
-    ));
-    st.rs[ri].align = crate::style::align_code(&crate::style::attr_enum_ref(
-        d,
-        st,
-        node,
-        crate::slir::A_ALIGN,
-    ));
-    st.rs[ri].self_align = crate::style::align_code(&crate::style::attr_enum_ref(
-        d,
-        st,
-        node,
-        crate::slir::A_SELF,
-    ));
+    st.rs[ri].pack = match kw_at(d, st, node, crate::slir::A_PACK) {
+        Ok(kw) => u32::from(kw.pack),
+        Err(s) => crate::style::pack_code(s),
+    };
+    st.rs[ri].align = match kw_at(d, st, node, crate::slir::A_ALIGN) {
+        Ok(kw) => i32::from(kw.align),
+        Err(s) => crate::style::align_code(s),
+    };
+    st.rs[ri].self_align = match kw_at(d, st, node, crate::slir::A_SELF) {
+        Ok(kw) => i32::from(kw.align),
+        Err(s) => crate::style::align_code(s),
+    };
     let off = crate::style::attr_val(d, st, node, crate::slir::A_OFFSET);
     if crate::style::is_tuple_v(off.tag) {
         st.rs[ri].offset_x = crate::style::tup_at(d, st, &off, 0i32);
@@ -2180,20 +2313,16 @@ pub fn build_rstyle(
         st.rs[ri].at_y = crate::style::tup_at(d, st, &at, 1i32);
         st.rs[ri].has_at = true;
     }
-    st.rs[ri].anchor = crate::style::align_code(&crate::style::attr_enum_ref(
-        d,
-        st,
-        node,
-        crate::slir::A_ANCHOR,
-    ));
+    st.rs[ri].anchor = match kw_at(d, st, node, crate::slir::A_ANCHOR) {
+        Ok(kw) => i32::from(kw.align),
+        Err(s) => crate::style::align_code(s),
+    };
     let has_attach = crate::style::attr_ix(d, st, node, crate::slir::A_ATTACH) >= 0;
     let attach = crate::style::attr_str(d, st, node, crate::slir::A_ATTACH);
-    let gravity = gravity_of(&crate::style::attr_enum_ref(
-        d,
-        st,
-        node,
-        crate::slir::A_GRAVITY,
-    ));
+    let gravity = match kw_at(d, st, node, crate::slir::A_GRAVITY) {
+        Ok(kw) => kw.gravity,
+        Err(s) => gravity_of(s),
+    };
     let collide = crate::style::attr_enum_ref(d, st, node, crate::slir::A_COLLIDE) != "none";
     st.rs[ri].has_attach = has_attach;
     st.rs[ri].attach = attach;
@@ -2243,12 +2372,10 @@ pub fn build_rstyle(
         st.rs[ri].stroke_h = sk.h;
     }
     st.rs[ri].stroke_w = crate::style::attr_num(d, st, node, crate::slir::A_STROKE_W, 1.0f64);
-    st.rs[ri].stroke_align = crate::style::stroke_align_code(&crate::style::attr_enum_ref(
-        d,
-        st,
-        node,
-        crate::slir::A_STROKE_ALIGN,
-    ));
+    st.rs[ri].stroke_align = match kw_at(d, st, node, crate::slir::A_STROKE_ALIGN) {
+        Ok(kw) => u32::from(kw.stroke_align),
+        Err(s) => crate::style::stroke_align_code(s),
+    };
     st.rs[ri].stroke_sides = f64_to_u32(crate::style::attr_num(
         d,
         st,
@@ -2305,12 +2432,10 @@ pub fn build_rstyle(
             st.rs[ri].bmask_h = bmask.h;
         }
     }
-    st.rs[ri].scrollbar = crate::style::scrollbar_code(&crate::style::attr_enum_ref(
-        d,
-        st,
-        node,
-        crate::slir::A_SCROLLBAR,
-    ));
+    st.rs[ri].scrollbar = match kw_at(d, st, node, crate::slir::A_SCROLLBAR) {
+        Ok(kw) => u32::from(kw.scrollbar),
+        Err(s) => crate::style::scrollbar_code(s),
+    };
     st.rs[ri].scrollbar_w = (0.0f64).max(crate::style::attr_num(
         d,
         st,
@@ -2373,18 +2498,34 @@ pub fn build_rstyle(
     } else {
         cached_font(d, st, fam, weight)
     };
-    st.rs[ri].talign = crate::style::talign_code(&crate::style::attr_enum_ref(
-        d,
-        st,
-        node,
-        crate::slir::A_ALIGN_TEXT,
-    ));
+    st.rs[ri].talign = match kw_at(d, st, node, crate::slir::A_ALIGN_TEXT) {
+        Ok(kw) => u32::from(kw.talign),
+        Err(s) => crate::style::talign_code(s),
+    };
     st.rs[ri].content = crate::style::content_str(d, st, node);
     let role = a11y_ref(d, st, node, crate::slir::A_ROLE, true);
     let label = a11y_ref(d, st, node, crate::slir::A_LABEL, false);
     let desc = a11y_ref(d, st, node, crate::slir::A_DESC, false);
     st.rs[ri].role = role;
-    st.rs[ri].label = label;
+    st.rs[ri].label = if label == 0 {
+        // Controls without an authored label derive their accessible name
+        // from descendant text content (§15.2); adapters inherit it through
+        // the ordinary scene label slot.
+        let base = crate::list::base(&st.lists, d, node);
+        let activates = base != crate::slir::NONE
+            && d.sign_trigger
+                .iter()
+                .enumerate()
+                .any(|(signal, &trigger)| d.sign_node[signal] == base && trigger == 0);
+        if st.rs[ri].flags & crate::slir::F_FOCUSABLE != 0 || activates {
+            let name = crate::style::name_from_content(d, st, node);
+            intern_scene_str(st, name)
+        } else {
+            0
+        }
+    } else {
+        label
+    };
     st.rs[ri].desc = desc;
     st.rs[ri].checked = checked_code(d, st, node);
     st.rs[ri].expanded = semantic_bool_code(d, st, node, crate::slir::A_EXPANDED);
@@ -2432,12 +2573,10 @@ pub fn build_rstyle(
         let line = st.rs[ri].line;
         st.rs[ri].img = resolve_image(d, st, node, line);
     }
-    st.rs[ri].fit = crate::style::fit_code(&crate::style::attr_enum_ref(
-        d,
-        st,
-        node,
-        crate::slir::A_FIT,
-    ));
+    st.rs[ri].fit = match kw_at(d, st, node, crate::slir::A_FIT) {
+        Ok(kw) => u32::from(kw.fit),
+        Err(s) => crate::style::fit_code(s),
+    };
     let path_attr = crate::style::attr_ix(d, st, node, crate::slir::A_D);
     let encoded_path = crate::value::decode_active(d, st.theme_index, path_attr);
     let path = if path_attr < 0 {
@@ -2735,5 +2874,79 @@ mod vector_path_tests {
         );
         assert_eq!(state.diag_code, ["attr"]);
         assert_eq!(state.diag_line, [9]);
+    }
+}
+
+#[cfg(test)]
+mod attribute_cache_tests {
+    use super::*;
+
+    #[test]
+    fn attribute_cache_count_matches_canonical_slir_table_and_covers_highest_id() {
+        assert_eq!(
+            crate::slir::ATTR_COUNT,
+            slab_slir::attrs::ATTR_COUNT,
+            "kernel ATTR_COUNT must match normative slab-slir table size"
+        );
+        let highest_id = crate::slir::A_CANCEL;
+        assert_eq!(
+            (highest_id as usize) + 1,
+            crate::slir::ATTR_COUNT,
+            "A_CANCEL must be the highest attribute ID"
+        );
+        for &(id, name) in slab_slir::attrs::ATTRS {
+            assert!(
+                (id as usize) < crate::slir::ATTR_COUNT,
+                "Attribute '{name}' (id {id}) falls outside ATTR_COUNT ({})",
+                crate::slir::ATTR_COUNT
+            );
+        }
+    }
+
+    #[test]
+    fn effective_attr_cache_resolves_highest_id_cancel() {
+        let mut doc = crate::slir::doc_new();
+        doc.ok = true;
+        doc.strs.push(String::new());
+        doc.strs.push("cancel_target".to_string());
+        doc.node_kind.push(crate::slir::K_RECT);
+        doc.node_flags.push(0);
+        doc.node_parent.push(crate::slir::NONE);
+        doc.node_first.push(crate::slir::NONE);
+        doc.node_next.push(crate::slir::NONE);
+        doc.node_key.push(0);
+        doc.node_id.push(0);
+        doc.node_line.push(1);
+
+        // Authored base attribute A_CANCEL = 91 set to value 0.
+        doc.attr_index.push(0);
+        doc.aval_tag.push(crate::slir::T_STR);
+        doc.aval_lo.push(1);
+        doc.aval_hi.push(0);
+        doc.aval_num.push(0.0);
+        doc.attr_id.push(crate::slir::A_CANCEL);
+        doc.attr_val.push(0);
+        doc.attr_index.push(1);
+
+        let mut st = st_new();
+        init_params(&doc, &mut st);
+
+        // 1. Query attr_ix before prepare_attrs (effective_attr_node is NONE)
+        assert_eq!(st.effective_attr_node, crate::slir::NONE);
+        assert_eq!(attr_ix(&doc, &st, 0, crate::slir::A_CANCEL), 0);
+
+        // 2. Prepare effective attrs for node 0 (active effective_attr_node path)
+        prepare_attrs(&doc, &mut st, 0);
+        assert_eq!(st.effective_attr_node, 0);
+
+        // Verify effective_attr_values cache has length ATTR_COUNT and contains 0 at index A_CANCEL (91)
+        assert_eq!(st.effective_attr_values[crate::slir::A_CANCEL as usize], 0);
+
+        // Query attr_ix while effective_attr_node == 0
+        assert_eq!(
+            attr_ix(&doc, &st, 0, crate::slir::A_CANCEL),
+            0,
+            "attr_ix must return cached value 0 for A_CANCEL when effective_attr_node is active"
+        );
     }
 }

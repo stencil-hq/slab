@@ -463,6 +463,7 @@ pub fn dump(s: &Slir) -> String {
                 11 => "drag-update",
                 12 => "drag-end",
                 13 => "activate",
+                14 => "cancel",
                 _ => "?",
             }
         );

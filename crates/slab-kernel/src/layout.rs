@@ -10,7 +10,7 @@
 //! and behave as astronomically large dimensions.
 
 use crate::{slir::Doc, style::St, textm::TextLayout};
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 fn idx<T>(value: T) -> usize
 where
@@ -88,7 +88,7 @@ pub struct Lay {
     /// Paragraph block index in the paragraph line pools, or `-1`.
     pub p_para: Vec<i32>,
     pub child_pool: Vec<i32>,
-    pub tls: Vec<TextLayout>,
+    pub tls: Vec<std::rc::Rc<TextLayout>>,
     /// Per-paragraph ranges into the line pools; each line stores a segment range.
     pub para_line_off: Vec<i32>,
     pub para_line_len: Vec<i32>,
@@ -111,6 +111,13 @@ pub struct Lay {
     /// 1 when the segment color is packed RGBA, 2 when it is a gradient handle.
     pub seg_color_kind: Vec<u32>,
     pub para_chars: Vec<u32>,
+    /// Reusable measure-pass scratch buffers, taken on container entry and
+    /// returned cleared on exit; recursion depth bounds each pool's size.
+    scratch_u32: Vec<Vec<u32>>,
+    scratch_i32: Vec<Vec<i32>>,
+    scratch_f64: Vec<Vec<f64>>,
+    /// Retained [`place_attached`] scratch, cleared and refilled per call.
+    attach: AttachScratch,
 }
 
 /// Creates an empty set of layout pools.
@@ -156,6 +163,33 @@ pub fn lay_reset(l: &mut Lay) {
     l.seg_color.clear();
     l.seg_color_kind.clear();
     l.para_chars.clear();
+}
+
+fn take_u32(l: &mut Lay) -> Vec<u32> {
+    l.scratch_u32.pop().unwrap_or_default()
+}
+
+fn give_u32(l: &mut Lay, mut buf: Vec<u32>) {
+    buf.clear();
+    l.scratch_u32.push(buf);
+}
+
+fn take_i32(l: &mut Lay) -> Vec<i32> {
+    l.scratch_i32.pop().unwrap_or_default()
+}
+
+fn give_i32(l: &mut Lay, mut buf: Vec<i32>) {
+    buf.clear();
+    l.scratch_i32.push(buf);
+}
+
+fn take_f64(l: &mut Lay) -> Vec<f64> {
+    l.scratch_f64.pop().unwrap_or_default()
+}
+
+fn give_f64(l: &mut Lay, mut buf: Vec<f64>) {
+    buf.clear();
+    l.scratch_f64.push(buf);
 }
 
 /// Returns the text-layout pool index for the last placed occurrence of `node`.
@@ -806,7 +840,7 @@ pub fn box_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &C
     if (st.rs[idx(ri)].flags & crate::slir::F_SCROLL_CROSS) != 0u32 {
         content_cross = INF;
     }
-    let mut kids: Vec<u32> = vec![];
+    let mut kids: Vec<u32> = take_u32(l);
     crate::style::children(d, st, node, &mut kids);
     let nk = len_i32(&kids);
     let virtual_metrics = crate::list::virtual_metrics(d, &st.lists, node);
@@ -816,8 +850,8 @@ pub fn box_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &C
     if content_main != INF {
         remaining = content_main - gaps;
     }
-    let mut kp: Vec<i32> = vec![];
-    let mut fills: Vec<i32> = vec![];
+    let mut kp: Vec<i32> = take_i32(l);
+    let mut fills: Vec<i32> = take_i32(l);
     for _i in 0i32..(nk) {
         kp.push(-1i32);
     }
@@ -1163,6 +1197,9 @@ pub fn box_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &C
             l.p_has_base[idx(pi)] = true;
         }
     }
+    give_u32(l, kids);
+    give_i32(l, kp);
+    give_i32(l, fills);
     pi
 }
 
@@ -1292,12 +1329,12 @@ pub fn wrap_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &
         pct_w = content_w;
         has_pct = true;
     }
-    let mut kids: Vec<u32> = vec![];
+    let mut kids: Vec<u32> = take_u32(l);
     crate::style::children(d, st, node, &mut kids);
     let inh = inh_of(st, ri);
     let is_row = st.rs[idx(ri)].is_row;
-    let mut kp: Vec<i32> = vec![];
-    let mut kline: Vec<i32> = vec![];
+    let mut kp: Vec<i32> = take_i32(l);
+    let mut kline: Vec<i32> = take_i32(l);
     let mut cur_line = 0i32;
     let mut rem = content_w;
     for i in 0i32..(len_i32(&kids)) {
@@ -1453,6 +1490,9 @@ pub fn wrap_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &
     l.p_w[idx(pi)] = own_w;
     l.p_h[idx(pi)] = own_h;
     boundary(d, st, l, pi);
+    give_u32(l, kids);
+    give_i32(l, kp);
+    give_i32(l, kline);
     pi
 }
 
@@ -1467,8 +1507,8 @@ pub fn grid_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &
     let inh = inh_of(st, ri);
     let is_row = st.rs[idx(ri)].is_row;
     // A grid with no authored tracks has one fill track.
-    let mut tk: Vec<u32> = vec![];
-    let mut tv: Vec<f64> = vec![];
+    let mut tk: Vec<u32> = take_u32(l);
+    let mut tv: Vec<f64> = take_f64(l);
     if st.rs[idx(ri)].track_len == 0i32 {
         tk.push(2u32);
         tv.push(1.0f64);
@@ -1509,10 +1549,10 @@ pub fn grid_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &
         content_w = (0.0f64).max((budget_w - pl) - pr);
     }
     // Assign cells row-major, honoring each cell's column span.
-    let mut kids: Vec<u32> = vec![];
+    let mut kids: Vec<u32> = take_u32(l);
     crate::style::children(d, st, node, &mut kids);
-    let mut ccol: Vec<i32> = vec![];
-    let mut cspan: Vec<i32> = vec![];
+    let mut ccol: Vec<i32> = take_i32(l);
+    let mut cspan: Vec<i32> = take_i32(l);
     let mut col = 0i32;
     for i in 0i32..(len_i32(&kids)) {
         crate::style::reset_wh_patches(d, st, kids[idx(i)]);
@@ -1536,11 +1576,11 @@ pub fn grid_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &
     if content_w != INF {
         remaining = content_w - gaps_total;
     }
-    let mut widths: Vec<f64> = vec![];
+    let mut widths: Vec<f64> = take_f64(l);
     for _t in 0i32..(ntr) {
         widths.push(0.0f64);
     }
-    let mut fill_idx: Vec<i32> = vec![];
+    let mut fill_idx: Vec<i32> = take_i32(l);
     let mut pct_base = 0.0f64;
     let mut has_pct = false;
     if content_w != INF {
@@ -1646,7 +1686,8 @@ pub fn grid_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &
             }
         }
     }
-    let mut xs: Vec<f64> = vec![pl];
+    let mut xs: Vec<f64> = take_f64(l);
+    xs.push(pl);
     for t in 1i32..(ntr) {
         xs.push((xs[idx(t.wrapping_sub(1i32))] + widths[idx(t.wrapping_sub(1i32))]) + gap);
     }
@@ -1661,7 +1702,7 @@ pub fn grid_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &
         pct_w_val = content_w;
         has_pct_w_val = true;
     }
-    let mut kp: Vec<i32> = vec![];
+    let mut kp: Vec<i32> = take_i32(l);
     let mut y = pt;
     let mut row_start = 0i32;
     let mut cur_col_expected = 0i32;
@@ -1728,7 +1769,7 @@ pub fn grid_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &
         for t in (ccol[idx(i)])..((ccol[idx(i)]).wrapping_add(cspan[idx(i)])) {
             cw += widths[idx(t)];
         }
-        let sa = crate::style::align_code(&crate::style::attr_enum(
+        let sa = crate::style::align_code(&crate::style::attr_enum_ref(
             d,
             st,
             kids[idx(i)],
@@ -1836,6 +1877,15 @@ pub fn grid_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &
     l.p_w[idx(pi)] = own_w;
     l.p_h[idx(pi)] = own_h;
     boundary(d, st, l, pi);
+    give_u32(l, tk);
+    give_f64(l, tv);
+    give_u32(l, kids);
+    give_i32(l, ccol);
+    give_i32(l, cspan);
+    give_f64(l, widths);
+    give_i32(l, fill_idx);
+    give_f64(l, xs);
+    give_i32(l, kp);
     pi
 }
 
@@ -1944,9 +1994,9 @@ pub fn stack_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: 
         pch = bh;
         has_pch = true;
     }
-    let mut kids: Vec<u32> = vec![];
+    let mut kids: Vec<u32> = take_u32(l);
     crate::style::children(d, st, node, &mut kids);
-    let mut kp: Vec<i32> = vec![];
+    let mut kp: Vec<i32> = take_i32(l);
     for i in 0i32..(len_i32(&kids)) {
         let c = Cons {
             min_w: 0.0f64,
@@ -2027,6 +2077,8 @@ pub fn stack_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: 
             l.p_has_base[idx(pi)] = true;
         }
     }
+    give_u32(l, kids);
+    give_i32(l, kp);
     pi
 }
 
@@ -2087,9 +2139,9 @@ pub fn canvas_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn:
     if has_h {
         ch = (own_h - pt) - pb;
     }
-    let mut kids: Vec<u32> = vec![];
+    let mut kids: Vec<u32> = take_u32(l);
     crate::style::children(d, st, node, &mut kids);
-    let mut kp: Vec<i32> = vec![];
+    let mut kp: Vec<i32> = take_i32(l);
     for i in 0i32..(len_i32(&kids)) {
         crate::style::reset_wh_patches(d, st, kids[idx(i)]);
         // Read each child's position and anchor before measuring because they
@@ -2101,7 +2153,7 @@ pub fn canvas_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn:
             ax = crate::style::tup_at(d, st, &at, 0i32);
             ay = crate::style::tup_at(d, st, &at, 1i32);
         }
-        let anchor = crate::style::align_code(&crate::style::attr_enum(
+        let anchor = crate::style::align_code(&crate::style::attr_enum_ref(
             d,
             st,
             kids[idx(i)],
@@ -2195,6 +2247,8 @@ pub fn canvas_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn:
     l.p_w[idx(pi)] = own_w;
     l.p_h[idx(pi)] = own_h;
     boundary(d, st, l, pi);
+    give_u32(l, kids);
+    give_i32(l, kp);
     pi
 }
 
@@ -2265,7 +2319,7 @@ pub fn text_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &
     let tracking = st.rs[idx(ri)].tracking;
     let wrap = (flags & crate::slir::F_NOWRAP) == 0u32;
     let ellipsis = (flags & crate::slir::F_ELLIPSIS) != 0u32;
-    let hit = st.text_layout_cache.get(&node).is_some_and(|entry| {
+    let entry_matches = |entry: &crate::textm::TextCacheEntry, content: &str| {
         entry.font == font
             && entry.size == size.to_bits()
             && entry.leading == leading.to_bits()
@@ -2274,18 +2328,24 @@ pub fn text_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &
             && entry.wrap == wrap
             && entry.ellipsis == ellipsis
             && entry.max_lines == max_lines
-            && entry.content == st.rs[idx(ri)].content
-    });
-    if hit {
-        l.tls.push(
-            st.text_layout_cache
-                .get(&node)
-                .expect("cache entry vanished between probes")
-                .layout
-                .clone(),
-        );
+            && entry.content == content
+    };
+    let cached = match st.text_layout_cache.get(&node) {
+        Some(entry) if entry_matches(entry, &st.rs[idx(ri)].content) => Some(entry.layout.clone()),
+        Some(_) => None,
+        None => match st.text_layout_cache_cold.remove(&node) {
+            Some(entry) if entry_matches(&entry, &st.rs[idx(ri)].content) => {
+                let layout = entry.layout.clone();
+                st.text_layout_cache.insert(node, entry);
+                Some(layout)
+            }
+            _ => None,
+        },
+    };
+    if let Some(layout) = cached {
+        l.tls.push(layout);
     } else {
-        let layout = crate::textm::measure_text(
+        let layout = std::rc::Rc::new(crate::textm::measure_text(
             d,
             font,
             size,
@@ -2296,9 +2356,11 @@ pub fn text_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &
             wrap,
             ellipsis,
             max_lines,
-        );
-        // Bound the cache; cleared entries refill on the next solve.
+        ));
+        // Bound the hot generation; the demoted generation still serves probes
+        // until the next swap, so eviction never re-measures a whole frame.
         if st.text_layout_cache.len() >= 4096 {
+            std::mem::swap(&mut st.text_layout_cache, &mut st.text_layout_cache_cold);
             st.text_layout_cache.clear();
         }
         st.text_layout_cache.insert(
@@ -2518,26 +2580,28 @@ pub fn para_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &
     let nowrap = flags & crate::slir::F_NOWRAP != 0;
     let ellipsis = flags & crate::slir::F_ELLIPSIS != 0;
     // Flatten spans into words while retaining each word's resolved style.
-    let mut direct: Vec<u32> = vec![];
+    let mut direct: Vec<u32> = take_u32(l);
     crate::style::children(d, st, node, &mut direct);
-    let mut kids: Vec<u32> = vec![];
-    for child in direct {
+    let mut kids: Vec<u32> = take_u32(l);
+    for &child in &direct {
         let base = crate::list::base(&st.lists, d, child);
         if base != crate::slir::NONE && d.node_kind[idx(base)] == crate::slir::K_EACH {
-            let mut runs = Vec::new();
+            let mut runs = take_u32(l);
             crate::style::children(d, st, child, &mut runs);
-            kids.extend(runs);
+            kids.extend_from_slice(&runs);
+            give_u32(l, runs);
         } else {
             kids.push(child);
         }
     }
-    let mut w_a: Vec<i32> = vec![];
-    let mut w_b: Vec<i32> = vec![];
-    let mut w_ri: Vec<i32> = vec![];
+    let mut w_a: Vec<i32> = take_i32(l);
+    let mut w_b: Vec<i32> = take_i32(l);
+    let mut w_ri: Vec<i32> = take_i32(l);
     // Source spaces preceding each word, counted across span boundaries so
     // adjacent spans join with exactly the whitespace the content contains.
-    let mut w_gap: Vec<i32> = vec![];
+    let mut w_gap: Vec<i32> = take_i32(l);
     let mut pending_gap = 0i32;
+    let mut cs: Vec<u32> = take_u32(l);
     for i in 0i32..(len_i32(&kids)) {
         crate::style::set_patch_flags(d, st, kids[idx(i)], avail, INF);
         let sri = crate::style::build_rstyle(
@@ -2555,7 +2619,7 @@ pub fn para_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &
             st.rs[idx(ri)].tracking,
             st.rs[idx(ri)].strike,
         );
-        let mut cs: Vec<u32> = vec![];
+        cs.clear();
         for cp in st.rs[idx(sri)].content.chars().map(u32::from) {
             cs.push(cp);
         }
@@ -2588,8 +2652,8 @@ pub fn para_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &
     // Greedily wrap words with the same EPS tolerance used by the solver.
     // Each word advances by its source gap; a gap is dropped when the word
     // opens a wrapped line, and `w_eff` records the gap actually applied.
-    let mut wline: Vec<i32> = vec![];
-    let mut w_eff: Vec<i32> = vec![];
+    let mut wline: Vec<i32> = take_i32(l);
+    let mut w_eff: Vec<i32> = take_i32(l);
     let mut cur_line = 0i32;
     let mut cur_w = 0.0f64;
     let mut line_len = 0i32;
@@ -2777,6 +2841,15 @@ pub fn para_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &
         l.p_base[idx(pi)] = pt + l.pl_asc[idx(lo)];
         l.p_has_base[idx(pi)] = true;
     }
+    give_u32(l, direct);
+    give_u32(l, kids);
+    give_u32(l, cs);
+    give_i32(l, w_a);
+    give_i32(l, w_b);
+    give_i32(l, w_ri);
+    give_i32(l, w_gap);
+    give_i32(l, wline);
+    give_i32(l, w_eff);
     pi
 }
 
@@ -3032,6 +3105,22 @@ fn positive_gravity(gravity: crate::style::Gravity) -> bool {
     )
 }
 
+/// Flips a gravity's alignment between start and end; centers are unchanged.
+fn flipped_alignment(gravity: crate::style::Gravity) -> crate::style::Gravity {
+    use crate::style::Gravity;
+    match gravity {
+        Gravity::BelowStart => Gravity::BelowEnd,
+        Gravity::BelowEnd => Gravity::BelowStart,
+        Gravity::AboveStart => Gravity::AboveEnd,
+        Gravity::AboveEnd => Gravity::AboveStart,
+        Gravity::LeftStart => Gravity::LeftEnd,
+        Gravity::LeftEnd => Gravity::LeftStart,
+        Gravity::RightStart => Gravity::RightEnd,
+        Gravity::RightEnd => Gravity::RightStart,
+        center => center,
+    }
+}
+
 #[allow(clippy::too_many_arguments)] // Placement keeps the anchor, popup, viewport, and authored offset explicit.
 fn attachment_position(
     anchor: AttachRect,
@@ -3061,6 +3150,30 @@ fn attachment_position(
         if overflows_main {
             gravity = opposite_gravity(gravity);
             position = gravity_position(anchor, popup_w, popup_h, gravity);
+        }
+        // Alignment-axis resolution order: keep the authored alignment when it
+        // fits, then prefer flipping start<->end (which keeps the overlay
+        // attached to its anchor), and only slide as the last resort.
+        let (alignment_position, alignment_extent, viewport_extent) = if vertical_gravity(gravity) {
+            (position.0, popup_w, viewport_w)
+        } else {
+            (position.1, popup_h, viewport_h)
+        };
+        if alignment_position < 0.0 || alignment_position + alignment_extent > viewport_extent {
+            let flipped = flipped_alignment(gravity);
+            if flipped != gravity {
+                let candidate = gravity_position(anchor, popup_w, popup_h, flipped);
+                let flipped_position = if vertical_gravity(gravity) {
+                    candidate.0
+                } else {
+                    candidate.1
+                };
+                if flipped_position >= 0.0 && flipped_position + alignment_extent <= viewport_extent
+                {
+                    gravity = flipped;
+                    position = candidate;
+                }
+            }
         }
         if vertical_gravity(gravity) {
             position.0 = position.0.clamp(0.0, (viewport_w - popup_w).max(0.0));
@@ -3226,12 +3339,26 @@ fn raw_origin_for_painted_rect(
     )
 }
 
+/// Retained scratch for [`place_attached`], cleared and reused every call.
+#[derive(Clone, Debug, Default)]
+struct AttachScratch {
+    parents: Vec<i32>,
+    rotated: Vec<bool>,
+    slots: Vec<i32>,
+    actual: Vec<i32>,
+    state: Vec<u8>,
+    abs_x: Vec<f64>,
+    abs_y: Vec<f64>,
+    transform: Vec<Affine>,
+    keys: FxHashMap<String, i32>,
+}
+
 struct AttachmentVisibility<'a> {
     st: &'a St,
     l: &'a mut Lay,
     parents: &'a [i32],
     rotated: &'a [bool],
-    keys: &'a HashMap<String, i32>,
+    keys: &'a FxHashMap<String, i32>,
     state: Vec<u8>,
 }
 
@@ -3279,7 +3406,7 @@ struct AttachmentPass<'a> {
     parents: &'a [i32],
     rotated: &'a [bool],
     slots: &'a [i32],
-    keys: &'a HashMap<String, i32>,
+    keys: &'a FxHashMap<String, i32>,
     state: Vec<u8>,
     abs_x: Vec<f64>,
     abs_y: Vec<f64>,
@@ -3402,6 +3529,20 @@ impl AttachmentPass<'_> {
                     offset_x,
                     offset_y,
                 );
+                // TUI output quantizes every op to the 8x16 cell grid; snap
+                // the anchored overlay's painted origin to whole cells so its
+                // borders land on cell boundaries instead of melting into
+                // neighbouring content rows.
+                let (painted_x, painted_y) = if self.st.env.client == crate::when::CLIENT_TUI {
+                    (
+                        f64::from(crate::cells::rhe(painted_x / crate::cells::CW))
+                            * crate::cells::CW,
+                        f64::from(crate::cells::rhe(painted_y / crate::cells::CH))
+                            * crate::cells::CH,
+                    )
+                } else {
+                    (painted_x, painted_y)
+                };
                 (x, y) = raw_origin_for_painted_rect(
                     parent_transform,
                     painted_x,
@@ -3451,30 +3592,36 @@ pub fn place_attached(
         return;
     }
 
-    let mut parents = vec![-2; l.p_node.len()];
-    let mut rotated = vec![false; l.p_node.len()];
-    let mut slots = vec![-1; l.p_node.len()];
-    let mut actual = Vec::new();
+    let count = l.p_node.len();
+    let mut s = std::mem::take(&mut l.attach);
+    s.parents.clear();
+    s.parents.resize(count, -2);
+    s.rotated.clear();
+    s.rotated.resize(count, false);
+    s.slots.clear();
+    s.slots.resize(count, -1);
+    s.actual.clear();
     collect_placements(
         l,
         root_pi,
         -1,
         false,
         -1,
-        &mut parents,
-        &mut rotated,
-        &mut slots,
-        &mut actual,
+        &mut s.parents,
+        &mut s.rotated,
+        &mut s.slots,
+        &mut s.actual,
     );
-    if !actual.iter().any(|&pi| {
+    if !s.actual.iter().any(|&pi| {
         let placement = idx(pi);
-        !rotated[placement] && st.rs[idx(l.p_ri[placement])].has_attach
+        !s.rotated[placement] && st.rs[idx(l.p_ri[placement])].has_attach
     }) {
+        l.attach = s;
         return;
     }
 
-    let mut keys = HashMap::new();
-    for &pi in &actual {
+    s.keys.clear();
+    for &pi in &s.actual {
         let placement = idx(pi);
         // Quarter-turn outers have no scene entry; their centered payload
         // carries the same key and is the painted rect attachment targets see.
@@ -3483,24 +3630,26 @@ pub fn place_attached(
         }
         let key = crate::scene::key_of(d, &st.lists, l.p_node[placement]);
         if !key.is_empty() {
-            keys.entry(key).or_insert(pi);
+            s.keys.entry(key).or_insert(pi);
         }
     }
-    let count = l.p_node.len();
     {
         // Finalize suppression for the whole attachment dependency graph before
         // sticky geometry or any other painted position is evaluated.
+        s.state.clear();
+        s.state.resize(count, 0);
         let mut visibility = AttachmentVisibility {
             st,
             l,
-            parents: &parents,
-            rotated: &rotated,
-            keys: &keys,
-            state: vec![0; count],
+            parents: &s.parents,
+            rotated: &s.rotated,
+            keys: &s.keys,
+            state: std::mem::take(&mut s.state),
         };
-        for &pi in &actual {
+        for &pi in &s.actual {
             visibility.resolve(pi);
         }
+        s.state = visibility.state;
     }
     let root = idx(root_pi);
     let viewport_w = if viewport_w > 0.0 {
@@ -3513,23 +3662,36 @@ pub fn place_attached(
     } else {
         l.p_h[root]
     };
+    s.state.clear();
+    s.state.resize(count, 0);
+    s.abs_x.clear();
+    s.abs_x.resize(count, 0.0);
+    s.abs_y.clear();
+    s.abs_y.resize(count, 0.0);
+    s.transform.clear();
+    s.transform.resize(count, Affine::IDENTITY);
     let mut pass = AttachmentPass {
         st,
         l,
-        parents: &parents,
-        rotated: &rotated,
-        slots: &slots,
-        keys: &keys,
-        state: vec![0; count],
-        abs_x: vec![0.0; count],
-        abs_y: vec![0.0; count],
-        transform: vec![Affine::IDENTITY; count],
+        parents: &s.parents,
+        rotated: &s.rotated,
+        slots: &s.slots,
+        keys: &s.keys,
+        state: std::mem::take(&mut s.state),
+        abs_x: std::mem::take(&mut s.abs_x),
+        abs_y: std::mem::take(&mut s.abs_y),
+        transform: std::mem::take(&mut s.transform),
         viewport_w,
         viewport_h,
     };
-    for pi in actual {
+    for &pi in &s.actual {
         pass.resolve(pi);
     }
+    s.state = pass.state;
+    s.abs_x = pass.abs_x;
+    s.abs_y = pass.abs_y;
+    s.transform = pass.transform;
+    l.attach = s;
 }
 
 /// Solves the document under a bounded width and optionally bounded height.
@@ -3602,13 +3764,16 @@ mod attachment_tests {
     }
 
     #[test]
-    fn collision_flips_then_slides_before_offset() {
+    fn collision_flips_main_then_alignment_before_offset() {
         let anchor = AttachRect {
             x: 140.0,
             y: 105.0,
             w: 10.0,
             h: 10.0,
         };
+        // Main axis flips below->above, then the start alignment (which would
+        // overflow the right viewport edge) flips to end, keeping the popup
+        // attached to its anchor instead of sliding away from it.
         assert_eq!(
             attachment_position(
                 anchor,
@@ -3621,7 +3786,7 @@ mod attachment_tests {
                 7.0,
                 -3.0,
             ),
-            (117.0, 72.0)
+            (107.0, 72.0)
         );
         assert_eq!(
             attachment_position(
@@ -3636,6 +3801,68 @@ mod attachment_tests {
                 0.0,
             ),
             (140.0, 115.0)
+        );
+    }
+
+    #[test]
+    fn alignment_flip_precedes_slide_and_falls_back_when_both_overflow() {
+        // W14: a 150u menu end-aligned to a 62u chip near the left edge must
+        // flip to start alignment (staying attached) rather than slide.
+        let chip = AttachRect {
+            x: 48.0,
+            y: 40.0,
+            w: 62.0,
+            h: 24.0,
+        };
+        assert_eq!(
+            attachment_position(
+                chip,
+                150.0,
+                90.0,
+                style::Gravity::BelowEnd,
+                true,
+                640.0,
+                480.0,
+                0.0,
+                0.0,
+            ),
+            (48.0, 64.0)
+        );
+        // Center alignment has no flip; it slides.
+        assert_eq!(
+            attachment_position(
+                chip,
+                150.0,
+                90.0,
+                style::Gravity::BelowCenter,
+                true,
+                150.0,
+                480.0,
+                0.0,
+                0.0,
+            ),
+            (0.0, 64.0)
+        );
+        // When both alignments overflow, the authored alignment slides.
+        let wide = AttachRect {
+            x: 10.0,
+            y: 10.0,
+            w: 30.0,
+            h: 10.0,
+        };
+        assert_eq!(
+            attachment_position(
+                wide,
+                80.0,
+                20.0,
+                style::Gravity::BelowEnd,
+                true,
+                60.0,
+                200.0,
+                0.0,
+                0.0,
+            ),
+            (0.0, 20.0)
         );
     }
 
