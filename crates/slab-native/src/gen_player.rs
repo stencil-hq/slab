@@ -29,6 +29,7 @@ pub mod keys {
 	pub const PLAY: &str = "#player/row@0/row@0/#play";
 	pub const NEXT: &str = "#player/row@0/row@0/#next";
 	pub const LOOP: &str = "#player/row@0/row@0/#loop";
+
 	/// Join one `each` item into a full canonical scene key.
 	///
 	/// `item_key(EACH, item, "")` addresses the item root; a non-empty
@@ -206,9 +207,7 @@ impl Doc {
 	/// Create an instance initialized from the embedded document.
 	pub fn new() -> Self {
 		let (doc, imgs) = slab_slir::decode_doc(SLIR).expect("embedded SLIR");
-		let mut inst = kframe::inst_shell();
-		inst.doc = doc;
-		kframe::inst_init(&mut inst);
+		let inst = kframe::inst_from_doc(doc);
 		Self { inst, imgs }
 	}
 

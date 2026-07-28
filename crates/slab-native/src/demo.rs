@@ -116,7 +116,7 @@ fn rows_slir() -> Result<Vec<u8>, String> {
 fn settings_doc(theme: Option<&str>) -> Result<gen_settings::Doc, String> {
 	let mut doc = gen_settings::Doc::new();
 	if !doc.ok() {
-		return Err(format!("embedded SLIR failed to decode: {:?}", doc.inst.doc.errs));
+		return Err(format!("embedded SLIR failed to decode: {:?}", doc.inst.doc().errs));
 	}
 	if let Some(name) = theme
 		&& !doc.set_theme(name)
@@ -145,11 +145,11 @@ pub fn headless_frame(opts: &Opts) -> Result<(), String> {
 
 	let mut doc = settings_doc(opts.theme.as_deref())?;
 	doc.set_env(opts.width, opts.height, opts.dark, false);
-	let main_id = renderer.register_doc(&doc.inst.doc, &doc.imgs, &[]);
+	let main_id = renderer.register_doc(doc.inst.doc(), &doc.imgs, &[]);
 
 	let rows = rows_slir()?;
 	let mut hole = InstanceHole::new(&rows).ok_or("rows SLIR failed to decode")?;
-	let rows_id = renderer.register_doc(&hole.inst.doc, &hole.imgs, &[]);
+	let rows_id = renderer.register_doc(hole.inst.doc(), &hole.imgs, &[]);
 	let natural = hole.natural();
 	kframe::inst_set_hole_size(&mut doc.inst, 0, natural.0, natural.1);
 
@@ -377,7 +377,7 @@ impl App {
 				.translated(rect.x, rect.y);
 			if let Some(node) = usize::try_from(rect.hole)
 				.ok()
-				.and_then(|hole_index| self.doc.inst.doc.hole_node.get(hole_index))
+				.and_then(|hole_index| self.doc.inst.doc().hole_node.get(hole_index))
 				.copied()
 			{
 				layer = layer.mounted(self.main_id, node);
@@ -430,7 +430,7 @@ impl App {
 				let frame = hole.content.frame(t);
 				let pending = kframe::inst_take_signals(&mut hole.content.inst);
 				for name in pending.sig_name {
-					println!("signal: {}", kslir::str_at(&hole.content.inst.doc, name));
+					println!("signal: {}", kslir::str_at(hole.content.inst.doc(), name));
 				}
 				frame
 			})
@@ -524,7 +524,7 @@ impl App {
 				ev.y -= hr.y;
 				let eff = self.holes[i].content.dispatch(&ev);
 				for (k, &name_ref) in eff.sig_name.iter().enumerate() {
-					let name = kslir::str_at(&self.holes[i].content.instance().doc, name_ref);
+					let name = kslir::str_at(self.holes[i].content.instance().doc(), name_ref);
 					let text = &eff.sig_text[k];
 					if text.is_empty() {
 						println!("signal: {name}");
@@ -745,9 +745,9 @@ impl ApplicationHandler<a11y::Event> for App {
 			.find(|f| !f.is_srgb())
 			.unwrap_or(caps.formats[0]);
 		let mut renderer = Renderer::new(device, queue);
-		self.main_id = renderer.register_doc(&self.doc.inst.doc, &self.doc.imgs, &[]);
+		self.main_id = renderer.register_doc(self.doc.inst.doc(), &self.doc.imgs, &[]);
 		if let Some(mut hole) = InstanceHole::new(&self.rows_bytes) {
-			let doc_id = renderer.register_doc(&hole.inst.doc, &hole.imgs, &[]);
+			let doc_id = renderer.register_doc(hole.inst.doc(), &hole.imgs, &[]);
 			let natural = hole.natural();
 			kframe::inst_set_hole_size(&mut self.doc.inst, 0, natural.0, natural.1);
 			self.holes.push(HoleBind { content: hole, doc_id });

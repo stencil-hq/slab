@@ -314,19 +314,19 @@ col { each param.sections }
 		.scene
 		.iter()
 		.find_map(|node| {
-			list::virtual_config(&instance.doc, &instance.st.lists, node.node)
+			list::virtual_config(instance.doc(), &instance.st.lists, node.node)
 				.is_some()
 				.then_some(node.node)
 		})
 		.expect("materialized nested virtual each");
-	let each_key = scene::key_of(&instance.doc, &instance.st.lists, each);
+	let each_key = scene::key_of(instance.doc(), &instance.st.lists, each);
 	let (start, end) = frame::inst_each_window(&instance, &each_key);
 	assert_eq!(start, 0);
 	assert!(end <= 10);
 
 	let (_, _, scroll_parent) =
-		list::virtual_config(&instance.doc, &instance.st.lists, each).expect("virtual config");
-	let scroll_key = scene::key_of(&instance.doc, &instance.st.lists, scroll_parent);
+		list::virtual_config(instance.doc(), &instance.st.lists, each).expect("virtual config");
+	let scroll_key = scene::key_of(instance.doc(), &instance.st.lists, scroll_parent);
 	assert!(frame::inst_set_scroll(&mut instance, &scroll_key, 0, 10_000.0));
 	frame::inst_frame(&mut instance, 0.0);
 	let scrolled = frame::inst_frame(&mut instance, 0.0);
@@ -375,11 +375,11 @@ col #surface w=160 { each param.rows key=rows }
 	let down = frame::inst_dispatch(&mut instance, &event(dispatch::E_POINTER_DOWN));
 	assert!(down.sig_name.is_empty());
 	let focused = instance.ds.fs.focus;
-	assert!(slab_kernel::style::attached(&instance.doc, &instance.st, focused,));
-	assert_eq!(dispatch::sig_of(&instance.doc, &instance.st, focused, 0), 0);
+	assert!(slab_kernel::style::attached(instance.doc(), &instance.st, focused,));
+	assert_eq!(dispatch::sig_of(instance.doc(), &instance.st, focused, 0), 0);
 	let up = frame::inst_dispatch(&mut instance, &event(dispatch::E_POINTER_UP));
 	assert_eq!(up.sig_name.len(), 1);
-	assert_eq!(slab_kernel::slir::str_at(&instance.doc, up.sig_name[0]), "choose");
+	assert_eq!(slab_kernel::slir::str_at(instance.doc(), up.sig_name[0]), "choose");
 	assert_eq!(up.sig_item, ["inner"]);
 	assert_eq!(up.sig_meta[0].key, "#surface/rows~outer/row/chips~inner/chip");
 }

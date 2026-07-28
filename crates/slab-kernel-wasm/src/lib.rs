@@ -295,7 +295,7 @@ impl KInst {
 	/// Drains settled-frame signals in the canonical conformance dump shape.
 	pub fn take_signals_dump_json(&mut self) -> String {
 		let effects = kframe::inst_take_signals(&mut self.inner);
-		dumpjson::dump_effects(&self.inner.doc, &self.inner.st, &effects)
+		dumpjson::dump_effects(self.inner.doc(), &self.inner.st, &effects)
 	}
 
 	/// Dispatches one platform event and returns all effects as JSON.
@@ -354,14 +354,14 @@ impl KInst {
 			text: text.to_owned(),
 			mods: modifiers,
 		});
-		dumpjson::dump_effects(&self.inner.doc, &self.inner.st, &effects)
+		dumpjson::dump_effects(self.inner.doc(), &self.inner.st, &effects)
 	}
 
 	/// Recomputes caret and IME geometry from the latest solve.
 	pub fn caret_effects_json(&self) -> String {
 		let mut effects = dispatch::effects_new();
 		dispatch::caret_effects(
-			&self.inner.doc,
+			self.inner.doc(),
 			&self.inner.st,
 			&self.inner.lay,
 			&self.inner.sc,
@@ -423,12 +423,12 @@ impl KInst {
 	/// Runs retained-scene hit testing and emits its canonical conformance JSON.
 	pub fn hit_json(&self, x: f64, y: f64) -> String {
 		let nodes = kframe::inst_hit(&self.inner, x, y);
-		dumpjson::dump_hit(&self.inner.doc, &self.inner.st, &nodes)
+		dumpjson::dump_hit(self.inner.doc(), &self.inner.st, &nodes)
 	}
 
 	/// Emits the canonical summary of retained trace state.
 	pub fn trace_summary_json(&self) -> String {
-		dumpjson::dump_trace_summary(&self.inner.doc, &self.inner.st, &self.inner)
+		dumpjson::dump_trace_summary(self.inner.doc(), &self.inner.st, &self.inner)
 	}
 
 	/// Solves once and emits plain TUI cells for conformance comparison.
@@ -466,7 +466,7 @@ impl KInst {
 	/// Emits canonical `frame.json` for native/WASM conformance checks.
 	pub fn frame_json(&mut self, time_ms: f64) -> String {
 		let frame = kframe::inst_frame(&mut self.inner, time_ms);
-		dumpjson::dump(&self.inner.doc, &self.inner.st, &frame)
+		dumpjson::dump(self.inner.doc(), &self.inner.st, &frame)
 	}
 }
 

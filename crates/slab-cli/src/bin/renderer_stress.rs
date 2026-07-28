@@ -26,12 +26,12 @@ const fn value(kind: u32, num: f64, text: String) -> ParamValue {
 
 fn param(instance: &Instance, name: &str) -> Result<u32, String> {
 	instance
-		.doc
+		.doc()
 		.parm_name
 		.iter()
 		.position(|&name_ref| {
 			let index = usize::try_from(name_ref).expect("string index exceeds usize");
-			instance.doc.strs[index] == name
+			instance.doc().strs[index] == name
 		})
 		.and_then(|index| u32::try_from(index).ok())
 		.ok_or_else(|| format!("stress fixture has no '{name}' parameter"))

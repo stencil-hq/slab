@@ -98,7 +98,7 @@ pub fn pv(d: &Doc, st: &St, v: &V) -> V {
 	let resolved = if v.tag == slir::T_TOKEN_REF {
 		value::decode_active(d, st.theme_index, value::token_aval(d, st.theme_index, v.h))
 	} else {
-		v.clone()
+		*v
 	};
 	if resolved.tag != slir::T_PARAM_REF {
 		return resolved;
@@ -120,10 +120,10 @@ pub fn pv(d: &Doc, st: &St, v: &V) -> V {
 /// Discrete and mismatched values hold the earlier stop.
 pub fn lerp_v(d: &Doc, st: &mut St, a: &V, b: &V, f: f64) -> V {
 	if f <= 0.0 {
-		return a.clone();
+		return *a;
 	}
 	if f >= 1.0 {
-		return b.clone();
+		return *b;
 	}
 	if is_numlike(a.tag) && is_numlike(b.tag) {
 		return V {
@@ -155,7 +155,7 @@ pub fn lerp_v(d: &Doc, st: &mut St, a: &V, b: &V, f: f64) -> V {
 		}
 		return V { tag: style::T_OV_TUPLE, num: 0.0, h: 0, off, ln: a.ln };
 	}
-	a.clone()
+	*a
 }
 
 /// Returns an attribute's value at an eased keyframe cycle position.
@@ -808,7 +808,7 @@ pub fn apply(d: &Doc, st: &mut St, ms: &mut MSt, t: f64) -> bool {
 					} else if is_colorlike(target.tag) {
 						// A color without a base fades through the target hue at zero alpha,
 						// matching CSS `transparent`, rather than stepping into existence.
-						let transparent = V { h: target.h & 0x00ff_ffff, ..target.clone() };
+						let transparent = V { h: target.h & 0x00ff_ffff, ..target };
 						current = lerp_v(d, st, &transparent, &target, weight);
 						has_value = true;
 					} else if weight >= 0.5 {

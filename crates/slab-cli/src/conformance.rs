@@ -125,7 +125,7 @@ fn setup_case(
 fn run_case(bytes: &[u8], case: &serde_json::Value) -> Result<String, String> {
 	let (mut inst, t) = setup_case(bytes, case)?;
 	let fr = slab_kernel::frame::inst_frame(&mut inst, t);
-	Ok(slab_kernel::dumpjson::dump(&inst.doc, &inst.st, &fr))
+	Ok(slab_kernel::dumpjson::dump(inst.doc(), &inst.st, &fr))
 }
 
 /// Runs one TUI case through `cells` and returns the plain cell grid used by
@@ -133,7 +133,7 @@ fn run_case(bytes: &[u8], case: &serde_json::Value) -> Result<String, String> {
 fn run_cells(bytes: &[u8], case: &serde_json::Value) -> Result<String, String> {
 	let (mut inst, t) = setup_case(bytes, case)?;
 	let fr = slab_kernel::frame::inst_frame(&mut inst, t);
-	let grid = slab_kernel::cells::cells_from_frame(&inst.doc, &fr, fr.width, fr.height);
+	let grid = slab_kernel::cells::cells_from_frame(inst.doc(), &fr, fr.width, fr.height);
 	Ok(slab_kernel::cells::cells_to_text(&grid, true))
 }
 
@@ -144,7 +144,7 @@ fn run_cells(bytes: &[u8], case: &serde_json::Value) -> Result<String, String> {
 fn run_cells_attrs(bytes: &[u8], case: &serde_json::Value) -> Result<String, String> {
 	let (mut inst, t) = setup_case(bytes, case)?;
 	let fr = slab_kernel::frame::inst_frame(&mut inst, t);
-	let grid = slab_kernel::cells::cells_from_frame(&inst.doc, &fr, fr.width, fr.height);
+	let grid = slab_kernel::cells::cells_from_frame(inst.doc(), &fr, fr.width, fr.height);
 	Ok(slab_kernel::cells::cells_attrs_text(&grid))
 }
 /// Runs one capability case: TUI grid diagnostics first, then the shared
@@ -157,13 +157,13 @@ fn run_caps(bytes: &[u8], case: &serde_json::Value) -> Result<String, String> {
 	let client = client_code(client).ok_or_else(|| format!("unknown client '{client}'"))?;
 	let mut lines = Vec::new();
 	if client == 2 {
-		let grid = slab_kernel::cells::cells_from_frame(&inst.doc, &fr, fr.width, fr.height);
+		let grid = slab_kernel::cells::cells_from_frame(inst.doc(), &fr, fr.width, fr.height);
 		for k in 0..grid.diag_code.len() {
 			lines.push(format!("grid {}: {}", grid.diag_code[k], grid.diag_msg[k]));
 		}
 	}
 	let client_index = usize::try_from(client).expect("client index exceeds usize");
-	lines.extend(slab_kernel::capability::chart_lines(&inst.doc, &fr, client_index));
+	lines.extend(slab_kernel::capability::chart_lines(inst.doc(), &fr, client_index));
 	let mut out = lines.join("\n");
 	out.push('\n');
 	Ok(out)

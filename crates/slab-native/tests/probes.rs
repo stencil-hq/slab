@@ -43,7 +43,7 @@ fn solve_source(
 	let bytes = slab_slir::write(&slir);
 	let (mut inst, imgs) = slab_slir::instance(&bytes)
 		.unwrap_or_else(|err| panic!("{name}: kernel decode failed: {err}"));
-	assert!(inst.ok, "{name}: kernel decode failed: {:?}", inst.doc.errs);
+	assert!(inst.ok, "{name}: kernel decode failed: {:?}", inst.doc().errs);
 	kframe::inst_set_env(&mut inst, width, 0.0, 3, false, false);
 	let fr = kframe::inst_frame(&mut inst, 0.0);
 	(inst, fr, imgs)
@@ -62,7 +62,7 @@ fn render_and_read(
 	fr: &Frame,
 	imgs: &[Vec<u8>],
 ) -> (u32, u32, Vec<u8>) {
-	let doc_id = renderer.register_doc(&inst.doc, imgs, &[]);
+	let doc_id = renderer.register_doc(&inst.doc(), imgs, &[]);
 	let tw = fr.width.ceil() as u32;
 	let th = fr.height.ceil() as u32;
 	let layers = [LayerInput { doc_id, inst, frame: fr, ox: 0.0, oy: 0.0, clip: None }];
@@ -260,7 +260,7 @@ fn renders_layered_examples() {
 		let bytes = slab_slir::write(&slir);
 		let (mut inst, imgs) =
 			slab_slir::instance(&bytes).unwrap_or_else(|err| panic!("{name}: decode failed: {err}"));
-		assert!(inst.ok, "{name}: decode failed: {:?}", inst.doc.errs);
+		assert!(inst.ok, "{name}: decode failed: {:?}", inst.doc().errs);
 		kframe::inst_set_env(&mut inst, 800.0, 0.0, 1, false, false);
 		let fr = kframe::inst_frame(&mut inst, 250.0);
 		let (w, h, px) = render_and_read(&mut renderer, &inst, &fr, &imgs);

@@ -63,9 +63,9 @@ pub fn host_key(inst: &kframe::Instance, event: &dispatch::Event) -> Option<Host
 		return None;
 	}
 	let focused_key = (focused != slab_kernel::slir::NONE)
-		.then(|| slab_kernel::scene::key_of(&inst.doc, &inst.st.lists, focused));
+		.then(|| slab_kernel::scene::key_of(inst.doc(), &inst.st.lists, focused));
 	let item = (focused != slab_kernel::slir::NONE)
-		.then(|| slab_kernel::list::item_key(&inst.st.lists, &inst.doc, focused))
+		.then(|| slab_kernel::list::item_key(&inst.st.lists, inst.doc(), focused))
 		.filter(|item| !item.is_empty());
 	Some(HostKey { key: event.key.clone(), mods: event.mods, focused_key, item })
 }
@@ -214,7 +214,7 @@ impl Host for () {}
 pub fn collect_signals(inst: &kframe::Instance, eff: &dispatch::Effects, out: &mut Vec<Signal>) {
 	for k in 0..eff.sig_name.len() {
 		out.push(Signal {
-			name: slab_kernel::slir::str_at(&inst.doc, eff.sig_name[k]).to_owned(),
+			name: slab_kernel::slir::str_at(inst.doc(), eff.sig_name[k]).to_owned(),
 			text: eff.sig_text[k].clone(),
 			item: eff.sig_item[k].clone(),
 			meta: eff.sig_meta[k].clone(),

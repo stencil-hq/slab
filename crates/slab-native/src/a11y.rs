@@ -272,7 +272,7 @@ impl Bridge {
 			let mut scene_ids = Vec::with_capacity(layer.frame.scene.len());
 			let mut key_ids = HashMap::new();
 			for source in &layer.frame.scene {
-				let key = scene::key_of(&layer.instance.doc, &layer.instance.st.lists, source.node);
+				let key = scene::key_of(layer.instance.doc(), &layer.instance.st.lists, source.node);
 				let identity = if key.is_empty() {
 					Identity::Node { document: layer.document, node: source.node }
 				} else {
@@ -328,13 +328,13 @@ impl Bridge {
 			for (scene_index, source) in layer.frame.scene.iter().enumerate() {
 				let id = ids_by_layer[layer_index][scene_index];
 				let role_name = scene_string(layer.instance, source.sem.role);
-				let key = scene::key_of(&layer.instance.doc, &layer.instance.st.lists, source.node);
+				let key = scene::key_of(layer.instance.doc(), &layer.instance.st.lists, source.node);
 				let inert = source.flags & slir::F_INERT != 0;
 				let enabled = !inert && !source.disabled;
 				let focusable = enabled && source.flags & slir::F_FOCUSABLE != 0;
 				let activates = focusable
 					&& kdispatch::sig_of(
-						&layer.instance.doc,
+						layer.instance.doc(),
 						&layer.instance.st,
 						source.node,
 						kdispatch::TR_ACTIVATE,
@@ -898,21 +898,30 @@ mod tests {
 		}
 	}
 
-	fn instance_with_keys(keys: &[&str]) -> Instance {
-		let mut instance = kframe::inst_shell();
-		instance.doc.strs = vec![String::new()];
+	fn doc_with_keys(keys: &[&str]) -> slab_kernel::slir::Doc {
+		let mut doc = slab_kernel::slir::doc_new();
+		doc.strs = vec![String::new()];
 		for key in keys {
-			instance.doc.strs.push((*key).to_owned());
+			doc.strs.push((*key).to_owned());
 		}
-		instance.doc.node_key = (1..=keys.len())
+		doc.node_key = (1..=keys.len())
 			.map(|index| u32::try_from(index).unwrap())
 			.collect();
-		instance.doc.node_kind = vec![slir::K_COL; keys.len()];
-		instance.doc.node_flags = vec![0; keys.len()];
-		instance.doc.node_parent = vec![slir::NONE; keys.len()];
-		instance.doc.attr_index = vec![0; keys.len() + 1];
+		doc.node_kind = vec![slir::K_COL; keys.len()];
+		doc.node_flags = vec![0; keys.len()];
+		doc.node_parent = vec![slir::NONE; keys.len()];
+		doc.attr_index = vec![0; keys.len() + 1];
+		doc
+	}
+
+	fn instance_from(doc: slab_kernel::slir::Doc) -> Instance {
+		let mut instance = kframe::inst_from_doc(doc);
 		instance.st.scene_strs = vec![String::new()];
 		instance
+	}
+
+	fn instance_with_keys(keys: &[&str]) -> Instance {
+		instance_from(doc_with_keys(keys))
 	}
 
 	fn frame(scene: Vec<SceneNode>) -> Frame {
@@ -1146,11 +1155,12 @@ mod tests {
 
 	#[test]
 	fn action_resolution_returns_exact_document_and_key_without_os_adapter() {
-		let mut instance = instance_with_keys(&["split", "scroll"]);
-		instance.doc.node_kind[0] = slir::K_DIVIDER;
-		instance.doc.sign_node = vec![0];
-		instance.doc.sign_trigger = vec![kdispatch::TR_ACTIVATE];
-		instance.doc.sign_name = vec![0];
+		let mut doc = doc_with_keys(&["split", "scroll"]);
+		doc.node_kind[0] = slir::K_DIVIDER;
+		doc.sign_node = vec![0];
+		doc.sign_trigger = vec![kdispatch::TR_ACTIVATE];
+		doc.sign_name = vec![0];
+		let instance = instance_from(doc);
 		let divider = source(0, -1, slir::K_DIVIDER, slir::F_FOCUSABLE);
 		let mut scroller = source(1, -1, slir::K_COL, slir::F_SCROLL);
 		scroller.is_row = true;

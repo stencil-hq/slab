@@ -31,37 +31,59 @@ use crate::{
 #[derive(Clone, Debug)]
 pub struct Instance {
 	/// Whether the assigned document decoded successfully.
-	pub ok:        bool,
-	/// The decoded document and its static pools.
-	pub doc:       Doc,
+	pub ok:         bool,
+	/// The decoded document and its static pools; hosts read it through
+	/// [`Instance::doc`] and construct instances with [`inst_from_doc`].
+	pub(crate) doc: Doc,
 	/// Runtime style, parameter, list, environment, and scroll state.
-	pub st:        St,
+	pub st:         St,
 	/// Scratch state and results from the latest layout solve.
-	pub lay:       Lay,
+	pub lay:        Lay,
 	/// Retained scene from the latest solve.
-	pub sc:        Scene,
+	pub sc:         Scene,
 	/// Interaction state, including focus, hover, presses, and edits.
-	pub ds:        DState,
+	pub ds:         DState,
 	/// Per-patch transition clocks and animation liveness.
-	pub ms:        MSt,
+	pub ms:         MSt,
 	/// Whether the host has supplied an environment.
-	pub has_env:   bool,
+	pub has_env:    bool,
 	/// Whether changed inputs require another solve.
-	pub dirty:     bool,
+	pub dirty:      bool,
 	/// Whether the instance has completed at least one solve.
-	pub solved:    bool,
+	pub solved:     bool,
 	/// Motion clock used for the latest solve.
-	pub last_t:    f64,
+	pub last_t:     f64,
 	/// Root patch index produced by the latest solve.
-	pub root_pi:   i32,
+	pub root_pi:    i32,
 	/// Actionable result of the most recent failed focus request.
-	focus_note:    String,
+	focus_note:     String,
 	/// Runtime glyph notes already surfaced, keyed by authored family and
 	/// codepoint.
-	glyph_warned:  BTreeSet<(String, u32)>,
+	glyph_warned:   BTreeSet<(String, u32)>,
 	/// Every distinct diagnostic observed since the document was assigned, in
 	/// first-occurrence order. Solves append; only [`inst_init`] clears.
-	diags_cum:     Vec<FrameDiagnostic>,
+	diags_cum:      Vec<FrameDiagnostic>,
+}
+
+impl Instance {
+	/// Borrows the decoded document and its static pools.
+	#[inline]
+	pub const fn doc(&self) -> &Doc {
+		&self.doc
+	}
+}
+
+/// Builds an initialized instance for a decoded document.
+///
+/// This is the only host-facing way to bind a document: every derived cache
+/// (styles, keyword codes, decoded values, lists) builds through
+/// [`inst_init`] on fresh runtime state, so an instance can never observe a
+/// stale or half-swapped document.
+pub fn inst_from_doc(doc: Doc) -> Instance {
+	let mut i = inst_shell();
+	i.doc = doc;
+	inst_init(&mut i);
+	i
 }
 
 /// One stable runtime image slot; inactive slots retain their unified index.
@@ -141,21 +163,21 @@ pub struct GlyphPos {
 /// Creates an empty instance to which a host can assign a decoded document.
 pub fn inst_shell() -> Instance {
 	Instance {
-		ok:            false,
-		doc:           slir::doc_new(),
-		st:            style::st_new(),
-		lay:           layout::lay_new(),
-		sc:            scene::scene_new(),
-		ds:            dispatch::dstate_new(),
-		ms:            motion::mst_new(),
-		has_env:       false,
-		dirty:         true,
-		solved:        false,
-		last_t:        0.0,
-		root_pi:       -1,
-		focus_note:    String::new(),
-		glyph_warned:  BTreeSet::new(),
-		diags_cum:     Vec::new(),
+		ok:           false,
+		doc:          slir::doc_new(),
+		st:           style::st_new(),
+		lay:          layout::lay_new(),
+		sc:           scene::scene_new(),
+		ds:           dispatch::dstate_new(),
+		ms:           motion::mst_new(),
+		has_env:      false,
+		dirty:        true,
+		solved:       false,
+		last_t:       0.0,
+		root_pi:      -1,
+		focus_note:   String::new(),
+		glyph_warned: BTreeSet::new(),
+		diags_cum:    Vec::new(),
 	}
 }
 

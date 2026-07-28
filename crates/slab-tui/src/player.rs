@@ -64,7 +64,7 @@ const fn pv_num(kind: u32, num: f64) -> kframe::ParamValue {
 
 /// Set a declared param by name through the kernel's type check.
 fn set(inst: &mut kframe::Instance, name: &str, v: &kframe::ParamValue) -> Result<(), String> {
-	let doc = &inst.doc;
+	let doc = inst.doc();
 	let p = (0..doc.parm_name.len())
 		.position(|p| doc.strs[doc.parm_name[p] as usize] == name)
 		.ok_or_else(|| format!("--app player: document has no param '{name}'"))?;

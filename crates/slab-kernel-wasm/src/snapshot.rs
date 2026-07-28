@@ -231,7 +231,7 @@ struct SceneSnapshot<'a> {
 }
 
 pub fn statics_json(instance: &Instance) -> String {
-	let document = &instance.doc;
+	let document = &instance.doc();
 	let params = document
 		.parm_name
 		.iter()
@@ -445,7 +445,7 @@ pub fn lifts_json(lifts: &[motion::Lift]) -> String {
 /// authored set metadata, so materialized virtual rows keep AT list context.
 fn item_set_metadata(instance: &Instance, index: usize, node: u32) -> (Option<f64>, Option<f64>) {
 	let lists = &instance.st.lists;
-	let each = list::each_of(lists, &instance.doc, node);
+	let each = list::each_of(lists, instance.doc(), node);
 	if each == slir::NONE {
 		return (None, None);
 	}
@@ -455,18 +455,18 @@ fn item_set_metadata(instance: &Instance, index: usize, node: u32) -> (Option<f6
 	let parent_each = usize::try_from(parent)
 		.ok()
 		.map_or(slir::NONE, |parent_index| {
-			list::each_of(lists, &instance.doc, instance.sc.entries[parent_index].node)
+			list::each_of(lists, instance.doc(), instance.sc.entries[parent_index].node)
 		});
 	if parent_each == each {
 		return (None, None);
 	}
-	let item = list::item_ix(lists, &instance.doc, node);
-	let handle = list::param_of(lists, &instance.doc, node);
+	let item = list::item_ix(lists, instance.doc(), node);
+	let handle = list::param_of(lists, instance.doc(), node);
 	if item < 0 || handle < 0 {
 		return (None, None);
 	}
 	let handle = u32::try_from(handle).expect("list handle must be nonnegative");
-	let length = list::length(&instance.doc, lists, handle);
+	let length = list::length(instance.doc(), lists, handle);
 	if length <= 0 {
 		return (None, None);
 	}
@@ -481,11 +481,11 @@ pub fn scene_json(instance: &Instance) -> String {
 		.enumerate()
 		.map(|(index, entry)| {
 			let node = entry.node;
-			let base = list::base(&instance.st.lists, &instance.doc, node);
+			let base = list::base(&instance.st.lists, instance.doc(), node);
 			let src_line = if base == slir::NONE {
 				0
 			} else {
-				instance.doc.node_line[index_u32(base)]
+				instance.doc().node_line[index_u32(base)]
 			};
 			let (item_pos, item_size) =
 				if entry.sem.pos_in_set.is_none() && entry.sem.set_size.is_none() {
@@ -494,7 +494,7 @@ pub fn scene_json(instance: &Instance) -> String {
 					(None, None)
 				};
 			SceneSnapshot {
-				key: scene::key_of(&instance.doc, &instance.st.lists, node),
+				key: scene::key_of(instance.doc(), &instance.st.lists, node),
 				node,
 				parent: entry.parent_ix,
 				kind: entry.kind,

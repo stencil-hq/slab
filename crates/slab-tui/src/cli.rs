@@ -221,7 +221,7 @@ fn session(
 			}
 		}
 		let base_dir = file.parent().unwrap_or_else(|| std::path::Path::new("."));
-		let imgpaint = images::Images::new(a.images, &doc.inst.doc, &doc.images, base_dir);
+		let imgpaint = images::Images::new(a.images, doc.inst.doc(), &doc.images, base_dir);
 		let ui = interactive::Ui {
 			fps: a.fps,
 			debug: a.debug,

@@ -59,8 +59,8 @@ fn player_frame(sets: &[(&str, slab_kernel::frame::ParamValue)]) -> slab_kernel:
 	let (mut inst, _) = slab_slir::instance(&bytes).expect("host decode");
 	slab_kernel::frame::inst_set_env(&mut inst, 360.0, 0.0, 2, false, false);
 	for (name, v) in sets {
-		let p = (0..inst.doc.parm_name.len())
-			.position(|p| inst.doc.strs[inst.doc.parm_name[p] as usize] == *name)
+		let p = (0..inst.doc().parm_name.len())
+			.position(|p| inst.doc().strs[inst.doc().parm_name[p] as usize] == *name)
 			.unwrap_or_else(|| panic!("unknown param '{name}'"));
 		assert!(
 			slab_kernel::frame::inst_set_param(&mut inst, p as u32, v),

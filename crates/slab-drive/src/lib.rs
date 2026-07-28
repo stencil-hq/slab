@@ -1163,7 +1163,7 @@ fn protocol_info(session: &Session) -> Value {
 fn doc_info(session: &mut Session) -> ProtocolResult {
 	let t_ms = session.t_ms;
 	let doc = ensure_frame(session)?;
-	let kernel = &doc.inst.doc;
+	let kernel = doc.inst.doc();
 	let mut parameters = Vec::with_capacity(kernel.parm_name.len());
 	for (index, name_ref) in kernel.parm_name.iter().copied().enumerate() {
 		let kind = kernel.parm_type[index];
@@ -1435,7 +1435,7 @@ fn focus_get(session: &mut Session) -> ProtocolResult {
 	let focus = frame::inst_focus(&doc.inst);
 	Ok(json!({
 		 "focus": focus,
-		 "key": scene::key_of(&doc.inst.doc, &doc.inst.st.lists, focus),
+		 "key": scene::key_of(doc.inst.doc(), &doc.inst.st.lists, focus),
 		 "visible": doc.inst.ds.fs.visible,
 	}))
 }
@@ -1568,23 +1568,23 @@ fn reveal_virtual_item(doc: &mut LoadedDoc, query: &str) -> bool {
 		.replace("%2F", "/")
 		.replace("%7E", "~")
 		.replace("%25", "%");
-	let list_id = slab_kernel::list::each_list(&doc.inst.doc, &doc.inst.st.lists, each);
+	let list_id = slab_kernel::list::each_list(doc.inst.doc(), &doc.inst.st.lists, each);
 	let Ok(list) = u32::try_from(list_id) else {
 		return false;
 	};
 	let index =
-		slab_kernel::list::item_index_for_key(&doc.inst.doc, &doc.inst.st.lists, list, &item_key);
+		slab_kernel::list::item_index_for_key(doc.inst.doc(), &doc.inst.st.lists, list, &item_key);
 	index >= 0 && frame::inst_reveal_item(&mut doc.inst, &each_key, index, 3)
 }
 
 fn list_param(inst: &Instance, name: &str) -> ProtocolResult<u32> {
 	let param = inst
-		.doc
+		.doc()
 		.parm_name
 		.iter()
-		.position(|name_ref| inst.doc.strs[*name_ref as usize] == name)
+		.position(|name_ref| inst.doc().strs[*name_ref as usize] == name)
 		.ok_or_else(|| domain(format!("unknown parameter '{name}'")))?;
-	if inst.doc.parm_type.get(param).copied() != Some(slir::PARAM_LIST) {
+	if inst.doc().parm_type.get(param).copied() != Some(slir::PARAM_LIST) {
 		return Err(domain(format!("parameter '{name}' is not a list")));
 	}
 	u32::try_from(param).map_err(|_| domain("parameter index is too large"))
@@ -1679,10 +1679,10 @@ fn divider_get(session: &mut Session, object: &Map<String, Value>) -> ProtocolRe
 	let query = required_str(object, "key")?.to_string();
 	let doc = ensure_frame(session)?;
 	let (node, key) = resolve_node_key(doc, &query)?;
-	let base = slab_kernel::list::base(&doc.inst.st.lists, &doc.inst.doc, node);
+	let base = slab_kernel::list::base(&doc.inst.st.lists, doc.inst.doc(), node);
 	let divider = usize::try_from(base)
 		.ok()
-		.and_then(|base| doc.inst.doc.node_kind.get(base))
+		.and_then(|base| doc.inst.doc().node_kind.get(base))
 		.copied()
 		== Some(slir::K_DIVIDER);
 	if !divider {
@@ -1707,11 +1707,11 @@ fn hole_list(session: &mut Session) -> ProtocolResult {
 	let holes = frame::inst_holes(&mut doc.inst)
 		.into_iter()
 		.map(|hole| {
-			let name_ref =
-				doc.inst.doc.hole_name[usize::try_from(hole.hole).expect("hole index must fit usize")];
+			let name_ref = doc.inst.doc().hole_name
+				[usize::try_from(hole.hole).expect("hole index must fit usize")];
 			json!({
 				 "hole": hole.hole,
-				 "name": slir::str_at(&doc.inst.doc, name_ref),
+				 "name": slir::str_at(doc.inst.doc(), name_ref),
 				 "x": hole.x,
 				 "y": hole.y,
 				 "w": hole.w,
@@ -1751,16 +1751,16 @@ fn hole_size(session: &mut Session, object: &Map<String, Value>) -> ProtocolResu
 	let hole = match (name, raw_index) {
 		(Some(name), None) => doc
 			.inst
-			.doc
+			.doc()
 			.hole_name
 			.iter()
-			.position(|name_ref| slir::str_at(&doc.inst.doc, *name_ref) == name)
+			.position(|name_ref| slir::str_at(doc.inst.doc(), *name_ref) == name)
 			.and_then(|index| u32::try_from(index).ok())
 			.ok_or_else(|| domain(format!("unknown hole '{name}'")))?,
 		(None, Some(index)) => {
 			if usize::try_from(index)
 				.ok()
-				.is_none_or(|index| index >= doc.inst.doc.hole_name.len())
+				.is_none_or(|index| index >= doc.inst.doc().hole_name.len())
 			{
 				return Err(domain(format!("unknown hole {index}")));
 			}
@@ -1807,7 +1807,7 @@ fn scene_entry(doc: &LoadedDoc, index: usize) -> Value {
 	json!({
 		 "i": i32::try_from(index).expect("scene index must fit i32"),
 		 "node": entry.node,
-		 "key": scene::key_of(&doc.inst.doc, &doc.inst.st.lists, entry.node),
+		 "key": scene::key_of(doc.inst.doc(), &doc.inst.st.lists, entry.node),
 		 "parent": entry.parent_ix,
 		 "kind": kind_name(entry.kind),
 		 "x": entry.x,
@@ -1880,9 +1880,9 @@ fn scene_entry(doc: &LoadedDoc, index: usize) -> Value {
 }
 
 fn resolve_node_key(doc: &LoadedDoc, query: &str) -> ProtocolResult<(u32, String)> {
-	match scene::resolve_key(&doc.inst.doc, &doc.inst.st.lists, query) {
+	match scene::resolve_key(doc.inst.doc(), &doc.inst.st.lists, query) {
 		scene::KeyResolution::Found(node) => {
-			let key = scene::key_of(&doc.inst.doc, &doc.inst.st.lists, node);
+			let key = scene::key_of(doc.inst.doc(), &doc.inst.st.lists, node);
 			Ok((node, key))
 		},
 		scene::KeyResolution::Ambiguous { candidates } => Err(domain(format!(
@@ -1955,11 +1955,11 @@ fn scene_node(session: &mut Session, object: &Map<String, Value>) -> ProtocolRes
 	);
 	states.insert(
 		"disabled".into(),
-		Value::Bool(dispatch::disabled(&doc.inst.doc, &doc.inst.st, node)),
+		Value::Bool(dispatch::disabled(doc.inst.doc(), &doc.inst.st, node)),
 	);
 	for state in extras {
 		if !states.contains_key(&state) {
-			let on = style::node_state_on(&doc.inst.doc, &doc.inst.st, node, &state);
+			let on = style::node_state_on(doc.inst.doc(), &doc.inst.st, node, &state);
 			states.insert(state, Value::Bool(on));
 		}
 	}
@@ -2033,7 +2033,7 @@ fn scene_hit(session: &mut Session, object: &Map<String, Value>) -> ProtocolResu
 	let nodes = frame::inst_hit(&doc.inst, x, y);
 	let keys = nodes
 		.iter()
-		.map(|node| Value::String(scene::key_of(&doc.inst.doc, &doc.inst.st.lists, *node)))
+		.map(|node| Value::String(scene::key_of(doc.inst.doc(), &doc.inst.st.lists, *node)))
 		.collect::<Vec<_>>();
 	let rects = nodes
 		.iter()
@@ -2064,7 +2064,7 @@ fn scene_find(session: &mut Session, object: &Map<String, Value>) -> ProtocolRes
 		});
 		if let Some(text) = matching_text {
 			matches.push(json!({
-				 "key": scene::key_of(&doc.inst.doc, &doc.inst.st.lists, node),
+				 "key": scene::key_of(doc.inst.doc(), &doc.inst.st.lists, node),
 				 "node": node,
 				 "text": text,
 				 "rect": rect_value(doc, index),
@@ -2080,13 +2080,13 @@ fn parse_kernel_json(raw: &str) -> ProtocolResult {
 
 fn frame_dump(session: &mut Session) -> ProtocolResult {
 	let doc = ensure_frame(session)?;
-	parse_kernel_json(&slab_kernel::dumpjson::dump(&doc.inst.doc, &doc.inst.st, &doc.fr))
+	parse_kernel_json(&slab_kernel::dumpjson::dump(doc.inst.doc(), &doc.inst.st, &doc.fr))
 }
 
 fn frame_summary(session: &mut Session) -> ProtocolResult {
 	let doc = ensure_frame(session)?;
 	parse_kernel_json(&slab_kernel::dumpjson::dump_trace_summary(
-		&doc.inst.doc,
+		doc.inst.doc(),
 		&doc.inst.st,
 		&doc.inst,
 	))
@@ -2313,7 +2313,7 @@ fn dispatch_one(session: &mut Session, event: &Event) -> ProtocolResult {
 
 fn effects_result(doc: &LoadedDoc, effects: &Effects, t_ms: f64) -> ProtocolResult {
 	let effects = parse_kernel_json(&slab_kernel::dumpjson::dump_effects(
-		&doc.inst.doc,
+		doc.inst.doc(),
 		&doc.inst.st,
 		effects,
 	))?;
@@ -2352,7 +2352,7 @@ fn runtime_images<'a>(
 	inst: &'a Instance,
 	frame: &Frame,
 ) -> Vec<slab_compile::render::RuntimeImage<'a>> {
-	let compiled_len = i32::try_from(inst.doc.img_src.len()).expect("image table exceeds i32");
+	let compiled_len = i32::try_from(inst.doc().img_src.len()).expect("image table exceeds i32");
 	let mut images: Vec<slab_compile::render::RuntimeImage<'a>> = Vec::new();
 	for image in frame.ops.iter().filter_map(|op| match op {
 		FrameOp::Image(image) if image.img >= compiled_len => Some(image.img),
@@ -2407,7 +2407,7 @@ fn render_png(session: &mut Session, object: &Map<String, Value>) -> ProtocolRes
 	let (width, height) = png_dimensions(&bytes)?;
 	let mut notes = frame_diagnostic_notes(&doc.fr);
 	notes.extend(slab_compile::capsnote::render_notes(
-		&doc.inst.doc,
+		doc.inst.doc(),
 		&doc.fr,
 		doc.inst.st.env.client,
 		&[],
@@ -2443,7 +2443,7 @@ fn render_svg(session: &mut Session, object: &Map<String, Value>) -> ProtocolRes
 	);
 	let mut notes = frame_diagnostic_notes(&doc.fr);
 	notes.extend(slab_compile::capsnote::render_notes(
-		&doc.inst.doc,
+		doc.inst.doc(),
 		&doc.fr,
 		doc.inst.st.env.client,
 		&[],
@@ -2472,7 +2472,7 @@ fn render_cells(session: &mut Session, object: &Map<String, Value>) -> ProtocolR
 	let grid = if caret {
 		cells::cells_with_caret(&doc.inst, &doc.fr)
 	} else {
-		cells::cells_from_frame(&doc.inst.doc, &doc.fr, doc.fr.width, doc.fr.height)
+		cells::cells_from_frame(doc.inst.doc(), &doc.fr, doc.fr.width, doc.fr.height)
 	};
 	let text = cells::cells_to_text(&grid, plain);
 	let mut notes = frame_diagnostic_notes(&doc.fr);
@@ -2484,7 +2484,7 @@ fn render_cells(session: &mut Session, object: &Map<String, Value>) -> ProtocolR
 			.map(|(code, message)| format!("note {code}: {message}")),
 	);
 	notes.extend(slab_compile::capsnote::render_notes(
-		&doc.inst.doc,
+		doc.inst.doc(),
 		&doc.fr,
 		doc.inst.st.env.client,
 		&grid.diag_code,

@@ -8,21 +8,19 @@
 //! testing, focus, and editing; the generated code never reimplements any of
 //! it.
 //!
-//! Unlike [`crate::rustgen`], which links the kernel directly, the Go binding
-//! has no in-process kernel. The document is therefore lowered to SLIR at
-//! generation time, embedded base64-encoded, decoded once at package
-//! initialization, and installed through the runtime's `doc.open_slir` helper.
-//! The runtime never runs the compiler for a generated binding.
-//!
 //! Output is deterministic and gofmt-clean as emitted. Regenerate with:
 //! `cargo run -q -p slab-cli -- gen go FILE -o OUT.go [--package NAME]`
 
-use std::fmt::Write as _;
-
+use serde_json::json;
 use slab_slir::Slir;
 use slab_syntax::diag::Diagnostics;
 
-use crate::Options;
+use crate::{
+	Options,
+	tmpl::{camel, pascal},
+};
+
+const TEMPLATE: &str = include_str!("../templates/go.tmpl");
 
 /// Generate the typed Go binding for a compiled `.slab` source.
 ///
@@ -42,40 +40,6 @@ pub fn generate(
 	let bytes = slab_slir::write(&slir);
 	let module = emit_module(&slir, &bytes, src_name, package);
 	(Some(module), diags)
-}
-
-/// `PascalCase` from a signal/param name (`row-clicked` -> `RowClicked`).
-fn pascal(s: &str) -> String {
-	let mut out = String::new();
-	let mut up = true;
-	for c in s.chars() {
-		if c.is_alphanumeric() {
-			if up {
-				out.extend(c.to_uppercase());
-				up = false;
-			} else {
-				out.push(c);
-			}
-		} else {
-			up = true;
-		}
-	}
-	if out.is_empty() {
-		out.push('X');
-	}
-	out
-}
-
-/// lowerCamelCase from a param name (`row-count` -> `rowCount`), for the
-/// unexported cache fields and helper methods of the generated `Doc`.
-fn camel(s: &str) -> String {
-	let mut out = pascal(s);
-	let Some(first) = out.chars().next() else {
-		return out;
-	};
-	let lowered: String = first.to_lowercase().collect();
-	out.replace_range(0..first.len_utf8(), &lowered);
-	out
 }
 
 /// Standard-alphabet base64 with padding. Written here so the crate keeps its
@@ -102,41 +66,6 @@ fn base64(bytes: &[u8]) -> String {
 		});
 	}
 	out
-}
-
-/// Quote a string as a Go interpreted string literal.
-fn go_string(s: &str) -> String {
-	let mut out = String::with_capacity(s.len() + 2);
-	out.push('"');
-	for c in s.chars() {
-		match c {
-			'\\' => out.push_str("\\\\"),
-			'"' => out.push_str("\\\""),
-			'\n' => out.push_str("\\n"),
-			'\r' => out.push_str("\\r"),
-			'\t' => out.push_str("\\t"),
-			c if (c as u32) < 0x20 || c as u32 == 0x7f => {
-				let _ = write!(out, "\\x{:02x}", c as u32);
-			},
-			c => out.push(c),
-		}
-	}
-	out.push('"');
-	out
-}
-
-/// Emit `const NAME = "" +` followed by one quoted chunk per line. gofmt keeps
-/// this shape untouched, so long payloads stay readable without reflowing.
-fn emit_string_const(out: &mut String, name: &str, parts: &[String]) {
-	if parts.is_empty() {
-		let _ = writeln!(out, "const {name} = \"\"");
-		return;
-	}
-	let _ = writeln!(out, "const {name} = \"\" +");
-	for (index, part) in parts.iter().enumerate() {
-		let tail = if index + 1 == parts.len() { "" } else { " +" };
-		let _ = writeln!(out, "\t{part}{tail}");
-	}
 }
 
 /// Unique signals in SIGN order: `(name, has_text)`. A name bound to multiple
@@ -207,14 +136,10 @@ fn list_type_name(names: &[(usize, String)], slir: &Slir, row: usize) -> String 
 		.expect("nested list schema type was not collected")
 }
 
-/// The `XxxItem` type name stripped of its `Item` suffix, used to build the
-/// package-level `validateXxxItems` / `equalXxxItems` / `cloneXxxItems`
-/// helpers and the `setXxxPath` reconciliation method.
 fn list_base_name(item_ty: &str) -> String {
 	item_ty.strip_suffix("Item").unwrap_or(item_ty).to_string()
 }
 
-/// SDP `list.set_field` kind spelling for a PARAM type code.
 const fn kind_name(ty: u8) -> &'static str {
 	match ty {
 		0 => "text",
@@ -226,9 +151,6 @@ const fn kind_name(ty: u8) -> &'static str {
 	}
 }
 
-/// The Go type of one scalar list field, plus the human note used in its doc
-/// comment. `owner` is the item type the field belongs to, which names the
-/// generated enum type for symbol fields.
 fn scalar_field_type(slir: &Slir, field: &slab_slir::ListFieldE, owner: &str) -> (String, String) {
 	match field.ty {
 		0 => ("string".to_string(), "text".to_string()),
@@ -248,7 +170,6 @@ fn scalar_field_type(slir: &Slir, field: &slab_slir::ListFieldE, owner: &str) ->
 	}
 }
 
-/// The Go expression that carries one scalar list field to `list.set_field`.
 fn field_wire_expr(ty: u8, member: &str) -> String {
 	match ty {
 		3 => format!("uint32(item.{member})"),
@@ -257,273 +178,6 @@ fn field_wire_expr(ty: u8, member: &str) -> String {
 	}
 }
 
-/// Emit the item structs, enum types, and equality/clone/validation helpers for
-/// one list param and every schema reachable from it.
-fn emit_list_types(out: &mut String, slir: &Slir, schema_row: usize, param_name: &str) {
-	let mut names = Vec::new();
-	let mut order = Vec::new();
-	collect_list_types(slir, schema_row, pascal(param_name), &mut names, &mut order);
-	let root = canonical_list_schema(slir, schema_row);
-	for &row in &order {
-		let schema = &slir.lists[row];
-		let item_ty = list_type_name(&names, slir, row);
-		let base = list_base_name(&item_ty);
-
-		for field_ix in schema.field_off..schema.field_off + schema.field_len {
-			let field = &slir.list_fields[field_ix as usize];
-			if field.ty != 5 {
-				continue;
-			}
-			let field_name = slir.str_at(field.name);
-			let enum_ty = format!("{item_ty}{}", pascal(field_name));
-			let _ = writeln!(
-				out,
-				"// {enum_ty} is the value type of schema field `{field_name}` on [{item_ty}]."
-			);
-			let _ = writeln!(out, "type {enum_ty} string\n");
-			for ix in field.enum_off..field.enum_off + field.enum_len {
-				let member = slir.str_at(slir.list_enum_syms[ix as usize]);
-				let konst = format!("{enum_ty}{}", pascal(member));
-				let _ = writeln!(
-					out,
-					"// {konst} is member `{member}` of schema field `{field_name}` on [{item_ty}]."
-				);
-				let _ = writeln!(out, "const {konst} {enum_ty} = {}\n", go_string(member));
-			}
-		}
-
-		if row == root {
-			let _ = writeln!(
-				out,
-				"// {item_ty} is one typed item accepted by [Doc.Set{}] for list param `{param_name}`.",
-				pascal(param_name)
-			);
-		} else {
-			let _ = writeln!(
-				out,
-				"// {item_ty} is one typed nested-list item reachable from list param `{param_name}`."
-			);
-		}
-		let _ = writeln!(out, "type {item_ty} struct {{");
-		let _ = writeln!(
-			out,
-			"\t// Key is the stable list identity; an empty Key uses the positional key."
-		);
-		let _ = writeln!(out, "\tKey string");
-		for field_ix in schema.field_off..schema.field_off + schema.field_len {
-			let field = &slir.list_fields[field_ix as usize];
-			let field_name = slir.str_at(field.name);
-			let member = pascal(field_name);
-			let (go_ty, note) = if field.ty == 6 {
-				(
-					format!("[]{}", list_type_name(&names, slir, field.sub as usize - 1)),
-					"nested list".to_string(),
-				)
-			} else {
-				scalar_field_type(slir, field, &item_ty)
-			};
-			let _ = writeln!(out, "\t// {member} is schema field `{field_name}` ({note}).");
-			let _ = writeln!(out, "\t{member} {go_ty}");
-		}
-		let _ = writeln!(out, "}}\n");
-
-		let _ = writeln!(
-			out,
-			"// equals reports whether two {item_ty} values carry identical field values."
-		);
-		let _ = writeln!(out, "func (a {item_ty}) equals(b {item_ty}) bool {{");
-		let _ = writeln!(out, "\tif a.Key != b.Key {{\n\t\treturn false\n\t}}");
-		for field_ix in schema.field_off..schema.field_off + schema.field_len {
-			let field = &slir.list_fields[field_ix as usize];
-			let member = pascal(slir.str_at(field.name));
-			if field.ty == 6 {
-				let child_ty = list_type_name(&names, slir, field.sub as usize - 1);
-				let child_base = list_base_name(&child_ty);
-				let _ = writeln!(
-					out,
-					"\tif !equal{child_base}Items(a.{member}, b.{member}) {{\n\t\treturn false\n\t}}"
-				);
-			} else {
-				let _ = writeln!(out, "\tif a.{member} != b.{member} {{\n\t\treturn false\n\t}}");
-			}
-		}
-		let _ = writeln!(out, "\treturn true\n}}\n");
-
-		let _ = writeln!(
-			out,
-			"// equal{base}Items reports whether two {item_ty} slices are element-wise equal."
-		);
-		let _ = writeln!(
-			out,
-			"func equal{base}Items(left, right []{item_ty}) bool {{\n\tif len(left) != len(right) \
-			 {{\n\t\treturn false\n\t}}\n\tfor index := range left {{\n\t\tif \
-			 !left[index].equals(right[index]) {{\n\t\t\treturn false\n\t\t}}\n\t}}\n\treturn \
-			 true\n}}\n"
-		);
-
-		let nested: Vec<(String, String)> = (schema.field_off..schema.field_off + schema.field_len)
-			.filter_map(|field_ix| {
-				let field = &slir.list_fields[field_ix as usize];
-				if field.ty != 6 {
-					return None;
-				}
-				let child_ty = list_type_name(&names, slir, field.sub as usize - 1);
-				Some((pascal(slir.str_at(field.name)), list_base_name(&child_ty)))
-			})
-			.collect();
-		let _ = writeln!(
-			out,
-			"// clone{base}Items deep-copies items so a cached snapshot never aliases\n// \
-			 caller-owned state."
-		);
-		let _ = writeln!(
-			out,
-			"func clone{base}Items(items []{item_ty}) []{item_ty} {{\n\tif items == nil \
-			 {{\n\t\treturn nil\n\t}}\n\tout := make([]{item_ty}, len(items))\n\tcopy(out, items)"
-		);
-		if !nested.is_empty() {
-			let _ = writeln!(out, "\tfor index := range out {{");
-			for (member, child_base) in &nested {
-				let _ = writeln!(
-					out,
-					"\t\tout[index].{member} = clone{child_base}Items(items[index].{member})"
-				);
-			}
-			let _ = writeln!(out, "\t}}");
-		}
-		let _ = writeln!(out, "\treturn out\n}}\n");
-
-		let _ = writeln!(
-			out,
-			"// validate{base}Items rejects an oversized list, duplicate item keys, and unknown\n// \
-			 enum members before any write reaches the session."
-		);
-		let _ = writeln!(
-			out,
-			"func validate{base}Items(items []{item_ty}) error {{\n\tif len(items) > maxListLen \
-			 {{\n\t\treturn fmt.Errorf(\"{item_ty} list has %d items, more than the %d the protocol \
-			 allows\", len(items), maxListLen)\n\t}}\n\tkeys := make(map[string]struct{{}}, \
-			 len(items))\n\tfor index, item := range items {{\n\t\tkey := item.Key\n\t\tif key == \
-			 \"\" {{\n\t\t\tkey = strconv.Itoa(index)\n\t\t}}\n\t\tif _, seen := keys[key]; seen \
-			 {{\n\t\t\treturn fmt.Errorf(\"{item_ty} %d: duplicate key %q\", index, \
-			 key)\n\t\t}}\n\t\tkeys[key] = struct{{}}{{}}"
-		);
-		for field_ix in schema.field_off..schema.field_off + schema.field_len {
-			let field = &slir.list_fields[field_ix as usize];
-			let field_name = slir.str_at(field.name);
-			let member = pascal(field_name);
-			if field.ty == 5 {
-				let enum_ty = format!("{item_ty}{member}");
-				let members: Vec<String> = (field.enum_off..field.enum_off + field.enum_len)
-					.map(|ix| {
-						format!("{enum_ty}{}", pascal(slir.str_at(slir.list_enum_syms[ix as usize])))
-					})
-					.collect();
-				let _ = writeln!(out, "\t\tswitch item.{member} {{");
-				if !members.is_empty() {
-					let _ = writeln!(out, "\t\tcase {}:", members.join(", "));
-				}
-				let _ = writeln!(
-					out,
-					"\t\tdefault:\n\t\t\treturn fmt.Errorf(\"{item_ty} %d: field `{field_name}` has \
-					 unknown enum member %q\", index, string(item.{member}))\n\t\t}}"
-				);
-			} else if field.ty == 6 {
-				let child_ty = list_type_name(&names, slir, field.sub as usize - 1);
-				let child_base = list_base_name(&child_ty);
-				let _ = writeln!(
-					out,
-					"\t\tif err := validate{child_base}Items(item.{member}); err != nil \
-					 {{\n\t\t\treturn err\n\t\t}}"
-				);
-			}
-		}
-		let _ = writeln!(out, "\t}}\n\treturn nil\n}}\n");
-	}
-}
-
-/// Emit the reconciliation methods for one list param: one `setXxxPath` per
-/// reachable schema plus the exported `SetXxx` entry point.
-fn emit_list_setters(out: &mut String, slir: &Slir, schema_row: usize, param_name: &str) {
-	let mut names = Vec::new();
-	let mut order = Vec::new();
-	collect_list_types(slir, schema_row, pascal(param_name), &mut names, &mut order);
-	let wire_param = go_string(param_name);
-	for &row in &order {
-		let schema = &slir.lists[row];
-		let item_ty = list_type_name(&names, slir, row);
-		let base = list_base_name(&item_ty);
-		let _ = writeln!(
-			out,
-			"// set{base}Path reconciles the {item_ty} list at path against the previous value,\n// \
-			 writing only the entries that changed."
-		);
-		let _ = writeln!(
-			out,
-			"func (d *Doc) set{base}Path(ctx context.Context, path string, items, previous \
-			 []{item_ty}) error {{\n\tif err := d.setListLen(ctx, {wire_param}, path, len(items)); \
-			 err != nil {{\n\t\treturn err\n\t}}\n\tfor index, item := range items {{\n\t\tvar prior \
-			 *{item_ty}\n\t\tif index < len(previous) {{\n\t\t\tprior = \
-			 &previous[index]\n\t\t}}\n\t\tif prior != nil && prior.equals(item) \
-			 {{\n\t\t\tcontinue\n\t\t}}\n\t\tif prior == nil || prior.Key != item.Key {{\n\t\t\tkey \
-			 := item.Key\n\t\t\tif key == \"\" {{\n\t\t\t\tkey = \
-			 strconv.Itoa(index)\n\t\t\t}}\n\t\t\tif err := d.setListKey(ctx, {wire_param}, path, \
-			 index, key); err != nil {{\n\t\t\t\treturn err\n\t\t\t}}\n\t\t}}"
-		);
-		for field_ix in schema.field_off..schema.field_off + schema.field_len {
-			let field = &slir.list_fields[field_ix as usize];
-			let field_name = slir.str_at(field.name);
-			let member = pascal(field_name);
-			if field.ty == 6 {
-				let child_ty = list_type_name(&names, slir, field.sub as usize - 1);
-				let child_base = list_base_name(&child_ty);
-				let _ = writeln!(
-					out,
-					"\t\tchildPath := strconv.Itoa(index) + {}\n\t\tif path != \"\" \
-					 {{\n\t\t\tchildPath = path + \".\" + childPath\n\t\t}}\n\t\tvar prior{member} \
-					 []{child_ty}\n\t\tif prior != nil {{\n\t\t\tprior{member} = \
-					 prior.{member}\n\t\t}}\n\t\tif err := d.set{child_base}Path(ctx, childPath, \
-					 item.{member}, prior{member}); err != nil {{\n\t\t\treturn err\n\t\t}}",
-					go_string(&format!(".{field_name}"))
-				);
-				continue;
-			}
-			let _ = writeln!(
-				out,
-				"\t\tif prior == nil || prior.{member} != item.{member} {{\n\t\t\tif err := \
-				 d.setListField(ctx, {wire_param}, path, index, {}, {}, {}); err != nil \
-				 {{\n\t\t\t\treturn err\n\t\t\t}}\n\t\t}}",
-				go_string(field_name),
-				go_string(kind_name(field.ty)),
-				field_wire_expr(field.ty, &member)
-			);
-		}
-		let _ = writeln!(out, "\t}}\n\treturn nil\n}}\n");
-	}
-	let root_ty = list_type_name(&names, slir, schema_row);
-	let root_base = list_base_name(&root_ty);
-	let setter = pascal(param_name);
-	let cache = format!("{}Cache", camel(param_name));
-	let _ = writeln!(
-		out,
-		"// Set{setter} reconciles list param `{param_name}`, and every nested list under it,\n// \
-		 with the last applied value. Unchanged items and fields are never rewritten. A\n// failed \
-		 write restores the previous snapshot so the next call resynchronizes."
-	);
-	let _ = writeln!(
-		out,
-		"func (d *Doc) Set{setter}(ctx context.Context, items []{root_ty}) error {{\n\tif \
-		 d.{cache}Valid && equal{root_base}Items(d.{cache}, items) {{\n\t\treturn nil\n\t}}\n\tif \
-		 err := validate{root_base}Items(items); err != nil {{\n\t\treturn err\n\t}}\n\tprevious := \
-		 d.{cache}\n\tpreviousValid := d.{cache}Valid\n\td.{cache} = nil\n\td.{cache}Valid = \
-		 false\n\tif err := d.set{root_base}Path(ctx, \"\", items, previous); err != nil \
-		 {{\n\t\td.{cache} = previous\n\t\td.{cache}Valid = previousValid\n\t\treturn \
-		 err\n\t}}\n\td.{cache} = clone{root_base}Items(items)\n\td.{cache}Valid = true\n\treturn \
-		 nil\n}}\n"
-	);
-}
-
-/// The schema row backing a list param, by position in `Slir::lists`.
 fn schema_row_of(slir: &Slir, param: usize) -> usize {
 	slir
 		.lists
@@ -533,300 +187,246 @@ fn schema_row_of(slir: &Slir, param: usize) -> usize {
 }
 
 fn emit_module(slir: &Slir, bytes: &[u8], src_name: &str, package: &str) -> String {
-	let mut o = String::new();
 	let signals = unique_signals(slir);
 	let has_list = slir.params.iter().any(|p| p.ty == 6);
 	let has_scalar = slir.params.iter().any(|p| p.ty != 6);
 	let has_color =
 		slir.params.iter().any(|p| p.ty == 3) || slir.list_fields.iter().any(|f| f.ty == 3);
 
-	let _ = writeln!(o, "// GENERATED by `slab gen go {src_name}` — do not edit.");
-	let _ = writeln!(
-		o,
-		"// Regenerate: cargo run -q -p slab-cli -- gen go {src_name} -o <this file> --package \
-		 {package}\n"
-	);
-	let _ = writeln!(
-		o,
-		"// Package {package} is the generated typed binding for `{src_name}`. It drives a\n// slab \
-		 session over the Slab Drive Protocol; the kernel owns layout, hit testing,\n// focus, and \
-		 editing, and this package only carries typed values across the wire."
-	);
-	let _ = writeln!(o, "package {package}\n");
-
-	o.push_str("import (\n\t\"context\"\n\t\"encoding/base64\"\n");
-	if has_list || has_color {
-		o.push_str("\t\"fmt\"\n");
-	}
-	if has_list {
-		o.push_str("\t\"strconv\"\n");
-	}
-	o.push_str("\n\t\"github.com/stencil-hq/slab/clients/go/slab\"\n)\n\n");
-
-	let _ = writeln!(
-		o,
-		"// SourceName is the document name reported to the session when [New] installs [SLIR]."
-	);
-	let _ = writeln!(o, "const SourceName = {}\n", go_string(src_name));
-
-	let _ = writeln!(
-		o,
-		"// slirBase64 is the compiled SLIR document ({} bytes) in standard base64. Base64\n// \
-		 keeps the generated file compact and byte-for-byte reproducible across runs.",
-		bytes.len()
-	);
 	let encoded = base64(bytes);
-	let chunks: Vec<String> = encoded
+	let slir_chunks: Vec<String> = encoded
 		.as_bytes()
 		.chunks(76)
 		.map(|chunk| {
-			let mut part = String::with_capacity(chunk.len() + 2);
-			part.push('"');
-			part.push_str(std::str::from_utf8(chunk).expect("base64 output is ASCII"));
-			part.push('"');
-			part
+			std::str::from_utf8(chunk)
+				.expect("base64 output is ASCII")
+				.to_string()
 		})
 		.collect();
-	emit_string_const(&mut o, "slirBase64", &chunks);
-	o.push_str(
-		"\n// SLIR is the compiled SLIR document this package installs, decoded once at\n// package \
-		 initialization. The slice is shared, so callers must not modify it.\nvar SLIR []byte\n\n// \
-		 init decodes the embedded document. A corrupt payload can only come from a\n// hand-edited \
-		 generated file, so it fails loudly rather than silently.\nfunc init() {\n\tdecoded, err := \
-		 base64.StdEncoding.DecodeString(slirBase64)\n\tif err != nil {\n\t\tpanic(\"slab: embedded \
-		 SLIR payload is corrupt: \" + err.Error())\n\t}\n\tSLIR = decoded\n}\n\n",
-	);
 
-	if has_color {
-		o.push_str(
-			"// Rgba is a packed SLIR color word: red in the low byte, then green, blue, \
-			 alpha.\ntype Rgba uint32\n\n// NewRgba packs straight-alpha channels into a SLIR color \
-			 word. Go cannot give a\n// function and a type the same name, so the constructor is \
-			 NewRgba, not Rgba.\nfunc NewRgba(red, green, blue, alpha uint8) Rgba {\n\treturn \
-			 Rgba(uint32(red) | uint32(green)<<8 | uint32(blue)<<16 | uint32(alpha)<<24)\n}\n\n// \
-			 String renders the `#rrggbbaa` spelling that `param.set` accepts for colors.\nfunc (c \
-			 Rgba) String() string {\n\treturn fmt.Sprintf(\"#%02x%02x%02x%02x\", uint8(c), \
-			 uint8(c>>8), uint8(c>>16), uint8(c>>24))\n}\n\n",
-		);
-	}
+	let keys: Vec<serde_json::Value> = crate::wc::static_scene_keys(slir)
+		.into_iter()
+		.map(|(name, key)| {
+			json!({
+				"name": name,
+				"pascal_name": pascal(&name),
+				"key": key,
+			})
+		})
+		.collect();
 
-	if has_list {
-		o.push_str(
-			"// maxListLen is the largest list length the protocol's int32 item count can \
-			 carry.\nconst maxListLen = 2147483647\n\n",
-		);
-	}
+	let params_json: Vec<serde_json::Value> = slir
+		.params
+		.iter()
+		.map(|p| {
+			let name = slir.str_at(p.name);
+			json!({
+				"name": name,
+				"pascal_name": pascal(name),
+				"param_type_name": slab_slir::PARAM_TYPE_NAMES
+					.get(usize::from(p.ty))
+					.copied()
+					.unwrap_or("unknown"),
+			})
+		})
+		.collect();
 
-	for (name, key) in crate::wc::static_scene_keys(slir) {
-		let konst = format!("Key{}", pascal(&name));
-		let _ = writeln!(o, "// {konst} is the canonical scene key of the authored `#{name}` node.");
-		let _ = writeln!(o, "const {konst} = {}\n", go_string(&key));
-	}
+	let enum_params: Vec<serde_json::Value> = slir
+		.params
+		.iter()
+		.filter(|p| p.ty == 5)
+		.map(|p| {
+			let name = slir.str_at(p.name);
+			let members: Vec<String> = (p.enum_off..p.enum_off + p.enum_len)
+				.map(|ix| slir.str_at(slir.param_enum_syms[ix as usize]).to_string())
+				.collect();
+			json!({
+				"name": name,
+				"pascal_name": pascal(name),
+				"members": members,
+			})
+		})
+		.collect();
 
-	for p in &slir.params {
-		let name = slir.str_at(p.name);
-		let konst = format!("Param{}", pascal(name));
-		let _ = writeln!(
-			o,
-			"// {konst} is the SDP name of param `{name}` ({}).",
-			slab_slir::PARAM_TYPE_NAMES
-				.get(usize::from(p.ty))
-				.copied()
-				.unwrap_or("unknown")
-		);
-		let _ = writeln!(o, "const {konst} = {}\n", go_string(name));
-	}
+	let signals_json: Vec<serde_json::Value> = signals
+		.iter()
+		.map(|(name, has_text)| {
+			json!({
+				"name": name,
+				"pascal_name": pascal(name),
+				"has_text": *has_text,
+			})
+		})
+		.collect();
 
-	for p in &slir.params {
-		if p.ty != 5 {
-			continue;
-		}
-		let name = slir.str_at(p.name);
-		let enum_ty = pascal(name);
-		let _ = writeln!(o, "// {enum_ty} is the value type of enum param `{name}`.");
-		let _ = writeln!(o, "type {enum_ty} string\n");
-		for ix in p.enum_off..p.enum_off + p.enum_len {
-			let member = slir.str_at(slir.param_enum_syms[ix as usize]);
-			let konst = format!("{enum_ty}{}", pascal(member));
-			let _ = writeln!(o, "// {konst} is member `{member}` of enum param `{name}`.");
-			let _ = writeln!(o, "const {konst} {enum_ty} = {}\n", go_string(member));
-		}
-	}
-
-	o.push_str(
-		"// SignalName is one authored signal name from the document's SIGN table.\ntype SignalName \
-		 string\n\n",
-	);
-	for (name, has_text) in &signals {
-		let konst = format!("Signal{}", pascal(name));
-		let note = if *has_text {
-			"it carries a text payload"
-		} else {
-			"it carries no text payload"
-		};
-		let _ = writeln!(o, "// {konst} is the authored signal `{name}`; {note}.");
-		let _ = writeln!(o, "const {konst} SignalName = {}\n", go_string(name));
-	}
-	o.push_str(
-		"// Signal is one decoded emission of a signal this document declares.\ntype Signal struct \
-		 {\n\t// Name is the authored signal name.\n\tName SignalName\n\t// Text is the committed \
-		 field text or final resize extent, and is empty for\n\t// signals that carry no text \
-		 payload.\n\tText string\n\t// Item is the innermost list item key, or empty outside a \
-		 list.\n\tItem string\n\t// Meta is the input and source metadata captured at \
-		 emission.\n\tMeta slab.SignalMeta\n}\n\n",
-	);
-	if signals.is_empty() {
-		o.push_str(
-			"// DecodeSignals converts the ordered effect signals into typed values. This\n// \
-			 document declares no signals, so the result is always empty.\nfunc \
-			 DecodeSignals(effects slab.Effects) []Signal {\n\treturn nil\n}\n\n",
-		);
-	} else {
-		o.push_str(
-			"// DecodeSignals converts the ordered effect signals into typed values, keeping \
-			 only\n// the names this document declares and preserving emission order.\nfunc \
-			 DecodeSignals(effects slab.Effects) []Signal {\n\tout := make([]Signal, 0, \
-			 len(effects.Signals))\n\tfor _, raw := range effects.Signals {\n\t\tname := \
-			 SignalName(raw.Name)\n\t\tswitch name {\n",
-		);
-		let cases: Vec<String> = signals
-			.iter()
-			.map(|(name, _)| format!("Signal{}", pascal(name)))
-			.collect();
-		let _ = writeln!(o, "\t\tcase {}:", cases.join(", "));
-		o.push_str(
-			"\t\tdefault:\n\t\t\tcontinue\n\t\t}\n\t\tout = append(out, Signal{Name: name, Text: \
-			 raw.Text, Item: raw.Item, Meta: raw.Meta})\n\t}\n\treturn out\n}\n\n",
-		);
-	}
-
+	let mut list_params: Vec<serde_json::Value> = Vec::new();
 	for (param_ix, p) in slir.params.iter().enumerate() {
 		if p.ty != 6 {
 			continue;
 		}
-		emit_list_types(&mut o, slir, schema_row_of(slir, param_ix), slir.str_at(p.name));
-	}
-
-	o.push_str(
-		"// Doc is the typed wrapper over a session holding this document. Every setter\n// routes \
-		 through the Slab Drive Protocol, so the kernel stays the single owner of\n// layout, hit \
-		 testing, focus, and editing.\ntype Doc struct {\n\t// sess is the session the document was \
-		 opened in.\n\tsess *slab.Session\n",
-	);
-	for (param_ix, p) in slir.params.iter().enumerate() {
-		if p.ty != 6 {
-			continue;
-		}
-		let name = slir.str_at(p.name);
-		let cache = format!("{}Cache", camel(name));
+		let param_name = slir.str_at(p.name);
 		let schema_row = schema_row_of(slir, param_ix);
 		let mut names = Vec::new();
 		let mut order = Vec::new();
-		collect_list_types(slir, schema_row, pascal(name), &mut names, &mut order);
-		let root_ty = list_type_name(&names, slir, schema_row);
-		let _ = writeln!(o, "\t// {cache} is the last value applied by [Doc.Set{}].", pascal(name));
-		let _ = writeln!(o, "\t{cache} []{root_ty}");
-		let _ = writeln!(o, "\t// {cache}Valid reports whether {cache} holds an applied value.");
-		let _ = writeln!(o, "\t{cache}Valid bool");
-	}
-	o.push_str("}\n\n");
+		collect_list_types(slir, schema_row, pascal(param_name), &mut names, &mut order);
+		let root = canonical_list_schema(slir, schema_row);
 
-	o.push_str(
-		"// New installs the embedded document in sess and returns the typed wrapper. The\n// \
-		 document is already compiled, so the runtime never parses `.slab` text and no\n// host \
-		 filesystem is involved.\nfunc New(ctx context.Context, sess *slab.Session) (*Doc, error) \
-		 {\n\tif err := sess.OpenSLIR(ctx, SLIR, SourceName); err != nil {\n\t\treturn nil, \
-		 err\n\t}\n\treturn &Doc{sess: sess}, nil\n}\n\n// Session returns the underlying session, \
-		 the escape hatch for SDP methods this\n// binding does not wrap.\nfunc (d *Doc) Session() \
-		 *slab.Session {\n\treturn d.sess\n}\n\n",
-	);
-	// Only a document with list params retains reconciliation snapshots.
-	if has_list {
-		o.push_str(
-			"// InvalidateCaches drops the generated list reconciliation snapshots. Call it \
-			 after\n// the document reloads underneath the session, before re-synchronizing the \
-			 typed\n// list setters. It is safe and idempotent.\nfunc (d *Doc) InvalidateCaches() {\n",
-		);
-		for p in &slir.params {
-			if p.ty != 6 {
-				continue;
-			}
-			let cache = format!("{}Cache", camel(slir.str_at(p.name)));
-			let _ = writeln!(o, "\td.{cache} = nil");
-			let _ = writeln!(o, "\td.{cache}Valid = false");
-		}
-		o.push_str("}\n\n");
-	}
+		let mut items_json = Vec::new();
+		for &row in &order {
+			let schema = &slir.lists[row];
+			let item_ty = list_type_name(&names, slir, row);
+			let base = list_base_name(&item_ty);
+			let is_root = row == root;
 
-	if has_scalar {
-		o.push_str(
-			"// setParam writes one scalar param through the protocol's `param.set` method.\nfunc (d \
-			 *Doc) setParam(ctx context.Context, name string, value any) error {\n\t_, err := \
-			 d.sess.Request(ctx, \"param.set\", map[string]any{\"name\": name, \"value\": \
-			 value})\n\treturn err\n}\n\n",
-		);
-	}
-	if has_list {
-		o.push_str(
-			"// setListLen resizes the list a param path addresses.\nfunc (d *Doc) setListLen(ctx \
-			 context.Context, param, path string, n int) error {\n\t_, err := d.sess.Request(ctx, \
-			 \"list.set_len\", map[string]any{\"param\": param, \"path\": path, \"n\": n})\n\treturn \
-			 err\n}\n\n// setListKey writes one list item's stable identity.\nfunc (d *Doc) \
-			 setListKey(ctx context.Context, param, path string, index int, key string) error \
-			 {\n\t_, err := d.sess.Request(ctx, \"list.set_key\", map[string]any{\"param\": param, \
-			 \"path\": path, \"index\": index, \"key\": key})\n\treturn err\n}\n\n// setListField \
-			 writes one typed field of one list item.\nfunc (d *Doc) setListField(ctx \
-			 context.Context, param, path string, index int, field, kind string, value any) error \
-			 {\n\t_, err := d.sess.Request(ctx, \"list.set_field\", map[string]any{\"param\": param, \
-			 \"path\": path, \"index\": index, \"field\": field, \"kind\": kind, \"value\": \
-			 value})\n\treturn err\n}\n\n",
-		);
-	}
-
-	for p in &slir.params {
-		if p.ty == 6 {
-			continue;
-		}
-		let name = slir.str_at(p.name);
-		let setter = pascal(name);
-		let (go_ty, wire, note) = match p.ty {
-			0 => ("string".to_string(), "value".to_string(), "text".to_string()),
-			1 => ("float64".to_string(), "value".to_string(), "num".to_string()),
-			2 => ("float64".to_string(), "value".to_string(), "pct, 0..100".to_string()),
-			3 => (
-				"Rgba".to_string(),
-				"value.String()".to_string(),
-				"color, packed with NewRgba(red, green, blue, alpha)".to_string(),
-			),
-			4 => ("bool".to_string(), "value".to_string(), "bool".to_string()),
-			_ => {
-				let members: Vec<&str> = (p.enum_off..p.enum_off + p.enum_len)
-					.map(|ix| slir.str_at(slir.param_enum_syms[ix as usize]))
+			let mut enum_fields = Vec::new();
+			for field_ix in schema.field_off..schema.field_off + schema.field_len {
+				let field = &slir.list_fields[field_ix as usize];
+				if field.ty != 5 {
+					continue;
+				}
+				let field_name = slir.str_at(field.name);
+				let members: Vec<String> = (field.enum_off..field.enum_off + field.enum_len)
+					.map(|ix| slir.str_at(slir.list_enum_syms[ix as usize]).to_string())
 					.collect();
-				(pascal(name), "string(value)".to_string(), format!("enum: {}", members.join(", ")))
-			},
-		};
-		let _ = writeln!(o, "// Set{setter} sets param `{name}` ({note}).");
-		let _ = writeln!(
-			o,
-			"func (d *Doc) Set{setter}(ctx context.Context, value {go_ty}) error {{\n\treturn \
-			 d.setParam(ctx, {}, {wire})\n}}\n",
-			go_string(name)
-		);
+				enum_fields.push(json!({
+					"name": field_name,
+					"pascal_name": pascal(field_name),
+					"members": members,
+				}));
+			}
+
+			let mut fields_json = Vec::new();
+			let mut nested_lists = Vec::new();
+
+			for field_ix in schema.field_off..schema.field_off + schema.field_len {
+				let field = &slir.list_fields[field_ix as usize];
+				let field_name = slir.str_at(field.name);
+				let member = pascal(field_name);
+				let is_list = field.ty == 6;
+				let is_enum = field.ty == 5;
+
+				let (go_ty, note) = if is_list {
+					(
+						format!("[]{}", list_type_name(&names, slir, field.sub as usize - 1)),
+						"nested list".to_string(),
+					)
+				} else {
+					scalar_field_type(slir, field, &item_ty)
+				};
+
+				let (child_type, child_base) = if is_list {
+					let child_ty = list_type_name(&names, slir, field.sub as usize - 1);
+					let cb = list_base_name(&child_ty);
+					nested_lists.push(json!({
+						"pascal_name": member,
+						"child_base": cb,
+					}));
+					(child_ty, cb)
+				} else {
+					(String::new(), String::new())
+				};
+
+				let enum_consts: Vec<String> = if is_enum {
+					let enum_ty = format!("{item_ty}{member}");
+					(field.enum_off..field.enum_off + field.enum_len)
+						.map(|ix| {
+							format!("{enum_ty}{}", pascal(slir.str_at(slir.list_enum_syms[ix as usize])))
+						})
+						.collect()
+				} else {
+					Vec::new()
+				};
+
+				fields_json.push(json!({
+					"name": field_name,
+					"dot_field_name": format!(".{field_name}"),
+					"pascal_name": member,
+					"is_list": is_list,
+					"is_enum": is_enum,
+					"go_type": go_ty,
+					"note": note,
+					"child_type": child_type,
+					"child_base": child_base,
+					"kind_name": kind_name(field.ty),
+					"wire_expr": field_wire_expr(field.ty, &member),
+					"enum_consts": enum_consts,
+				}));
+			}
+
+			items_json.push(json!({
+				"type_name": item_ty,
+				"base_name": base,
+				"is_root": is_root,
+				"enum_fields": enum_fields,
+				"fields": fields_json,
+				"nested_lists": nested_lists,
+			}));
+		}
+
+		let root_ty = list_type_name(&names, slir, schema_row);
+		let root_base = list_base_name(&root_ty);
+
+		list_params.push(json!({
+			"param_name": param_name,
+			"pascal_name": pascal(param_name),
+			"cache_name": format!("{}Cache", camel(param_name)),
+			"wire_param": param_name,
+			"root_item_type": root_ty,
+			"root_base": root_base,
+			"items": items_json,
+		}));
 	}
 
-	for (param_ix, p) in slir.params.iter().enumerate() {
-		if p.ty != 6 {
-			continue;
-		}
-		emit_list_setters(&mut o, slir, schema_row_of(slir, param_ix), slir.str_at(p.name));
-	}
-	// gofmt allows exactly one newline at end of file.
-	while o.ends_with('\n') {
-		o.pop();
-	}
-	o.push('\n');
-	o
+	let scalar_params: Vec<serde_json::Value> = slir
+		.params
+		.iter()
+		.filter(|p| p.ty != 6)
+		.map(|p| {
+			let name = slir.str_at(p.name);
+			let (go_ty, wire, note) = match p.ty {
+				0 => ("string".to_string(), "value".to_string(), "text".to_string()),
+				1 => ("float64".to_string(), "value".to_string(), "num".to_string()),
+				2 => ("float64".to_string(), "value".to_string(), "pct, 0..100".to_string()),
+				3 => (
+					"Rgba".to_string(),
+					"value.String()".to_string(),
+					"color, packed with NewRgba(red, green, blue, alpha)".to_string(),
+				),
+				4 => ("bool".to_string(), "value".to_string(), "bool".to_string()),
+				_ => {
+					let members: Vec<&str> = (p.enum_off..p.enum_off + p.enum_len)
+						.map(|ix| slir.str_at(slir.param_enum_syms[ix as usize]))
+						.collect();
+					(pascal(name), "string(value)".to_string(), format!("enum: {}", members.join(", ")))
+				},
+			};
+			json!({
+				"name": name,
+				"pascal_name": pascal(name),
+				"go_type": go_ty,
+				"wire_expr": wire,
+				"doc_note": note,
+			})
+		})
+		.collect();
+
+	let ctx = json!({
+		"src_name": src_name,
+		"package": package,
+		"bytes_len": bytes.len(),
+		"slir_chunks": slir_chunks,
+		"has_list": has_list,
+		"has_scalar": has_scalar,
+		"has_color": has_color,
+		"keys": keys,
+		"params": params_json,
+		"enum_params": enum_params,
+		"signals": signals_json,
+		"list_params": list_params,
+		"scalar_params": scalar_params,
+	});
+
+	crate::tmpl::render(TEMPLATE, &ctx).expect("go.tmpl render error")
 }
 
 #[cfg(test)]

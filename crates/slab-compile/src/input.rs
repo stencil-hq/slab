@@ -243,7 +243,7 @@ fn prepare(doc: &Doc, name: &str, raw: &str) -> Result<Prepared, String> {
 pub fn apply_sets(inst: &mut Instance, sets: &[(String, String)]) -> Result<(), String> {
 	let prepared = sets
 		.iter()
-		.map(|(name, raw)| prepare(&inst.doc, name, raw).map_err(|e| format!("param '{name}': {e}")))
+		.map(|(name, raw)| prepare(inst.doc(), name, raw).map_err(|e| format!("param '{name}': {e}")))
 		.collect::<Result<Vec<_>, _>>()?;
 
 	for value in prepared {

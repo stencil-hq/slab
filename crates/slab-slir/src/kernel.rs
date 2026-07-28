@@ -211,9 +211,7 @@ pub fn decode_doc(bytes: &[u8]) -> Result<(slab_kernel::slir::Doc, Vec<Vec<u8>>)
 /// Builds an initialized kernel instance from a host-decoded SLIR document.
 pub fn instance(bytes: &[u8]) -> Result<(slab_kernel::frame::Instance, Vec<Vec<u8>>), String> {
 	let (doc, imgs) = decode_doc(bytes)?;
-	let mut instance = slab_kernel::frame::inst_shell();
-	instance.doc = doc;
-	slab_kernel::frame::inst_init(&mut instance);
+	let instance = slab_kernel::frame::inst_from_doc(doc);
 	Ok((instance, imgs))
 }
 

@@ -110,7 +110,7 @@ impl NativeDriver {
 
 	pub fn register_document(&mut self) -> usize {
 		let doc_id = self.renderer.register_doc(
-			&self.document.inst.doc,
+			&self.document.inst.doc(),
 			&self.document.imgs,
 			self.document.registered_fonts(),
 		);
@@ -126,7 +126,7 @@ impl NativeDriver {
 		if let Some(doc_id) = self.doc_id {
 			self
 				.renderer
-				.refresh_registered_colors(doc_id, &self.document.inst.doc);
+				.refresh_registered_colors(doc_id, &self.document.inst.doc());
 		}
 		true
 	}
@@ -134,14 +134,14 @@ impl NativeDriver {
 	/// Registers a face for layout and painting, invalidating the glyph atlas
 	/// entries associated with the newly appended FONT table.
 	pub fn register_font(&mut self, name: &str, bytes: Vec<u8>) -> bool {
-		let first_font = self.document.inst.doc.font_upem.len();
+		let first_font = self.document.inst.doc().font_upem.len();
 		if !self.document.register_font(name, bytes) {
 			return false;
 		}
 		if let Some(doc_id) = self.doc_id {
 			self.renderer.refresh_registered_fonts(
 				doc_id,
-				&self.document.inst.doc,
+				&self.document.inst.doc(),
 				self.document.registered_fonts(),
 				first_font,
 			);

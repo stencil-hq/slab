@@ -16,6 +16,7 @@ pub mod react;
 pub mod render;
 pub mod rustgen;
 pub mod svg;
+pub mod tmpl;
 pub mod wc;
 
 use std::path::PathBuf;

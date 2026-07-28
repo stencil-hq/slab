@@ -26,8 +26,8 @@ row#scroller w=100 h=60 scroll=both scrollbar=always scrollbar-w=4 {
 		60.0,
 	);
 	let first = frame::inst_frame(&mut instance, 0.0);
-	let scroller = node(&instance.doc, &instance, "#scroller");
-	let content = node(&instance.doc, &instance, "#scroller/#content");
+	let scroller = node(instance.doc(), &instance, "#scroller");
+	let content = node(instance.doc(), &instance, "#scroller/#content");
 	let scroller_scene = scene::index_of(&instance.sc, scroller);
 	let scroller_scene = usize::try_from(scroller_scene).expect("scroller retained");
 	assert_eq!(instance.sc.entries[scroller_scene].content_main, 220.0);
@@ -82,9 +82,9 @@ col#feed w=100 h=60 scroll {
 	assert!(frame::inst_set_scroll(&mut instance, "#feed", 0, 70.0));
 	let painted = frame::inst_frame(&mut instance, 1.0);
 
-	let h1 = node(&instance.doc, &instance, "#feed/#h1");
-	let h2 = node(&instance.doc, &instance, "#feed/#h2");
-	let b2 = node(&instance.doc, &instance, "#feed/#b2");
+	let h1 = node(instance.doc(), &instance, "#feed/#h1");
+	let h2 = node(instance.doc(), &instance, "#feed/#h2");
+	let b2 = node(instance.doc(), &instance, "#feed/#b2");
 	let h1_scene = usize::try_from(scene::index_of(&instance.sc, h1)).expect("h1 retained");
 	let h2_scene = usize::try_from(scene::index_of(&instance.sc, h2)).expect("h2 retained");
 	assert_eq!(instance.sc.entries[h1_scene].y, -10.0, "next header pushes the first away");

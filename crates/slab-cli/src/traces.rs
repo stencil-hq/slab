@@ -49,12 +49,12 @@ fn drain_frame_signals(
 	}
 	for index in 0..effects.sig_name.len() {
 		signals.push((
-			inst.doc.strs[effects.sig_name[index] as usize].clone(),
+			inst.doc().strs[effects.sig_name[index] as usize].clone(),
 			effects.sig_text[index].clone(),
 			effects.sig_item[index].clone(),
 		));
 	}
-	lines.push(slab_kernel::dumpjson::dump_effects(&inst.doc, &inst.st, &effects));
+	lines.push(slab_kernel::dumpjson::dump_effects(inst.doc(), &inst.st, &effects));
 }
 
 /// Maps the shared trace and SDP event names to kernel event type codes.
@@ -329,7 +329,8 @@ fn run_trace(bytes: &[u8], case: &serde_json::Value) -> TraceResult {
 	if let Some(params) = case["params"].as_array() {
 		for p in params {
 			let (name, pv) = param_value(p)?;
-			let ix = param_index(&inst.doc, &name).ok_or_else(|| format!("unknown param '{name}'"))?;
+			let ix =
+				param_index(inst.doc(), &name).ok_or_else(|| format!("unknown param '{name}'"))?;
 			if !slab_kernel::frame::inst_set_param(&mut inst, ix, &pv) {
 				return Err(format!("param '{name}' rejected"));
 			}
@@ -352,12 +353,12 @@ fn run_trace(bytes: &[u8], case: &serde_json::Value) -> TraceResult {
 			let eff = slab_kernel::frame::inst_dispatch(&mut inst, &ev);
 			for k in 0..eff.sig_name.len() {
 				signals.push((
-					inst.doc.strs[eff.sig_name[k] as usize].clone(),
+					inst.doc().strs[eff.sig_name[k] as usize].clone(),
 					eff.sig_text[k].clone(),
 					eff.sig_item[k].clone(),
 				));
 			}
-			lines.push(slab_kernel::dumpjson::dump_effects(&inst.doc, &inst.st, &eff));
+			lines.push(slab_kernel::dumpjson::dump_effects(inst.doc(), &inst.st, &eff));
 		} else if step["state"].is_object() {
 			let s = &step["state"];
 			let name = s["name"].as_str().unwrap_or("");
@@ -385,7 +386,8 @@ fn run_trace(bytes: &[u8], case: &serde_json::Value) -> TraceResult {
 			lines.push("{\"set\":\"env\"}".into());
 		} else if step["param"].is_object() {
 			let (name, pv) = param_value(&step["param"])?;
-			let ix = param_index(&inst.doc, &name).ok_or_else(|| format!("unknown param '{name}'"))?;
+			let ix =
+				param_index(inst.doc(), &name).ok_or_else(|| format!("unknown param '{name}'"))?;
 			let ok = slab_kernel::frame::inst_set_param(&mut inst, ix, &pv);
 			lines.push(format!("{{\"set\":\"param\",\"ok\":{ok}}}"));
 		} else if let Some(image_step) = step["img"].as_object() {
@@ -429,7 +431,7 @@ fn run_trace(bytes: &[u8], case: &serde_json::Value) -> TraceResult {
 			let list = &step["list"];
 			let param = list["param"]
 				.as_str()
-				.and_then(|name| param_index(&inst.doc, name))
+				.and_then(|name| param_index(inst.doc(), name))
 				.unwrap_or(u32::MAX);
 			let path = list["path"].as_str().unwrap_or("");
 			let op = list["op"].as_str().unwrap_or("");
@@ -495,15 +497,15 @@ fn run_trace(bytes: &[u8], case: &serde_json::Value) -> TraceResult {
 			let x = xy.first().and_then(|v| v.as_f64()).unwrap_or(0.0);
 			let y = xy.get(1).and_then(|v| v.as_f64()).unwrap_or(0.0);
 			let nodes = slab_kernel::frame::inst_hit(&inst, x, y);
-			lines.push(slab_kernel::dumpjson::dump_hit(&inst.doc, &inst.st, &nodes));
+			lines.push(slab_kernel::dumpjson::dump_hit(inst.doc(), &inst.st, &nodes));
 		} else {
 			lines.push("{\"tick\":true}".into());
 		}
 	}
 	let fr = slab_kernel::frame::inst_frame(&mut inst, t_last);
 	drain_frame_signals(&mut inst, &mut lines, &mut signals);
-	let summary = slab_kernel::dumpjson::dump_trace_summary(&inst.doc, &inst.st, &inst);
-	let frame_json = slab_kernel::dumpjson::dump(&inst.doc, &inst.st, &fr);
+	let summary = slab_kernel::dumpjson::dump_trace_summary(inst.doc(), &inst.st, &inst);
+	let frame_json = slab_kernel::dumpjson::dump(inst.doc(), &inst.st, &fr);
 	let mut out = String::new();
 	for l in &lines {
 		out.push_str(l);

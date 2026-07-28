@@ -1233,7 +1233,7 @@ impl Renderer {
 	}
 
 	fn sync_runtime_images(&mut self, doc_id: usize, inst: &Instance) {
-		let start = inst.doc.img_src.len();
+		let start = inst.doc().img_src.len();
 		let end = self
 			.docs
 			.get(doc_id)
@@ -1266,11 +1266,11 @@ impl Renderer {
 	)]
 	fn build_layer(&mut self, fb: &mut FrameBuild, li: &LayerInput<'_>, s: f32, tw: u32, th: u32) {
 		self.sync_runtime_images(li.doc_id, li.inst);
-		self.refresh_registered_colors(li.doc_id, &li.inst.doc);
+		self.refresh_registered_colors(li.doc_id, &li.inst.doc());
 		for diagnostic in &li.frame.diagnostics {
 			self.frame_note(&diagnostic.code, diagnostic.line, &diagnostic.msg);
 		}
-		let doc = &li.inst.doc;
+		let doc = &li.inst.doc();
 		let full: Sc = (0, 0, tw, th);
 		let huge = [-1.0e9f32, -1.0e9, 1.0e9, 1.0e9];
 		let (ox, oy) = (li.ox as f32, li.oy as f32);

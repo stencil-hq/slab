@@ -198,14 +198,14 @@ pub fn render(
 	match opts.kind {
 		RenderKind::Svg => {
 			let dims = format!(" ({}x{}u)", fr.width, fr.height);
-			notes.extend(capsnote::render_notes(&inst.doc, &fr, client, &[]));
+			notes.extend(capsnote::render_notes(inst.doc(), &fr, client, &[]));
 			let svg =
 				crate::svg::render_svg(slir, &images, &[], &opts.registered_fonts, &fr, base_dir);
 			Ok(RenderOut { bytes: svg.into_bytes(), text: false, notes, summary: dims })
 		},
 		RenderKind::Png => {
 			let dims = format!(" ({}x{}u)", fr.width, fr.height);
-			notes.extend(capsnote::render_notes(&inst.doc, &fr, client, &[]));
+			notes.extend(capsnote::render_notes(inst.doc(), &fr, client, &[]));
 			let png =
 				crate::raster::render_png(slir, &images, &[], &opts.registered_fonts, &fr, opts.scale)?;
 			Ok(RenderOut { bytes: png, text: false, notes, summary: dims })
@@ -222,7 +222,7 @@ pub fn render(
 			}
 			let apng = crate::raster::encode_apng(&frames, opts.fps, 0)?;
 			let dims = format!(" ({}x{}u)", fr.width, fr.height);
-			notes.extend(capsnote::render_notes(&inst.doc, &fr, client, &[]));
+			notes.extend(capsnote::render_notes(inst.doc(), &fr, client, &[]));
 			Ok(RenderOut {
 				bytes: apng,
 				text: false,
@@ -231,11 +231,11 @@ pub fn render(
 			})
 		},
 		RenderKind::Tui => {
-			let grid = cells::cells_from_frame(&inst.doc, &fr, fr.width, fr.height);
+			let grid = cells::cells_from_frame(inst.doc(), &fr, fr.width, fr.height);
 			for k in 0..grid.diag_code.len() {
 				notes.push(format!("note {}: {}", grid.diag_code[k], grid.diag_msg[k]));
 			}
-			notes.extend(capsnote::render_notes(&inst.doc, &fr, client, &grid.diag_code));
+			notes.extend(capsnote::render_notes(inst.doc(), &fr, client, &grid.diag_code));
 			let text = cells::cells_to_text(&grid, opts.plain);
 			let summary =
 				format!(" ({}x{}u = {}x{} cells)", fr.width, fr.height, grid.cols, grid.rows);

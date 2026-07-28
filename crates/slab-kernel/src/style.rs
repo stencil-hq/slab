@@ -859,9 +859,10 @@ pub fn ov_push(
 /// Rebuilds the theme-resolved decoded-value cache for every AVAL entry.
 ///
 /// Attribute reads resolve values through this cache instead of re-decoding
-/// and re-following token references per lookup. Call after document init and
-/// whenever the active theme changes.
-pub fn rebuild_aval_cache(d: &crate::slir::Doc, st: &mut crate::style::St) {
+/// and re-following token references per lookup. Runs on document init and
+/// theme change; crate-internal tests that edit a bound document's value
+/// pools in place must call it before the next attribute read.
+pub(crate) fn rebuild_aval_cache(d: &crate::slir::Doc, st: &mut crate::style::St) {
 	st.aval_active.clear();
 	st.aval_active.extend((0..d.aval_tag.len()).map(|ix| {
 		crate::value::decode_active(d, st.theme_index, i32::try_from(ix).expect("aval index"))
@@ -1060,7 +1061,12 @@ pub fn attr_ix(d: &crate::slir::Doc, st: &crate::style::St, node: u32, attr: u32
 /// Returns the last motion overlay value for a node attribute.
 #[inline]
 pub fn overlay_val(st: &crate::style::St, node: u32, attr: u32) -> crate::value::V {
-	if !st.mo_node_has.get(index_u32(node)).copied().unwrap_or(false) {
+	if !st
+		.mo_node_has
+		.get(index_u32(node))
+		.copied()
+		.unwrap_or(false)
+	{
 		return crate::value::missing();
 	}
 	let Some(&index) = st.mo_index.get(&(node, attr)) else {

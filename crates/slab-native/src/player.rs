@@ -225,7 +225,7 @@ impl PlayerCore {
 	pub fn new() -> Result<Self, String> {
 		let mut doc = gen_player::Doc::new();
 		if !doc.ok() {
-			return Err(format!("embedded SLIR failed to decode: {:?}", doc.inst.doc.errs));
+			return Err(format!("embedded SLIR failed to decode: {:?}", doc.inst.doc().errs));
 		}
 		let queue_bytes = (0..PLAYLIST.len())
 			.map(queue_slir)
@@ -325,7 +325,7 @@ impl PlayerCore {
 		};
 		let pending = kframe::inst_take_signals(&mut queue.inst);
 		for name in pending.sig_name {
-			println!("signal: {}", kslir::str_at(&queue.inst.doc, name));
+			println!("signal: {}", kslir::str_at(&queue.inst.doc(), name));
 		}
 		frame
 	}
@@ -348,7 +348,7 @@ impl PlayerCore {
 	/// node id and its child-local scene rect. Needs a solved queue frame.
 	pub fn queue_row(&self, row: usize) -> Option<(u32, (f64, f64, f64, f64))> {
 		let q = &self.queues[self.state.idx];
-		let node = *pick_nodes(&q.inst.doc).get(row)?;
+		let node = *pick_nodes(&q.inst.doc()).get(row)?;
 		let ix = kscene::index_of(&q.inst.sc, node);
 		if ix < 0 {
 			return None;
@@ -484,7 +484,7 @@ impl PlayerCore {
 			let mut picked = false;
 			let mut signals = Vec::new();
 			for (k, &name_ref) in effects.sig_name.iter().enumerate() {
-				let name = kslir::str_at(&queue.inst.doc, name_ref);
+				let name = kslir::str_at(&queue.inst.doc(), name_ref);
 				if name == "pick" {
 					picked = true;
 				} else {
@@ -497,7 +497,7 @@ impl PlayerCore {
 		out.cursor = cursor;
 		out.queue_signals = signals;
 		if let Some(node) = picked_node
-			&& let Some(row) = pick_nodes(&self.queues[idx].inst.doc)
+			&& let Some(row) = pick_nodes(&self.queues[idx].inst.doc())
 				.iter()
 				.position(|&candidate| candidate == node)
 		{
@@ -534,7 +534,7 @@ impl PlayerCore {
 		let next = k % PLAYLIST.len();
 		let focus_key = if old != next && matches!(self.focus_route, Route::Hole(_)) {
 			kscene::key_of(
-				&self.queues[old].inst.doc,
+				&self.queues[old].inst.doc(),
 				&self.queues[old].inst.st.lists,
 				self.queues[old].inst.ds.fs.focus,
 			)
@@ -577,9 +577,9 @@ pub fn headless_frame(opts: &Opts) -> Result<(), String> {
 
 	let mut core = player_core(opts.theme.as_deref())?;
 	core.set_env(opts.width, opts.height, opts.dark, false);
-	let main_id = renderer.register_doc(&core.doc.inst.doc, &core.doc.imgs, &[]);
+	let main_id = renderer.register_doc(&core.doc.inst.doc(), &core.doc.imgs, &[]);
 	let idx = core.track_index();
-	let queue_id = renderer.register_doc(&core.queues[idx].inst.doc, &core.queues[idx].imgs, &[]);
+	let queue_id = renderer.register_doc(&core.queues[idx].inst.doc(), &core.queues[idx].imgs, &[]);
 
 	let fr = core.frame(opts.t);
 	let cf = core.queue_frame(opts.t);
@@ -763,7 +763,7 @@ impl App {
 					.translated(rect.x, rect.y);
 			if let Some(node) = usize::try_from(rect.hole)
 				.ok()
-				.and_then(|hole| self.core.doc.inst.doc.hole_node.get(hole))
+				.and_then(|hole| self.core.doc.inst.doc().hole_node.get(hole))
 				.copied()
 			{
 				layer = layer.mounted(A11Y_MAIN_DOCUMENT, node);
@@ -991,11 +991,11 @@ impl ApplicationHandler<a11y::Event> for App {
 			.find(|f| !f.is_srgb())
 			.unwrap_or(caps.formats[0]);
 		let mut renderer = Renderer::new(device, queue);
-		self.main_id = renderer.register_doc(&self.core.doc.inst.doc, &self.core.doc.imgs, &[]);
+		self.main_id = renderer.register_doc(&self.core.doc.inst.doc(), &self.core.doc.imgs, &[]);
 		for q in &self.core.queues {
 			self
 				.queue_ids
-				.push(renderer.register_doc(&q.inst.doc, &q.imgs, &[]));
+				.push(renderer.register_doc(&q.inst.doc(), &q.imgs, &[]));
 		}
 		self.renderer = Some(renderer);
 		self.surface = Some(surface);
