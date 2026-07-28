@@ -1585,10 +1585,12 @@ impl Renderer {
 							self.note("cap-font", "FONT table without usable native face; text skipped");
 							break;
 						}
-						let Some(e) = self.atlas_entry(li.doc_id, g.font, g.gid, px) else {
+						let pen_x = (g.x as f32 + ox) * s;
+						let (base_x, bin) = crate::atlas::subpixel(pen_x);
+						let Some(e) = self.atlas_entry(li.doc_id, g.font, g.gid, px, bin) else {
 							continue;
 						};
-						let gx = (g.x as f32 + ox).mul_add(s, e.bearing[0]).round();
+						let gx = base_x + e.bearing[0];
 						let gy = (g.y as f32 + oy).mul_add(s, e.bearing[1]).round();
 						let inst = GlyphI {
 							mabcd: [mat.a, mat.b, mat.c, mat.d],
@@ -2029,10 +2031,11 @@ impl Renderer {
 		font: i32,
 		gid: u32,
 		px: f32,
+		bin: u32,
 	) -> Option<crate::atlas::GlyphEntry> {
 		// Take the face out to split the borrow with the atlas, then restore.
 		let face = self.docs[doc_id].fonts[font as usize].take()?;
-		let e = self.atlas.entry(doc_id, font, &face, gid, px);
+		let e = self.atlas.entry(doc_id, font, &face, gid, px, bin);
 		self.docs[doc_id].fonts[font as usize] = Some(face);
 		e
 	}
@@ -2289,27 +2292,27 @@ impl Renderer {
 			0,
 			bytemuck::cast_slice(&[tw as f32, th as f32, 0.0, 0.0]),
 		);
-		if self.atlas.dirty {
+		if let Some((row, rows)) = self.atlas.take_dirty() {
+			let band = (row * ATLAS) as usize..((row + rows) * ATLAS) as usize;
 			self.queue.write_texture(
 				wgpu::TexelCopyTextureInfo {
 					texture:   &self.atlas_tex,
 					mip_level: 0,
-					origin:    wgpu::Origin3d::ZERO,
+					origin:    wgpu::Origin3d { x: 0, y: row, z: 0 },
 					aspect:    wgpu::TextureAspect::All,
 				},
-				&self.atlas.pixels,
+				&self.atlas.pixels[band],
 				wgpu::TexelCopyBufferLayout {
 					offset:         0,
 					bytes_per_row:  Some(ATLAS),
-					rows_per_image: Some(ATLAS),
+					rows_per_image: Some(rows),
 				},
 				wgpu::Extent3d {
 					width:                 ATLAS,
-					height:                ATLAS,
+					height:                rows,
 					depth_or_array_layers: 1,
 				},
 			);
-			self.atlas.dirty = false;
 		}
 
 		let mkbuf = |data: &[u8], label: &str| {

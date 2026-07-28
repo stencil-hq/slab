@@ -2,7 +2,7 @@
 //!
 //! Rasterized from runtime-registered or bundled fallback faces. Glyph ids and
 //! pen positions come EXCLUSIVELY from kernel `text_glyphs`; this module only
-//! turns (font, gid, px) into a shelf-packed alpha bitmap.
+//! turns (font, gid, px, subpixel bin) into a shelf-packed alpha bitmap.
 
 use std::collections::HashMap;
 
@@ -10,6 +10,22 @@ use ab_glyph::{Font, FontVec, GlyphId, point};
 
 /// Atlas texture dimension (square, `R8Unorm`).
 pub const ATLAS: u32 = 2048;
+
+/// Horizontal subpixel positions rasterized per glyph.
+///
+/// Kernel pen positions are fractional device pixels. Snapping each quad to the
+/// pixel grid costs up to half a pixel of tracking error per glyph, which reads
+/// as uneven letter and word spacing. Rasterizing the outline at quarter-pixel
+/// offsets instead keeps advances honest at 4x the atlas entries per glyph.
+pub const SUBPIXEL_BINS: u32 = 4;
+
+/// Splits a device-pixel pen coordinate into the integer quad origin and the
+/// subpixel bin its outline must be rasterized at.
+pub fn subpixel(pen: f32) -> (f32, u32) {
+	let base = pen.floor();
+	let bin = ((pen - base) * SUBPIXEL_BINS as f32).round() as u32;
+	if bin >= SUBPIXEL_BINS { (base + 1.0, 0) } else { (base, bin) }
+}
 
 /// One cached glyph bitmap: normalized uv rect, device-px quad size, bearing
 /// from the baseline pen position (device px).
@@ -37,11 +53,12 @@ impl Face {
 }
 
 /// Shelf-packed alpha atlas shared by every registered document.
-/// Cache key: (doc id, FONT table index, glyph id, quarter-px quantized size).
+/// Cache key: (doc id, FONT table index, glyph id, quarter-px quantized size,
+/// subpixel bin).
 pub struct Atlas {
 	pub pixels: Vec<u8>,
-	pub dirty:  bool,
-	cache:      HashMap<(usize, i32, u32, u32), Option<GlyphEntry>>,
+	cache:      HashMap<(usize, i32, u32, u32, u32), Option<GlyphEntry>>,
+	dirty:      Option<(u32, u32)>,
 	pen:        (u32, u32),
 	shelf_h:    u32,
 	full_noted: bool,
@@ -51,7 +68,7 @@ impl Default for Atlas {
 	fn default() -> Self {
 		Self {
 			pixels:     vec![0; (ATLAS * ATLAS) as usize],
-			dirty:      false,
+			dirty:      None,
 			cache:      HashMap::new(),
 			pen:        (0, 0),
 			shelf_h:    0,
@@ -61,8 +78,9 @@ impl Default for Atlas {
 }
 
 impl Atlas {
-	/// Rasterize (or fetch) glyph `gid` of `face` at `px` device pixels.
-	/// `None` for empty outlines (spaces) or when the atlas is full.
+	/// Rasterize (or fetch) glyph `gid` of `face` at `px` device pixels, shifted
+	/// by `bin`/[`SUBPIXEL_BINS`] of a pixel horizontally. `None` for empty
+	/// outlines (spaces) or when the atlas is full.
 	pub fn entry(
 		&mut self,
 		doc: usize,
@@ -70,15 +88,22 @@ impl Atlas {
 		face: &Face,
 		gid: u32,
 		px: f32,
+		bin: u32,
 	) -> Option<GlyphEntry> {
-		let key = (doc, font_ix, gid, (px * 4.0).round() as u32);
+		let px_q = (px * 4.0).round();
+		let key = (doc, font_ix, gid, px_q as u32, bin);
 		if let Some(e) = self.cache.get(&key) {
 			return *e;
 		}
-		// PxScale is relative to the font's unscaled height; convert so `px`
-		// means the typographic font size in device pixels.
-		let scale = ab_glyph::PxScale::from(px * face.height / face.upem);
-		let glyph = GlyphId(gid as u16).with_scale_and_position(scale, point(0.0, 0.0));
+		// Rasterize at the quantized size the key was built from, so one key
+		// never resolves to two slightly different bitmaps. PxScale is relative
+		// to the font's unscaled height; convert so `px` means the typographic
+		// font size in device pixels.
+		let scale = ab_glyph::PxScale::from(px_q / 4.0 * face.height / face.upem);
+		// The bin offset lands inside the bitmap: `px_bounds` folds the
+		// fractional position into integer bounds, so quads stay pixel-aligned.
+		let off = bin as f32 / SUBPIXEL_BINS as f32;
+		let glyph = GlyphId(gid as u16).with_scale_and_position(scale, point(off, 0.0));
 		let mut entry = None;
 		if let Some(og) = face.font.outline_glyph(glyph) {
 			let b = og.px_bounds();
@@ -90,22 +115,30 @@ impl Atlas {
 					let (px_, py_) = (ax + x, ay + y);
 					if px_ < ATLAS && py_ < ATLAS {
 						let i = (py_ * ATLAS + px_) as usize;
-						let v = (c * 255.0) as u8;
+						let v = (c * 255.0).round() as u8;
 						if v > pixels[i] {
 							pixels[i] = v;
 						}
 					}
 				});
-				self.dirty = true;
+				self.mark_dirty(ay, gh);
 				let a = ATLAS as f32;
 				entry = Some(GlyphEntry {
 					uv:      [ax as f32 / a, ay as f32 / a, gw as f32 / a, gh as f32 / a],
 					size:    [gw as f32, gh as f32],
 					bearing: [b.min.x, b.min.y],
 				});
-			} else if !self.full_noted {
-				self.full_noted = true;
-				eprintln!("slab-native: cap-atlas: glyph atlas full; further new glyphs skipped");
+			} else {
+				if !self.full_noted {
+					self.full_noted = true;
+					eprintln!("slab-native: cap-atlas: glyph atlas full; falling back to whole-pixel glyphs");
+				}
+				// Subpixel variants are the first thing to give up under
+				// pressure: reuse the whole-pixel bitmap (usually already
+				// resident) instead of dropping the glyph entirely.
+				if bin != 0 {
+					entry = self.entry(doc, font_ix, face, gid, px, 0);
+				}
 			}
 		}
 		self.cache.insert(key, entry);
@@ -118,6 +151,22 @@ impl Atlas {
 		self
 			.cache
 			.retain(|(cached_doc, font, ..), _| *cached_doc != doc || *font < first_font);
+	}
+
+	/// Row band written since the last upload, as `(first row, row count)`.
+	/// Clears the band: subpixel binning multiplies glyph inserts, so uploading
+	/// the whole 4 MiB texture per new glyph is not affordable.
+	pub fn take_dirty(&mut self) -> Option<(u32, u32)> {
+		let (lo, hi) = self.dirty.take()?;
+		Some((lo, hi - lo + 1))
+	}
+
+	fn mark_dirty(&mut self, y: u32, rows: u32) {
+		let hi = (y + rows).min(ATLAS) - 1;
+		self.dirty = Some(match self.dirty {
+			Some((lo0, hi0)) => (lo0.min(y), hi0.max(hi)),
+			None => (y, hi),
+		});
 	}
 
 	fn alloc(&mut self, gw: u32, gh: u32) -> Option<(u32, u32)> {
