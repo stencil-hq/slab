@@ -154,9 +154,17 @@ before claiming support.
 The cell grid quantizes at paint: every grapheme cluster is one cell except
 East Asian Width W/F, emoji-presentation, and regional-indicator pairs, which
 take two. Every line is one row regardless of `size`/`leading`. Layout still
-uses vector metrics; keep pads/gaps/fixed sizes multiples of 8u/16u. Borders
-paint inside shared cells, so bordered boxes need `pad=16,8`+. Radius ≥4u uses
-arc glyphs; sub-cell boxes become hairline runs; low-alpha color may vanish.
+uses proportional vector metrics. Keep pads, gaps, and fixed sizes in 8u/16u
+multiples. Borders paint inside shared cells, so bordered boxes need
+`pad=16,8`+. Radius ≥4u uses arc glyphs. Sub-cell boxes become hairline runs.
+Omitted text color uses the terminal foreground without an SGR color. Authored
+low-alpha color can vanish when the terminal background is unknown.
+
+Make glyph advance equal one cell or text paints wider than layout measured
+(collided gaps, clipped right-aligned siblings): set
+`when tui { family="mono" size=13.333 }` at the root. JetBrains Mono's
+600/1000em advance × 13.333 = 8.0u = exactly one cell, so vector metrics
+match the grid.
 
 Runtime paths use the same cell approximation as compiled paths. Icons ignore
 their scale transform and render in design-box coordinates; provide a

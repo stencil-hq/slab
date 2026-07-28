@@ -280,6 +280,19 @@ plain numbers in **milliseconds**. An attribute animates between the stops
 where it appears and clamps outside them (declare 0%/100% for full-cycle
 control). `once` holds the final frame; easing applies to the whole cycle.
 
+`animate=` may be state-gated:
+
+```slab
+rect w=9 h=9 radius=999 {
+  when running { animate=pulse,1100,alternate,ease-in-out }
+}
+```
+
+The binding is registered statically. Its clock and overlay run only while the
+condition wins the animation channel. When false, it contributes no active
+motion and does not keep an otherwise idle instance repainting. Conditional
+bindings stay kernel-driven instead of using native animation lifting.
+
 Time comes from outside: `--t MS` renders one instant (omitted → 0ms);
 `--dur S --fps N` renders an APNG (one solve per frame); interactive
 drivers pass `t_ms` to every `inst_frame`.

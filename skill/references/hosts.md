@@ -61,6 +61,13 @@ default is required and type-checked (`err[param-type]`).
   typed setters. CLI/TUI use `--set param=value`; invalid names, values, or
   enum members reject the write.
 
+**Display strings are host-computed.** `when` patches attrs and injects
+conditional children; the language has no ternary or content swap. Precompute
+every conditional display string — checkbox glyphs, priority labels, timer
+text — into list fields or params in the host, and treat a re-skin of those
+strings as a host change. Keep the document declarative over the data it is
+given.
+
 ## Lists, runs & virtualization
 
 Declare nested list fields on exported defs with `list(Def)`. Schemas may be
@@ -319,6 +326,9 @@ The generated element surface uses these exact clean-cutover signatures:
 setParam(name: string, value: unknown): boolean
 setList(name: string, path: string, value: unknown): boolean
 getList(name: string, path: string): unknown
+setFieldText(key: string, text: string): boolean
+fieldText(key: string): string | undefined
+getToken(path: string): string | number | undefined
 imgRegister(name: string, width: number, height: number,
             format: number, bytes: Uint8Array): number
 imgUnregister(name: string): boolean
@@ -338,7 +348,37 @@ sceneSnapshot(): readonly SceneNode[]
 `imgInfo` tuple order is width, height, format, generation. `imgRegister`
 returns `-1` before the instance exists or for invalid bytes.
 Param/list/scroll/divider writes made before initialization are buffered.
+`setFieldText` requires a mounted field; `fieldText` returns `undefined` for
+an unknown or non-editable key. `getToken` reads the generated component's
+fully resolved active-theme table. It returns CSS color strings, numbers for
+numeric tokens, and `undefined` for unknown paths. Arbitrary SLIR loaded with
+`loadSlir` has no token metadata until a later SLIR revision.
 `hole`s remain named slots; scene snapshots resolve a11y fields to strings.
+
+Bundlers: `slab-runtime.js` resolves the kernel WASM via
+`new URL('./wasm/slab_kernel_bg.wasm', import.meta.url)`. After bundling,
+`import.meta.url` is the bundle URL, so the relative fetch can 404. Either
+copy the generated `wasm/` directory next to the served bundle, or add a
+server route mapping `/wasm/*` to the generated output's `wasm/` directory.
+A load failure logs the attempted URL and this bundler remedy, then renders a
+visible `role=alert` error inside the element.
+
+Web editing uses an invisible textarea at the kernel IME rectangle. The
+component forwards `compositionstart`, `compositionupdate`, and
+`compositionend`, suppresses composing key events and the browser's duplicate
+post-composition insertion, and refreshes the textarea from kernel field
+state. Cmd/Ctrl-A, C, X, and V keep the hidden selection, system clipboard,
+and kernel field synchronized.
+
+Secondary pointer down reaches the kernel as `button=2` and does not clear
+field focus or selection. The component does not cancel the browser
+`contextmenu` event. However, Slab visuals are painted elements and the
+invisible textarea is not the pointer event target. Therefore, browsers show
+their ordinary page menu, not a dependable native text-edit menu. For an
+editing menu, author `context=field_menu` and listen for that named
+`CustomEvent`; use `detail.meta.key` with `fieldText`/`setFieldText`, and use
+the Clipboard API for host menu commands. Do not add a second pointer handler
+or cancel the authored Context signal.
 
 ## Rust hosts
 
@@ -346,12 +386,162 @@ Param/list/scroll/divider writes made before initialization are buffered.
 recursive `<Param>Item` structs plus `set_<param>`, a typed `Signal` enum with
 shared `SignalMeta`, and these clean-cutover methods:
 `set_scroll(key,axis,off)`, `get_scroll(key,axis)`,
+`set_field_text(key,text)`, `field_text(key)`,
 `img_register(name,w,h,format,data)`, `img_unregister(name)`,
 `reveal(key,margin)`, `reveal_item(each,index,align)`, `each_window(each)`,
 `set_divider(key,extent)`, `get_divider(key)`, `set_focus`, `holes`, `frame`,
 and `dispatch`. `Doc.inst` remains public for the complete kernel API and
 scene-string pool. `crates/slab-native` is the reference winit/wgpu driver;
 `slab-tui` is the reference terminal driver.
+
+### Depending on Slab
+
+Pin every Slab crate to the same Git revision. The generated Rust document
+imports `slab-kernel` and `slab-slir`. Native hosts import `slab-native`.
+Terminal hosts import `slab-tui`. Add `slab-compile` only when the host
+compiles source or uses `apply_sets`:
+
+```toml
+[dependencies]
+slab-native = { git = "https://github.com/stencil-hq/slab", rev = "<SAME_COMMIT>" }
+slab-tui = { git = "https://github.com/stencil-hq/slab", rev = "<SAME_COMMIT>" }
+slab-kernel = { git = "https://github.com/stencil-hq/slab", rev = "<SAME_COMMIT>" }
+slab-slir = { git = "https://github.com/stencil-hq/slab", rev = "<SAME_COMMIT>" }
+slab-compile = { git = "https://github.com/stencil-hq/slab", rev = "<SAME_COMMIT>", optional = true }
+slab-drive = { git = "https://github.com/stencil-hq/slab", rev = "<SAME_COMMIT>", optional = true }
+```
+
+Replace `<SAME_COMMIT>` with one full commit hash. Do not mix revisions because
+the generated document, kernel event constants, and frame structures form one
+contract.
+
+### Driving and testing
+
+Use `slab-drive` to mount the Slab Drive Protocol (SDP) on the application's
+live `Instance`. `RequestPump` borrows the instance for one request only.
+The host keeps ownership between requests and runs its normal signal handler:
+
+```rust
+let mut pump = slab_drive::RequestPump::new("app.slab", slir, images);
+let result = pump.request(&mut doc.inst, request_line);
+for effects in result.effects {
+    app.handle_effects(&mut doc.inst, effects)?;
+}
+write_response(result.response)?;
+```
+
+This pattern tests real app policy. Input methods dispatch through the live
+kernel, then the host applies emitted signals to its model. Use
+`slab_drive::serve` for a blocking NDJSON loop. Use `RequestPump::request` from a
+window or terminal event loop.
+
+`param.set` remains a deferred input write. It does not solve immediately.
+A transition flip starts at the first solve that observes the changed value.
+For a settled snapshot, use `render` → `clock.advance` → `render`. The first
+render observes the flip, the advance moves its clock, and the second render
+captures the new transition position.
+
+### Terminal hosts
+
+`slab-tui` is an embeddable library and a command. `Terminal` owns raw mode,
+the alternate screen, mouse capture, and safe teardown. `Painter` emits cell
+diffs and preserves terminal-default colors. `Translator` maps crossterm input
+to kernel events. Its retained state supplies click counts and pointer deltas.
+The `resize` helper applies cell dimensions to the kernel environment.
+
+Use `run` when the host only needs signal and clock callbacks:
+
+```rust
+use slab_tui::{Host, ImageMode, Images, Signal, Ui};
+
+struct App {
+    last_signal: String,
+}
+impl Host for App {
+    fn on_signal(
+        &mut self,
+        inst: &mut slab_kernel::frame::Instance,
+        signal: &Signal,
+    ) -> Result<(), String> {
+        self.last_signal.clone_from(&signal.name);
+        let _ = inst;
+        Ok(())
+    }
+}
+
+let mut app = App { last_signal: String::new() };
+let images = Images::new(
+    ImageMode::Off,
+    &inst.doc,
+    &[],
+    std::path::Path::new("."),
+);
+let ui = Ui {
+    fps: 30.0,
+    debug: false,
+    dark: true,
+    coarse: false,
+    gallery: None,
+};
+slab_tui::run(&mut inst, &mut app, images, &ui)?;
+```
+
+Use `Terminal`, `Painter`, `translate`, and `resize` directly for a custom
+event loop. The library keeps layout, editing, focus, and hit testing inside
+the kernel.
+
+### Native input, IME, clipboard, and accessibility
+
+Use `slab_native::input` instead of copying reference-host code.
+`ClickCounter`, `key_name`, `mouse_button_id`, `cursor_delta`, and
+`cursor_icon` define the native input mapping. Compute coordinates and deltas
+in document units. Forward secondary pointer-down with `button=2` before
+applying any host context-menu policy.
+
+Keep one `input::ImeState` per window. Pass every `WindowEvent::Ime` to
+`ImeState::on_ime` and dispatch each returned `(etype, text)` pair in order.
+While `composing()` is true, suppress raw key events. Forward
+`KeyboardInput.text` only when `forwards_key_text()` is true. This rule prevents
+an `Ime::Commit` and its raw key event from delivering the same text twice.
+After each dispatch, use this effects recipe:
+
+```rust
+ime.set_allowed(window, slab_native::input::focus_in_field(&doc.inst));
+ime.sync_rect(window, &effects);
+```
+
+`ImeState` translates Enabled, Preedit, Commit, and Disabled into composition
+start/update/end or plain text events. Commit ends the composition and clears
+preedit state. `sync_rect` passes changed kernel candidate rectangles to winit.
+Translation tests cannot select a macOS input method. Before release, a human
+must select a CJK input method and smoke-test preedit, candidate placement,
+commit, cancellation, blur, and refocus in a real window.
+
+The kernel edits selection but never accesses the operating-system clipboard.
+Use `input::selection_text` plus `input::Clipboard::write` for copy. For cut,
+write the selection first and dispatch `E_CUT`. For paste, read the clipboard
+and dispatch `E_PASTE` with its text. Cmd/Ctrl shortcuts and the visual context
+menu remain host policy. The reference native player shows a title-bar
+affordance after right-click: C copies, X cuts, V pastes, and Escape closes it.
+
+Mount accessibility with `slab_native::a11y::WindowAccessibility`. Create an
+`EventLoop<a11y::Event>`, then create the bridge after the window in
+`ApplicationHandler::resumed`. Forward every `WindowEvent` through
+`process_event`. After each settled frame, call `refresh` with one or more
+`SceneLayer` values, then call `update(false)`. Handle
+`EventKind::InitialTreeRequested` with `update(true)`. Resolve
+`EventKind::ActionRequested` through `resolve_action`, apply the returned action
+to its identified document, and dispatch `ActionResult::Dispatch` through the
+generated document wrapper so typed signals remain available.
+
+For untyped bulk input from a Rust host, use
+`slab_compile::input::apply_sets(&mut inst, &sets)` with
+`("name", "value")` pairs — the same path as CLI `--set`. It coerces strings
+per param type (colors like `"#4FC7E0"`, nested list JSON with per-item
+`key`), validates the complete value, and applies atomically; use
+`slab_compile::input::coerce_scalar(kind, raw)` for one scalar. Prefer it
+over raw `inst_set_list_*` when values arrive as strings/JSON; prefer
+`gen rust` typed setters when the host owns typed state.
 
 ## The kernel Instance API
 
@@ -379,11 +569,19 @@ fn inst_reveal_item(i: &mut Instance, each_key: &str, index: i32,
 fn inst_each_window(i: &Instance, each_key: &str) -> (i32, i32)
 fn inst_set_divider(i: &mut Instance, key: &str, extent: f64) -> bool
 fn inst_get_divider(i: &Instance, key: &str) -> f64
+fn inst_set_field_text(i: &mut Instance, key: &str, text: &str) -> bool
+fn inst_field_text(i: &Instance, key: &str) -> Option<String>
+fn inst_focus(i: &Instance) -> u32
+fn inst_param_json(i: &Instance, name: &str) -> Option<String>
 ```
 
 Root-list `path=""`, scroll `axis`, and Event `clicks` are required; old
-pathless/axisless shapes have no compatibility overload. All setters are
-total, atomic, and dirty only on an actual change.
+pathless/axisless shapes have no compatibility overload. Setters are total,
+atomic, and dirty only on an actual change. `inst_set_field_text` returns
+`false` for unknown or non-field keys. It works while focused or blurred,
+resets composition, selection, and undo/redo, places the caret at the end,
+synchronizes a same-named Text param, and queues Change for
+`inst_take_signals`.
 
 ```rust
 struct Event {
@@ -414,10 +612,11 @@ struct Effects {
 `0 default | 1 pointer | 2 text | 3 col-resize | 4 row-resize`.
 `focus=0xFFFFFFFF` means none; honor caret/IME rectangles only when their
 `has_*` flag is true.
-The WASM `KInst` mirrors these as snake-case methods (`set_list_len`,
-`img_register`, `set_scroll`, `reveal_item`, `each_window_json`, …). Its exact
-event call is `dispatch_json(type,x,y,dx,dy,button,key,text,modifiers,clicks)`;
-the returned JSON contains the complete Effects shape.
+The WASM `KInst` mirrors these as snake-case methods (`set_field_text`,
+`field_text`, `focus`, `param_json`, `set_list_len`, `img_register`,
+`set_scroll`, `reveal_item`, `each_window_json`, …). Its exact event call is
+`dispatch_json(type,x,y,dx,dy,button,key,text,modifiers,clicks)`; the returned
+JSON contains the complete Effects shape.
 
 ## Dispatch model
 
@@ -460,6 +659,16 @@ that axis. Keyboard focus sets `focus-visible`; pointer focus sets only
 focusable. Virtual-list traversal includes only materialized items. Use
 `inst_set_focus(i,key,visible)` / web `setFocus` for host-driven dialogs;
 focus traps and restoration policy remain host-owned.
+
+**Host key layer** (per-key actions on the focused row, the TUI list-app
+staple): `keys=` only adds activation keys for one `act=` signal, so distinct
+per-key actions are a host recipe. Intercept printable keys before dispatch
+when focus is not in an edit field; query focus with `inst_focus(i)` / web
+`focus()` (`0xFFFFFFFF` = none); resolve the focused node to its item with
+`list::item_key(&inst.st.lists, &inst.doc, node)` and to its full key with
+`scene::key_of`. Note host `inst_set_focus`/`setFocus` does NOT auto-reveal
+(Tab traversal does): call `inst_reveal(key, margin)` / `reveal` after
+focusing an off-screen row.
 
 ## Scroll
 
@@ -577,8 +786,18 @@ Kernel-owned on `field=` text nodes; single-line unless flagged `multiline`.
   visual-line end, Ctrl-U to start; Ctrl/Meta-A selects all; Ctrl/Meta-Z /
   Shift-Z undo/redo. Arrows move by cluster/word/document; multiline
   Up/Down move by visual line with goal-x.
-- The embedding owns IME plumbing and the clipboard (web uses a hidden
-  textarea; native forwards winit IME; kernel cut/copy touch no system
-  clipboard — GPU clipboard degradation is charted). Composition drives the
-  `composing` node state. Caret/IME rects in `Effects` describe the LAST
-  solve — refresh after the next frame.
+- The embedding owns IME plumbing and the clipboard. Web positions a hidden
+  textarea from each refreshed IME rectangle and forwards the full composition
+  lifecycle without duplicate key/text delivery. Native forwards winit IME;
+  kernel cut/copy touch no system clipboard, and GPU clipboard degradation is
+  charted. Composition drives the `composing` node state. Caret/IME rects in
+  `Effects` describe the LAST solve — refresh after the next frame.
+- Clearing or seeding a field: `field=draft` binds an INITIAL value. The
+  EditState is keyed persistent state, so ordinary param writes never reseed
+  it. Blur/refocus also preserves it. Use
+  `inst_set_field_text(i, key, text)` / web `setFieldText(key, text)` /
+  generated Rust `set_field_text` to replace the buffer. The call works while
+  focused or blurred. It resets selection and undo/redo, moves the caret to
+  the end, synchronizes the same-named Text param, and emits Change through
+  the next `inst_take_signals` Effects. Normal field mutations also synchronize
+  that param. Do not echo Change into the param or rotate item keys.

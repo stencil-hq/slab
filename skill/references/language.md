@@ -12,7 +12,16 @@ Contents: [Syntax](#syntax) · [Nodes](#nodes) ·
 
 KDL-flavored. A node is `name [#id] (arg|attr=value|flag)* [{ children }]`.
 Newlines or `;` separate siblings. `//` line and `/* */` block comments.
-`\` at end of line continues a long header.
+Node headers end at a newline. Put `\` at each continued line end:
+
+```slab
+text "Save" w=fill \
+  family="sans" \
+  weight=700
+```
+
+Indentation does not continue a header. A missing `\` produces one recovery
+diagnostic for the continued attribute run.
 
 ```ebnf
 document := stmt*
@@ -46,7 +55,8 @@ for the complete grammar, especially recursive list defaults and token forms.
   `pointer-move=`, `pointer-up=`, `drag=`, `drag-update=`, `drag-end=`,
   `drop=`, `resize=`. `act`/`field`/`press`/`drag` imply `focusable`;
   placement and payload rules are in hosts.md. `keys=Escape,F2` declares
-  extra activation keys and implies `focusable`.
+  extra activation keys and implies `focusable`. Keyboard Activate places the
+  fired key name in `SigMeta.key`; pointer Activate keeps the full node key.
 - Accessibility attrs start with `role= label= desc=` and include checked,
   disclosure/selection, exact-key relations, value/range, modal/live, and
   level/set metadata; the complete typed list is below.
@@ -139,6 +149,10 @@ the first report).
 
 `%` requires a determinate parent axis (fixed/%/fill-given); against hug it
 degrades to hug + `pct-unbounded` warning.
+
+A leaf used as an `each` item root cannot consume the list's bounded item
+space directly. Explicit `w=fill` or `h=fill` there resolves as hug and emits
+`fill-unbounded`. Wrap the leaf in a fill-sized `row` or `col`.
 
 ## Layout algorithm
 
@@ -290,7 +304,8 @@ Gauge#cpu label="CPU" pct=63% tone=color.amber
   the slot's parent (CSS `::slotted` semantics).
 - A body may have multiple top-level nodes — all splice as siblings (the
   grid-row idiom: one def emits six cells = one visual table row).
-- Call-site `#id` lands on the component's first root.
+- Call-site `#id` becomes a key path SEGMENT above the component's root; the
+  root keeps its own segment (see Identity & keys).
 - Truthiness for `when prop`: absent/`false`/`0`/`""` are false.
 - A def param shadowing an attr/flag name or `fill`/`hug` warns `shadow`.
 - `export` after the parameter list makes the def a standalone embeddable
@@ -339,12 +354,22 @@ hover/pressed/focus/composing and the drag states. Hosts drive app states
 document-wide conditions. Author drag feedback with `when dragging` on the
 source and `when drop` on a target.
 
+Binders and `animate=` may appear inside `when`. The compiler registers them
+statically, but the active patch cascade gates them at runtime. A false binder
+condition suppresses dispatch, pointer behavior, editing, and tab focus. A
+false animation condition stops its motion clock, so idle repaint reaches zero.
+
 ## Identity & keys
 
 Every node gets a stable key path at compile time. Segment precedence:
 explicit `key=v` → `#id` → `<kind>@<n>` (ordinal among unkeyed same-kind
 siblings). Full key = `parent/segment`. Component calls contribute their own
-segment; body roots and slot children continue under the call's key.
+segment; body roots and slot children continue under the call's key. A
+call-site `#id` is therefore a segment ABOVE the component root's own
+segment: `Filter#factive …` whose body root is a `row` yields
+`…/#factive/row@0`, not `…/#factive`. Host-side lookups must match the
+`#factive` segment (`key.split('/').includes('#factive')`), never
+`endsWith('#factive')`.
 
 An `each` descendant inserts `<each-key>~<item-key>/…`; nested eaches extend
 that path at every level. `sig_item` is only the innermost item key, while
@@ -405,8 +430,10 @@ an equivalent adapter (hosts.md). `spec/SPEC.md` is normative.
 ## Diagnostics
 
 `file:line: level[code]: message`; codes with a remedy print it as indented
-follow-ups. `slab check` exits non-zero on errors. The list below highlights
-authoring failures; `spec/SPEC.md` is the complete normative registry.
+follow-ups. `slab check` exits non-zero on errors. It also compiles every
+`export` definition as a standalone document. Export diagnostics keep the
+source filename and add `in export NAME`. The list below highlights authoring
+failures; `spec/SPEC.md` is the complete normative registry.
 Layout diagnostics ride in frame output, and drivers report `cap-*` once per
 document from `spec/support.toml` (rendering.md).
 
@@ -414,7 +441,7 @@ Compile time:
 
 | code | level | meaning / remedy |
 |---|---|---|
-| `parse` | error | syntax error |
+| `parse` | error | syntax error; an attribute run after a newline suggests the missing node-header `\` once |
 | `ref` | error | unknown token/param/prop/component; token cycle; malformed value — check dotted paths and Capitalization |
 | `param-type` | error | param default doesn't fit its type, or non-bool param used as `when` condition |
 | `dup-hole` | error | one hole name declared twice |
@@ -435,6 +462,8 @@ Compile time:
 | `dup-token` / `dup-def` | warning | token path / component redefined; last wins |
 | `dup-id` | warning | one `#id` resolved twice |
 | `dup-key` | warning | sibling key collision; both kept |
+| `fill-unbounded` | warning | explicit fill on a leaf `each` item root resolves as hug — wrap it in a fill-sized row/col |
+| `glyph-missing` | warning | static text contains a character absent from its resolved embedded family; dynamic text is not compile-checked |
 
 Layout time (kernel, per solve):
 

@@ -126,6 +126,8 @@ cond       := IDENT | "!" IDENT | ("w"|"h") ("<"|"<="|">"|">=") NUMBER
 - `key=` is a **reserved attribute** on every node (builtin or component
   call): it names the node's identity segment for per-node state (§15.1) and
   never reaches styling. Values may be strings, numbers, or idents.
+- A newline ends a node header. A backslash immediately before the newline
+  continues it. Indentation alone never continues a header.
 - `act=`, `field=`, `submit=`, `press=`, `context=`, `dblclick=`, `drag=`,
   `drop=`, `resize=`, `pointer-move=`, `pointer-up=`, `drag-update=`, and
   `drag-end=` are **reserved attributes** binding signals (§13.3). `act=`,
@@ -271,7 +273,8 @@ Per axis, `w=` / `h=` take exactly one of:
 | `fill` / `fill:2` | share of parent's leftover space, weighted |
 | `40%` | percent of parent content box (unbounded parent → treated as `hug`, warning `pct-unbounded`) |
 
-Plus clamps: `min-w`, `max-w`, `min-h`, `max-h`.
+Plus clamps: `min-w`, `max-w`, `min-h`, `max-h`. A maximum of `0` is a
+real zero clamp, not an omitted or unbounded maximum.
 
 **Defaults.** Main axis: `hug`. Cross axis: containers — and `rect`, which
 is a `box` with no children — default to **stretch** (= `fill`); other
@@ -676,6 +679,13 @@ Width conditions read the incoming **constraint**, never the resolved size —
 responsive patches cannot create layout feedback loops. A `when` block may
 contain attrs and/or extra children (appended in place).
 
+Signal binders and `animate=` inside a deferred `when` are registered
+statically, then gated by that patch at runtime. While the condition is false,
+its binders do not dispatch, contribute hit behavior, or make the node
+focusable. Its animation clock stops and does not keep the instance repainting.
+When several active patches bind the same trigger or animation channel, the
+last active patch wins.
+
 **State scoping (§15).** A state ident matches in this order: component-prop
 scope (folds at compile time) → a **bool param** of the same name (§13.1) →
 the node's OWN states (keyed by the node's identity path, §15.1) → the
@@ -846,7 +856,7 @@ Compile time (`slab-syntax` + `slab-compile`):
 
 | code | level | meaning |
 |---|---|---|
-| `parse` | error | syntax error |
+| `parse` | error | syntax error; a node-header attribute after a newline suggests the missing continuation `\` once |
 | `ref` | error | unknown token/param/prop/component reference; token cycle; malformed value |
 | `param-type` | error | a param default does not fit its declared type, or a non-bool param used as a `when` condition (§13.1) |
 | `dup-hole` | error | one hole name declared twice |
@@ -867,6 +877,8 @@ Compile time (`slab-syntax` + `slab-compile`):
 | `attach-ctx` | error | `attach`, `gravity`, or `collide` used outside a direct child of `stack`/`canvas` (§6.10) |
 | `icon-body` | error | an icon has no paths, a non-path child, a dynamic value, or a nonpositive viewbox (§4.3) |
 | `icon-dup` | error | a top-level icon name is declared more than once |
+| `fill-unbounded` | warning | explicit fill on a leaf `each` item root resolves as hug; use a fill-sized container root |
+| `glyph-missing` | warning | a static text character has no glyph in its resolved embedded family; includes character and codepoint |
 
 Layout time (kernel, per solve):
 
@@ -991,8 +1003,10 @@ exporters leave the box empty, the TUI reports `cap-hole`.
 ### 13.3 Signals
 
 Signals are the document's only outputs — named, declared on the node that
-fires them. Bindings are node-static: placing any signal binding inside a
-deferred `when` patch warns `attr` and ignores it.
+fires them. The compiler registers every binding statically, including bindings
+declared under `when`. The kernel dispatches only the binding selected by the
+active patch cascade. An inactive conditional binder contributes no interactive
+hit behavior, pointer cursor, edit behavior, or tab stop.
 
 - `act=NAME` — Activate (trigger 0), with empty text.
 - `field=NAME` — Change (1); text nodes only, with the full committed text
@@ -1012,7 +1026,8 @@ deferred `when` patch warns `attr` and ignores it.
   through that same captured/current path.
 - `drag-update=NAME` — DragUpdate (11), on every active-drag move, including
   the threshold-crossing move immediately after DragStart.
-- `drag-end=NAME` — DragEnd (12), exactly once when an active drag ends.
+- `drag-end=NAME` — DragEnd (12), exactly once when an active drag ends or an
+  armed drag is cancelled.
 
 `act=`, `field=`, `press=`, and `drag=` imply `focusable`; the other bindings
 do not. One name may fan in from sites with the same payload shape. Change,
@@ -1023,10 +1038,12 @@ Every emitted signal carries an innermost list item key (or `""` outside an
 `each`) and a `SigMeta` in the parallel
 `Effects.sig_name/sig_text/sig_item/sig_meta` arrays. `SigMeta` is
 `{x,y,dx,dy,drag_dx,drag_dy,mods,button,clicks,key,src_key,src_item,cancelled,dropped}`:
-`key` is the emitter's full node-key path; keyboard-originated `x/y` are
-`-1/-1`; `dx/dy` are the originating event deltas; `drag_dx/drag_dy` are the
-current pointer displacement from the armed pointer-down origin when a drag
-is active (otherwise zero); and `src_key/src_item` are populated only for Drop.
+`key` is the emitter's full node-key path for pointer and direct-helper
+signals. Keyboard-driven Activate instead stores the fired key name in `key`.
+Keyboard-originated `x/y` are `-1/-1`; `dx/dy` are the originating event
+deltas; `drag_dx/drag_dy` are the current pointer displacement from the armed
+pointer-down origin when a drag is active (otherwise zero); and
+`src_key/src_item` are populated only for Drop.
 `cancelled` distinguishes abnormal DragEnd termination. `dropped` is true on
 a delivered Drop and on its corresponding DragEnd, and false otherwise.
 Web events are bubbling and composed, with an
@@ -1102,6 +1119,10 @@ Symbolic List props may be forwarded through ordinary defs before reaching the
 nested `each`. Templates stay detached and symbolic: recursive data controls
 runtime depth, and the compiler never unrolls a recursive schema. `hole`
 remains forbidden anywhere inside an `each` template (`err[each-nest]`).
+An explicit `w=fill` or `h=fill` on a leaf template root resolves as hug,
+because the leaf cannot consume the list's bounded item space directly. The
+compiler emits `fill-unbounded`. A fill-sized `row` or `col` root provides
+the required container boundary.
 Direct `para` children use the exactly-one-span rule in §6.8.
 
 Each item has a stable, nonempty, unique string identity. Before a host
@@ -1224,6 +1245,11 @@ rect w=9 h=9 radius=999 animate=pulse,1100,alternate,ease-in-out
 - `animate=NAME,dur[,loop|once|alternate][,easing][,delay]` — durations and
   delays are **plain numbers in milliseconds** (Slab has no unit suffixes).
   `once` holds its final frame; easing applies to the whole cycle.
+  `animate=` may appear under `when`; the binding exists statically but its
+  clock and overlay run only while that condition wins the animation channel.
+  A false condition makes no motion contribution, so an otherwise idle
+  instance reports no active motion and requests no repaint. Conditional
+  animations remain kernel-driven and are not eligible for native lifting.
 - Time comes from outside: `--t MS` renders one instant; `--dur S --fps N`
   renders an APNG sequence, one solve per frame; interactive drivers pass
   `t_ms` to every `inst_frame`. Omitting `--t` samples 0ms.
@@ -1432,12 +1458,12 @@ focusable, or Enter/Space key-down on the focused non-edit node;
 `keys=Escape,F2` declares additional activation keys and implies `focusable`.
 On key-down, dispatch walks from the focused scene node through its parents;
 the first enabled node whose `keys` list contains the event key receives the
-synthesized activate event. A disabled match is skipped so an enabled ancestor
-may handle it. Routing precedence is field-edit commands, focused divider
-adjustment, focused scrolling, `keys=`, default Enter/Space activation, then
-Tab/arrow focus navigation.
-While an edit field is focused, single printable keys stay in the text-input
-path; unconsumed named keys may bubble.
+synthesized activate event. Its `SigMeta.key` is the fired key name. A disabled
+match is skipped so an enabled ancestor may handle it. Routing precedence is
+drag cancellation by Escape, field-edit commands, focused divider adjustment,
+focused scrolling, `keys=`, default Enter/Space activation, then Tab/arrow
+focus navigation. While an edit field is focused, single printable keys stay
+in the text-input path; unconsumed named keys may bubble.
 
 The portable named-key vocabulary is `Enter Space Escape Tab Backspace Delete
 Insert Home End PageUp PageDown ArrowLeft ArrowRight ArrowUp ArrowDown` and
@@ -1450,8 +1476,11 @@ Authored `Space` is canonicalized to the event key `" "`. Unknown names produce
   raw target), sets `pressed`, and applies pointer-grade focus. Hover
   enter/leave still follows the whole uncaptured hit path.
 - Secondary pointer-down (`button=2`) fires the deepest enabled `context=`
-  binding and has no pressed or focus side effects. Auxiliary buttons likewise
-  do not press, focus, or activate.
+  binding with pointer metadata. It never presses or arms drag. On an editable
+  focusable field, it applies pointer-grade focus and preserves the current
+  selection when the hit caret lies inside it; otherwise it collapses the
+  selection at the hit caret. Other secondary and auxiliary downs do not focus
+  or activate.
 - A primary down with `clicks == 2` fires the deepest enabled `dblclick=`
   binding. When one is found, that gesture's later Activate is suppressed;
   ordinary single-click activation remains pointer-up over the captured node.
@@ -1465,8 +1494,10 @@ Authored `Space` is canonicalized to the event key `" "`. Unknown names produce
   movement starts Drag once Euclidean document-space distance is strictly
   greater than 4 units, emits DragStart on the source, sets its `dragging`
   state, and suppresses Activate. That threshold-crossing move and every later
-  active move emit DragUpdate with per-event `dx/dy` and cumulative
-  `drag_dx/drag_dy`. While active, the deepest enabled `drop=` node under the
+  active move emit DragUpdate with event-local `dx/dy` and cumulative
+  `drag_dx/drag_dy`. Supplied `dx/dy` remain authoritative. When both are zero
+  and coordinates changed, dispatch derives them from the previous pointer
+  coordinates. While active, the deepest enabled `drop=` node under the
   pointer is marked `drop`, excluding the source and every descendant in its
   subtree. Enter/leave updates that state.
 - Primary pointer-up over an eligible target emits Drop on the target. Its
@@ -1475,9 +1506,12 @@ Authored `Space` is canonicalized to the event key `" "`. Unknown names produce
   `cancelled=false,dropped=true`. Release without a target still fires DragEnd
   once with both booleans false. Every release clears `pressed`, `dragging`,
   and `drop`.
-- `blur`, close, a vanished or disabled source, and host pointer cancellation
-  clear the same gesture state without Drop and emit exactly one DragEnd with
-  `cancelled=true,dropped=false`, using the last cached pointer metadata.
+- Escape during an armed or active drag clears gesture state, emits exactly one
+  DragEnd with `cancelled=true,dropped=false`, and never emits Drop. Escape is
+  consumed before field editing or `keys=` activation. During an active drag,
+  `blur`, close, a new pointer-down, a vanished or disabled source, list
+  pruning, and host pointer cancellation have the same termination behavior,
+  using the last cached pointer metadata.
   Cancellation discovered during a solve is queued; live hosts must call
   `inst_take_signals` immediately after the settled frame and deliver the
   returned signals once.
@@ -1698,7 +1732,7 @@ shared conformance goldens byte for byte in the environment it serves.
 ## 17. Reference CLI
 
 ```
-slab check FILE                          # compile, print diagnostics (exit 1 on errors)
+slab check FILE                          # compile main + standalone exports; print diagnostics
 slab build FILE -o OUT.slir [--no-embed-assets]
 slab dump  FILE.slir                     # canonical slir-dump text (spec/SLIR.md)
 slab fmt   FILE... [--check]             # canonical formatter ('-' filters stdin)
@@ -1716,6 +1750,8 @@ slab lsp                                 # stdio LSP server (diagnostics, comple
   `--state`, `--env`, and `--client` flags are accepted for compatibility
   and ignored (env-sensitive checking is the kernel's job, via
   `render`/`conformance`).
+  Every exported def also compiles through its standalone generator path.
+  These diagnostics keep `FILE` attribution and identify the export name.
 - `fmt` rewrites files in place (`--check` only reports, exit 1 on drift).
   It is line-preserving — statements are never merged or split — and
   normalizes indentation, spacing, and entry-name alignment in

@@ -61,6 +61,20 @@ fn inst_set_focus(i: &mut Instance, key: &str, visible: bool) -> bool
     // unknown, absent, or non-focusable key, with no side effects. visible
     // selects the keyboard-grade focus ring exactly as Tab does; a field=
     // target binds its EditState on focus (§15.6).
+fn inst_set_field_text(i: &mut Instance, key: &str, text: &str) -> bool
+    // Replace or create the keyed field EditState while focused or blurred.
+    // Reset composition, selection, and undo/redo; place the caret at the end.
+    // Synchronize a same-named Text param. A changed value marks dirty and
+    // queues Change in Effects for inst_take_signals. false = unknown/non-field.
+fn inst_field_text(i: &Instance, key: &str) -> Option<String>
+    // Committed EditState text, or resolved content before first bind.
+    // None = unknown key or a node without field=.
+fn inst_focus(i: &Instance) -> u32
+    // Current focused node; 0xFFFFFFFF means no focus.
+fn inst_param_json(i: &Instance, name: &str) -> Option<String>
+    // Current scalar or recursive list value as deterministic JSON.
+    // Text/enum/color are strings; num/pct are numbers; bool is boolean;
+    // lists are arrays with stable key plus every schema field. None = unknown.
 fn inst_set_scroll(i: &mut Instance, key: &str, axis: u32, off: f64) -> bool
     // Set a keyed active scroll axis: 0 main | 1 cross. The offset clamps to
     // retained geometry when available. false = unknown key/axis/inactive axis.
@@ -253,8 +267,11 @@ struct Event {
   10 composition-update | 11 composition-end | 12 blur | 13 resize |
   14 close | 15 inspect | 16 activate (synthesized internally; ignored
   from outside).
-- `x`/`y` are document-space pointer coordinates. `dx`/`dy` are wheel deltas
-  for type 3 and the new viewport width/height for type 13.
+- `x`/`y` are document-space pointer coordinates. Pointer-move `dx`/`dy` are
+  event-local deltas. Supplied deltas are authoritative; when both are zero and
+  coordinates changed during capture, dispatch derives them from the previous
+  coordinates. `dx`/`dy` are wheel deltas for type 3 and the new viewport
+  width/height for type 13.
 - `button` is the host pointer-button code. `clicks` is the host-computed click
   count on pointer-down; 0 and 1 are single clicks, 2 is a double click.
 - `key` is the host named key (`"Tab"`, `"Enter"`, `" "`, `"ArrowLeft"`,
@@ -267,9 +284,11 @@ reports Effects); pointer capture lasts from pointer-down until release;
 `pressed` lands on the nearest focusable in the hit path, else the raw target;
 hover enter/leave states cover the whole hit path. Pointer-up over the
 still-pressed focusable, or Enter/Space on a focused non-edit node, synthesizes
-Activate; `disabled` suppresses it. Wheel scrolls the deepest `scroll` node in
-the path with the retained-scene clamp. `resize` (dx/dy > 0) updates env;
-`blur` clears hover + pressed; `copy` / `inspect` are host territory.
+Activate; `disabled` suppresses it. Escape cancels an armed or active drag,
+emits cancelled DragEnd without Drop, clears capture, and is consumed before
+authored activation. Wheel scrolls the deepest `scroll` node in the path with
+the retained-scene clamp. `resize` (dx/dy > 0) updates env; `blur` clears hover
+and pressed; `copy` / `inspect` are host territory.
 
 Signal trigger codes (SPEC §13) are `0 Activate`, `1 Change`, `2 Submit`,
 `3 Press`, `4 Context`, `5 Dblclick`, `6 DragStart`, `7 Drop`, `8 Resize`,
@@ -278,15 +297,26 @@ Signal trigger codes (SPEC §13) are `0 Activate`, `1 Change`, `2 Submit`,
 extent for Resize; other triggers use `""`. Every signal carries the innermost
 synthetic item key of its emitting node (or `""`) and the `SigMeta` below.
 
-Focusing a field binds an EditState seeded from CONTENT. Backspace/Delete
-delete grapheme clusters; Ctrl/Meta/Alt word deletion and Ctrl-K/U kills use
-the visual line; Ctrl/Meta-Z and Ctrl/Meta-Shift-Z traverse bounded grouped
+Focusing a field binds an EditState seeded from CONTENT on FIRST bind only.
+The EditState persists across blur/refocus and ordinary param writes.
+`inst_set_field_text` replaces it while focused or blurred, resets selection
+and undo/redo, places the caret at the end, synchronizes a same-named Text
+param, and queues Change in Effects when the value changes. Normal field
+mutations also synchronize that parameter. Item-key change discards retained
+edit identity. Backspace/Delete delete grapheme clusters; Ctrl/Meta/Alt word
+deletion and Ctrl-K/U kills use the visual line; Ctrl/Meta-Z and
+Ctrl/Meta-Shift-Z traverse bounded grouped
 undo/redo. Multiline ArrowUp/Down and Home/End use visual-line source offsets
 from the retained TextLayout with goal-x preservation. Enter inserts or
 submits by SPEC §15.6's modifier/flag matrix. Text, paste, cut, kill, word
 delete, undo/redo, and composition all flow through the same committed-change
 path. Single-line display text owns horizontal scroll; multiline caret follow
 may adjust the nearest scroll ancestor.
+
+Secondary pointer-down emits Context with pointer metadata and never presses
+or arms drag. On an editable focusable field, it applies pointer-grade focus.
+It preserves selection when the hit caret lies inside that selection.
+Otherwise, it collapses selection at the hit caret.
 
 ## Effects (module `dispatch`)
 
@@ -324,14 +354,17 @@ struct Effects {
 ```
 
 `sig_name`, `sig_text`, `sig_item`, and `sig_meta` always have equal length
-and matching order. `SigMeta.key` is the full key path of the emitting node.
-For pointer-originated dispatch it carries document-space `x`/`y`; keyboard
-and direct helper emissions use `(-1, -1)`. `dx`/`dy` are the originating
-event deltas; `drag_dx`/`drag_dy` are cumulative displacement from the armed
-pointer-down origin while a drag is active. `mods`, `button`, and `clicks`
-come from the current event. `src_key` and `src_item` identify a drag source
-only for Drop and are otherwise empty. `cancelled` marks abnormal DragEnd;
-`dropped` marks Drop and the corresponding successful DragEnd.
+and matching order. For pointer and direct-helper signals, `SigMeta.key` is
+the full key path of the emitting node. For keyboard-driven Activate, it is
+the fired key name, including default Enter/Space activation and authored
+`keys=` activation. Pointer-originated dispatch carries document-space `x`/`y`;
+keyboard and direct helper emissions use `(-1, -1)`. `dx`/`dy` are the
+authoritative or derived event-local deltas; `drag_dx`/`drag_dy` are cumulative
+displacement from the armed pointer-down origin while a drag is active.
+`mods`, `button`, and `clicks` come from the current event. `src_key` and
+`src_item` identify a drag source only for Drop and are otherwise empty.
+`cancelled` marks abnormal DragEnd; `dropped` marks Drop and the corresponding
+successful DragEnd.
 
 `scrolls` is ordered by dispatch execution and contains one entry for each
 offset actually changed by wheel, scroll-key, or caret-follow handling.
@@ -507,6 +540,10 @@ containment invariant holds at every instant for free.
   authored base step at the midpoint; flags and extra `when` children
   never tween. Env/Client/W-H conds re-solve without tweening (research
   parity: its prev-env kept renderer + viewport fixed).
+  Parameter and state setters only dirty the instance; they do not solve it.
+  The first later `inst_frame` stamps an observed flip at that frame's
+  `t_ms`. Drive scripts that need a settled snapshot use
+  `render` → `clock.advance` → `render`.
 - **Liveness**: motion.apply reports "still animating" (running binds,
   in-flight tweens); inst_frame then re-solves whenever the clock moves.
   The manifest's `states_prev`/`state_age` cases realize the research

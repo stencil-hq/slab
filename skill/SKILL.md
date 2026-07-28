@@ -59,9 +59,16 @@ bunx @stencil-hq/slab check doc.slab      # ALWAYS run after editing
 ```
 
 Output kind infers from the extension (`.svg .png .apng .txt`); `--client tui`
-with no `-o` prints cells to stdout. Diagnostics name the problem AND the
-remedy. In this repo the native CLI is `cargo run -p slab-cli --` (adds
-`fmt`, `conformance`, `lsp`, `--theme`, `--font`).
+with no `-o` prints cells to stdout. `check` validates the main document and
+each `export` definition through its standalone path. Diagnostics keep the
+source filename and identify the export. In this repo the native CLI is
+`cargo run -p slab-cli --` (adds `fmt`, `conformance`, `lsp`, `--theme`,
+`--font`).
+
+Fresh releases: bun's minimum-release-age gate blocks packages younger than
+24h (`… blocked by minimum-release-age`). Fix: add `[install]
+minimumReleaseAge = 0` to a project `bunfig.toml`. `bunx` ignores a cwd
+bunfig — use `bun add @stencil-hq/slab` then `./node_modules/.bin/slab`.
 
 ## Core vocabulary (memorize; details in references/language.md)
 
@@ -104,26 +111,31 @@ remedy. In this repo the native CLI is `cargo run -p slab-cli --` (adds
    use `self=` (stack children: `self=bottom-end offset=4,-4`).
 3. `%` needs a determinate parent axis; against `hug` it degrades to hug with
    `pct-unbounded`. Progress bars live inside `fill`/fixed tracks.
-4. Bare idents in value position are keywords or component props — token
+4. Node headers end at newlines. End each continued header line with `\`;
+   indentation alone does not continue it.
+5. Bare idents in value position are keywords or component props — token
    references are ALWAYS dotted (`color.accent`, never `accent`).
-5. Numbers are unitless `u` (1u = 1px on web/svg). Durations are plain ms.
-6. One shadow inline (`shadow=0,2,6,#0004`); layered shadows must be a list
+6. Numbers are unitless `u` (1u = 1px on web/svg). Durations are plain ms.
+7. One shadow inline (`shadow=0,2,6,#0004`); layered shadows must be a list
    of presets/token refs (`shadow=shadow.crisp,shadow.lift`).
-7. TUI is a cell grid (8u × 16u): keep pads/gaps/sizes cell-multiples and
-   give bordered boxes `pad=16,8`+ or text overwrites the border.
-8. Quarter-turn `rotate` (±90/270) participates in layout; any other angle is
+8. TUI paints one cell per grapheme, but layout uses vector font metrics.
+   Use cell-multiple geometry and `pad=16,8`+ inside borders. Set
+   `when tui { family="mono" size=13.333 }`: the 600/1000em mono advance
+   becomes exactly 8u, so measured text matches the cell grid.
+9. Quarter-turn `rotate` (±90/270) participates in layout; any other angle is
    ink-only. TUI skips rotated subtrees.
-9. Dynamic rows come from `list(Def)` + `each`, including recursive child
+10. Dynamic rows come from `list(Def)` + `each`, including recursive child
    lists. Give items stable keys; path-address nested lists by index/field.
    Use kernel virtualization only for a uniform-height top-level `each`.
-10. Diagnostics are the contract: `squeeze` = fixed size clamped, `clipped`
-    = content truncated, `cap-*` = a declared client degradation. Fix the
-    named node; never silence by guessing coordinates.
-11. Keep policy in the host: Slab owns layout, gesture mechanics and optional
+11. Diagnostics are the contract: `squeeze` = fixed size clamped, `clipped`
+    = content truncated, and `glyph-missing` = static text is absent from its
+    resolved embedded family. Fix the named source; never silence by guessing
+    coordinates. `cap-*` names a declared client degradation.
+12. Keep policy in the host: Slab owns layout, gesture mechanics and optional
     drag ghosts, focus, scrolling, scene export, and shipped web/native
     accessibility adapters. The host owns app state, popover dismissal, and
     focus traps.
-12. Treat `spec/SPEC.md` as normative and `spec/FRAME.md` as the exact host
+13. Treat `spec/SPEC.md` as normative and `spec/FRAME.md` as the exact host
     ABI. Skill references are procedural guidance, not replacement specs.
 
 ## Feature selection cues
