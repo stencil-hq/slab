@@ -172,16 +172,17 @@ impl RoutedAction {
 
 fn key_event(key: &str) -> KernelEvent {
 	KernelEvent {
-		etype:  kdispatch::E_KEY_DOWN,
-		x:      -1.0,
-		y:      -1.0,
-		dx:     0.0,
-		dy:     0.0,
-		button: 0,
-		clicks: 0,
-		key:    key.to_owned(),
-		text:   String::new(),
-		mods:   0,
+		etype:   kdispatch::E_KEY_DOWN,
+		x:       -1.0,
+		y:       -1.0,
+		dx:      0.0,
+		dy:      0.0,
+		button:  0,
+		clicks:  0,
+		key:     key.to_owned(),
+		text:    String::new(),
+		clauses: Vec::new(),
+		mods:    0,
 	}
 }
 

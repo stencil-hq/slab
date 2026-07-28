@@ -12,6 +12,16 @@ pub use frame_buf::FrameBuf;
 use slab_kernel::{cells, dispatch, dumpjson, frame as kframe};
 use wasm_bindgen::prelude::*;
 
+/// Decodes the optional JSON `[[start,end], ...]` composition clause payload.
+/// Invalid JSON or malformed pairs degrade to the kernel's whole-preedit
+/// fallback instead of rejecting the host event.
+fn decode_clauses(json: Option<String>) -> Vec<(i32, i32)> {
+	json
+		.as_deref()
+		.and_then(|value| serde_json::from_str(value).ok())
+		.unwrap_or_default()
+}
+
 /// One decoded, initialized kernel instance owned by JavaScript.
 #[wasm_bindgen]
 pub struct KInst {
@@ -162,6 +172,92 @@ impl KInst {
 	/// Returns one keyed field's committed text.
 	pub fn field_text(&self, key: &str) -> Option<String> {
 		kframe::inst_field_text(&self.inner, key)
+	}
+
+	/// Sets one keyed field's directed selection and optional vertical goal.
+	pub fn set_caret(&mut self, key: &str, caret: i32, anchor: i32, goal_x: Option<f64>) -> bool {
+		match goal_x {
+			Some(goal) => kframe::inst_set_caret_goal(&mut self.inner, key, caret, anchor, goal),
+			None => kframe::inst_set_caret(&mut self.inner, key, caret, anchor),
+		}
+	}
+
+	/// Returns one keyed field's caret state as JSON, with a null `goal_x` when
+	/// no vertical-movement goal is active.
+	pub fn get_caret_json(&self, key: &str) -> Option<String> {
+		let caret = kframe::inst_get_caret(&self.inner, key)?;
+		Some(
+			serde_json::json!({
+				"caret": caret.caret,
+				"anchor": caret.anchor,
+				"goal_x": (caret.goal_x >= 0.0).then_some(caret.goal_x),
+				"composing": caret.composing,
+			})
+			.to_string(),
+		)
+	}
+
+	/// Returns normalized rich-field runs as the canonical `sig_runs` JSON
+	/// schema.
+	pub fn field_runs_json(&self, key: &str) -> Option<String> {
+		let runs = kframe::inst_field_runs(&self.inner, key)?;
+		Some(
+			serde_json::json!({
+				"rev": runs.revision,
+				"runs": runs.runs,
+			})
+			.to_string(),
+		)
+	}
+
+	/// Atomically replaces normalized rich-field runs from canonical
+	/// `sig_runs` JSON.
+	pub fn set_field_runs_json(&mut self, key: &str, runs_json: &str) -> Result<bool, JsValue> {
+		#[derive(serde::Deserialize)]
+		struct RunsJson {
+			rev:  u64,
+			runs: Vec<RunJson>,
+		}
+		#[derive(serde::Deserialize)]
+		struct RunJson {
+			style: u32,
+			start: i32,
+			end:   i32,
+		}
+		let decoded: RunsJson =
+			serde_json::from_str(runs_json).map_err(|error| js_error(error.to_string()))?;
+		let runs = kframe::FieldRuns {
+			revision: decoded.rev,
+			runs:     decoded
+				.runs
+				.into_iter()
+				.map(|run| kframe::FieldRun { style: run.style, start: run.start, end: run.end })
+				.collect(),
+		};
+		Ok(kframe::inst_set_field_runs(&mut self.inner, key, &runs))
+	}
+
+	/// Toggles one inline style over a keyed field's current selection.
+	pub fn toggle_style(&mut self, key: &str, style: u32) -> bool {
+		kframe::inst_toggle_style(&mut self.inner, key, style)
+	}
+
+	/// Returns the active cross-field range as canonical keyed locators, or
+	/// JSON null when no range is active.
+	pub fn get_range_json(&self) -> String {
+		match kframe::inst_get_range(&self.inner) {
+			Some((anchor, head)) => serde_json::json!({
+				"anchor": anchor,
+				"head": head,
+			})
+			.to_string(),
+			None => "null".to_owned(),
+		}
+	}
+
+	/// Clears retained cross-field selection metadata.
+	pub fn clear_range(&mut self) -> bool {
+		kframe::inst_clear_range(&mut self.inner)
 	}
 
 	/// Returns the focused node, or `u32::MAX` when focus is clear.
@@ -317,6 +413,7 @@ impl KInst {
 		text: &str,
 		modifiers: u32,
 		clicks: u32,
+		clauses_json: Option<String>,
 	) -> String {
 		let effects = kframe::inst_dispatch(&mut self.inner, &dispatch::Event {
 			etype: event_type,
@@ -328,6 +425,7 @@ impl KInst {
 			clicks,
 			key: key.to_owned(),
 			text: text.to_owned(),
+			clauses: decode_clauses(clauses_json),
 			mods: modifiers,
 		});
 		snapshot::effects_json(&effects)
@@ -347,6 +445,7 @@ impl KInst {
 		text: &str,
 		modifiers: u32,
 		clicks: u32,
+		clauses_json: Option<String>,
 	) -> String {
 		let effects = kframe::inst_dispatch(&mut self.inner, &dispatch::Event {
 			etype: event_type,
@@ -358,6 +457,7 @@ impl KInst {
 			clicks,
 			key: key.to_owned(),
 			text: text.to_owned(),
+			clauses: decode_clauses(clauses_json),
 			mods: modifiers,
 		});
 		dumpjson::dump_effects(self.inner.doc(), &self.inner.st, &effects)

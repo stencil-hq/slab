@@ -174,12 +174,18 @@ kernel_tests! {
 	 test_multiline__test_enter_submit_does_not_bubble => slab_kernel::test_multiline::test_enter_submit_does_not_bubble;
 	 test_multiline__test_field_keys_preempt_plain_only => slab_kernel::test_multiline::test_field_keys_preempt_plain_only;
 	 test_multiline__test_modified_printable_bubbles_with_mods => slab_kernel::test_multiline::test_modified_printable_bubbles_with_mods;
+	 test_multiline__test_vertical_boundary_bubbles_with_goal_x => slab_kernel::test_multiline::test_vertical_boundary_bubbles_with_goal_x;
 	 test_multiline__test_fresh_wrapped_layout_scroll_follow_settles => slab_kernel::test_multiline::test_fresh_wrapped_layout_scroll_follow_settles;
 	 test_multiline__test_horizontal_and_ancestor_scroll_follow => slab_kernel::test_multiline::test_horizontal_and_ancestor_scroll_follow;
 	 test_multiline__test_kills_undo_and_redo => slab_kernel::test_multiline::test_kills_undo_and_redo;
 	 test_multiline__test_paste_undoes_in_one_step => slab_kernel::test_multiline::test_paste_undoes_in_one_step;
 	 test_multiline__test_single_line_text_prefilters_newlines => slab_kernel::test_multiline::test_single_line_text_prefilters_newlines;
 	 test_multiline__test_visual_arrows_home_end_and_caret_geometry => slab_kernel::test_multiline::test_visual_arrows_home_end_and_caret_geometry;
+
+	 test_rangesel__test_host_composed_boundary_range_preserves_source_band => slab_kernel::test_rangesel::test_host_composed_boundary_range_preserves_source_band;
+	 test_rangesel__test_keyed_list_reorder_and_virtualization_keep_range_identity => slab_kernel::test_rangesel::test_keyed_list_reorder_and_virtualization_keep_range_identity;
+	 test_rangesel__test_shift_click_cross_field_range_paints_endpoints_and_middle => slab_kernel::test_rangesel::test_shift_click_cross_field_range_paints_endpoints_and_middle;
+	 test_rangesel__test_range_edits_defer_to_host_and_plain_click_clears => slab_kernel::test_rangesel::test_range_edits_defer_to_host_and_plain_click_clears;
 
 	 test_textm__test_default_advance => slab_kernel::test_textm::test_default_advance;
 	 test_textm__test_bidi_visual_order => slab_kernel::test_textm::test_bidi_visual_order;
@@ -197,11 +203,34 @@ kernel_tests! {
 	 test_textm__test_wrap_basic => slab_kernel::test_textm::test_wrap_basic;
 	 test_textm__test_wrap_cjk_kinsoku => slab_kernel::test_textm::test_wrap_cjk_kinsoku;
 	 test_textm__test_wrap_mixed_cjk_latin => slab_kernel::test_textm::test_wrap_mixed_cjk_latin;
+	 test_textm__test_wrap_latin_hyphen_opportunity => slab_kernel::test_textm::test_wrap_latin_hyphen_opportunity;
+	 test_textm__test_wrap_zero_width_space_opportunity => slab_kernel::test_textm::test_wrap_zero_width_space_opportunity;
+	 test_textm__test_wrap_ideographic_space_opportunity => slab_kernel::test_textm::test_wrap_ideographic_space_opportunity;
 	 test_textm__test_wrap_nbsp_overlong_glue => slab_kernel::test_textm::test_wrap_nbsp_overlong_glue;
 	 test_textm__test_wrap_overlong_latin_url => slab_kernel::test_textm::test_wrap_overlong_latin_url;
 	 test_textm__test_wrap_thai_grapheme_fallback => slab_kernel::test_textm::test_wrap_thai_grapheme_fallback;
 	 test_textm__test_wrap_nbsp_glue => slab_kernel::test_textm::test_wrap_nbsp_glue;
 	 test_textm__test_uncovered_runs_marked => slab_kernel::test_textm::test_uncovered_runs_marked;
+
+	 test_richfield__test_host_split_round_trip_preserves_runs => slab_kernel::test_richfield::test_host_split_round_trip_preserves_runs;
+	 test_richfield__test_typing_span_boundary_semantics => slab_kernel::test_richfield::test_typing_span_boundary_semantics;
+	 test_richfield__test_toggle_covered_removes_partial_extends => slab_kernel::test_richfield::test_toggle_covered_removes_partial_extends;
+	 test_richfield__test_styled_delete_undo_redo => slab_kernel::test_richfield::test_styled_delete_undo_redo;
+	 test_richfield__test_layout_emits_styled_segments_with_total_advance => slab_kernel::test_richfield::test_layout_emits_styled_segments_with_total_advance;
+	 test_richfield__test_code_run_paints_color_and_background => slab_kernel::test_richfield::test_code_run_paints_color_and_background;
+	 test_richfield__test_change_signal_runs_revision_and_param_reset => slab_kernel::test_richfield::test_change_signal_runs_revision_and_param_reset;
+	 test_richfield__test_composition_clause_fallback_underlines_whole_preedit => slab_kernel::test_richfield::test_composition_clause_fallback_underlines_whole_preedit;
+	 test_richfield__test_composition_clause_ranges_clamp => slab_kernel::test_richfield::test_composition_clause_ranges_clamp;
+	 test_richfield__test_composition_clauses_paint_distinct_underlines => slab_kernel::test_richfield::test_composition_clauses_paint_distinct_underlines;
+	 test_richfield__test_composition_end_clears_clause_overlay => slab_kernel::test_richfield::test_composition_end_clears_clause_overlay;
+	 test_richfield__test_composition_commit_preserves_spans => slab_kernel::test_richfield::test_composition_commit_preserves_spans;
+
+	 test_undoscopes__test_enter_split_restore_is_exact_and_resets_local_history => slab_kernel::test_undoscopes::test_enter_split_restore_is_exact_and_resets_local_history;
+	 test_undoscopes__test_backspace_merge_restore_restores_both_fields => slab_kernel::test_undoscopes::test_backspace_merge_restore_restores_both_fields;
+	 test_undoscopes__test_snapshot_and_restore_reject_unresolvable_locator_atomically => slab_kernel::test_undoscopes::test_snapshot_and_restore_reject_unresolvable_locator_atomically;
+	 test_undoscopes__test_snapshot_abort_preserves_local_history => slab_kernel::test_undoscopes::test_snapshot_abort_preserves_local_history;
+	 test_undoscopes__test_commit_without_structural_change_barriers_history => slab_kernel::test_undoscopes::test_commit_without_structural_change_barriers_history;
+	 test_undoscopes__test_restore_clears_active_composition => slab_kernel::test_undoscopes::test_restore_clears_active_composition;
 
 	 test_value__test_active_theme_token_lookup => slab_kernel::test_value::test_active_theme_token_lookup;
 	 test_value__test_f64_bits => slab_kernel::test_value::test_f64_bits;

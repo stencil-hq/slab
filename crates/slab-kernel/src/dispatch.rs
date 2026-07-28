@@ -19,7 +19,7 @@ use crate::{
 	scene::{self, Scene},
 	slir::{self, Doc},
 	style::{self, St},
-	textm::TextLayout,
+	textm::{self, TextLayout},
 };
 
 /// Pointer-move event type.
@@ -119,25 +119,27 @@ pub const CUR_ROW_RESIZE: u32 = 4;
 #[derive(Clone, Debug, Serialize)]
 pub struct Event {
 	/// One of the `E_*` event type codes.
-	pub etype:  u32,
+	pub etype:   u32,
 	/// Pointer x-coordinate.
-	pub x:      f64,
+	pub x:       f64,
 	/// Pointer y-coordinate.
-	pub y:      f64,
+	pub y:       f64,
 	/// Horizontal wheel delta or resized viewport width.
-	pub dx:     f64,
+	pub dx:      f64,
 	/// Vertical wheel delta or resized viewport height.
-	pub dy:     f64,
+	pub dy:      f64,
 	/// Pointer button code.
-	pub button: u32,
+	pub button:  u32,
 	/// Host-computed click count for pointer-down (`0`/`1` means single).
-	pub clicks: u32,
+	pub clicks:  u32,
 	/// Named keyboard key.
-	pub key:    String,
+	pub key:     String,
 	/// Text, paste, or composition payload.
-	pub text:   String,
+	pub text:    String,
+	/// Ordered codepoint ranges within a composition-update preedit.
+	pub clauses: Vec<(i32, i32)>,
 	/// Bitset of the `M_*` modifier constants.
-	pub mods:   u32,
+	pub mods:    u32,
 }
 
 /// Metadata attached to every emitted signal.
@@ -187,69 +189,113 @@ pub struct ScrollChange {
 	pub axis: u32,
 	pub off:  f64,
 }
+/// Cross-field range edit initiated by committed text input.
+pub const RANGE_EDIT_TEXT: u32 = 0;
+/// Cross-field range edit initiated by paste.
+pub const RANGE_EDIT_PASTE: u32 = 1;
+/// Cross-field range deletion initiated by cut.
+pub const RANGE_EDIT_CUT: u32 = 2;
+/// Cross-field range deletion initiated by Backspace.
+pub const RANGE_EDIT_BACKSPACE: u32 = 3;
+/// Cross-field range deletion initiated by Delete.
+pub const RANGE_EDIT_DELETE: u32 = 4;
+/// Cross-field range edit initiated by IME composition.
+pub const RANGE_EDIT_COMPOSITION: u32 = 5;
+/// Non-destructive cross-field copy request.
+pub const RANGE_EDIT_COPY: u32 = 6;
+
+/// One stable endpoint in a host-composed cross-field edit.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct RangeEndpoint {
+	/// Escaped canonical full field key.
+	pub key:    String,
+	/// Grapheme-boundary committed-text codepoint offset.
+	pub offset: i32,
+}
+
+/// A pre-mutation request that the host must apply to its block model.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct RangeEdit {
+	/// One of the `RANGE_EDIT_*` constants.
+	pub kind:   u32,
+	/// Fixed selection endpoint.
+	pub anchor: RangeEndpoint,
+	/// Active selection endpoint.
+	pub head:   RangeEndpoint,
+	/// Replacement text; empty for deletion, cut, and copy.
+	pub text:   String,
+}
 
 /// Host-visible consequences of dispatching an [`Event`].
 #[derive(Clone, Debug, Serialize)]
 pub struct Effects {
 	/// Whether the next frame must re-solve.
-	pub repaint:   bool,
-	/// Document string references, parallel to `sig_text` and `sig_item`.
-	pub sig_name:  Vec<u32>,
+	pub repaint:    bool,
+	/// Document string references, parallel to every `sig_*` payload vector.
+	pub sig_name:   Vec<u32>,
 	/// Committed text for Change/Submit, final extent for Resize, or empty.
-	pub sig_text:  Vec<String>,
+	pub sig_text:   Vec<String>,
+	/// Rich-field payload JSON parallel to `sig_name`; empty for non-field
+	/// signals.
+	pub sig_runs:   Vec<String>,
 	/// Innermost list item key, or empty for a real document node.
-	pub sig_item:  Vec<String>,
+	pub sig_item:   Vec<String>,
 	/// Signal metadata parallel to [`Self::sig_name`].
-	pub sig_meta:  Vec<SigMeta>,
+	pub sig_meta:   Vec<SigMeta>,
 	/// Scroll offsets changed by this dispatch.
-	pub scrolls:   Vec<ScrollChange>,
+	pub scrolls:    Vec<ScrollChange>,
+	/// Host-owned structural edit requested for an active cross-field range.
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub range_edit: Option<RangeEdit>,
 	/// Whether the caret rectangle is available.
-	pub has_caret: bool,
+	pub has_caret:  bool,
 	/// Caret rectangle x-coordinate.
-	pub caret_x:   f64,
+	pub caret_x:    f64,
 	/// Caret rectangle y-coordinate.
-	pub caret_y:   f64,
+	pub caret_y:    f64,
 	/// Caret rectangle width.
-	pub caret_w:   f64,
+	pub caret_w:    f64,
 	/// Caret rectangle height.
-	pub caret_h:   f64,
+	pub caret_h:    f64,
 	/// Whether the IME rectangle is available.
-	pub has_ime:   bool,
+	pub has_ime:    bool,
 	/// IME rectangle x-coordinate.
-	pub ime_x:     f64,
+	pub ime_x:      f64,
 	/// IME rectangle y-coordinate.
-	pub ime_y:     f64,
+	pub ime_y:      f64,
 	/// IME rectangle width.
-	pub ime_w:     f64,
+	pub ime_w:      f64,
 	/// IME rectangle height.
-	pub ime_h:     f64,
+	pub ime_h:      f64,
 	/// One of the `CUR_*` cursor codes.
-	pub cursor:    u32,
+	pub cursor:     u32,
 	/// Focused node id, or [`slir::NONE`].
-	pub focus:     u32,
+	pub focus:      u32,
 }
 
 /// Creates an empty effect collection.
 pub const fn effects_new() -> Effects {
 	Effects {
-		repaint:   false,
-		sig_name:  Vec::new(),
-		sig_text:  Vec::new(),
-		sig_item:  Vec::new(),
-		sig_meta:  Vec::new(),
-		scrolls:   Vec::new(),
-		has_caret: false,
-		caret_x:   0.0,
-		caret_y:   0.0,
-		caret_w:   0.0,
-		caret_h:   0.0,
-		has_ime:   false,
-		ime_x:     0.0,
-		ime_y:     0.0,
-		ime_w:     0.0,
-		ime_h:     0.0,
-		cursor:    CUR_DEFAULT,
-		focus:     slir::NONE,
+		repaint:    false,
+		sig_name:   Vec::new(),
+		sig_text:   Vec::new(),
+		sig_runs:   Vec::new(),
+		sig_item:   Vec::new(),
+		sig_meta:   Vec::new(),
+		scrolls:    Vec::new(),
+		range_edit: None,
+		has_caret:  false,
+		caret_x:    0.0,
+		caret_y:    0.0,
+		caret_w:    0.0,
+		caret_h:    0.0,
+		has_ime:    false,
+		ime_x:      0.0,
+		ime_y:      0.0,
+		ime_w:      0.0,
+		ime_h:      0.0,
+		cursor:     CUR_DEFAULT,
+		focus:      slir::NONE,
 	}
 }
 
@@ -269,6 +315,7 @@ struct DividerDrag {
 struct PendingSignal {
 	name: u32,
 	text: String,
+	runs: String,
 	item: String,
 	meta: SigMeta,
 }
@@ -313,6 +360,8 @@ pub struct DState {
 	pub cursor:             u32,
 	/// Whether the host requested closure.
 	pub closed:             bool,
+	/// Active selection spanning two editable fields, if any.
+	pub range:              Option<edit::CrossFieldRange>,
 	/// Field node ids, parallel to `ed`.
 	pub ed_node:            Vec<u32>,
 	/// Editing states parallel to `ed_node`.
@@ -348,6 +397,7 @@ pub const fn dstate_new() -> DState {
 		divider:           None,
 		cursor:            CUR_DEFAULT,
 		closed:            false,
+		range:             None,
 		ed_node:           Vec::new(),
 		ed:                Vec::new(),
 	}
@@ -393,6 +443,7 @@ pub fn prune_vanished(d: &Doc, st: &mut St, ds: &mut DState) -> bool {
 	{
 		ds.divider = None;
 	}
+	state_changed |= validate_range(d, st, ds);
 
 	for index in (0..ds.hover.len()).rev() {
 		if vanished(d, st, ds.hover[index]) {
@@ -469,6 +520,7 @@ pub fn sig_of(d: &Doc, st: &St, node: u32, trigger: u32) -> i32 {
 fn emit_signal(d: &Doc, st: &St, eff: &mut Effects, signal_index: usize, node: u32, text: &str) {
 	eff.sig_name.push(d.sign_name[signal_index]);
 	eff.sig_text.push(text.to_owned());
+	eff.sig_runs.push(String::new());
 	eff.sig_item.push(list::item_key(&st.lists, d, node));
 	eff.sig_meta.push(SigMeta {
 		x:           -1.0,
@@ -553,6 +605,7 @@ fn push_cached_drag_signal(
 	};
 	effects.sig_name.push(name);
 	effects.sig_text.push(String::new());
+	effects.sig_runs.push(String::new());
 	effects.sig_item.push(ds.drag_source_item.clone());
 	effects.sig_meta.push(drag_meta(ds, cancelled, dropped));
 	effects.repaint = true;
@@ -578,6 +631,7 @@ fn queue_drag_end(ds: &mut DState) {
 	ds.pending_signals.push(PendingSignal {
 		name,
 		text: String::new(),
+		runs: String::new(),
 		item: ds.drag_source_item.clone(),
 		meta: drag_meta(ds, true, false),
 	});
@@ -589,6 +643,7 @@ pub fn take_pending_signals(ds: &mut DState) -> Effects {
 	for pending in ds.pending_signals.drain(..) {
 		effects.sig_name.push(pending.name);
 		effects.sig_text.push(pending.text);
+		effects.sig_runs.push(pending.runs);
 		effects.sig_item.push(pending.item);
 		effects.sig_meta.push(pending.meta);
 	}
@@ -775,6 +830,97 @@ pub fn ed_ix(ds: &DState, node: u32) -> i32 {
 		.position(|candidate| *candidate == node)
 		.map_or(-1, |index| i32::try_from(index).expect("too many edit states"))
 }
+/// Clears cross-field selection metadata, retaining each field's local state.
+pub fn clear_range(ds: &mut DState) -> bool {
+	ds.range.take().is_some()
+}
+/// Drops a range whose stable endpoint identity no longer resolves.
+///
+/// A de-windowed list item still resolves through retained list identity and
+/// therefore does not invalidate the range.
+pub fn validate_range(d: &Doc, st: &St, ds: &mut DState) -> bool {
+	let invalid = ds.range.as_ref().is_some_and(|range| {
+		scene::node_by_key(d, &st.lists, &range.anchor_key) == slir::NONE
+			|| scene::node_by_key(d, &st.lists, &range.head_key) == slir::NONE
+	});
+	if invalid {
+		ds.range = None;
+	}
+	invalid
+}
+fn request_range_edit(ds: &DState, effects: &mut Effects, kind: u32, text: &str) -> bool {
+	let Some(range) = ds.range.as_ref() else {
+		return false;
+	};
+	effects.range_edit = Some(RangeEdit {
+		kind,
+		anchor: RangeEndpoint { key: range.anchor_key.clone(), offset: range.anchor_offset },
+		head: RangeEndpoint { key: range.head_key.clone(), offset: range.head_offset },
+		text: text.to_owned(),
+	});
+	true
+}
+
+fn scene_order(sc: &Scene, node: u32) -> Option<u32> {
+	sc.entries
+		.iter()
+		.filter(|entry| entry.node == node)
+		.map(|entry| entry.authored_order)
+		.min()
+}
+
+/// Records a cross-field range from one stable anchor key to the currently
+/// materialized head field and projects ordinary local endpoint selections.
+pub fn set_range(
+	d: &Doc,
+	st: &St,
+	sc: &Scene,
+	ds: &mut DState,
+	anchor_key: &str,
+	anchor_offset: i32,
+	head_node: u32,
+	head_offset: i32,
+) -> bool {
+	let anchor_node = scene::node_by_key(d, &st.lists, anchor_key);
+	if anchor_node == slir::NONE || anchor_node == head_node {
+		return false;
+	}
+	let anchor_key = scene::key_of(d, &st.lists, anchor_node);
+	let head_key = scene::key_of(d, &st.lists, head_node);
+	if anchor_key.is_empty() || head_key.is_empty() {
+		return false;
+	}
+	let (Some(anchor_order), Some(head_order)) =
+		(scene_order(sc, anchor_node), scene_order(sc, head_node))
+	else {
+		return false;
+	};
+	let anchor_index = ed_ix(ds, anchor_node);
+	let head_index = ed_ix(ds, head_node);
+	if anchor_index < 0 || head_index < 0 {
+		return false;
+	}
+	let anchor_index = usize::try_from(anchor_index).expect("negative edit index");
+	let head_index = usize::try_from(head_index).expect("negative edit index");
+	let anchor_end = crate::rt::str_len(&ds.ed[anchor_index].text);
+	let head_end = crate::rt::str_len(&ds.ed[head_index].text);
+	let anchor_offset = anchor_offset.clamp(0, anchor_end);
+	let head_offset = head_offset.clamp(0, head_end);
+	let anchor_caret = if anchor_order < head_order {
+		anchor_end
+	} else {
+		0
+	};
+	let head_anchor = if anchor_order < head_order {
+		0
+	} else {
+		head_end
+	};
+	edit::set_selection(&mut ds.ed[anchor_index], anchor_caret, anchor_offset);
+	edit::set_selection(&mut ds.ed[head_index], head_offset, head_anchor);
+	ds.range = Some(edit::CrossFieldRange { anchor_key, anchor_offset, head_key, head_offset });
+	true
+}
 
 /// Binds editing state to a field on first focus, seeded from current content.
 pub fn ensure_edit(d: &Doc, st: &mut St, ds: &mut DState, node: u32) {
@@ -807,7 +953,9 @@ pub fn clear_focus(d: &Doc, st: &mut St, ds: &mut DState) -> bool {
 			style::set_node_state(d, st, focused, "composing", false);
 		}
 	}
-	focus::set_focus(d, st, &mut ds.fs, slir::NONE, false)
+	let range_changed = clear_range(ds);
+	let focus_changed = focus::set_focus(d, st, &mut ds.fs, slir::NONE, false);
+	range_changed || focus_changed
 }
 pub(crate) fn sync_bound_text_param(d: &Doc, st: &mut St, node: u32, text: &str) -> bool {
 	let signal_index = sig_of(d, st, node, TR_CHANGE);
@@ -845,6 +993,13 @@ pub(crate) fn reset_synced_edits(
 ) -> bool {
 	let param_name = slir::str_at(d, d.parm_name[param]);
 	let mut changed = false;
+	let range_nodes = ds.range.as_ref().map(|range| {
+		(
+			scene::node_by_key(d, &st.lists, &range.anchor_key),
+			scene::node_by_key(d, &st.lists, &range.head_key),
+		)
+	});
+	let mut endpoint_changed = false;
 	for index in 0..ds.ed_node.len() {
 		let node = ds.ed_node[index];
 		if ds.ed[index].composing {
@@ -863,13 +1018,20 @@ pub(crate) fn reset_synced_edits(
 		}
 		edit::history_barrier(&mut ds.ed[index]);
 		edit::begin_mutation(&mut ds.ed[index], edit::MUT_NONE);
+		let revision = ds.ed[index].revision;
+		let old_end = crate::rt::str_len(&ds.ed[index].text);
+		edit::splice(&mut ds.ed[index], 0, old_end, text);
+		ds.ed[index].revision = revision;
 		let end = crate::rt::str_len(text);
-		text.clone_into(&mut ds.ed[index].text);
 		ds.ed[index].caret = end;
 		ds.ed[index].anchor = end;
 		edit::history_barrier(&mut ds.ed[index]);
 		style::field_set(st, node, text);
+		endpoint_changed |= range_nodes.is_some_and(|(anchor, head)| node == anchor || node == head);
 		changed = true;
+	}
+	if endpoint_changed {
+		clear_range(ds);
 	}
 	changed
 }
@@ -882,11 +1044,22 @@ pub(crate) fn queue_field_change(d: &Doc, st: &St, ds: &mut DState, node: u32, t
 		return;
 	}
 	let signal_index = usize::try_from(signal_index).expect("negative signal index");
+	let runs = {
+		let edit_index = ed_ix(ds, node);
+		if edit_index < 0 {
+			String::new()
+		} else {
+			let edit = &ds.ed[usize::try_from(edit_index).expect("negative edit index")];
+			edit::spans_json(edit.revision, &edit.spans)
+		}
+	};
 	let mut effects = effects_new();
 	emit_signal(d, st, &mut effects, signal_index, node, text);
+	effects.sig_runs[0] = runs;
 	ds.pending_signals.push(PendingSignal {
 		name: effects.sig_name[0],
 		text: effects.sig_text.swap_remove(0),
+		runs: effects.sig_runs.swap_remove(0),
 		item: effects.sig_item.swap_remove(0),
 		meta: effects.sig_meta.swap_remove(0),
 	});
@@ -914,6 +1087,8 @@ pub fn sync_field(
 	if signal_index >= 0 {
 		let signal_index = usize::try_from(signal_index).expect("negative signal index");
 		emit_signal(d, st, eff, signal_index, node, &text);
+		*eff.sig_runs.last_mut().expect("signal payload exists") =
+			edit::spans_json(ds.ed[index].revision, &ds.ed[index].spans);
 	}
 }
 
@@ -1471,7 +1646,6 @@ pub fn line_of(tl: &TextLayout, at: i32) -> i32 {
 
 /// Geometry needed to map a document-space hit into one editable field.
 pub(crate) struct FieldHit<'a> {
-	pub(crate) d:    &'a Doc,
 	pub(crate) st:   &'a St,
 	pub(crate) lay:  &'a Lay,
 	pub(crate) sc:   &'a Scene,
@@ -1479,8 +1653,7 @@ pub(crate) struct FieldHit<'a> {
 }
 
 /// Maps a document-space field hit to the nearest source caret.
-fn field_caret_at(hit: &FieldHit<'_>, text: &str, scroll_x: f64, x: f64, y: f64) -> i32 {
-	let d = hit.d;
+fn field_caret_at(hit: &FieldHit<'_>, scroll_x: f64, x: f64, y: f64) -> i32 {
 	let st = hit.st;
 	let lay = hit.lay;
 	let sc = hit.sc;
@@ -1496,49 +1669,25 @@ fn field_caret_at(hit: &FieldHit<'_>, text: &str, scroll_x: f64, x: f64, y: f64)
 	if text_layout.src_ls.is_empty() {
 		return 0;
 	}
-	let (font, size, tracking, pad_top, pad_left, pad_right, align) =
+	let (pad_top, pad_left, pad_right, align) =
 		if let Some(resolved) = st.rs.iter().rev().find(|resolved| resolved.node == node) {
 			let align = match resolved.talign {
 				1 => 0.5,
 				2 => 1.0,
 				_ => 0.0,
 			};
-			(
-				resolved.font,
-				resolved.size,
-				resolved.tracking,
-				resolved.pad_t,
-				resolved.pad_l,
-				resolved.pad_r,
-				align,
-			)
+			(resolved.pad_t, resolved.pad_l, resolved.pad_r, align)
 		} else {
-			(-1, 14.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+			(0.0, 0.0, 0.0, 0.0)
 		};
 	let line = (((y - sc.entries[scene_index].y - pad_top) / text_layout.line_h).floor() as i32)
 		.clamp(0, i32::try_from(text_layout.src_ls.len() - 1).expect("too many text lines"));
 	let line_index = usize::try_from(line).expect("negative line index");
-	let start = text_layout.src_ls[line_index];
-	let end = text_layout.src_le[line_index];
 	let content_width = sc.entries[scene_index].w - pad_left - pad_right;
 	let origin = (content_width - text_layout.line_w[line_index])
 		.mul_add(align, sc.entries[scene_index].x + pad_left)
 		- scroll_x;
-	let mut advance = 0.0;
-	for (index, character) in text
-		.chars()
-		.map(u32::from)
-		.enumerate()
-		.skip(usize::try_from(start).expect("negative line start"))
-		.take(usize::try_from(end - start).expect("negative line length"))
-	{
-		let width = crate::textm::char_w(d, font, size, tracking, character);
-		if x < width.mul_add(0.5, origin + advance) {
-			return i32::try_from(index).expect("field text exceeds i32");
-		}
-		advance += width;
-	}
-	end
+	textm::caret_for_visual_x(text_layout, line_index, x - origin)
 }
 
 /// Applies secondary-click selection semantics to one editable field.
@@ -1548,7 +1697,7 @@ pub(crate) fn place_context_caret(
 	x: f64,
 	y: f64,
 ) -> bool {
-	let hit = field_caret_at(hit, &edit_state.text, edit_state.scroll_x, x, y);
+	let hit = field_caret_at(hit, edit_state.scroll_x, x, y);
 	if hit >= edit::sel_lo(edit_state) && hit <= edit::sel_hi(edit_state) {
 		return false;
 	}
@@ -1854,6 +2003,18 @@ pub fn route_edit_key(
 	if !refresh {
 		return false;
 	}
+	let after = (ds.ed[index].caret, ds.ed[index].anchor);
+	if selecting {
+		if let Some(range) = ds.range.as_mut()
+			&& scene::node_by_key(d, &st.lists, &range.head_key) == node
+		{
+			range.head_offset = ds.ed[index].caret;
+		}
+	} else if (text_changed || before != after) && clear_range(ds) {
+		eff.repaint = true;
+	}
+	sync_field(d, st, ds, eff, edit_index, text_changed);
+	follow_caret(d, st, lay, sc, ds, edit_index, eff);
 	// A boundary command that changed nothing — Backspace at the start,
 	// Delete at the end, an arrow clamped at an edge — bubbles through
 	// `keys=` so hosts can bind block-level behaviors (merge, split,
@@ -1862,8 +2023,6 @@ pub fn route_edit_key(
 	if !effect_emitted && !text_changed && before == (ds.ed[index].caret, ds.ed[index].anchor) {
 		return false;
 	}
-	sync_field(d, st, ds, eff, edit_index, text_changed);
-	follow_caret(d, st, lay, sc, ds, edit_index, eff);
 	true
 }
 
@@ -1880,6 +2039,9 @@ pub fn dispatch(
 	ev: &Event,
 ) -> Effects {
 	let mut effects = effects_new();
+	if validate_range(d, st, ds) {
+		effects.repaint = true;
+	}
 	let (pointer_dx, pointer_dy) = if ev.etype == E_POINTER_MOVE
 		&& ds.drag_source != slir::NONE
 		&& ev.dx == 0.0
@@ -2017,6 +2179,10 @@ pub fn dispatch(
 			}
 		},
 		E_POINTER_DOWN => {
+			let previous_focus = ds.fs.focus;
+			if ev.mods & M_SHIFT == 0 && clear_range(ds) {
+				effects.repaint = true;
+			}
 			// A fresh down cancels stale capture without disturbing keyboard
 			// focus, except that a secondary field hit applies pointer focus.
 			if ds.drag_active {
@@ -2043,11 +2209,14 @@ pub fn dispatch(
 					let edit_index =
 						usize::try_from(ed_ix(ds, field)).expect("field edit state is missing");
 					effects.repaint |= place_context_caret(
-						&FieldHit { d, st, lay, sc, node: field },
+						&FieldHit { st, lay, sc, node: field },
 						&mut ds.ed[edit_index],
 						ev.x,
 						ev.y,
 					);
+					if field != previous_focus && clear_range(ds) {
+						effects.repaint = true;
+					}
 					effects.repaint |= focus::set_focus(d, st, &mut ds.fs, field, false);
 				}
 				let target = path_trigger_node(d, st, sc, &path, TR_CONTEXT);
@@ -2120,6 +2289,60 @@ pub fn dispatch(
 				}
 				if focus_target != slir::NONE && sig_of(d, st, focus_target, TR_CHANGE) >= 0 {
 					ensure_edit(d, st, ds, focus_target);
+					let edit_index =
+						usize::try_from(ed_ix(ds, focus_target)).expect("field edit state is missing");
+					let hit = field_caret_at(
+						&FieldHit { st, lay, sc, node: focus_target },
+						ds.ed[edit_index].scroll_x,
+						ev.x,
+						ev.y,
+					);
+					let selecting = ev.mods & M_SHIFT != 0;
+					let prior_range = ds.range.clone();
+					let source = if selecting && previous_focus != focus_target {
+						prior_range
+							.as_ref()
+							.filter(|range| {
+								scene::node_by_key(d, &st.lists, &range.head_key) == previous_focus
+							})
+							.map(|range| (range.anchor_key.clone(), range.anchor_offset))
+							.or_else(|| {
+								let source_index = ed_ix(ds, previous_focus);
+								(source_index >= 0).then(|| {
+									let source_index =
+										usize::try_from(source_index).expect("negative edit index");
+									(scene::key_of(d, &st.lists, previous_focus), ds.ed[source_index].anchor)
+								})
+							})
+					} else if selecting {
+						prior_range
+							.as_ref()
+							.filter(|range| {
+								scene::node_by_key(d, &st.lists, &range.head_key) == focus_target
+							})
+							.map(|range| (range.anchor_key.clone(), range.anchor_offset))
+					} else {
+						None
+					};
+					let ranged = source.is_some_and(|(anchor_key, anchor_offset)| {
+						set_range(d, st, sc, ds, &anchor_key, anchor_offset, focus_target, hit)
+					});
+					if ranged {
+						effects.repaint = true;
+					} else {
+						let anchor = if selecting && previous_focus == focus_target {
+							ds.ed[edit_index].anchor
+						} else {
+							hit
+						};
+						effects.repaint |= edit::set_selection(&mut ds.ed[edit_index], hit, anchor);
+					}
+				}
+				if focus_target != previous_focus
+					&& (focus_target == slir::NONE || sig_of(d, st, focus_target, TR_CHANGE) < 0)
+					&& clear_range(ds)
+				{
+					effects.repaint = true;
 				}
 				effects.repaint |= focus::set_focus(d, st, &mut ds.fs, focus_target, false);
 				if divider_target != slir::NONE
@@ -2225,14 +2448,23 @@ pub fn dispatch(
 			let selecting = ev.mods & M_SHIFT != 0;
 			let focused = ds.fs.focus;
 
-			// Escape cancels pointer capture before editing or authored keys.
-			let mut handled = if ev.key == "Escape" && ds.drag_source != slir::NONE {
-				emit_drag_end(&mut effects, ds, true, false);
-				cancel_pointer(d, st, ds, &mut effects);
-				true
-			} else {
-				false
-			};
+			// Structural range edits preempt field-local mutation and authored
+			// key bindings; the host applies them to its block model.
+			let mut handled =
+				if ds.range.is_some() && matches!(ev.key.as_str(), "Backspace" | "Delete") {
+					let kind = if ev.key == "Backspace" {
+						RANGE_EDIT_BACKSPACE
+					} else {
+						RANGE_EDIT_DELETE
+					};
+					request_range_edit(ds, &mut effects, kind, "")
+				} else if ev.key == "Escape" && ds.drag_source != slir::NONE {
+					emit_drag_end(&mut effects, ds, true, false);
+					cancel_pointer(d, st, ds, &mut effects);
+					true
+				} else {
+					false
+				};
 			if !handled
 				&& ev.key == "Escape"
 				&& focused != slir::NONE
@@ -2296,6 +2528,9 @@ pub fn dispatch(
 				if focus::focus_next(d, st, sc, &mut ds.fs, selecting) {
 					effects.repaint = true;
 					bind_edit_on_focus(d, st, ds);
+					if clear_range(ds) {
+						effects.repaint = true;
+					}
 				}
 			// Enter and Space activate only focused, non-editable controls.
 			} else if !handled
@@ -2327,67 +2562,88 @@ pub fn dispatch(
 				if focus::focus_next(d, st, sc, &mut ds.fs, backwards) {
 					effects.repaint = true;
 					bind_edit_on_focus(d, st, ds);
+					if clear_range(ds) {
+						effects.repaint = true;
+					}
 				}
 			}
 		},
 		E_TEXT | E_PASTE => {
-			let focused = ds.fs.focus;
-			let edit_index = ed_ix(ds, focused);
-			if focused != slir::NONE && edit_index >= 0 && !ev.text.is_empty() {
-				let text = if multiline(d, st, focused) {
-					Cow::Borrowed(ev.text.as_str())
-				} else {
-					Cow::Owned(single_line_text(&ev.text))
-				};
-				let index = usize::try_from(edit_index).expect("negative edit index");
-				if ev.etype == E_PASTE {
-					edit::history_barrier(&mut ds.ed[index]);
-				}
-				let changed = edit::insert(&mut ds.ed[index], text.as_ref());
-				sync_field(d, st, ds, &mut effects, edit_index, changed);
-				follow_caret(d, st, lay, sc, ds, edit_index, &mut effects);
-			}
-		},
-		E_CUT => {
-			let edit_index = ed_ix(ds, ds.fs.focus);
-			if ds.fs.focus != slir::NONE && edit_index >= 0 {
-				let index = usize::try_from(edit_index).expect("negative edit index");
-				edit::history_barrier(&mut ds.ed[index]);
-				if edit::delete_selection(&mut ds.ed[index]) {
-					sync_field(d, st, ds, &mut effects, edit_index, true);
+			let kind = if ev.etype == E_PASTE {
+				RANGE_EDIT_PASTE
+			} else {
+				RANGE_EDIT_TEXT
+			};
+			if request_range_edit(ds, &mut effects, kind, &ev.text) {
+				// The host owns replacement across block boundaries.
+			} else {
+				let focused = ds.fs.focus;
+				let edit_index = ed_ix(ds, focused);
+				if focused != slir::NONE && edit_index >= 0 && !ev.text.is_empty() {
+					let text = if multiline(d, st, focused) {
+						Cow::Borrowed(ev.text.as_str())
+					} else {
+						Cow::Owned(single_line_text(&ev.text))
+					};
+					let index = usize::try_from(edit_index).expect("negative edit index");
+					if ev.etype == E_PASTE {
+						edit::history_barrier(&mut ds.ed[index]);
+					}
+					let changed = edit::insert(&mut ds.ed[index], text.as_ref());
+					sync_field(d, st, ds, &mut effects, edit_index, changed);
 					follow_caret(d, st, lay, sc, ds, edit_index, &mut effects);
 				}
 			}
 		},
+		E_COPY => {
+			request_range_edit(ds, &mut effects, RANGE_EDIT_COPY, "");
+		},
+		E_CUT => {
+			if !request_range_edit(ds, &mut effects, RANGE_EDIT_CUT, "") {
+				let edit_index = ed_ix(ds, ds.fs.focus);
+				if ds.fs.focus != slir::NONE && edit_index >= 0 {
+					let index = usize::try_from(edit_index).expect("negative edit index");
+					edit::history_barrier(&mut ds.ed[index]);
+					if edit::delete_selection(&mut ds.ed[index]) {
+						sync_field(d, st, ds, &mut effects, edit_index, true);
+						follow_caret(d, st, lay, sc, ds, edit_index, &mut effects);
+					}
+				}
+			}
+		},
 		E_COMPOSITION_START => {
-			let focused = ds.fs.focus;
-			let edit_index = ed_ix(ds, focused);
-			if focused != slir::NONE && edit_index >= 0 {
-				let index = usize::try_from(edit_index).expect("negative edit index");
-				let changed = edit::composition_update(&mut ds.ed[index], "");
-				style::set_node_state(d, st, focused, "composing", true);
-				sync_field(d, st, ds, &mut effects, edit_index, changed);
+			if !request_range_edit(ds, &mut effects, RANGE_EDIT_COMPOSITION, "") {
+				let focused = ds.fs.focus;
+				let edit_index = ed_ix(ds, focused);
+				if focused != slir::NONE && edit_index >= 0 {
+					let index = usize::try_from(edit_index).expect("negative edit index");
+					let changed = edit::composition_update(&mut ds.ed[index], "");
+					style::set_node_state(d, st, focused, "composing", true);
+					sync_field(d, st, ds, &mut effects, edit_index, changed);
+				}
 			}
 		},
 		E_COMPOSITION_UPDATE | E_COMPOSITION_END => {
-			let focused = ds.fs.focus;
-			let edit_index = ed_ix(ds, focused);
-			if focused != slir::NONE && edit_index >= 0 {
-				let text = if multiline(d, st, focused) {
-					Cow::Borrowed(ev.text.as_str())
-				} else {
-					Cow::Owned(single_line_text(&ev.text))
-				};
-				let index = usize::try_from(edit_index).expect("negative edit index");
-				let changed = if ev.etype == E_COMPOSITION_UPDATE {
-					edit::composition_update(&mut ds.ed[index], text.as_ref())
-				} else {
-					let changed = edit::composition_end(&mut ds.ed[index], text.as_ref());
-					style::set_node_state(d, st, focused, "composing", false);
-					changed
-				};
-				sync_field(d, st, ds, &mut effects, edit_index, changed);
-				follow_caret(d, st, lay, sc, ds, edit_index, &mut effects);
+			if !request_range_edit(ds, &mut effects, RANGE_EDIT_COMPOSITION, &ev.text) {
+				let focused = ds.fs.focus;
+				let edit_index = ed_ix(ds, focused);
+				if focused != slir::NONE && edit_index >= 0 {
+					let text = if multiline(d, st, focused) {
+						Cow::Borrowed(ev.text.as_str())
+					} else {
+						Cow::Owned(single_line_text(&ev.text))
+					};
+					let index = usize::try_from(edit_index).expect("negative edit index");
+					let changed = if ev.etype == E_COMPOSITION_UPDATE {
+						edit::composition_update_clauses(&mut ds.ed[index], text.as_ref(), &ev.clauses)
+					} else {
+						let changed = edit::composition_end(&mut ds.ed[index], text.as_ref());
+						style::set_node_state(d, st, focused, "composing", false);
+						changed
+					};
+					sync_field(d, st, ds, &mut effects, edit_index, changed);
+					follow_caret(d, st, lay, sc, ds, edit_index, &mut effects);
+				}
 			}
 		},
 		E_BLUR => {
@@ -2397,6 +2653,9 @@ pub fn dispatch(
 			ds.hover.clear();
 			emit_drag_end(&mut effects, ds, true, false);
 			cancel_pointer(d, st, ds, &mut effects);
+			if clear_range(ds) {
+				effects.repaint = true;
+			}
 		},
 		E_RESIZE => {
 			if ev.dx > 0.0 {
@@ -2412,9 +2671,12 @@ pub fn dispatch(
 			emit_drag_end(&mut effects, ds, true, false);
 			cancel_pointer(d, st, ds, &mut effects);
 			ds.closed = true;
+			if clear_range(ds) {
+				effects.repaint = true;
+			}
 		},
 		// These host-originated events have no kernel-side semantics.
-		E_COPY | E_INSPECT | E_ACTIVATE => {},
+		E_INSPECT | E_ACTIVATE => {},
 		_ => {},
 	}
 

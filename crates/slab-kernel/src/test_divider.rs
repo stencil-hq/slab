@@ -127,6 +127,7 @@ const fn pointer(etype: u32, x: f64, y: f64, clicks: u32) -> dispatch::Event {
 		clicks,
 		key: String::new(),
 		text: String::new(),
+		clauses: Vec::new(),
 		mods: 0,
 	}
 }
@@ -142,6 +143,7 @@ fn key(name: &str, mods: u32) -> dispatch::Event {
 		clicks: 0,
 		key: name.into(),
 		text: String::new(),
+		clauses: Vec::new(),
 		mods,
 	}
 }

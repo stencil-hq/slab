@@ -280,16 +280,17 @@ pub fn test_wheel_routes_main_and_cross_axes_independently() {
 	let mut ds = dispatch::dstate_new();
 	let lay = layout::lay_new();
 	let wheel = Event {
-		etype:  dispatch::E_WHEEL,
-		x:      50.0,
-		y:      50.0,
-		dx:     15.0,
-		dy:     20.0,
-		button: 0,
-		clicks: 0,
-		key:    String::new(),
-		text:   String::new(),
-		mods:   0,
+		etype:   dispatch::E_WHEEL,
+		x:       50.0,
+		y:       50.0,
+		dx:      15.0,
+		dy:      20.0,
+		button:  0,
+		clicks:  0,
+		key:     String::new(),
+		text:    String::new(),
+		clauses: Vec::new(),
+		mods:    0,
 	};
 	let effects = dispatch::dispatch(&doc, &mut st, &lay, &sc, &mut ds, &wheel);
 	assert_eq!(style::scroll_get(&st, 0), 20.0, "dy reaches deepest main owner");
@@ -392,16 +393,17 @@ pub fn activation_scene() -> Scene {
 /// Constructs a key-down event with neutral pointer and modifier fields.
 pub fn key_event(key: &str) -> Event {
 	Event {
-		etype:  dispatch::E_KEY_DOWN,
-		x:      0.0,
-		y:      0.0,
-		dx:     0.0,
-		dy:     0.0,
-		button: 0,
-		clicks: 0,
-		key:    key.into(),
-		text:   String::new(),
-		mods:   0,
+		etype:   dispatch::E_KEY_DOWN,
+		x:       0.0,
+		y:       0.0,
+		dx:      0.0,
+		dy:      0.0,
+		button:  0,
+		clicks:  0,
+		key:     key.into(),
+		text:    String::new(),
+		clauses: Vec::new(),
+		mods:    0,
 	}
 }
 
@@ -508,16 +510,17 @@ pub fn test_synthetic_activation_carries_item_key() {
 	eds.ed_node.push(node);
 	eds.ed.push(edit::es_new(node, ""));
 	let text_event = Event {
-		etype:  dispatch::E_TEXT,
-		x:      0.0,
-		y:      0.0,
-		dx:     0.0,
-		dy:     0.0,
-		button: 0,
-		clicks: 0,
-		key:    String::new(),
-		text:   "x".into(),
-		mods:   0,
+		etype:   dispatch::E_TEXT,
+		x:       0.0,
+		y:       0.0,
+		dx:      0.0,
+		dy:      0.0,
+		button:  0,
+		clicks:  0,
+		key:     String::new(),
+		text:    "x".into(),
+		clauses: Vec::new(),
+		mods:    0,
 	};
 	let change = dispatch::dispatch(&doc, &mut st, &lay, &sc, &mut eds, &text_event);
 	assert!(

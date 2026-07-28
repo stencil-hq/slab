@@ -109,6 +109,7 @@ pub fn event(etype: u32, key: &str, text: &str, mods: u32) -> Event {
 		clicks: 0,
 		key: key.into(),
 		text: text.into(),
+		clauses: Vec::new(),
 		mods,
 	}
 }
@@ -466,4 +467,35 @@ pub fn test_modified_printable_bubbles_with_mods() {
 	assert_eq!(meta.mods, dispatch::M_META, "shortcut reports its modifiers");
 	assert_eq!(meta.pressed_key, "b", "shortcut reports its key");
 	assert_eq!(edit::text_str(&f.ds.ed[0]), "ab", "Cmd+B changes no text");
+}
+
+/// Verifies that vertical arrows clamped at the first/last visual line leave
+/// the caret untouched, retain `goal_x`, and bubble to ancestor `keys=` maps.
+pub fn test_vertical_boundary_bubbles_with_goal_x() {
+	let mut f = fix_new();
+	fill(&mut f, "ab\ncde", true, false, 100.0);
+	let keys = push_str(&mut f, "ArrowUp:up,ArrowDown:down");
+	let parent = push_node(&mut f, slir::K_COL, slir::A_KEYS, keys);
+	let up = push_key_signal(&mut f, parent, "up");
+	let down = push_key_signal(&mut f, parent, "down");
+	f.d.node_parent[0] = parent;
+	f.sc.entries[0].parent_ix = 1;
+	add_scene(&mut f.sc, parent, -1, 0.0, 0.0, 100.0, 100.0, 0);
+
+	// Mid first line: Up stays put, keeps goal_x, and bubbles.
+	send(&mut f, &event(dispatch::E_KEY_DOWN, "Home", "", dispatch::M_META));
+	send(&mut f, &event(dispatch::E_KEY_DOWN, "ArrowRight", "", 0));
+	assert_eq!(f.ds.ed[0].caret, 1, "caret mid first line");
+	let first = send(&mut f, &event(dispatch::E_KEY_DOWN, "ArrowUp", "", 0));
+	assert!(first.sig_name.contains(&up), "Up on the first line bubbles");
+	assert_eq!(f.ds.ed[0].caret, 1, "Up on the first line leaves the caret");
+	assert!(f.ds.ed[0].goal_x >= 0.0, "Up on the first line retains goal_x");
+
+	// Mid last line: Down stays put, keeps goal_x, and bubbles.
+	send(&mut f, &event(dispatch::E_KEY_DOWN, "ArrowDown", "", 0));
+	assert_eq!(f.ds.ed[0].caret, 4, "interior Down moves to the last line");
+	let last = send(&mut f, &event(dispatch::E_KEY_DOWN, "ArrowDown", "", 0));
+	assert!(last.sig_name.contains(&down), "Down on the last line bubbles");
+	assert_eq!(f.ds.ed[0].caret, 4, "Down on the last line leaves the caret");
+	assert!(f.ds.ed[0].goal_x >= 0.0, "Down on the last line retains goal_x");
 }

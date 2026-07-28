@@ -311,11 +311,17 @@ pub const A_ITALIC: u32 = 92u32;
 /// Inherited boolean underline text decoration.
 pub const A_UNDERLINE: u32 = 93u32;
 
+/// Optional rich inline-code text paint.
+pub const A_CODE_COLOR: u32 = 94u32;
+
+/// Optional rich inline-code background paint.
+pub const A_CODE_BG: u32 = 95u32;
+
 /// Field cancel binder channel fired on escape-blur.
 pub const A_CANCEL: u32 = 91u32;
 
 /// Total number of normative SLIR attributes (highest attribute ID + 1).
-pub const ATTR_COUNT: usize = (A_UNDERLINE as usize) + 1;
+pub const ATTR_COUNT: usize = (A_CODE_BG as usize) + 1;
 
 /// Parameter types stored in [`Doc::parm_type`] and host parameter values.
 pub const PARAM_TEXT: u32 = 0u32;

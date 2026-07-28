@@ -131,6 +131,33 @@ pub fn test_wrap_mixed_cjk_latin() {
 		.collect();
 	assert_eq!(lines, ["ab", "天地", "cd"], "mixed break classes wrap greedily");
 }
+/// Checks the UAX #14 HY opportunity in otherwise ordinary Latin text.
+pub fn test_wrap_latin_hyphen_opportunity() {
+	let doc = font_doc();
+	let layout = measure(&doc, "aa foo-bar", 45.0, true, false, -1);
+	assert_eq!(line_str(&layout, 0), "aa foo-", "HY opportunity fills the current line");
+	assert_eq!(line_str(&layout, 1), "bar", "whole token would also fit the next line");
+}
+
+/// Checks that zero-width space supplies a UAX #14 opportunity.
+pub fn test_wrap_zero_width_space_opportunity() {
+	let doc = font_doc();
+	let layout = measure(&doc, "a aa\u{200b}bb", 30.0, true, false, -1);
+	assert_eq!(line_str(&layout, 0), "a aa\u{200b}", "ZWSP opportunity fills the current line");
+	assert_eq!(line_str(&layout, 1), "bb", "whole token would also fit the next line");
+}
+
+/// Checks that an ideographic space supplies a UAX #14 opportunity.
+pub fn test_wrap_ideographic_space_opportunity() {
+	let doc = font_doc();
+	let layout = measure(&doc, "a aa\u{3000}bb", 30.0, true, false, -1);
+	assert_eq!(
+		line_str(&layout, 0),
+		"a aa\u{3000}",
+		"ideographic-space opportunity fills the current line"
+	);
+	assert_eq!(line_str(&layout, 1), "bb", "whole token would also fit the next line");
+}
 
 /// Checks that GL-class nonbreaking space remains attached even when over
 /// width.

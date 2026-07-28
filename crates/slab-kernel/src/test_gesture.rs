@@ -118,6 +118,7 @@ const fn pointer(etype: u32, x: f64, y: f64, button: u32, clicks: u32, mods: u32
 		clicks,
 		key: String::new(),
 		text: String::new(),
+		clauses: Vec::new(),
 		mods,
 	}
 }

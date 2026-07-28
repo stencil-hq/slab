@@ -13,7 +13,7 @@ use crate::{
 	layout::Lay,
 	list,
 	motion::MSt,
-	slir,
+	scene, slir,
 	style::{self, RStyle, St},
 	textm,
 };
@@ -792,10 +792,24 @@ struct RotationFrame {
 }
 
 #[derive(Clone, Copy)]
+enum RangeOrdering {
+	Scene { anchor: u32, head: u32 },
+	List { list: i32, anchor: i32, head: i32 },
+}
+
+#[derive(Clone, Copy)]
+struct RangeOrders {
+	anchor_node: u32,
+	head_node:   u32,
+	ordering:    RangeOrdering,
+}
+
+#[derive(Clone, Copy)]
 struct WalkContext {
 	parent_ix:    i32,
 	parent_inert: bool,
 	rotation:     Option<RotationFrame>,
+	range:        Option<RangeOrders>,
 }
 
 fn mark_authored_order(l: &Lay, pi: i32, next: &mut u32, order: &mut [u32]) {
@@ -817,6 +831,55 @@ fn mark_authored_order(l: &Lay, pi: i32, next: &mut u32, order: &mut [u32]) {
 	for child_pool_index in first_child..child_end {
 		mark_authored_order(l, l.child_pool[index(child_pool_index)], next, order);
 	}
+}
+fn node_authored_order(l: &Lay, authored_order: &[u32], node: u32) -> Option<u32> {
+	l.p_node
+		.iter()
+		.zip(authored_order)
+		.filter(|(candidate, order)| **candidate == node && **order != u32::MAX)
+		.map(|(_, order)| *order)
+		.min()
+}
+
+fn cross_field_selection(
+	d: &slir::Doc,
+	st: &St,
+	ds: &DState,
+	orders: Option<RangeOrders>,
+	node: u32,
+	order: u32,
+	text_end: i32,
+) -> Option<(i32, i32)> {
+	let range = ds.range.as_ref()?;
+	let orders = orders?;
+	let anchor_before = match orders.ordering {
+		RangeOrdering::Scene { anchor, head } => anchor < head,
+		RangeOrdering::List { anchor, head, .. } => anchor < head,
+	};
+	if node == orders.anchor_node {
+		return Some(if anchor_before {
+			(range.anchor_offset.clamp(0, text_end), text_end)
+		} else {
+			(0, range.anchor_offset.clamp(0, text_end))
+		});
+	}
+	if node == orders.head_node {
+		return Some(if anchor_before {
+			(0, range.head_offset.clamp(0, text_end))
+		} else {
+			(range.head_offset.clamp(0, text_end), text_end)
+		});
+	}
+	let between = match orders.ordering {
+		RangeOrdering::Scene { anchor, head } => order > anchor.min(head) && order < anchor.max(head),
+		RangeOrdering::List { list, anchor, head } => {
+			list::param_of(&st.lists, d, node) == list && {
+				let item = list::item_ix(&st.lists, d, node);
+				item > anchor.min(head) && item < anchor.max(head)
+			}
+		},
+	};
+	between.then_some((0, text_end))
 }
 
 /// Flattens one placed node and its descendants into `fr`.
@@ -847,10 +910,33 @@ pub fn walk(
 	authored_order.resize(l.p_node.len(), u32::MAX);
 	let mut next = 0;
 	mark_authored_order(l, pi, &mut next, &mut authored_order);
+	let range = ds.range.as_ref().and_then(|range| {
+		let anchor_node = scene::node_by_key(d, &st.lists, &range.anchor_key);
+		let head_node = scene::node_by_key(d, &st.lists, &range.head_key);
+		if anchor_node == slir::NONE || head_node == slir::NONE {
+			return None;
+		}
+		let anchor_scene = node_authored_order(l, &authored_order, anchor_node);
+		let head_scene = node_authored_order(l, &authored_order, head_node);
+		let ordering = if let (Some(anchor), Some(head)) = (anchor_scene, head_scene) {
+			RangeOrdering::Scene { anchor, head }
+		} else {
+			let anchor_list = list::param_of(&st.lists, d, anchor_node);
+			let head_list = list::param_of(&st.lists, d, head_node);
+			let anchor = list::item_ix(&st.lists, d, anchor_node);
+			let head = list::item_ix(&st.lists, d, head_node);
+			if anchor_list < 0 || anchor_list != head_list || anchor < 0 || head < 0 {
+				return None;
+			}
+			RangeOrdering::List { list: anchor_list, anchor, head }
+		};
+		Some(RangeOrders { anchor_node, head_node, ordering })
+	});
 	walk_node(d, st, l, ds, ms, fr, pi, ox, oy, &authored_order, WalkContext {
 		parent_ix,
 		parent_inert,
 		rotation,
+		range,
 	});
 	fr.order_scratch = authored_order;
 }
@@ -1111,50 +1197,76 @@ fn walk_node(
 		let content_width = w - padding_left - padding_right;
 		let alignment = text_alignment_factor(rule.talign);
 
-		// The focused field's selection paints as one half-alpha band of
-		// the text color per visual line, before the glyphs (SPEC §15.6).
-		if field_clip && ds.fs.focus == node {
-			let edit_index = dispatch::ed_ix(ds, node);
-			if edit_index >= 0 {
-				let es = &ds.ed[index(edit_index)];
-				let (sel_lo, sel_hi) = (edit::sel_lo(es), edit::sel_hi(es));
-				if sel_hi > sel_lo {
-					let text = edit::display_str(es);
-					// RGBA words are little-endian [r, g, b, a]: keep the
-					// text rgb, set alpha to exactly half (0x80).
-					let band = (solid_text_rgba(d, rule) & 0x00ff_ffff) | 0x8000_0000;
-					for line in 0..text_layout.src_ls.len() {
-						let line_start = text_layout.src_ls[line];
-						let overlap_lo = sel_lo.max(line_start);
-						let overlap_hi = sel_hi.min(text_layout.src_le[line]);
-						if overlap_hi <= overlap_lo {
-							continue;
-						}
-						let measure = |to: i32| {
-							textm::str_slice_w(
-								d,
-								rule.font,
-								rule.size,
-								rule.tracking,
-								&text,
-								line_start,
-								to,
-							)
-						};
-						let origin = (content_width - text_layout.line_w[line])
-							.mul_add(alignment, x + padding_left)
-							- field_scroll_x;
-						let band_x = origin + measure(overlap_lo);
-						push_solid_rect(
-							fr,
-							node,
-							band_x,
-							f64::from(count(line)).mul_add(text_layout.line_h, y + padding_top),
-							origin + measure(overlap_hi) - band_x,
-							text_layout.line_h,
-							band,
-						);
+		if rule.code_bg_kind != 0 {
+			for line in 0..count(text_layout.ls.len()) {
+				let line_index = index(line);
+				let line_origin = (content_width - text_layout.line_w[line_index])
+					.mul_add(alignment, x + padding_left)
+					- field_scroll_x;
+				let line_y = f64::from(line).mul_add(text_layout.line_h, y + padding_top);
+				for run in &text_layout.shaped[line_index].runs {
+					if run.end <= run.start || run.style & (1 << edit::STYLE_CODE) == 0 {
+						continue;
 					}
+					let mut background = unstyled_rect(
+						node,
+						line_origin + run.x,
+						line_y,
+						run.width,
+						text_layout.line_h,
+						0.0,
+					);
+					background.bg_kind = rule.code_bg_kind;
+					background.bg = rule.code_bg;
+					fr.ops.push(FrameOp::Rect(background));
+				}
+			}
+		}
+
+		// Cross-field and focused local selections share the same shaped visual
+		// band primitive and paint before glyphs inside each field clip.
+		let text_end = count(text_layout.chars.len());
+		let selection = field_clip
+			.then(|| {
+				cross_field_selection(d, st, ds, context.range, node, authored_order[pi], text_end)
+			})
+			.flatten()
+			.or_else(|| {
+				(field_clip && ds.fs.focus == node)
+					.then(|| {
+						let edit_index = dispatch::ed_ix(ds, node);
+						(edit_index >= 0).then(|| {
+							let es = &ds.ed[index(edit_index)];
+							(edit::sel_lo(es), edit::sel_hi(es))
+						})
+					})
+					.flatten()
+			});
+		if let Some((sel_lo, sel_hi)) = selection
+			&& sel_hi > sel_lo
+		{
+			// RGBA words are little-endian [r, g, b, a]: keep the text rgb,
+			// set alpha to exactly half (0x80).
+			let band = (solid_text_rgba(d, rule) & 0x00ff_ffff) | 0x8000_0000;
+			for line in 0..text_layout.src_ls.len() {
+				let overlap_lo = sel_lo.max(text_layout.src_ls[line]);
+				let overlap_hi = sel_hi.min(text_layout.src_le[line]);
+				if overlap_hi <= overlap_lo {
+					continue;
+				}
+				let origin = (content_width - text_layout.line_w[line])
+					.mul_add(alignment, x + padding_left)
+					- field_scroll_x;
+				for (x0, x1) in textm::selection_bands(text_layout, line, overlap_lo, overlap_hi) {
+					push_solid_rect(
+						fr,
+						node,
+						origin + x0,
+						f64::from(count(line)).mul_add(text_layout.line_h, y + padding_top),
+						x1 - x0,
+						text_layout.line_h,
+						band,
+					);
 				}
 			}
 		}
@@ -1176,7 +1288,19 @@ fn walk_node(
 					push_shaped_glyphs(fr, run, line_origin, baseline, rule.size, 0);
 				let (underline_offset, underline_thickness) =
 					textm::underline_geometry(d, run.font, rule.size);
-				let font_weight = if run.font >= 0 {
+				let bold = run.style & (1 << edit::STYLE_BOLD) != 0;
+				let strike = run.style & (1 << edit::STYLE_STRIKE) != 0;
+				let italic = run.style & (1 << edit::STYLE_ITALIC) != 0;
+				let underline = run.style & (1 << edit::STYLE_UNDERLINE) != 0;
+				let code = run.style & (1 << edit::STYLE_CODE) != 0;
+				let (run_color, run_color_kind) = if code && rule.code_color_kind != 0 {
+					(rule.code_color, rule.code_color_kind)
+				} else {
+					(rule.color, rule.color_kind)
+				};
+				let font_weight = if bold {
+					700
+				} else if run.font >= 0 {
 					d.font_weight[index(run.font)]
 				} else {
 					truncate_u32(rule.weight)
@@ -1191,14 +1315,14 @@ fn walk_node(
 					size: rule.size,
 					weight: font_weight,
 					tracking: rule.tracking,
-					color: rule.color,
+					color: run_color,
 					opacity: 1.0,
-					strike: rule.strike,
-					italic: rule.italic,
-					underline: rule.underline,
+					strike: rule.strike || strike,
+					italic: rule.italic || italic,
+					underline: rule.underline || underline,
 					underline_offset,
 					underline_thickness,
-					color_kind: rule.color_kind,
+					color_kind: run_color_kind,
 					gx: 0.0,
 					gy: 0.0,
 					gw: 0.0,
@@ -1209,7 +1333,7 @@ fn walk_node(
 					glyph_len,
 					rtl: run.rtl,
 				};
-				if rule.color_kind == 2 {
+				if run_color_kind == 2 {
 					// The gradient spans the node's content box so every line
 					// samples one continuous ramp.
 					text_op.gx = x + padding_left;
@@ -1218,6 +1342,52 @@ fn walk_node(
 					text_op.gh = h - padding_top - padding_bottom;
 				}
 				fr.ops.push(FrameOp::Text(text_op));
+			}
+		}
+
+		// Paint the IME marked-text overlay independently from committed rich
+		// spans. Each clause owns its underline, including adjacent clauses.
+		if field_clip && ds.fs.focus == node {
+			let edit_index = dispatch::ed_ix(ds, node);
+			if edit_index >= 0 {
+				let es = &ds.ed[index(edit_index)];
+				if es.composing {
+					let color = solid_text_rgba(d, rule);
+					for &(clause_start, clause_end) in &es.compose_clauses {
+						let clause_start = es.caret.wrapping_add(clause_start);
+						let clause_end = es.caret.wrapping_add(clause_end);
+						for line in 0..text_layout.src_ls.len() {
+							let overlap_start = clause_start.max(text_layout.src_ls[line]);
+							let overlap_end = clause_end.min(text_layout.src_le[line]);
+							if overlap_start >= overlap_end {
+								continue;
+							}
+							let origin = (content_width - text_layout.line_w[line])
+								.mul_add(alignment, x + padding_left)
+								- field_scroll_x;
+							let baseline = f64::from(count(line))
+								.mul_add(text_layout.line_h, y + padding_top + text_layout.ascent);
+							let font = text_layout.shaped[line]
+								.runs
+								.first()
+								.map_or(rule.font, |run| run.font);
+							let (offset, thickness) = textm::underline_geometry(d, font, rule.size);
+							for (band_x, band_end) in
+								textm::selection_bands(text_layout, line, overlap_start, overlap_end)
+							{
+								push_solid_rect(
+									fr,
+									node,
+									origin + band_x,
+									baseline + offset - thickness / 2.0,
+									band_end - band_x,
+									thickness,
+									color,
+								);
+							}
+						}
+					}
+				}
 			}
 		}
 	}
@@ -1406,7 +1576,12 @@ fn walk_node(
 			children_x,
 			children_y,
 			authored_order,
-			WalkContext { parent_ix: scene_index_i32, parent_inert: inert, rotation: None },
+			WalkContext {
+				parent_ix:    scene_index_i32,
+				parent_inert: inert,
+				rotation:     None,
+				range:        context.range,
+			},
 		);
 	}
 
@@ -1435,6 +1610,7 @@ fn walk_node(
 			parent_ix:    scene_index_i32,
 			parent_inert: inert,
 			rotation:     None,
+			range:        context.range,
 		});
 	}
 

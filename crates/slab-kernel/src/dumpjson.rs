@@ -811,6 +811,21 @@ pub fn dump_effects(d: &slir::Doc, st: &style::St, effects: &dispatch::Effects) 
 		out.push(OBJECT_CLOSE);
 	}
 	out.push(ARRAY_CLOSE);
+	if let Some(range_edit) = &effects.range_edit {
+		emit(&mut out, ",\"range_edit\":{\"kind\":");
+		emit_u32(&mut out, range_edit.kind);
+		emit(&mut out, ",\"anchor\":{\"key\":");
+		emit_jstr(&mut out, &range_edit.anchor.key);
+		emit(&mut out, ",\"offset\":");
+		emit_i32(&mut out, range_edit.anchor.offset);
+		emit(&mut out, "},\"head\":{\"key\":");
+		emit_jstr(&mut out, &range_edit.head.key);
+		emit(&mut out, ",\"offset\":");
+		emit_i32(&mut out, range_edit.head.offset);
+		emit(&mut out, "},\"text\":");
+		emit_jstr(&mut out, &range_edit.text);
+		out.push(OBJECT_CLOSE);
+	}
 	out.push(OBJECT_CLOSE);
 	crate::rt::str_from_chars(&out)
 }

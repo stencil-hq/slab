@@ -255,6 +255,7 @@ fn hover_ease_interpolates_shuf_bg_paint() {
 		clicks: 0,
 		key: String::new(),
 		text: String::new(),
+		clauses: Vec::new(),
 		mods: 0,
 	};
 	kframe::inst_dispatch(&mut inst, &ev);

@@ -568,6 +568,7 @@ impl App {
 			clicks: 0,
 			key: String::new(),
 			text: String::new(),
+			clauses: Vec::new(),
 			mods: self.mods,
 		}
 	}

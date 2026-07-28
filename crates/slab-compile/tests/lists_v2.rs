@@ -370,6 +370,7 @@ col #surface w=160 { each param.rows key=rows }
 		clicks: 1,
 		key: String::new(),
 		text: String::new(),
+		clauses: Vec::new(),
 		mods: 0,
 	};
 	let down = frame::inst_dispatch(&mut instance, &event(dispatch::E_POINTER_DOWN));

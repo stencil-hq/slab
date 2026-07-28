@@ -1,5 +1,5 @@
-{"repaint":true,"signals":[],"caret":[11.669,0,1,19.6],"ime":[11.669,0,1,19.6],"cursor":0,"focus":"canvas@0/#q","scrolls":[]}
-{"repaint":false,"signals":[],"caret":[11.669,0,1,19.6],"ime":[11.669,0,1,19.6],"cursor":0,"focus":"canvas@0/#q","scrolls":[]}
+{"repaint":true,"signals":[],"caret":[8.278,0,1,19.6],"ime":[8.278,0,1,19.6],"cursor":0,"focus":"canvas@0/#q","scrolls":[]}
+{"repaint":false,"signals":[],"caret":[8.278,0,1,19.6],"ime":[8.278,0,1,19.6],"cursor":0,"focus":"canvas@0/#q","scrolls":[]}
 {"set":"param","ok":true}
 {"set":"param","ok":true}
 {"set":"param","ok":true}

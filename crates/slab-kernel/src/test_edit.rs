@@ -73,7 +73,7 @@ pub fn test_selection_and_words() {
 	assert_eq!(edit::text_str(&es), "hello !");
 }
 
-/// Verifies punctuation is a non-word span between UAX #29 Latin word starts.
+/// Verifies trailing and standalone punctuation editor word stops.
 pub fn test_unicode_word_punctuation_deletion() {
 	let punctuated = "hello, world";
 	assert_eq!(edit::word_prev(punctuated, 12), 7, "backward stop is the start of world");
@@ -84,6 +84,25 @@ pub fn test_unicode_word_punctuation_deletion() {
 	);
 	assert_eq!(edit::word_next(punctuated, 0), 7, "forward stop skips comma and space");
 	assert_eq!(edit::word_next(punctuated, 7), 12, "the final fallback stop is text end");
+
+	let standalone = "hello !";
+	assert_eq!(
+		edit::word_next(standalone, 0),
+		6,
+		"whitespace-delimited punctuation is a forward stop"
+	);
+	assert_eq!(
+		edit::word_prev(standalone, 7),
+		6,
+		"whitespace-delimited punctuation is a backward stop"
+	);
+	let mut forward = edit::es_new(2, standalone);
+	edit::home(&mut forward, false);
+	assert!(edit::word_forward(&mut forward), "forward deletion uses the punctuation stop");
+	assert_eq!(forward.text, "!", "forward deletion leaves the standalone punctuation unit");
+	let mut backward = edit::es_new(3, standalone);
+	assert!(edit::word_back(&mut backward), "backward deletion uses the punctuation stop");
+	assert_eq!(backward.text, "hello ", "backward deletion removes only punctuation");
 
 	let mut deleted = edit::es_new(1, punctuated);
 	assert!(edit::word_back(&mut deleted), "first backward deletion changes text");
@@ -567,6 +586,7 @@ pub fn host_field_event(etype: u32, key: &str, text: &str) -> dispatch::Event {
 		clicks: 0,
 		key: key.into(),
 		text: text.into(),
+		clauses: Vec::new(),
 		mods: 0,
 	}
 }
@@ -806,7 +826,7 @@ pub fn test_context_caret_preserves_selection_only_for_inside_hit() {
 	let mut es = edit::es_new(0, text);
 	es.anchor = 2;
 	es.caret = 4;
-	let hit = dispatch::FieldHit { d: &doc, st: &st, lay: &lay, sc: &sc, node: 0 };
+	let hit = dispatch::FieldHit { st: &st, lay: &lay, sc: &sc, node: 0 };
 	assert!(!dispatch::place_context_caret(&hit, &mut es, inside_x, sc.entries[0].y,));
 	assert_eq!((es.anchor, es.caret), (2, 4));
 

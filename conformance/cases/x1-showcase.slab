@@ -78,6 +78,7 @@ stack#app w=800 h=600 bg=#0a0e14 family="system-ui, sans-serif" {
 
       text "Add virtual each support" size=14 color=#f8fafc weight=500
 
+      // UAX #14 fills the current line at the hyphens in main-axis and item-extent.
       text "Implements virtual rendering for main-axis scroll containers using item-extent and overscan." size=13 color=#cbd5e1
 
       row h=1 bg=#1e293b w=fill offset=0,8

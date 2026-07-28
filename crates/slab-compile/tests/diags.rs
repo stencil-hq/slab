@@ -640,6 +640,7 @@ row w=300 h=64 gap=40 {
 		clicks: 1,
 		key: String::new(),
 		text: String::new(),
+		clauses: Vec::new(),
 		mods: 0,
 	};
 	slab_kernel::frame::inst_dispatch(
@@ -729,6 +730,7 @@ canvas w=240 h=160 {
 		clicks: 1,
 		key: String::new(),
 		text: String::new(),
+		clauses: Vec::new(),
 		mods: 0,
 	};
 	slab_kernel::frame::inst_dispatch(
@@ -800,6 +802,7 @@ col w=400 h=300 pad=100,50 {
 		clicks: 1,
 		key: String::new(),
 		text: String::new(),
+		clauses: Vec::new(),
 		mods: 0,
 	};
 	let down_x = base_rect.x + 10.0;

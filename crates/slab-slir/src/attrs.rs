@@ -2,7 +2,7 @@
 //!
 //! This table is normative: `spec/SLIR.md` mirrors it and `slab_kernel::slir`
 //! must match. Ids 39–44 and 89 include compiler/kernel channels; ids 90,
-//! 92, and 93 extend the authorable text-attribute set.
+//! 92–95 extend the authorable text-attribute set.
 
 macro_rules! attr_table {
     ($( $const:ident = $id:literal, $name:literal; )*) => {
@@ -127,4 +127,6 @@ attr_table! {
 	 CANCEL = 91, "cancel";
 	 ITALIC = 92, "italic";
 	 UNDERLINE = 93, "underline";
+	 CODE_COLOR = 94, "code-color";
+	 CODE_BG = 95, "code-bg";
 }

@@ -1535,8 +1535,13 @@ fn apply_attr_concrete(ctx: &mut Ctx, sink: &mut Sink, key: &str, rv: &RVal, lin
 			},
 			_ => ctx.error("ref", "collide expects auto|none".into(), line),
 		},
-		"bg" | "stroke" => {
-			let id = if key == "bg" { at::BG } else { at::STROKE };
+		"bg" | "stroke" | "code-color" | "code-bg" => {
+			let id = match key {
+				"bg" => at::BG,
+				"stroke" => at::STROKE,
+				"code-color" => at::CODE_COLOR,
+				_ => at::CODE_BG,
+			};
 			if matches!(rv, RVal::Kw(keyword) if keyword == "current") {
 				if ctx.icon_depth != 0 {
 					sink.set(id, TVal::PaintCurrent);
@@ -1561,8 +1566,8 @@ fn apply_attr_concrete(ctx: &mut Ctx, sink: &mut Sink, key: &str, rv: &RVal, lin
 					None => ctx.warn("attr", format!("unparseable color '{s}' for {key}"), line),
 				},
 				Ok(None) => {
-					if matches!(rv, RVal::Kw(_)) {
-						// explicit none/transparent: emit so patches can clear
+					if matches!(rv, RVal::Kw(_)) && key != "code-color" {
+						// Explicit none/transparent clears box and code backgrounds.
 						sink.set(id, TVal::Paint(Paint::None));
 					}
 				},

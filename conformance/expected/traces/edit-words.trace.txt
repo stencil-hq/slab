@@ -1,4 +1,4 @@
-{"repaint":true,"signals":[],"caret":[113.798,0,1,19.6],"ime":[113.798,0,1,19.6],"cursor":0,"focus":"col@0/text@0","scrolls":[]}
+{"repaint":true,"signals":[],"caret":[49.396,0,1,19.6],"ime":[49.396,0,1,19.6],"cursor":0,"focus":"col@0/text@0","scrolls":[]}
 {"repaint":true,"signals":[],"caret":[0,0,1,19.6],"ime":[0,0,1,19.6],"cursor":0,"focus":"col@0/text@0","scrolls":[]}
 {"repaint":true,"signals":[],"caret":[35.554,0,1,19.6],"ime":[35.554,0,1,19.6],"cursor":0,"focus":"col@0/text@0","scrolls":[]}
 {"repaint":true,"signals":[],"caret":[113.798,0,1,19.6],"ime":[113.798,0,1,19.6],"cursor":0,"focus":"col@0/text@0","scrolls":[]}

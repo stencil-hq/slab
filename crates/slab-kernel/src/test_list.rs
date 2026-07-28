@@ -780,16 +780,17 @@ pub fn test_virtual_list_frame_settle_reveal_and_op_bound() {
 	frame::inst_frame(&mut inst, 15.0);
 	assert!(frame::inst_set_focus(&mut inst, "virtual~0/row", true));
 	let tab = dispatch::Event {
-		etype:  dispatch::E_KEY_DOWN,
-		x:      0.0,
-		y:      0.0,
-		dx:     0.0,
-		dy:     0.0,
-		button: 0,
-		clicks: 0,
-		key:    "Tab".into(),
-		text:   String::new(),
-		mods:   0,
+		etype:   dispatch::E_KEY_DOWN,
+		x:       0.0,
+		y:       0.0,
+		dx:      0.0,
+		dy:      0.0,
+		button:  0,
+		clicks:  0,
+		key:     "Tab".into(),
+		text:    String::new(),
+		clauses: Vec::new(),
+		mods:    0,
 	};
 	for step in 0..8 {
 		frame::inst_dispatch(&mut inst, &tab);

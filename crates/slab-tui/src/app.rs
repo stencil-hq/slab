@@ -112,6 +112,7 @@ const fn event_new(etype: u32) -> dispatch::Event {
 		clicks: 0,
 		key: String::new(),
 		text: String::new(),
+		clauses: Vec::new(),
 		mods: 0,
 	}
 }

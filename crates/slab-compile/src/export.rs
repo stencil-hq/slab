@@ -53,7 +53,8 @@ pub fn exported_def_names(units: &[Unit]) -> Vec<String> {
 	names
 }
 
-const COLOR_ATTRS: [&str; 5] = ["bg", "stroke", "color", "mask", "backdrop-mask"];
+const COLOR_ATTRS: [&str; 7] =
+	["bg", "stroke", "color", "code-color", "code-bg", "mask", "backdrop-mask"];
 const TEXT_ATTRS: [&str; 12] = [
 	"act",
 	"field",

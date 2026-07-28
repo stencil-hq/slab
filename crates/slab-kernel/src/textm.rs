@@ -234,6 +234,8 @@ pub struct ShapedRun {
 	pub start:  i32,
 	pub end:    i32,
 	pub font:   i32,
+	/// Bitset of `1 << edit::STYLE_*` inline overrides.
+	pub style:  u32,
 	pub rtl:    bool,
 	pub x:      f64,
 	pub width:  f64,
@@ -307,6 +309,8 @@ pub struct TextCacheEntry {
 	pub wrap:      bool,
 	pub ellipsis:  bool,
 	pub max_lines: i32,
+	/// Rich-field spans that participated in this layout.
+	pub spans:     crate::edit::InlineSpans,
 	/// Resolved text content at measurement time.
 	pub content:   String,
 	pub layout:    std::rc::Rc<TextLayout>,
@@ -540,6 +544,7 @@ fn shape_font_run(
 				start: run_start,
 				end: run_end,
 				font,
+				style: 0,
 				rtl,
 				x: line_x,
 				width: cursor - line_x,
@@ -601,6 +606,7 @@ fn shape_font_run(
 			start: run_start,
 			end: run_end,
 			font,
+			style: 0,
 			rtl,
 			x: line_x,
 			width: cursor - line_x,
@@ -893,6 +899,383 @@ fn shape_layout(
 	}
 }
 
+fn rich_font(d: &Doc, base_font: i32, style: u32) -> i32 {
+	let bold = style & (1 << crate::edit::STYLE_BOLD) != 0;
+	let weight = if bold {
+		700
+	} else {
+		usize::try_from(base_font)
+			.ok()
+			.and_then(|index| d.font_weight.get(index))
+			.copied()
+			.unwrap_or(400)
+	};
+	if style & (1 << crate::edit::STYLE_CODE) != 0
+		&& let Some((index, family)) = d
+			.font_class
+			.iter()
+			.zip(&d.font_family)
+			.enumerate()
+			.find_map(|(index, (&class, &family))| (class == 1).then_some((index, family)))
+	{
+		let selected = slir::font_select(d, family, weight);
+		return if selected >= 0 {
+			selected
+		} else {
+			i32::try_from(index).expect("font index exceeds i32")
+		};
+	}
+	usize::try_from(base_font)
+		.ok()
+		.and_then(|index| d.font_family.get(index))
+		.map_or(base_font, |&family| slir::font_select(d, family, weight))
+}
+
+fn rich_mask(spans: &crate::edit::InlineSpans, point: i32) -> u32 {
+	let mut mask = 0;
+	for style in 0..=crate::edit::STYLE_CODE {
+		if spans
+			.get(style)
+			.is_some_and(|ranges| ranges.contains(point))
+		{
+			mask |= 1 << style;
+		}
+	}
+	mask
+}
+
+#[allow(
+	clippy::too_many_arguments,
+	reason = "rich shaping keeps metric and source inputs explicit"
+)]
+fn shape_rich_line(
+	d: &Doc,
+	base_font: i32,
+	size: f64,
+	tracking: f64,
+	chars: &[u32],
+	output_start: i32,
+	source_start: i32,
+	source_end: i32,
+	spans: &crate::edit::InlineSpans,
+	cache: &mut ShapeCache,
+) -> ShapedLine {
+	if chars.is_empty() {
+		return ShapedLine::default();
+	}
+	let masks: Vec<u32> = (0..chars.len())
+		.map(|local| {
+			let offset = source_start.wrapping_add(i32::try_from(local).expect("text exceeds i32"));
+			let point = if source_end > source_start {
+				offset.min(source_end - 1)
+			} else {
+				source_start
+			};
+			rich_mask(spans, point)
+		})
+		.collect();
+	let mut assigned = Vec::with_capacity(chars.len());
+	let mut segment_start = 0;
+	while segment_start < chars.len() {
+		let mask = masks[segment_start];
+		let mut segment_end = segment_start + 1;
+		while segment_end < chars.len() && masks[segment_end] == mask {
+			segment_end += 1;
+		}
+		let text: String = chars[segment_start..segment_end]
+			.iter()
+			.map(|&codepoint| char::from_u32(codepoint).unwrap_or(char::REPLACEMENT_CHARACTER))
+			.collect();
+		assigned.extend(font_assignments(
+			d,
+			rich_font(d, base_font, mask),
+			&text,
+			&chars[segment_start..segment_end],
+		));
+		segment_start = segment_end;
+	}
+
+	let text: String = chars
+		.iter()
+		.map(|&codepoint| char::from_u32(codepoint).unwrap_or(char::REPLACEMENT_CHARACTER))
+		.collect();
+	let mut byte_offsets: Vec<usize> = text.char_indices().map(|(offset, _)| offset).collect();
+	byte_offsets.push(text.len());
+	let bidi = unicode_bidi::BidiInfo::new(&text, None);
+	let Some(paragraph) = bidi.paragraphs.first() else {
+		return ShapedLine::default();
+	};
+	let (levels, visual_runs) = bidi.visual_runs(paragraph, paragraph.range.clone());
+	let source_delta = source_start.wrapping_sub(output_start);
+	let mut line = ShapedLine::default();
+	for visual in visual_runs {
+		let start = byte_offsets
+			.binary_search(&visual.start)
+			.expect("bidi run starts at a character boundary");
+		let end = byte_offsets
+			.binary_search(&visual.end)
+			.expect("bidi run ends at a character boundary");
+		let rtl = levels.get(visual.start).is_some_and(|level| level.is_rtl());
+		let mut logical_runs = Vec::new();
+		let mut run_start = start;
+		while run_start < end {
+			let font = assigned[run_start];
+			let style = masks[run_start];
+			let mut run_end = run_start + 1;
+			while run_end < end && assigned[run_end] == font && masks[run_end] == style {
+				run_end += 1;
+			}
+			logical_runs.push((run_start, run_end, font, style));
+			run_start = run_end;
+		}
+		if rtl {
+			logical_runs.reverse();
+		}
+		for (start, end, font, style) in logical_runs {
+			let (mut run, mut clusters) = shape_font_run(
+				d,
+				chars,
+				start,
+				end,
+				font,
+				size,
+				tracking,
+				rtl,
+				line.width,
+				output_start,
+				source_delta,
+				source_end,
+				cache,
+			);
+			run.style = style;
+			line.width += run.width;
+			line.runs.push(run);
+			line.clusters.append(&mut clusters);
+		}
+	}
+	line
+}
+
+/// Re-shapes measured lines at rich-field span boundaries.
+pub(crate) fn shape_rich_layout(
+	d: &Doc,
+	base_font: i32,
+	size: f64,
+	tracking: f64,
+	spans: &crate::edit::InlineSpans,
+	layout: &mut TextLayout,
+	cache: &mut ShapeCache,
+) {
+	if spans.is_empty() {
+		return;
+	}
+	for line_index in 0..layout.ls.len() {
+		let start = usize::try_from(layout.ls[line_index]).expect("negative line start");
+		let end = usize::try_from(layout.le[line_index]).expect("negative line end");
+		let shaped = shape_rich_line(
+			d,
+			base_font,
+			size,
+			tracking,
+			&layout.chars[start..end],
+			layout.ls[line_index],
+			layout.src_ls[line_index],
+			layout.src_le[line_index],
+			spans,
+			cache,
+		);
+		layout.line_w[line_index] = shaped.width;
+		if line_index < layout.shaped.len() {
+			layout.shaped[line_index] = Rc::new(shaped);
+		} else {
+			layout.shaped.push(Rc::new(shaped));
+		}
+	}
+	layout.w = layout.line_w.iter().copied().fold(0.0_f64, f64::max);
+}
+
+#[allow(
+	clippy::too_many_arguments,
+	reason = "rich width uses the shaping inputs without a hot-path options object"
+)]
+fn rich_range_width(
+	d: &Doc,
+	base_font: i32,
+	size: f64,
+	tracking: f64,
+	src: &[u32],
+	start: i32,
+	end: i32,
+	spans: &crate::edit::InlineSpans,
+	cache: &mut ShapeCache,
+) -> f64 {
+	let a = usize::try_from(start).expect("negative rich range start");
+	let b = usize::try_from(end).expect("negative rich range end");
+	shape_rich_line(d, base_font, size, tracking, &src[a..b], 0, start, end, spans, cache).width
+}
+
+#[allow(
+	clippy::too_many_arguments,
+	reason = "wrapping mutates retained layout with explicit shaping inputs"
+)]
+fn rich_wrap_hard(
+	d: &Doc,
+	base_font: i32,
+	size: f64,
+	tracking: f64,
+	src: &[u32],
+	a: i32,
+	b: i32,
+	max_w: f64,
+	spans: &crate::edit::InlineSpans,
+	layout: &mut TextLayout,
+	cache: &mut ShapeCache,
+) {
+	if a == b {
+		finish_line(layout, i32::try_from(layout.chars.len()).expect("text exceeds i32"), a, b, 0.0);
+		return;
+	}
+	let mut opportunities = Vec::new();
+	line_break_boundaries(src, a, b, &mut opportunities);
+	let mut breaks: Vec<i32> = opportunities
+		.into_iter()
+		.map(|(position, _)| position)
+		.filter(|&position| position > a && position <= b)
+		.collect();
+	if breaks.last().copied() != Some(b) {
+		breaks.push(b);
+	}
+	breaks.sort_unstable();
+	breaks.dedup();
+
+	let text: String = src[usize::try_from(a).expect("negative hard start")
+		..usize::try_from(b).expect("negative hard end")]
+		.iter()
+		.map(|&codepoint| char::from_u32(codepoint).expect("valid codepoint"))
+		.collect();
+	let mut grapheme_offsets = Vec::new();
+	graphemes::boundaries(&text, &mut grapheme_offsets);
+	let grapheme_breaks: Vec<i32> = grapheme_offsets
+		.into_iter()
+		.skip(1)
+		.map(|offset| a.wrapping_add(offset))
+		.collect();
+
+	let mut line_start = a;
+	while line_start < b {
+		let mut chosen = None;
+		for &candidate in breaks.iter().filter(|&&position| position > line_start) {
+			let mut content_end = candidate;
+			while content_end > line_start
+				&& matches!(src[usize::try_from(content_end - 1).expect("negative rich trim")], 9 | 32)
+			{
+				content_end -= 1;
+			}
+			let width = rich_range_width(
+				d,
+				base_font,
+				size,
+				tracking,
+				src,
+				line_start,
+				content_end,
+				spans,
+				cache,
+			);
+			if width <= max_w + WIDTH_EPSILON {
+				chosen = Some((candidate, content_end, width));
+			} else {
+				break;
+			}
+		}
+		let (next, content_end, width) = if let Some(chosen) = chosen {
+			chosen
+		} else {
+			let mut fallback = None;
+			for next in grapheme_breaks
+				.iter()
+				.copied()
+				.filter(|&position| position > line_start)
+			{
+				let width =
+					rich_range_width(d, base_font, size, tracking, src, line_start, next, spans, cache);
+				if fallback.is_none() || width <= max_w + WIDTH_EPSILON {
+					fallback = Some((next, next, width));
+				}
+				if width > max_w + WIDTH_EPSILON {
+					break;
+				}
+			}
+			fallback.unwrap_or((b, b, 0.0))
+		};
+		let output_start = i32::try_from(layout.chars.len()).expect("text exceeds i32");
+		append_range(layout, src, line_start, content_end);
+		finish_line(layout, output_start, line_start, content_end, width);
+		line_start = next;
+		while line_start < b
+			&& matches!(src[usize::try_from(line_start).expect("negative rich skip")], 9 | 32)
+		{
+			line_start += 1;
+		}
+	}
+}
+
+#[allow(clippy::too_many_arguments, reason = "rich rewrap mirrors the text measurement contract")]
+/// Rebuilds wrapped line ranges using rich-segment advances.
+pub(crate) fn rewrap_rich_layout(
+	d: &Doc,
+	base_font: i32,
+	size: f64,
+	tracking: f64,
+	text: &str,
+	max_w: f64,
+	max_lines: i32,
+	spans: &crate::edit::InlineSpans,
+	layout: &mut TextLayout,
+	cache: &mut ShapeCache,
+) {
+	if spans.is_empty() {
+		return;
+	}
+	let src: Vec<u32> = text.chars().map(u32::from).collect();
+	layout.chars.clear();
+	layout.ls.clear();
+	layout.le.clear();
+	layout.src_ls.clear();
+	layout.src_le.clear();
+	layout.line_w.clear();
+	layout.shaped.clear();
+	layout.truncated = false;
+	let source_len = i32::try_from(src.len()).expect("text exceeds i32");
+	let mut hard_start = 0;
+	loop {
+		let mut hard_end = hard_start;
+		while hard_end < source_len
+			&& src[usize::try_from(hard_end).expect("negative hard offset")] != 10
+		{
+			hard_end += 1;
+		}
+		rich_wrap_hard(
+			d, base_font, size, tracking, &src, hard_start, hard_end, max_w, spans, layout, cache,
+		);
+		if hard_end >= source_len {
+			break;
+		}
+		hard_start = hard_end + 1;
+	}
+	if max_lines >= 0 && line_count(layout) > max_lines {
+		let keep = usize::try_from(max_lines.max(1)).expect("negative rich line limit");
+		layout.ls.truncate(keep);
+		layout.le.truncate(keep);
+		layout.src_ls.truncate(keep);
+		layout.src_le.truncate(keep);
+		layout.line_w.truncate(keep);
+		layout.truncated = true;
+	}
+	layout.w = layout.line_w.iter().copied().fold(0.0_f64, f64::max);
+	layout.h = layout.line_h * f64::from(line_count(layout)).max(1.0);
+}
+
 /// Measures a codepoint slice without allocating another character buffer.
 pub fn advance_slice_w(
 	d: &Doc,
@@ -1128,25 +1511,6 @@ pub(crate) fn fallback_break_allowed(src: &[u32], boundary: i32) -> bool {
 		) && !matches!(before, BreakClass::OpenPunctuation)
 }
 
-pub(crate) fn uses_uax_breaks(src: &[u32], a: i32, b: i32) -> bool {
-	(a..b).any(|i| {
-		matches!(
-			break_property(src[usize::try_from(i).expect("nonnegative character index")]),
-			BreakClass::Ideographic
-				| BreakClass::HangulLvSyllable
-				| BreakClass::HangulLvtSyllable
-				| BreakClass::HangulLJamo
-				| BreakClass::HangulVJamo
-				| BreakClass::HangulTJamo
-				| BreakClass::ComplexContext
-				| BreakClass::Mandatory
-				| BreakClass::CarriageReturn
-				| BreakClass::LineFeed
-				| BreakClass::NextLine
-		)
-	})
-}
-
 fn append_range(tl: &mut TextLayout, src: &[u32], a: i32, b: i32) {
 	for k in a..b {
 		tl.chars
@@ -1230,6 +1594,9 @@ fn wrap_hard_cached(
 	let mut source_start = a;
 	let mut line_width = 0.0;
 	let mut word_start = a;
+	let mut all_breaks = Vec::new();
+	line_break_boundaries(src, a, b, &mut all_breaks);
+	let mut word_breaks = Vec::new();
 
 	loop {
 		let mut word_end = word_start;
@@ -1240,15 +1607,21 @@ fn wrap_hard_cached(
 		}
 
 		let word_width = slice_w_cached(d, f, size, tracking, src, word_start, word_end, cache);
-		let mut breaks = Vec::new();
-		if uses_uax_breaks(src, word_start, word_end) {
-			line_break_boundaries(src, word_start, word_end, &mut breaks);
+		word_breaks.clear();
+		word_breaks.extend(
+			all_breaks
+				.iter()
+				.copied()
+				.filter(|&(position, _)| position > word_start && position < word_end),
+		);
+		let use_internal_breaks = !word_breaks.is_empty();
+		if use_internal_breaks {
+			word_breaks.push((word_end, false));
 		}
-		let has_internal_break = breaks.iter().any(|&(position, _)| position < word_end);
 
-		if has_internal_break {
+		if use_internal_breaks {
 			let mut unit_start = word_start;
-			for &(unit_end, mandatory) in &breaks {
+			for &(unit_end, mandatory) in &word_breaks {
 				let line_nonempty =
 					i32::try_from(tl.chars.len()).expect("text exceeds i32") > line_start;
 				let candidate_width =

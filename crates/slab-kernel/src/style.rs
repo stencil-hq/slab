@@ -2117,6 +2117,12 @@ pub struct RStyle {
 	pub color:           u32,
 	/// 1 when `color` is packed RGBA, 2 when it is a gradient handle.
 	pub color_kind:      u32,
+	/// Optional rich inline-code text paint; kind 0 inherits `color`.
+	pub code_color:      u32,
+	pub code_color_kind: u32,
+	/// Optional rich inline-code background paint; kind 0 is none.
+	pub code_bg:         u32,
+	pub code_bg_kind:    u32,
 	pub talign:          u32,
 	pub content:         String,
 	/// Resolved accessibility semantics copied into the scene entry.
@@ -2524,6 +2530,22 @@ pub fn build_rstyle(
 		st.rs[ri].color = inh_color;
 		st.rs[ri].color_kind = inh_color_kind;
 	}
+	let code_color = crate::style::attr_val(d, st, node, crate::slir::A_CODE_COLOR);
+	if (code_color.tag == crate::slir::T_COLOR) || (code_color.tag == crate::slir::T_PAINT_SOLID) {
+		st.rs[ri].code_color = code_color.h;
+		st.rs[ri].code_color_kind = 1u32;
+	} else if code_color.tag == crate::slir::T_PAINT_GRADIENT {
+		st.rs[ri].code_color = code_color.h;
+		st.rs[ri].code_color_kind = 2u32;
+	}
+	let code_bg = crate::style::attr_val(d, st, node, crate::slir::A_CODE_BG);
+	if (code_bg.tag == crate::slir::T_COLOR) || (code_bg.tag == crate::slir::T_PAINT_SOLID) {
+		st.rs[ri].code_bg = code_bg.h;
+		st.rs[ri].code_bg_kind = 1u32;
+	} else if code_bg.tag == crate::slir::T_PAINT_GRADIENT {
+		st.rs[ri].code_bg = code_bg.h;
+		st.rs[ri].code_bg_kind = 2u32;
+	}
 	let weight = f64_to_u32(st.rs[ri].weight);
 	st.rs[ri].font = if dynamic_family_uninterned {
 		crate::slir::font_select_name(d, &dynamic_family, weight)
@@ -2760,6 +2782,10 @@ pub fn rstyle_default(node: u32, kind: u32, line: u32) -> crate::style::RStyle {
 		underline: false,
 		color: 0x111111ffu32,
 		color_kind: 1u32,
+		code_color: 0u32,
+		code_color_kind: 0u32,
+		code_bg: 0u32,
+		code_bg_kind: 0u32,
 		talign: 0u32,
 		content: String::new(),
 		sem: Semantics::default(),
@@ -2893,11 +2919,11 @@ mod attribute_cache_tests {
 			slab_slir::attrs::ATTR_COUNT,
 			"kernel ATTR_COUNT must match normative slab-slir table size"
 		);
-		let highest_id = crate::slir::A_UNDERLINE;
+		let highest_id = crate::slir::A_CODE_BG;
 		assert_eq!(
 			(highest_id as usize) + 1,
 			crate::slir::ATTR_COUNT,
-			"A_UNDERLINE must be the highest attribute ID"
+			"A_CODE_BG must be the highest attribute ID"
 		);
 		for &(id, name) in slab_slir::attrs::ATTRS {
 			assert!(

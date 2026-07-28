@@ -70,66 +70,76 @@ pub const INF: f64 = 1.0e30;
 /// relative to the parent border-box origin.
 #[derive(Clone, Debug, Default)]
 pub struct Lay {
-	pub p_node:             Vec<u32>,
+	pub p_node:               Vec<u32>,
 	/// Index of the node's resolved style in [`St::rs`].
-	pub p_ri:               Vec<i32>,
-	pub p_x:                Vec<f64>,
-	pub p_y:                Vec<f64>,
-	pub p_w:                Vec<f64>,
-	pub p_h:                Vec<f64>,
-	pub p_base:             Vec<f64>,
-	pub p_has_base:         Vec<bool>,
-	pub p_clip:             Vec<bool>,
+	pub p_ri:                 Vec<i32>,
+	pub p_x:                  Vec<f64>,
+	pub p_y:                  Vec<f64>,
+	pub p_w:                  Vec<f64>,
+	pub p_h:                  Vec<f64>,
+	pub p_base:               Vec<f64>,
+	pub p_has_base:           Vec<bool>,
+	pub p_clip:               Vec<bool>,
 	/// Placed index of a quarter-turn payload, or `-1` when absent.
-	pub p_rot:              Vec<i32>,
+	pub p_rot:                Vec<i32>,
 	/// Placements omitted from paint, scene export, and hit testing.
-	pub p_skip:             Vec<bool>,
-	pub p_child_off:        Vec<i32>,
-	pub p_child_len:        Vec<i32>,
+	pub p_skip:               Vec<bool>,
+	pub p_child_off:          Vec<i32>,
+	pub p_child_len:          Vec<i32>,
 	/// Index in [`Lay::tls`], or `-1` when this placement has no text layout.
-	pub p_tl:               Vec<i32>,
+	pub p_tl:                 Vec<i32>,
 	/// Paragraph block index in the paragraph line pools, or `-1`.
-	pub p_para:             Vec<i32>,
-	pub child_pool:         Vec<i32>,
-	pub tls:                Vec<Rc<TextLayout>>,
+	pub p_para:               Vec<i32>,
+	pub child_pool:           Vec<i32>,
+	pub tls:                  Vec<Rc<TextLayout>>,
+	/// Field nodes with retained rich spans, synchronized by [`crate::frame`].
+	pub(crate) rich_node:     Vec<u32>,
+	/// Display-adjusted spans parallel to [`Self::rich_node`].
+	pub(crate) rich_spans:    Vec<crate::edit::InlineSpans>,
+	/// Committed revisions parallel to [`Self::rich_node`].
+	pub(crate) rich_revision: Vec<u64>,
+	/// Display composition lengths parallel to [`Self::rich_node`].
+	pub(crate) rich_compose:  Vec<i32>,
+	/// Composition insertion offsets parallel to [`Self::rich_node`].
+	pub(crate) rich_caret:    Vec<i32>,
 	/// Per-paragraph ranges into the line pools; each line stores a segment
 	/// range.
-	pub para_line_off:      Vec<i32>,
-	pub para_line_len:      Vec<i32>,
-	pub pl_h:               Vec<f64>,
-	pub pl_asc:             Vec<f64>,
-	pub pl_w:               Vec<f64>,
-	pub pl_seg_off:         Vec<i32>,
-	pub pl_seg_len:         Vec<i32>,
-	pub seg_x:              Vec<f64>,
+	pub para_line_off:        Vec<i32>,
+	pub para_line_len:        Vec<i32>,
+	pub pl_h:                 Vec<f64>,
+	pub pl_asc:               Vec<f64>,
+	pub pl_w:                 Vec<f64>,
+	pub pl_seg_off:           Vec<i32>,
+	pub pl_seg_len:           Vec<i32>,
+	pub seg_x:                Vec<f64>,
 	/// Start of the segment's codepoint slice in [`Lay::para_chars`].
-	pub seg_a:              Vec<i32>,
-	pub seg_b:              Vec<i32>,
-	pub seg_w:              Vec<f64>,
-	pub seg_font:           Vec<i32>,
-	pub seg_size:           Vec<f64>,
-	pub seg_weight:         Vec<f64>,
-	pub seg_tracking:       Vec<f64>,
-	pub seg_strike:         Vec<bool>,
-	pub seg_italic:         Vec<bool>,
-	pub seg_underline:      Vec<bool>,
-	pub seg_color:          Vec<u32>,
+	pub seg_a:                Vec<i32>,
+	pub seg_b:                Vec<i32>,
+	pub seg_w:                Vec<f64>,
+	pub seg_font:             Vec<i32>,
+	pub seg_size:             Vec<f64>,
+	pub seg_weight:           Vec<f64>,
+	pub seg_tracking:         Vec<f64>,
+	pub seg_strike:           Vec<bool>,
+	pub seg_italic:           Vec<bool>,
+	pub seg_underline:        Vec<bool>,
+	pub seg_color:            Vec<u32>,
 	/// 1 when the segment color is packed RGBA, 2 when it is a gradient handle.
-	pub seg_color_kind:     Vec<u32>,
+	pub seg_color_kind:       Vec<u32>,
 	/// Background paint behind the segment (`0` none, `1` solid, `2` gradient).
-	pub seg_bg_kind:        Vec<u32>,
-	pub seg_bg:             Vec<u32>,
-	pub seg_shaped:         Vec<Rc<crate::textm::ShapedLine>>,
-	pub para_chars:         Vec<u32>,
+	pub seg_bg_kind:          Vec<u32>,
+	pub seg_bg:               Vec<u32>,
+	pub seg_shaped:           Vec<Rc<crate::textm::ShapedLine>>,
+	pub para_chars:           Vec<u32>,
 	/// Reusable measure-pass scratch buffers, taken on container entry and
 	/// returned cleared on exit; recursion depth bounds each pool's size.
-	scratch_u32:            Vec<Vec<u32>>,
-	scratch_i32:            Vec<Vec<i32>>,
-	scratch_f64:            Vec<Vec<f64>>,
+	scratch_u32:              Vec<Vec<u32>>,
+	scratch_i32:              Vec<Vec<i32>>,
+	scratch_f64:              Vec<Vec<f64>>,
 	/// Reusable OpenType plans, retained across solves for this document.
-	pub(crate) shape_cache: crate::textm::ShapeCache,
+	pub(crate) shape_cache:   crate::textm::ShapeCache,
 	/// Retained [`place_attached`] scratch, cleared and refilled per call.
-	attach:                 AttachScratch,
+	attach:                   AttachScratch,
 }
 
 /// Creates an empty set of layout pools.
@@ -2246,6 +2256,12 @@ pub fn text_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &
 	let tracking = st.rs[idx(ri)].tracking;
 	let wrap = (flags & crate::slir::F_NOWRAP) == 0u32;
 	let ellipsis = (flags & crate::slir::F_ELLIPSIS) != 0u32;
+	let empty_spans = crate::edit::InlineSpans::default();
+	let rich_spans = l
+		.rich_node
+		.iter()
+		.position(|candidate| *candidate == node)
+		.map_or(&empty_spans, |index| &l.rich_spans[index]);
 	let entry_matches = |entry: &crate::textm::TextCacheEntry, content: &str| {
 		entry.font == font
 			&& entry.size == size.to_bits()
@@ -2255,6 +2271,7 @@ pub fn text_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &
 			&& entry.wrap == wrap
 			&& entry.ellipsis == ellipsis
 			&& entry.max_lines == max_lines
+			&& entry.spans == *rich_spans
 			&& entry.content == content
 	};
 	let cached = match st.text_layout_cache.get(&node) {
@@ -2272,7 +2289,7 @@ pub fn text_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &
 	if let Some(layout) = cached {
 		l.tls.push(layout);
 	} else {
-		let layout = std::rc::Rc::new(crate::textm::measure_text_cached(
+		let mut layout = crate::textm::measure_text_cached(
 			d,
 			font,
 			size,
@@ -2284,7 +2301,31 @@ pub fn text_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &
 			ellipsis,
 			max_lines,
 			&mut l.shape_cache,
-		));
+		);
+		if wrap && !ellipsis {
+			crate::textm::rewrap_rich_layout(
+				d,
+				font,
+				size,
+				tracking,
+				&st.rs[idx(ri)].content,
+				avail_w,
+				max_lines,
+				rich_spans,
+				&mut layout,
+				&mut l.shape_cache,
+			);
+		}
+		crate::textm::shape_rich_layout(
+			d,
+			font,
+			size,
+			tracking,
+			rich_spans,
+			&mut layout,
+			&mut l.shape_cache,
+		);
+		let layout = std::rc::Rc::new(layout);
 		// Bound the hot generation; the demoted generation still serves probes
 		// until the next swap, so eviction never re-measures a whole frame.
 		if st.text_layout_cache.len() >= 4096 {
@@ -2301,6 +2342,7 @@ pub fn text_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &
 				wrap,
 				ellipsis,
 				max_lines,
+				spans: rich_spans.clone(),
 				content: st.rs[idx(ri)].content.clone(),
 				layout: layout.clone(),
 			});
@@ -2569,11 +2611,8 @@ pub fn para_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &
 			if b > a {
 				let mut ranges = Vec::new();
 				let mut breaks = Vec::new();
-				if crate::textm::uses_uax_breaks(&cs, a, b) {
-					crate::textm::line_break_boundaries(&cs, a, b, &mut breaks);
-				}
-				let has_internal_break = breaks.iter().any(|&(position, _)| position < b);
-				if has_internal_break {
+				crate::textm::line_break_boundaries(&cs, a, b, &mut breaks);
+				if breaks.iter().any(|&(position, _)| position < b) {
 					let mut start = a;
 					for &(end, mandatory) in &breaks {
 						ranges.push((start, end, mandatory && end < b));
