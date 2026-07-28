@@ -18,7 +18,7 @@ jobs:
           targets: wasm32-unknown-unknown, wasm32-wasip2
       - uses: Swatinem/rust-cache@v2
       - uses: extractions/setup-just@v4
-      - uses: astral-sh/setup-uv@v9
+      - uses: astral-sh/setup-uv@v9.0.0
         with:
           python-version: '3.11'
       - run: bun install
