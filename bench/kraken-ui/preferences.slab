@@ -1,0 +1,152 @@
+params preference {
+  page text = "General"
+  eyebrow text = "01 · GENERAL"
+  repo text = "REPO: KRAKEN-RS"
+  rows list(PreferenceItem) = []
+  nav list(PreferenceNavItem) = []
+}
+
+params pref {
+  profiles list(ProfileItem) = []
+  is_profiles_page bool = false
+  is_not_profiles_page bool = true
+}
+
+// ---------- preferences ----------
+def PreferenceNavItem(label="General", header=false, selected=false, disabled=false, sub=false, page=false) export {
+  col w=fill h=hug {
+    when header {
+      rect w=fill h=18
+      row w=fill h=20 pad=0,14 align=center {
+        text label style=text.ui size=11 weight=500 color=color.dim w=fill nowrap ellipsis {
+          when disabled { color=color.disabled }
+        }
+      }
+    }
+    when sub {
+      row w=fill h=20 pad=0,16 align=center {
+        text label style=text.ui size=11 weight=400 color=color.dim w=fill nowrap ellipsis {
+          when disabled { color=color.disabled }
+        }
+      }
+    }
+    when page {
+      row w=fill h=26 pad=1,6 align=center act=select-preference-page role="tab" label=label {
+        row w=fill h=24 radius=4 pad=0,16 align=center {
+          when selected { bg=color.accentSoft }
+          when hover { bg=color.panelAlt }
+          text label style=text.ui size=13 color=color.muted w=fill nowrap ellipsis {
+            when selected { color=color.accent }
+            when disabled { color=color.disabled }
+          }
+        }
+      }
+    }
+  }
+}
+
+def PreferenceItem(label="", description="", has_description=false, disabled=false, is_toggle=false, checked=false, is_number=false, number_value="", is_field=false, field_value="", field_placeholder="", field_browse_label="", has_browse=false, is_button=false, button_label="") export {
+  col w=fill h=hug min-h=32 gap=4 {
+    when disabled { opacity=0.45 }
+    when is_toggle {
+      row w=fill h=32 gap=12 pad=0,2 radius=3 align=center act="preference-toggle" {
+        when hover { bg=color.panelAlt }
+        Checkbox checked "preference-toggle" label
+        text label style=text.ui size=14 weight=400 color=color.text nowrap
+      }
+    }
+    when is_number {
+      row w=fill h=36 align=center {
+        text label style=text.ui size=12 weight=400 color=color.muted w=250 nowrap
+        row w=160 h=28 bg=color.input stroke=color.borderStrong stroke-w=1 radius=4 align=center pad=0,2,0,0 gap=2 {
+          text number_value style=text.mono color=color.muted w=fill pad=6,8 nowrap
+          stack w=24 h=24 radius=4 bg=color.panelAlt stroke=color.borderStrong stroke-w=1 act="preference-dec" focusable role="button" label="Decrease" {
+            when hover { bg=color.surface; stroke=color.borderHard }
+            text "" family="JetBrainsMono Nerd Font Mono" size=13 weight=400 color=color.text self=center nowrap
+          }
+          stack w=24 h=24 radius=4 bg=color.panelAlt stroke=color.borderStrong stroke-w=1 act="preference-inc" focusable role="button" label="Increase" {
+            when hover { bg=color.surface; stroke=color.borderHard }
+            text "" family="JetBrainsMono Nerd Font Mono" size=13 weight=400 color=color.text self=center nowrap
+          }
+        }
+      }
+    }
+    when is_field {
+      row w=fill h=36 align=center {
+        text label style=text.ui size=12 weight=400 color=color.muted w=250 nowrap
+        row w=300 h=30 { Field field_value field_placeholder "focus-preference-field" "preference-field" }
+        when has_browse { spacer w=8; TextButton field_browse_label "preference-browse" }
+      }
+    }
+    when is_button {
+      row w=fill h=36 align=center {
+        text label style=text.ui size=12 weight=400 color=color.muted w=250 nowrap
+        row w=hug h=30 { TextButton button_label "preference-action" }
+      }
+    }
+    when has_description { text description style=text.small color=color.muted w=700 }
+  }
+}
+
+def ProfileItem(name="Default", author="", email="", selected=false) export {
+  row w=fill h=28 align=center pad=5,10 radius=4 stroke=color.borderStrong stroke-w=1 act="preference-select-profile" {
+    when hover { bg=color.hover; stroke=color.borderHard }
+    when selected { bg=color.selected }
+    text name style=text.ui color=color.text nowrap
+    text " · " style=text.ui color=color.muted nowrap
+    text author style=text.ui color=color.text nowrap
+    text " · " style=text.ui color=color.muted nowrap
+    text email style=text.ui color=color.text nowrap
+  }
+}
+
+def Preferences() {
+  col w=fill h=fill bg=color.window {
+    row h=46 bg=color.topbar stroke=color.border stroke-w=1 stroke-sides=bottom pad=0,14 align=center {
+      row w=142 h=29 radius=4 bg=color.panelAlt stroke=color.borderStrong stroke-w=1 gap=7 align=center pack=center act="exit-preferences" focusable role="button" label="‹ Exit Preferences" {
+        when hover { bg=color.surface; stroke=color.borderHard }
+        Codicon "" 13 color.text
+        text "Exit Preferences" style=text.ui size=13 weight=500 color=color.text nowrap
+      }
+      spacer
+      text "PREFERENCES" style=text.ui size=11 color=color.dim nowrap
+      spacer
+      rect w=142 h=1
+    }
+    row w=fill h=fill {
+      col w=250 h=fill bg=color.panel stroke=color.border stroke-w=1 stroke-sides=right pad=16,0,0,0 {
+        col w=fill pad=0,12,6,12 gap=8 {
+          row h=50 bg=color.panelAlt stroke=color.border stroke-w=1 radius=4 pad=10 gap=8 align=center {
+            rect w=30 h=30 radius=99 bg=color.green
+            col w=fill gap=1 { text "OSS" style=text.ui size=13 color=color.text nowrap; text "CURRENT PROFILE" style=text.small color=color.dim nowrap }
+            Codicon "" 12 color.muted
+          }
+          row h=36 bg=color.input stroke=color.border stroke-w=1 radius=4 pad=0,10 align=center {
+            text "ORGANIZATION" style=text.small color=color.dim w=75 nowrap
+            text "NA" style=text.ui size=11 color=color.muted w=fill nowrap
+            Codicon "" 12 color.muted
+          }
+        }
+        col w=fill h=fill scroll clip { each param.preference.nav #preference-nav }
+      }
+      col#preferences-scroll w=fill h=fill scroll scrollbar=auto scrollbar-w=5 scrollbar-fg=color.borderHard clip pad=25,42 gap=6 {
+        text param.preference.eyebrow style=text.ui size=11 color=color.accent nowrap
+        text param.preference.page style=text.title weight=700 nowrap
+        rect w=870 h=1 bg=color.border
+        col w=870 pad=12,0,0,0 gap=2 {
+          when pref.is_profiles_page {
+            col w=fill gap=32 {
+              TextButton "+ Add profile" "preference-action-add-profile"
+              col w=fill gap=4 { each param.pref.profiles #pref-profiles }
+              col w=fill gap=4 { each param.preference.rows #preference-rows-profiles }
+            }
+          }
+          when pref.is_not_profiles_page {
+            each param.preference.rows #preference-rows
+          }
+        }
+      }
+    }
+  }
+}
+

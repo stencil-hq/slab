@@ -1,0 +1,86 @@
+params {
+  repo_name text = "kraken-rs"
+  branch_name text = "main"
+  tabs list(TabItem) = []
+}
+
+// ---------- shell ----------
+// Toolbar/status icon button: codicon glyph centered in a hover pill.
+// Glyph tone lifts from muted to text on hover via color inheritance,
+// matching the pre-slab toolbar_action treatment.
+def CodiconButton(glyph, action, tip="", bw=34, gsize=16) {
+  stack w=bw h=30 radius=4 act=action focusable role="button" label=tip color=color.muted {
+    when hover { bg=color.hover; color=color.text }
+    when pressed { bg=color.selected }
+    when focus-visible { stroke=color.borderHard stroke-w=1 }
+    text glyph family="JetBrainsMono Nerd Font Mono" size=gsize weight=400 self=center nowrap
+  }
+}
+
+def TabItem(label="Repository", active=false, glyph="") export {
+  stack w=180 h=44 act=select-tab role="tab" label=label {
+    stack w=176 h=33 self=top offset=0,5 radius=4 color=color.muted {
+      when hover { bg=color.hover }
+      when active { bg=color.transparent; color=color.text }
+      row w=fill h=fill pad=0,2,0,10 gap=8 align=center {
+        text glyph family="JetBrainsMono Nerd Font Mono" size=13 nowrap
+        text label family="Instrument Sans" size=13 weight=500 w=fill nowrap ellipsis
+        stack w=22 h=24 radius=3 act=close-tab role="button" label="Close tab" {
+          when hover { bg=color.hover }
+          text "" family="JetBrainsMono Nerd Font Mono" size=15 color=color.muted self=center nowrap
+        }
+      }
+    }
+    when active {
+      rect w=160 h=2 self=bottom bg=color.accent
+    }
+  }
+}
+
+def TopBar() {
+  row#bar w=fill h=44 bg=color.topbar stroke=color.border stroke-w=1 stroke-sides=bottom align=center clip {
+    row w=90 h=44 gap=8 pad=0,14 align=center {
+      rect w=12 h=12 radius=99 bg=#FF5F56 act=window-close role="button" label="Close"
+      rect w=12 h=12 radius=99 bg=#FFBD2E act=window-minimize role="button" label="Minimize"
+      rect w=12 h=12 radius=99 bg=#27C93F act=window-maximize role="button" label="Maximize"
+    }
+    row h=44 w=hug gap=2 clip { each param.tabs #tabs }
+    spacer w=4
+    stack w=28 h=28 radius=3 act=new-tab role="button" label="New tab" {
+      when hover { bg=color.hover }
+      text "" family="JetBrainsMono Nerd Font Mono" size=18 color=color.dim self=center nowrap
+    }
+    spacer w=12
+    row w=60 h=30 radius=4 pad=0,11 gap=6 align=center act=toggle-actions role="button" label="PRs" color=color.muted {
+      when hover { bg=color.hover; color=color.text }
+      text "" family="JetBrainsMono Nerd Font Mono" size=11 nowrap
+      text "PRs" family="Instrument Sans" size=11 weight=450 nowrap
+    }
+    rect#window-drag-region w=fill h=44 bg=color.transparent press=window-drag label="Window drag region"
+    row h=44 align=center {
+      CodiconButton "" "undo" "Undo"
+      CodiconButton "" "redo" "Redo"
+      CodiconButton "" "pull" "Pull"
+      stack#pull-anchor w=12 h=30 act=toggle-pull-options role="button" label="Select pull operation" {
+        text "" family="JetBrainsMono Nerd Font Mono" size=11 color=color.muted self=center nowrap
+      }
+      CodiconButton "" "push" "Push"
+      CodiconButton "" "toggle-create-branch" "Branch"
+      CodiconButton "" "stash" "Stash"
+      CodiconButton "" "pop-stash" "Pop"
+      stack#lfs-anchor w=34 h=30 { CodiconButton "" "toggle-lfs-menu" "LFS" }
+      CodiconButton "" "open-terminal" "Terminal"
+    }
+    rect#window-drag-region-end w=fill h=44 bg=color.transparent press=window-drag label="Window drag region"
+    row h=44 gap=4 align=center {
+      stack#actions-anchor w=32 h=30 { CodiconButton "" "toggle-actions-menu" "Actions" bw=32 }
+      CodiconButton "" "toggle-search" "Search" bw=32
+      spacer w=16
+      stack#tabs-anchor w=32 h=30 { CodiconButton "" "toggle-tab-switcher" "Open tabs" bw=32 gsize=15 }
+      stack#notifications-anchor w=32 h=30 { CodiconButton "" "toggle-notifications" "Notifications" bw=32 gsize=15 }
+      CodiconButton "" "open-preferences" "Preferences" bw=32 gsize=15
+    }
+    spacer w=26
+  }
+}
+

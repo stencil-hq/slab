@@ -1,0 +1,250 @@
+params graph {
+  header_count text = "0"
+  rows list(GraphItem) = []
+}
+
+// ---------- graph ----------
+
+// Lane ink is painted into one clipped canvas per row. Solid strokes are
+// bucketed into ten palette slots (matching GRAPH_COLORS in src/ui/slab.rs);
+// arbitrary-tone solid and dashed ink use the extra/dashed slots.
+
+def GraphRefChip(label="", show_label=true, label_w=0, lead="", show_lead=false, lead_size=9.5, lead_tone=#737373, trail="", show_trail_icons=false, width=36, label_inset=false, lead_inset=false, tone=#EDEDED, hover_stroke=#EDEDED, border=#303030, chip_bg=#0C0C0C, passive=false) export {
+  // HEAD's draw_ref_chip paints hairline borders INSIDE the badge rect and
+  // clips every text run to badge.inset(2): the padded content box below is
+  // exactly that clip window (pad_r = 2), and the inner `clip` row cuts
+  // overflowing runs mid-glyph like HEAD's clipped scene text.
+  row key=chip w=width h=18 pad=2,5 radius=3 bg=chip_bg stroke=border stroke-w=1 stroke-align=inside \
+    act=graph-ref context=graph-ref-context drag=graph-ref-drag drop=graph-ref-drop drag-ghost \
+    role="button" label=label {
+    // Branch/+N/HEAD chips: text origin badge.x + 6, right clip badge - 2.
+    when label_inset { pad=2,2,2,6 }
+    // Tag/worktree ref chips: lead glyph at badge.x + 5, right clip badge - 2.
+    when lead_inset { pad=2,2,2,5 }
+    when hover { bg=color.panelAlt; stroke=hover_stroke; stroke-w=1.4 }
+    when dragging { opacity=0.72 }
+    when drop { bg=color.yellowSoft; stroke=color.yellow; stroke-w=1.6 }
+    // HEAD only wires actions/drag/drop on ref chips (draw_ref_chip gates on
+    // action/droppable); the +N / detached-HEAD / WIP / worktree chips are
+    // static ink. The `inert` flag drops the subtree from hit testing, so no
+    // hover/drag/drop/act ever fires on a passive chip.
+    when passive { inert }
+    // gap=0: the Rust-computed label_w box pins the trail icon column at
+    // HEAD's badge.x + 6 + chars*6.2 offset, and a longer label paints under
+    // the trail glyphs exactly like HEAD draws its icons over the label run.
+    row w=fill h=fill gap=0 align=center clip {
+      // Every content child is when-gated: when-block children append after
+      // the base children, so mixing a base label with a deferred lead would
+      // paint `main ✓` instead of HEAD's `✓ main`. All-deferred children
+      // splice in lexical order, keeping lead → label → trail.
+      when show_lead { text lead family="JetBrainsMono Nerd Font Mono" size=lead_size weight=400 color=lead_tone nowrap }
+      when show_label { text label w=label_w size=10.5 leading=1.15 color=tone nowrap }
+      when show_trail_icons { text trail family="JetBrainsMono Nerd Font Mono" size=9.5 weight=400 color=color.dim nowrap }
+    }
+  }
+}
+
+def GraphItem(lane_c0="", lane_c1="", lane_c2="", lane_c3="", lane_c4="", lane_c5="", lane_c6="", lane_c7="", lane_c8="", lane_c9="", lane_extra="", lane_extra_tone=#A878F5, lane_dashed="", lane_dashed_tone=#40BACD, refs=list(GraphRefChip), message_chips=list(GraphRefChip), subject="", description="", show_graph_label=false, graph_label="", date="", sha="", node_x=24, node_tone=#40BACD, band_mark=false, show_trail=true, trail_base_width=0, trail_lift_x=24, trail_lift_width=0, trail_shadow_x=24, trail_shadow_width=0, trail_end_x=24, trail_base_tone=#40BACD0D, trail_lift_tone=#40BACD0F, trail_end_tone=#40BACDE6, avatar="", avatar_visible=false, dot_visible=true, wip_node=false, worktree_node=false, selected=false, local=false, worktree_wip=false, matched=false, current_match=false, has_modified=false, modified_count="", has_added=false, added_count="") export {
+  stack w=fill h=26 bleed act=graph-row context=graph-row-context role="row" label=subject {
+    when local { bg=#4CB7820F }
+    when worktree_wip { bg=#A878F51A }
+    when selected { bg=color.selected }
+    row w=fill h=26 align=center bleed {
+      // pad t,r,b,l: HEAD starts chips at column.x + 7 but budgets each
+      // chip width against column right - 4, so the right gutter is 4.
+      row w=param.ref_width h=fill pad=4,4,4,7 gap=4 align=center clip {
+        each refs #graph-ref-chips
+      }
+      stack w=param.graph_width h=fill bleed {
+        when show_trail {
+          stack w=fill h=fill {
+            row w=fill h=fill align=center {
+              rect w=node_x h=1 bg=color.transparent
+              rect w=trail_base_width h=22 bg=trail_base_tone
+            }
+            row w=fill h=fill align=center {
+              rect w=trail_lift_x h=1 bg=color.transparent
+              rect w=trail_lift_width h=22 bg=trail_lift_tone
+            }
+            row w=fill h=fill align=center {
+              rect w=trail_shadow_x h=1 bg=color.transparent
+              rect w=trail_shadow_width h=22 bg=linear(90, #00000000 0%, #00000047 100%)
+            }
+            row w=fill h=fill align=center {
+              rect w=trail_lift_x h=1 bg=color.transparent
+              rect w=1 h=22 bg=#00000029
+            }
+            row w=fill h=fill align=center {
+              rect w=trail_end_x h=1 bg=color.transparent
+              rect w=2 h=22 bg=trail_end_tone
+            }
+          }
+        }
+        canvas key=lanes w=param.graph_width h=26 self=top-start clip {
+          path d=lane_c0 bg=none stroke=#40BACD stroke-w=1.5
+          path d=lane_c1 bg=none stroke=#6A82E8 stroke-w=1.5
+          path d=lane_c2 bg=none stroke=#9666F0 stroke-w=1.5
+          path d=lane_c3 bg=none stroke=#C45ADE stroke-w=1.5
+          path d=lane_c4 bg=none stroke=#EB5694 stroke-w=1.5
+          path d=lane_c5 bg=none stroke=#E85C55 stroke-w=1.5
+          path d=lane_c6 bg=none stroke=#F0AA36 stroke-w=1.5
+          path d=lane_c7 bg=none stroke=#DEC450 stroke-w=1.5
+          path d=lane_c8 bg=none stroke=#96D650 stroke-w=1.5
+          path d=lane_c9 bg=none stroke=#42D6A0 stroke-w=1.5
+          path d=lane_extra bg=none stroke=lane_extra_tone stroke-w=1.5
+          path d=lane_dashed bg=none stroke=lane_dashed_tone stroke-w=1.5 stroke-dash=5,4
+        }
+        row w=param.graph_width h=26 align=center {
+          rect w=node_x h=1 bg=color.transparent
+          stack w=20 h=20 offset=-10,0 {
+            when avatar_visible {
+              group w=20 h=20 pad=2 radius=99 bg=color.panel stroke=node_tone stroke-w=2 {
+                img avatar w=16 h=16 fit=cover radius=99
+              }
+            }
+            when dot_visible {
+              rect w=8 h=8 self=center radius=99 bg=node_tone
+            }
+            when wip_node {
+              rect w=20 h=20 radius=99 bg=color.transparent stroke=node_tone stroke-w=2 stroke-dash=3,3
+            }
+            when worktree_node {
+              rect w=12 h=12 self=center radius=3 bg=node_tone
+            }
+          }
+        }
+        when show_graph_label {
+          row w=param.graph_width h=26 pad=0,48 align=center clip {
+            text graph_label style=text.mono color=color.purple nowrap ellipsis
+          }
+        }
+      }
+      stack w=fill h=fill clip {
+        when hover { bg=#111111 }
+        when selected { bg=color.transparent }
+        when matched { bg=#DEC45012 }
+        when current_match { bg=#DEC45026 }
+        when band_mark {
+          row w=fill h=fill align=center {
+            // HEAD commit-row loop: rect at message_rect.x - 1, 3.5 wide,
+            // ROW_HEIGHT*0.72 = 18.72 tall, centered on the row, full-alpha
+            // node_color (views/graph.rs, "scene.rect(1, Rect::new(message_rect.x - 1.0, ...)").
+            rect w=3.5 h=18.72 offset=-1,0 bg=node_tone
+          }
+        }
+        row w=fill h=fill align=center {
+          row w=param.message_width h=fill pad=0,8 gap=7 align=center clip {
+            each message_chips #graph-message-chips
+            para w=fill nowrap ellipsis {
+              span subject style=text.ui size=11.5 color=color.muted {
+                when selected { color=color.accent }
+              }
+              span "  " style=text.ui size=11.5
+              span description style=text.small size=10.5 color=color.dim
+            }
+            when has_modified {
+              row h=fill gap=3 align=center {
+                Codicon "" 11.5 color.dim
+                text modified_count style=text.small size=11.5 color=color.dim nowrap
+              }
+            }
+            when has_added {
+              row h=fill gap=3 align=center {
+                Codicon "" 11.5 color.dim
+                text added_count style=text.small size=11.5 color=color.dim nowrap
+              }
+            }
+          }
+          row w=param.date_width h=fill pad=0,8 align=center clip {
+            text date style=text.mono size=10.5 color=color.dim nowrap
+          }
+          row w=param.sha_width h=fill pad=0,8 align=center clip {
+            text sha style=text.mono size=10.5 color=color.dim nowrap
+          }
+        }
+      }
+    }
+    when selected { rect w=2 h=fill self=start bg=color.accent }
+  }
+}
+
+def GraphView() {
+  col w=fill h=fill bg=color.window clip {
+    stack w=fill h=28 bg=color.panel stroke=color.border stroke-w=1 stroke-sides=bottom {
+      row w=fill h=fill align=center {
+        row w=param.ref_width h=fill pad=0,8 align=center clip {
+          text "BRANCH / TAG" style=text.label nowrap
+        }
+        row w=param.graph_width h=fill pad=0,8 align=center clip {
+          text "GRAPH" style=text.label nowrap
+        }
+        row w=param.message_width h=fill pad=0,8 align=center clip {
+          text "COMMIT MESSAGE" style=text.label nowrap
+        }
+        row w=param.date_width h=fill pad=0,9 align=center clip {
+          Codicon "" 12 color.dim
+        }
+        row w=param.sha_width h=fill pad=0,8 gap=8 align=center clip {
+          text "SHA" style=text.label nowrap
+          Codicon "" 11 color.dim
+        }
+      }
+      // HEAD build_header (views/graph.rs): the resize strip draws NOTHING
+      // idle — a 4px invisible hit strip at each column edge — and paints
+      // theme.accent over the strip only while hovered (or dragging). The
+      // spacer min/max mirror HEAD's drag clamps minus the 4px strip
+      // (ref 100/ref_cap, graph 60/320, message 80/table budget; maxima are
+      // published live from resize_preference). Each divider's remainder is
+      // nested so the kernel's drag budget frees everything to its right,
+      // like HEAD's resize_preference, instead of just the adjacent spacer.
+      row w=fill h=fill align=center {
+        rect w=param.ref_resize_width min-w=96 max-w=param.ref_resize_max h=1
+        divider#graph-ref-divider w=4 h=fill resize=resize-ref-column {
+          when hover { bg=color.accent }
+          when pressed { bg=color.accent }
+        }
+        row w=fill h=fill align=center {
+          rect w=param.graph_resize_width min-w=56 max-w=param.graph_resize_max h=1
+          divider#graph-lane-divider w=4 h=fill resize=resize-graph-column {
+            when hover { bg=color.accent }
+            when pressed { bg=color.accent }
+          }
+          row w=fill h=fill align=center {
+            rect w=param.message_resize_width min-w=76 max-w=param.message_resize_max h=1
+            divider#graph-message-divider w=4 h=fill resize=resize-message-column {
+              when hover { bg=color.accent }
+              when pressed { bg=color.accent }
+            }
+            spacer
+          }
+        }
+      }
+    }
+    stack w=fill h=fill {
+      col#graph-scroll w=fill h=fill scroll scrollbar=auto scrollbar-w=4 \
+        scrollbar-fg=color.borderHard scrollbar-bg=color.transparent clip {
+        each param.graph.rows #graph-rows virtual item-extent=26 overscan=4
+      }
+      when search.open {
+        row w=324 h=32 self=top-end offset=-8,8 pad=3,6 gap=5 radius=4 \
+          bg=color.panelAlt stroke=color.borderHard stroke-w=1 shadow=shadow.menu align=center {
+          SubmitField param.search.text "Search commits" "focus-search" "change-search" "submit-search"
+          text param.search.count style=text.mono size=9.5 color=color.dim nowrap
+          stack w=18 h=24 radius=3 act=previous-search focusable role="button" label="Previous result" {
+            when hover { bg=color.hover }
+            row w=fill h=fill align=center { Codicon "" 13 color.muted }
+          }
+          stack w=18 h=24 radius=3 act=next-search focusable role="button" label="Next result" {
+            when hover { bg=color.hover }
+            row w=fill h=fill align=center { Codicon "" 13 color.muted }
+          }
+          stack w=18 h=24 radius=3 act=close-search focusable role="button" label="Close search" {
+            when hover { bg=color.hover }
+            row w=fill h=fill align=center { Codicon "" 13 color.muted }
+          }
+        }
+      }
+    }
+  }
+}
+

@@ -1,0 +1,75 @@
+// ---------- shared controls ----------
+def IconButton(icon, action, tip="") {
+  stack w=30 h=30 radius=4 act=action focusable role="button" label=tip {
+    when hover { bg=color.hover }
+    when pressed { bg=color.selected }
+    when focus-visible { stroke=color.borderHard stroke-w=1 }
+    icon icon size=14 color=color.muted self=center
+  }
+}
+
+def TextButton(label, action) {
+  row w=hug h=28 pad=5,10 radius=4 stroke=color.borderStrong stroke-w=1 act=action align=center role="button" label=label {
+    when hover { bg=color.hover; stroke=color.borderHard }
+    when pressed { bg=color.selected }
+    text label style=text.ui nowrap
+  }
+}
+
+def PrimaryButton(label, action) {
+  row w=fill h=34 pad=6,12 radius=4 stroke=color.green stroke-w=1 act=action align=center pack=center role="button" label=label {
+    when hover { bg=color.greenSoft }
+    when pressed { opacity=0.78 }
+    text label style=text.ui color=color.green nowrap
+  }
+}
+
+def Checkbox(checked=false, action="noop", label="Toggle") {
+  stack w=16 h=16 radius=3 bg=color.input stroke=color.borderHard stroke-w=1 act=action focusable role="checkbox" label=label checked=checked {
+    when checked { bg=color.accent; stroke=color.accent }
+    when hover { stroke=color.muted }
+    icon check size=12 color=color.onAccent self=center {
+      when !checked { opacity=0 }
+    }
+  }
+}
+
+def Field(value, placeholder, focus_action, change_action) {
+  row w=fill h=30 pad=6,9 radius=4 bg=color.input stroke=color.borderStrong stroke-w=1 press=focus_action align=center clip role="textbox" label=placeholder {
+    when hover { stroke=color.borderHard }
+    stack w=fill h=fill {
+      text placeholder style=text.ui color=color.dim nowrap ellipsis opacity=0
+      text value style=text.ui w=fill h=fill nowrap ellipsis field=change_action field-sync=host
+    }
+  }
+}
+
+def SubmitField(value, placeholder, focus_action, change_action, submit_action) {
+  row w=fill h=30 pad=6,9 radius=4 bg=color.input stroke=color.borderStrong stroke-w=1 press=focus_action align=center clip role="textbox" label=placeholder {
+    when hover { stroke=color.borderHard }
+    stack w=fill h=fill {
+      text placeholder style=text.ui color=color.dim nowrap ellipsis opacity=0
+      text value style=text.ui w=fill h=fill nowrap ellipsis field=change_action submit=submit_action field-sync=host
+    }
+  }
+}
+
+def MultilineField(value, placeholder, focus_action, change_action) {
+  row w=fill h=fill pad=6,9 radius=4 bg=color.input stroke=color.borderStrong stroke-w=1 press=focus_action clip role="textbox" label=placeholder {
+    when hover { stroke=color.borderHard }
+    stack w=fill h=fill {
+      text placeholder style=text.ui color=color.dim w=fill opacity=0
+      text value style=text.ui w=fill h=fill field=change_action multiline field-sync=host
+    }
+  }
+}
+
+def SectionRule() { rect h=1 bg=color.border }
+
+// Nerd Font codicon glyph (same codepoints as the pre-slab chrome, see
+// src/ui/icons.rs at HEAD). Preferred over hand-drawn `icon` paths for
+// application chrome; pass the literal glyph string.
+def Codicon(glyph="", size=14, tone=#A3A3A3) export {
+  text glyph family="JetBrainsMono Nerd Font Mono" size=size weight=400 color=tone nowrap
+}
+

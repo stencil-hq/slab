@@ -1,0 +1,37 @@
+// ---------- status bar ----------
+params status {
+  version text = "0.1.0"
+  commits text = "Opening repository"
+}
+
+params selected_file {
+  name text = ""
+  encoding text = "UTF-8"
+}
+
+def StatusBar() {
+  row#statusbar w=fill h=22 self=bottom bg=color.window stroke=color.border stroke-w=1 stroke-sides=top align=center {
+    spacer w=6
+    row#branches-anchor w=hug h=20 radius=3 pad=0,6 gap=5 align=center act=toggle-branch-menu role="button" label="Switch branch" color=color.muted {
+      when hover { bg=color.hover; color=color.text }
+      text "" family="JetBrainsMono Nerd Font Mono" size=11 nowrap
+      text param.branch_name family="Instrument Sans" size=11 weight=450 nowrap
+    }
+    spacer w=6
+    text "•" family="Instrument Sans" size=11 color=color.dim nowrap
+    spacer w=6
+    text param.status.commits family="Instrument Sans" size=11 color=color.dim nowrap
+    spacer
+    Codicon "" 11 color.muted
+    spacer w=10
+    Codicon "" 11 color.muted
+    spacer w=10
+    Codicon "" 11 color.muted
+    spacer w=20
+    text "Support" family="Instrument Sans" size=11 weight=450 color=color.muted nowrap act=open-support role="button" label="Support"
+    spacer w=20
+    text param.status.version family="Instrument Sans" size=11 color=color.muted nowrap
+    spacer w=12
+  }
+}
+

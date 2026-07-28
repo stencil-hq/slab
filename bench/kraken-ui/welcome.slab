@@ -1,0 +1,70 @@
+params {
+  recent_repos list(RecentRepoItem) = []
+}
+
+params welcome {
+  search text = ""
+}
+
+params clone {
+  open bool = false
+  url text = ""
+  destination text = "Choose a destination"
+}
+
+// ---------- welcome ----------
+def RecentRepoItem(name="Repository", path="", badge="") export {
+  row w=fill h=44 pad=7,10 gap=10 radius=4 act=open-recent-repo align=center {
+    when hover { bg=color.hover }
+    rect w=28 h=28 radius=4 bg=color.panelAlt stroke=color.borderStrong stroke-w=1
+    col w=fill gap=2 {
+      text name style=text.ui color=color.text nowrap ellipsis
+      text path style=text.small color=color.dim nowrap ellipsis
+    }
+    text badge style=text.small color=color.muted nowrap
+  }
+}
+
+def Welcome() {
+  row w=fill h=fill bg=color.window clip {
+    col w=fill h=fill pad=32,64 gap=16 clip {
+      text "Repositories" style=text.title w=fill nowrap
+      row gap=10 {
+        TextButton "Open" "open-repository-picker"
+        TextButton "Clone" "toggle-clone"
+        TextButton "+ Create" "create-repository-picker"
+      }
+      Field param.welcome.search "Search repositories" "focus-welcome-search" "change-welcome-search"
+      text "Recent" style=text.small color=color.muted w=fill nowrap
+      col w=fill h=fill scroll scrollbar=auto scrollbar-w=4 clip {
+        each param.recent_repos #recent-repos virtual item-extent=44
+      }
+      when clone.open {
+        col w=fill h=146 bg=color.panel stroke=color.borderHard stroke-w=1 radius=6 pad=16 gap=12 {
+          text "Clone a repository" style=text.heading nowrap
+          SubmitField param.clone.url "Repository URL" "focus-clone-url" "change-clone-url" "submit-clone"
+          row gap=8 {
+            row w=fill {
+              TextButton param.clone.destination "pick-clone-destination"
+            }
+            PrimaryButton "Clone" "clone-repository"
+          }
+        }
+      }
+    }
+    rect w=1 h=fill bg=color.border
+    col w=400 h=fill pad=32,64 gap=16 clip {
+      text "Connect More Integrations" style=text.title w=fill nowrap
+      text "Speed up your workflow and reduce context switching with powerful integrations for pull requests,\nissues, CI/CD, and more." style=text.ui color=color.muted h=42 w=fill
+      row h=32 {
+        TextButton "Connect Integrations" "open-preferences"
+      }
+      rect h=16
+      text "Resources" style=text.small color=color.muted w=fill nowrap
+      TextButton "Intro Tutorials" "open-tutorial"
+      TextButton "Release Notes" "open-release-notes"
+      TextButton "Documentation ↗" "open-documentation"
+    }
+  }
+}
+

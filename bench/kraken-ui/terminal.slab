@@ -1,0 +1,12 @@
+// ---------- terminal ----------
+
+def TerminalView() {
+  stack w=fill h=fill bg=color.window act=focus-terminal clip {
+    stack w=fill h=fill pad=12 {
+      stack w=fill h=fill bg=color.input stroke=color.border stroke-w=1 radius=5 pad=1 clip {
+        hole terminal w=fill h=fill clip
+      }
+    }
+  }
+}
+

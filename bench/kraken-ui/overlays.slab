@@ -1,0 +1,333 @@
+params {
+  branches_overlay bool = false
+  tabs_overlay bool = false
+  notifications_overlay bool = false
+  tab_filter text = ""
+}
+
+params overlay {
+  open bool = false
+  modal bool = false
+  gravity_end bool = false
+  has_target bool = false
+  fallback bool = false
+  target text = ""
+  title text = ""
+  subtitle text = ""
+  x num = 0
+  y num = 0
+  width num = 300
+  height num = 320
+  field_one text = ""
+  field_two text = ""
+  field_three text = ""
+  field_one_visible bool = false
+  field_two_visible bool = false
+  field_three_visible bool = false
+  primary_label text = "Done"
+  primary_visible bool = false
+  secondary_label text = "Cancel"
+  secondary_visible bool = false
+  footer_visible bool = false
+  rows list(OverlayItem) = []
+}
+
+params add_remote {
+  push_url text = ""
+  is_url bool = true
+  is_hosted bool = false
+  is_gitea bool = false
+  name text = ""
+  url text = ""
+  open bool = false
+  repo text = ""
+  host text = ""
+}
+
+params palette {
+  open bool = false
+  editor bool = false
+  query text = ""
+  hint text = "Type a command"
+  rows list(PaletteItem) = []
+}
+
+params toast {
+  open bool = false
+  text text = ""
+}
+
+params error {
+  open bool = false
+  text text = ""
+}
+
+params ai {
+  open bool = false
+  loading bool = false
+  text text = ""
+}
+
+params branch {
+  rows_empty bool = false
+  rows list(BranchMenuRow) = []
+}
+
+// ---------- overlays ----------
+def OverlaySubmenuItem(label="", danger=false, disabled=false) export {
+  row w=fill h=31 pad=0,10 gap=8 align=center act=overlay-submenu-row {
+    when hover { bg=color.hover }
+    when disabled { opacity=0.35 }
+    text label style=text.ui color=color.text w=fill nowrap ellipsis {
+      when danger { color=color.red }
+    }
+  }
+}
+
+def OverlayItem(icon="", label="", detail="", selected=false, disabled=false, separator=false, not_separator=true, danger=false, checked=false, has_children=false, children=list(OverlaySubmenuItem)) export {
+  col w=fill h=hug {
+    when separator { rect h=1 bg=color.border }
+    when not_separator {
+      row w=fill h=31 pad=0,10 gap=8 align=center act=overlay-row {
+        when selected { bg=color.selected }
+        when hover { bg=color.hover }
+        when disabled { opacity=0.35 }
+        text icon style=text.mono color=color.muted w=15 nowrap
+        text label style=text.ui color=color.text w=fill nowrap ellipsis {
+          when danger { color=color.red }
+        }
+        text detail style=text.small color=color.muted nowrap
+        text "✓" style=text.mono color=color.text nowrap opacity=0 { when checked { opacity=1 } }
+      }
+    }
+    when has_children {
+      col w=fill h=hug pad=0,0,0,16 {
+        each children
+      }
+    }
+  }
+}
+
+def PaletteItem(icon="", label="", hint="", selected=false, disabled=false) export {
+  row w=fill h=38 pad=0,12 gap=9 align=center act=palette-row {
+    when selected { bg=color.selected }
+    when hover { bg=color.hover }
+    when disabled { opacity=0.35 }
+    text icon style=text.mono color=color.muted w=17 nowrap
+    text label style=text.ui color=color.text w=fill nowrap ellipsis
+    text hint style=text.small color=color.dim nowrap
+  }
+}
+
+// Branch dropdown 1:1 with HEAD build_branches() (src/views/overlays.rs):
+// 320x520 panel at (128,48) with 8px inset, 32px search well, dim BRANCHES
+// caption, then 28px rows (codicon + name; current row keeps the selected
+// fill even under hover).
+def BranchMenuRow(icon="", branch_name="", current=false) export {
+  row w=fill h=28 pad=0,8 radius=3 align=center color=color.muted act=overlay-row {
+    when hover { bg=#111111; color=color.text }
+    when current { bg=color.selected; color=color.accent }
+    text icon family="JetBrainsMono Nerd Font Mono" size=12 weight=400 color=color.muted w=20 nowrap {
+      when current { color=color.accent }
+    }
+    text branch_name family="Instrument Sans" size=13 weight=450 w=fill nowrap ellipsis
+  }
+}
+
+def BranchesOverlay() {
+  stack w=fill h=fill {
+    rect w=fill h=fill bg=color.transparent act=dismiss-overlay
+    col w=320 h=520 self=top-start offset=128,48 pad=8 bg=color.surface stroke=#30303080 stroke-w=1 radius=6 shadow=shadow.menu clip {
+      row w=fill h=32 pad=6,9 radius=4 bg=color.input stroke=color.borderStrong stroke-w=1 press=focus-branch-filter align=center clip role="textbox" label="Search branches" {
+        when hover { stroke=color.borderHard }
+        when branch.filter_focused { stroke=color.accent }
+        stack w=fill h=fill {
+          when branch.filter_empty {
+            text "Search branches" family="Instrument Sans" size=13 weight=450 color=color.dim nowrap
+          }
+          text param.branch.filter family="Instrument Sans" size=13 weight=450 color=color.text w=fill h=fill nowrap ellipsis field=change-branch-filter
+        }
+      }
+      rect w=fill h=12
+      row w=fill h=20 pad=2,8 {
+        text "BRANCHES" family="Instrument Sans" size=11 weight=450 color=color.dim nowrap
+      }
+      when branch.rows_empty {
+        row w=fill h=30 pad=0,8 align=center {
+          text "NO MATCHING BRANCHES" family="Instrument Sans" size=11 weight=450 color=color.dim nowrap
+        }
+      }
+      col w=fill h=fill scroll scrollbar=auto scrollbar-w=4 scrollbar-fg=color.borderHard clip {
+        each param.branch.rows #branch-menu-rows virtual item-extent=28 overscan=4
+      }
+    }
+  }
+}
+
+def GenericOverlay() {
+  stack w=fill h=fill {
+    rect w=fill h=fill bg=color.transparent act=dismiss-overlay {
+      when overlay.modal { bg=color.scrim }
+    }
+    col w=param.overlay.width h=param.overlay.height bg=color.surface stroke=color.borderHard stroke-w=1 radius=6 shadow=shadow.menu clip {
+      when overlay.has_target {
+        attach=param.overlay.target
+        collide=auto
+        gravity=below-start
+      }
+      when overlay.fallback {
+        self=top-start
+        offset=param.overlay.x,param.overlay.y
+      }
+      when overlay.modal { self=center; offset=0,0 }
+      row h=42 pad=0,12 align=center {
+        col w=fill gap=2 {
+          text param.overlay.title style=text.ui color=color.text nowrap ellipsis
+          text param.overlay.subtitle style=text.small color=color.muted nowrap ellipsis
+        }
+        IconButton "×" "dismiss-overlay"
+      }
+      rect h=1 bg=color.border
+      col w=fill h=fill scroll scrollbar=auto scrollbar-w=4 scrollbar-fg=color.borderHard clip {
+        each param.overlay.rows #generic-overlay-rows
+      }
+      when overlay.field_one_visible { row h=42 pad=6,10 { SubmitField param.overlay.field_one "" "focus-overlay-field-one" "change-overlay-field-one" "submit-overlay-field" } }
+      when overlay.field_two_visible { row h=42 pad=6,10 { SubmitField param.overlay.field_two "" "focus-overlay-field-two" "change-overlay-field-two" "submit-overlay-field" } }
+      when overlay.field_three_visible { row h=42 pad=6,10 { SubmitField param.overlay.field_three "" "focus-overlay-field-three" "change-overlay-field-three" "submit-overlay-field" } }
+      when overlay.footer_visible {
+        row h=46 pad=7,10 gap=8 align=center {
+          spacer
+          when overlay.secondary_visible { TextButton param.overlay.secondary_label "overlay-secondary" }
+          when overlay.primary_visible { TextButton param.overlay.primary_label "overlay-primary" }
+        }
+      }
+    }
+  }
+}
+
+def TabsOverlay() {
+  stack w=fill h=fill act=dismiss-overlay {
+    col w=300 h=240 attach=param.overlay.target gravity=below-end collide=auto offset=0,6 bg=color.surface stroke=color.borderHard stroke-w=1 radius=6 shadow=shadow.menu pad=8 gap=8 clip {
+      text "OPEN TABS" style=text.label color=color.dim nowrap
+      row h=32 { Field param.tab_filter "Search Tabs..." "focus-tab-filter" "change-tab-filter" }
+      col w=fill h=fill scroll clip {
+        each param.overlay.rows #tabs-overlay-rows
+      }
+    }
+  }
+}
+
+def NotificationCard(title, body) {
+  col w=fill h=96 bg=color.panelAlt stroke=color.border stroke-w=1 radius=4 pad=10,12 gap=7 {
+    text title style=text.ui color=color.text nowrap ellipsis
+    text body style=text.small color=color.muted w=fill
+  }
+}
+
+def NotificationsOverlay() {
+  stack w=fill h=fill act=dismiss-overlay {
+    col w=360 h=400 attach=param.overlay.target gravity=below-end collide=auto offset=0,6 bg=color.surface stroke=color.borderHard stroke-w=1 radius=6 shadow=shadow.menu clip {
+      row h=52 pad=0,14 align=center {
+        text "NOTIFICATIONS" style=text.label color=color.dim nowrap
+        spacer
+        row gap=4 align=center {
+          text "ALL" style=text.small color=color.dim nowrap
+          Codicon "" 10 color.dim
+        }
+      }
+      rect h=1 bg=color.border
+      col w=fill h=fill pad=11,12 gap=8 scroll clip {
+        NotificationCard "Kraken Native 0.1.0" "Native wgpu renderer, real graph, staging, and Git operations are available."
+        NotificationCard "AI provider" "No AI usage is fabricated. Configure an endpoint and API key in the environment."
+        NotificationCard "Repository" "Git operations report their real libgit2 result in the status bar."
+      }
+    }
+  }
+}
+
+def AddRemoteOverlay() {
+  stack w=fill h=fill bg=color.scrim act=dismiss-overlay {
+    col w=480 h=392 self=center bg=color.surface stroke=color.borderHard stroke-w=1 radius=6 shadow=shadow.modal clip {
+      row h=42 pad=0,24 align=center { text "Add remote" style=text.heading nowrap }
+      row h=52 pad=0,24 gap=20 align=center {
+        TextButton "URL" "select-add-remote-url"
+        TextButton "GitHub" "select-add-remote-github"
+        TextButton "Gitea" "select-add-remote-gitea"
+      }
+      rect h=1 bg=color.border
+      col w=fill h=fill pad=24 gap=16 {
+        SubmitField param.add_remote.name "Remote Name" "focus-add-remote-name" "change-add-remote-name" "submit-add-remote"
+        when add_remote.is_url {
+          SubmitField param.add_remote.url "Fetch URL" "focus-add-remote-url" "change-add-remote-url" "submit-add-remote"
+          SubmitField param.add_remote.push_url "Push URL (Optional)" "focus-add-remote-push-url" "change-add-remote-push-url" "submit-add-remote"
+        }
+        when add_remote.is_hosted {
+          SubmitField param.add_remote.repo "Repository (owner/name)" "focus-add-remote-repo" "change-add-remote-repo" "submit-add-remote"
+        }
+        when add_remote.is_gitea {
+          SubmitField param.add_remote.host "Gitea Host" "focus-add-remote-host" "change-add-remote-host" "submit-add-remote"
+        }
+      }
+      rect h=1 bg=color.border
+      row h=52 pad=0,24 gap=12 align=center {
+        spacer
+        TextButton "Cancel" "dismiss-overlay"
+        PrimaryButton "Add Remote" "add-remote"
+      }
+    }
+  }
+}
+
+def Palette() {
+  stack w=fill h=fill bg=#00000066 act=dismiss-overlay {
+    col w=620 h=430 self=top bg=color.surface stroke=color.borderHard stroke-w=1 radius=6 shadow=shadow.modal offset=0,94 clip {
+      row h=50 pad=9,12 gap=9 align=center press=focus-palette {
+        Codicon "" 13 color.muted
+        text param.palette.query style=text.ui color=color.text w=fill nowrap ellipsis field=change-palette submit=submit-palette
+        text "ESC" style=text.small color=color.dim nowrap
+      }
+      rect h=1 bg=color.border
+      col w=fill h=fill scroll scrollbar=auto scrollbar-w=4 scrollbar-fg=color.borderHard clip {
+        each param.palette.rows #palette-rows virtual item-extent=38 overscan=4
+      }
+      row h=32 bg=color.panelAlt pad=0,12 align=center {
+        text param.palette.hint style=text.small color=color.muted nowrap
+        spacer
+        text "↑↓ Navigate  Enter Select" style=text.small color=color.dim nowrap
+      }
+    }
+  }
+}
+
+def AiOverlay() {
+  stack w=fill h=fill bg=color.scrim act=dismiss-overlay {
+    col w=560 h=360 self=center bg=color.surface stroke=color.borderHard stroke-w=1 radius=6 shadow=shadow.modal pad=18 gap=14 {
+      row align=center { text "Recompose with AI" style=text.heading; spacer; IconButton "×" "dismiss-overlay" }
+      rect h=1 bg=color.border
+      col w=fill h=fill bg=color.input stroke=color.borderStrong stroke-w=1 radius=4 pad=12 scroll clip {
+        text param.ai.text style=text.ui color=color.muted w=fill
+        when ai.loading { text "Thinking…" style=text.ui color=color.purple }
+      }
+      row h=34 { spacer; TextButton "Generate" "request-ai" }
+    }
+  }
+}
+
+def Feedback() {
+  stack w=fill h=fill {
+    when toast.open {
+      row w=420 h=42 self=bottom bg=color.surface stroke=color.borderHard stroke-w=1 radius=5 shadow=shadow.menu pad=0,12 align=center offset=0,-36 act=dismiss-overlay {
+        text param.toast.text style=text.ui color=color.text w=fill nowrap ellipsis
+        text "×" style=text.ui color=color.muted nowrap
+      }
+    }
+    when error.open {
+      row w=560 h=52 self=bottom bg=color.redSoft stroke=color.red stroke-w=1 radius=5 shadow=shadow.menu pad=0,13 gap=10 align=center offset=0,-36 act=dismiss-overlay {
+        text "!" style=text.mono color=color.red nowrap
+        text param.error.text style=text.ui color=color.text w=fill nowrap ellipsis
+        text "×" style=text.ui color=color.muted nowrap
+      }
+    }
+  }
+}
+

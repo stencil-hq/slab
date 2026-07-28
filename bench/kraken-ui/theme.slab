@@ -1,0 +1,51 @@
+// ---------- theme ----------
+tokens {
+  color {
+    window       #070707
+    topbar       #040404
+    panel        #0C0C0C
+    panelAlt     #111111
+    surface      #181818
+    hover        #111111
+    selected     #222222
+    border       #222222
+    borderStrong #303030
+    borderHard   #464646
+    text         #E5E5E5
+    muted        #A3A3A3
+    dim          #737373
+    disabled     #525252
+    accent       #EDEDED
+    accentHover  #FFFFFF
+    accentActive #D4D4D4
+    accentSoft   #222222
+    onAccent     #0A0A0A
+    green        #4CB782
+    greenSoft    #0E2A1E
+    orange       #F7A550
+    orangeSoft   #34260F
+    red          #EB5757
+    redSoft      #3A1618
+    yellow       #DEC450
+    yellowSoft   #383112
+    purple       #A878F5
+    purpleSoft   #2A2146
+    cyan         #40BACD
+    blue         #6A82E8
+    input        #050505
+    scrim        #000000B8
+    transparent  #00000000
+  }
+  text {
+    ui      { family "Instrument Sans"; size 12; weight 450; color #E5E5E5 }
+    small   { family "Instrument Sans"; size 10; weight 500; color #A3A3A3 }
+    label   { family "Instrument Sans"; size 10; weight 600; color #A3A3A3 }
+    heading { family "Instrument Sans"; size 16; weight 600; color #E5E5E5 }
+    title   { family "Instrument Sans"; size 20; weight 600; color #E5E5E5 }
+    mono    { family "JetBrainsMono Nerd Font Mono"; size 11; weight 450; color #E5E5E5 }
+  }
+  shadow {
+    menu 0,12,36,#000000AA
+    modal 0,24,80,#000000CC
+  }
+}

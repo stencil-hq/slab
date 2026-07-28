@@ -1,0 +1,150 @@
+params branch {
+  filter text = ""
+  filter_focused bool = false
+  filter_empty bool = true
+}
+
+params sidebar {
+  loading bool = false
+  sections list(SidebarSection) = []
+  rail list(SidebarRailEntry) = []
+}
+
+// One sidebar tree row: caret cell (folders), codicon glyph cell, label.
+// Geometry mirrors the pre-slab sidebar_row/sidebar_folder_row exactly:
+// 24u rows inset 6u; folder rows start at indent 8+12*depth with a 13u caret
+// cell, a 19u icon cell (11/12u glyphs) and the label 32u in; leaf rows start
+// at indent 10+12*depth with a 20u icon cell (13u glyph). Cell widths come
+// from Rust rather than `when folder` blocks because SLIR appends when-block
+// children AFTER the node's base children — structural whens here pushed the
+// icons to the row's right edge (and made them hostage to patch evaluation).
+def SidebarRow(caret="", icon="", label="", indent=0, caret_w=0, icon_w=20, gsize=13, selected=false, tone=#737373) export {
+  row w=fill h=24 pad=0,6 {
+    row key=row w=fill h=24 radius=4 align=center clip \
+      act=sidebar-row context=sidebar-context drag=graph-ref-drag drop=graph-ref-drop drag-ghost \
+      role="treeitem" label=label {
+      when selected { bg=color.accentSoft }
+      when hover { bg=color.hover }
+      when dragging { opacity=0.72 }
+      when drop { bg=color.yellowSoft; stroke=color.yellow; stroke-w=1.6 }
+      rect w=indent h=1
+      row w=caret_w h=fill align=center clip { Codicon glyph=caret size=11 tone=color.dim }
+      row w=icon_w h=fill align=center clip color=tone { Codicon glyph=icon size=gsize tone=tone }
+      text label family="Instrument Sans" size=13 weight=400 color=color.text w=fill nowrap ellipsis {
+        when selected { color=color.accent }
+      }
+      rect w=8 h=1
+    }
+  }
+}
+
+// One sidebar section: 28u header (10u caret, title at 24u, add-remote button
+// at right-58, count left-aligned at right-34 in a 30u cell — pre-slab
+// draw_sidebar_section_header) plus an independently scrolling content
+// viewport whose height Rust allocates from the pre-slab
+// sidebar_section_layouts distribution. The add-remote button keeps its 16u
+// slot but paints only under its own hover (pre-slab gated it on header
+// hover, so idle captures show no button).
+def SidebarSection(title="", count="", caret="", open=false, add_remote=false, body_height=0, rows=list(SidebarRow)) export {
+  col w=fill {
+    row w=fill h=28 pad=2,4 {
+      row w=fill h=fill radius=4 align=center act=sidebar-row role="button" label=title {
+        when hover { bg=color.hover }
+        rect w=6 h=1
+        row w=14 h=fill align=center { Codicon glyph=caret size=10 tone=color.dim }
+        text title family="Instrument Sans" size=11 weight=500 color=color.dim w=fill nowrap ellipsis
+        stack w=16 h=16 radius=3 clip act=open-add-remote role="button" label="Add remote" color=color.transparent {
+          when !add_remote { w=0; inert }
+          when hover { bg=color.hover; stroke=color.borderStrong; stroke-w=1; color=color.dim }
+          text "" family="JetBrainsMono Nerd Font Mono" size=10 self=center nowrap
+        }
+        rect w=8 h=1 { when !add_remote { w=0 } }
+        row w=30 h=fill align=center clip {
+          text count family="JetBrainsMono Nerd Font Mono" size=10 color=color.dim nowrap
+        }
+      }
+    }
+    when open {
+      col w=fill h=body_height scroll scrollbar=auto scrollbar-w=8 scrollbar-fg=#464646BF scrollbar-bg=color.transparent clip {
+        each rows virtual item-extent=24 overscan=4
+      }
+    }
+  }
+}
+
+// Collapsed-rail cell: 14u glyph at (8,7), count at (21,16) clipped to the
+// 32u cell, 4u gap below each cell — pre-slab build_sidebar_rail.
+def SidebarRailEntry(icon="", title="", count="", show_count=false) export {
+  col w=32 h=36 {
+    stack w=32 h=32 radius=4 clip act=expand-sidebar-section role="button" label=title {
+      when hover { bg=color.hover }
+      text icon family="JetBrainsMono Nerd Font Mono" size=14 weight=400 color=color.dim self=top-start offset=8,7 nowrap
+      when show_count {
+        text count family="JetBrainsMono Nerd Font Mono" size=8 color=color.muted self=top-start offset=21,16 nowrap
+      }
+    }
+  }
+}
+
+def Sidebar() {
+  row w=fill h=fill bg=color.panel {
+    when sidebar_collapsed {
+      col w=44 h=fill pad=12,6,0,6 gap=4 align=center {
+        stack w=26 h=26 radius=3 act=toggle-sidebar-collapse role="button" label="Expand sidebar" {
+          when hover { bg=color.hover }
+          text "" family="JetBrainsMono Nerd Font Mono" size=13 color=color.muted self=top-start offset=8,4 nowrap
+        }
+        rect h=4
+        each param.sidebar.rail #sidebar-rail
+      }
+    }
+    when !sidebar_collapsed {
+      col w=fill h=fill {
+        row h=38 pad=12,12,0,10 gap=8 align=center {
+          stack w=26 h=26 radius=3 act=toggle-sidebar-collapse role="button" label="Collapse sidebar" {
+            when hover { bg=color.hover }
+            text "" family="JetBrainsMono Nerd Font Mono" size=13 color=color.muted self=top-start offset=8,4 nowrap
+          }
+          row w=fill h=26 radius=4 bg=color.panelAlt pad=2 {
+            row w=50% h=fill radius=3 bg=color.surface stroke=color.borderStrong stroke-w=1 pad=0,0,0,32 gap=8 align=center act=show-list role="button" label="List" {
+              Codicon "" 11 color.text
+              text "List" family="Instrument Sans" size=11 color=color.text nowrap
+            }
+            row w=50% h=fill radius=3 pad=0,0,0,32 gap=8 align=center act=show-agents role="button" label="Agents" {
+              when hover { bg=color.hover }
+              Codicon "" 11 color.muted
+              text "Agents" family="Instrument Sans" size=11 color=color.muted nowrap
+            }
+          }
+        }
+        rect h=10
+        row h=18 pad=0,12 align=center {
+          text param.commit.count family="Instrument Sans" size=11 color=color.dim w=fill nowrap ellipsis
+        }
+        rect h=2
+        row h=28 pad=0,12 {
+          row w=fill h=28 pad=5,8 radius=4 bg=color.input stroke=color.borderStrong stroke-w=1 press=focus-branch-filter align=center clip role="textbox" label="Filter branches" {
+            when hover { stroke=color.borderHard }
+            stack w=fill h=fill {
+              when branch.filter_empty {
+                text "FILTER (󰘳+OPTION+F)" family="JetBrainsMono Nerd Font Mono" size=10 color=color.dim nowrap
+              }
+              text param.branch.filter family="JetBrainsMono Nerd Font Mono" size=10 color=color.text w=fill h=fill nowrap field=change-branch-filter
+            }
+            row w=12 h=fill align=center { Codicon "" 13 color.dim }
+          }
+        }
+        rect h=10
+        col#sidebar-list w=fill h=fill clip {
+          when sidebar.loading {
+            row h=44 pad=0,24 align=center {
+              text "Opening repo..." family="Instrument Sans" size=12 color=color.muted nowrap
+            }
+          }
+          each param.sidebar.sections #sidebar-sections
+        }
+      }
+    }
+  }
+}
+

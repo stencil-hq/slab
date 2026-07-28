@@ -1,0 +1,103 @@
+// Kraken's complete native interface. Rust supplies state through params and
+// typed lists; Slab owns layout, paint, responsive behavior, and hit geometry.
+
+import "theme.slab"
+import "icons.slab"
+import "controls.slab"
+import "topbar.slab"
+import "sidebar.slab"
+import "statusbar.slab"
+import "graph.slab"
+import "wip.slab"
+import "detail.slab"
+import "diff.slab"
+import "terminal.slab"
+import "welcome.slab"
+import "preferences.slab"
+import "overlays.slab"
+
+params {
+  show_preferences bool = false
+  show_welcome bool = false
+  show_workspace bool = true
+  show_graph bool = true
+  show_diff bool = false
+  show_terminal bool = false
+  show_detail bool = true
+  show_wip_detail bool = false
+  show_commit_detail bool = true
+  show_multi_detail bool = false
+  sidebar_collapsed bool = false
+  sidebar_width num = 254
+  detail_width num = 710
+  terminal_height num = 260
+  sidebar_min num = 44
+  sidebar_max num = 510
+  detail_min num = 200
+  detail_max num = 1080
+  terminal_min num = 64
+  terminal_max num = 900
+  ref_width num = 106
+  graph_width num = 112
+  message_width num = 330
+  date_width num = 165
+  sha_width num = 82
+  ref_resize_width num = 102
+  graph_resize_width num = 108
+  message_resize_width num = 326
+  ref_resize_max num = 276
+  graph_resize_max num = 316
+  message_resize_max num = 4000
+}
+
+// ---------- document root ----------
+stack#app w=fill h=fill bg=color.window clip {
+  when !show_preferences {
+    col#shell w=fill h=fill pad=0,0,22,0 {
+      TopBar#topbar
+      when show_welcome { Welcome }
+      when show_workspace {
+        row w=fill h=fill {
+          row w=param.sidebar_width min-w=param.sidebar_min max-w=param.sidebar_max h=fill {
+            Sidebar
+          }
+          divider#sidebar-split w=4 h=fill bg=color.border resize=sidebar-resize dblclick=sidebar-reset {
+            when sidebar_collapsed { inert }
+          }
+          col w=fill min-w=320 h=fill {
+            stack w=fill min-h=120 h=fill {
+              when show_graph { GraphView }
+              when show_diff { DiffView }
+            }
+            divider#terminal-split w=fill h=4 bg=color.border resize=terminal-resize dblclick=terminal-reset {
+              when !show_terminal { h=0 inert }
+              when hover { bg=color.accent }
+              when pressed { bg=color.accent }
+            }
+            row w=fill h=param.terminal_height {
+              when show_terminal { TerminalView }
+            }
+          }
+          divider#detail-split w=4 h=fill bg=color.border resize=detail-resize dblclick=detail-reset {
+            when !show_detail { w=0 inert }
+          }
+          stack w=param.detail_width min-w=0 max-w=param.detail_max h=fill {
+            when show_wip_detail { WipDetail }
+            when show_commit_detail { CommitDetail }
+            when show_multi_detail { MultiDetail }
+          }
+        }
+      }
+    }
+    StatusBar#status
+  }
+  when show_preferences { Preferences }
+  when overlay.open { GenericOverlay }
+  when branches_overlay { BranchesOverlay }
+  when tabs_overlay { TabsOverlay }
+  when notifications_overlay { NotificationsOverlay }
+  when add_remote.open { AddRemoteOverlay }
+  when palette.open { Palette }
+  when ai.open { AiOverlay }
+  Feedback
+}

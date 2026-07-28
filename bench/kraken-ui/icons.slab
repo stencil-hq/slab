@@ -1,0 +1,141 @@
+// ---------- icons ----------
+icon check viewbox=24 { path "M4 12l4 4 12-12" bg=none stroke=current stroke-w=3 }
+icon chevron_down viewbox=24 { path "M6 9l6 6 6-6" bg=none stroke=current stroke-w=2 }
+icon sparkle viewbox=24 { path "M12 2L14.5 9.5L22 12L14.5 14.5L12 22L9.5 14.5L2 12L9.5 9.5Z" bg=current }
+icon folder viewbox=24 { path "M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z" bg=current }
+icon file viewbox=24 { path "M6 2c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6H6zm7 7V3.5L18.5 9H13z" bg=current }
+
+icon undo viewbox=24 {
+  path "M3 7v6h6" bg=none stroke=current stroke-w=2
+  path "M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13" bg=none stroke=current stroke-w=2
+}
+icon redo viewbox=24 {
+  path "M21 7v6h-6" bg=none stroke=current stroke-w=2
+  path "M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3l3 2.7" bg=none stroke=current stroke-w=2
+}
+icon cloud viewbox=24 {
+  path "M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z" bg=none stroke=current stroke-w=2
+}
+icon terminal viewbox=24 {
+  path "M12 19h8" bg=none stroke=current stroke-w=2
+  path "m4 17 6-6-6-6" bg=none stroke=current stroke-w=2
+}
+icon menu viewbox=24 {
+  path "M4 5h16" bg=none stroke=current stroke-w=2
+  path "M4 12h16" bg=none stroke=current stroke-w=2
+  path "M4 19h16" bg=none stroke=current stroke-w=2
+}
+icon search viewbox=24 {
+  path "m21 21-4.34-4.34" bg=none stroke=current stroke-w=2
+  path "M 3, 11 a 8,8 0 1,0 16,0 a 8,8 0 1,0 -16,0" bg=none stroke=current stroke-w=2
+}
+icon bell viewbox=24 {
+  path "M10.268 21a2 2 0 0 0 3.464 0" bg=none stroke=current stroke-w=2
+  path "M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326" bg=none stroke=current stroke-w=2
+}
+icon settings viewbox=24 {
+  path "M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915" bg=none stroke=current stroke-w=2
+  path "M 9, 12 a 3,3 0 1,0 6,0 a 3,3 0 1,0 -6,0" bg=none stroke=current stroke-w=2
+}
+icon plus viewbox=24 {
+  path "M5 12h14" bg=none stroke=current stroke-w=2
+  path "M12 5v14" bg=none stroke=current stroke-w=2
+}
+icon x viewbox=24 {
+  path "M18 6 6 18" bg=none stroke=current stroke-w=2
+  path "m6 6 12 12" bg=none stroke=current stroke-w=2
+}
+icon arrowdowntoline viewbox=24 {
+  path "M12 17V3" bg=none stroke=current stroke-w=2
+  path "m6 11 6 6 6-6" bg=none stroke=current stroke-w=2
+  path "M19 21H5" bg=none stroke=current stroke-w=2
+}
+icon arrowupfromline viewbox=24 {
+  path "m18 9-6-6-6-6" bg=none stroke=current stroke-w=2
+  path "M12 3v14" bg=none stroke=current stroke-w=2
+  path "M5 21h14" bg=none stroke=current stroke-w=2
+}
+icon gitbranch viewbox=24 {
+  path "M15 6a9 9 0 0 0-9 9V3" bg=none stroke=current stroke-w=2
+  path "M 15, 6 a 3,3 0 1,0 6,0 a 3,3 0 1,0 -6,0" bg=none stroke=current stroke-w=2
+  path "M 3, 18 a 3,3 0 1,0 6,0 a 3,3 0 1,0 -6,0" bg=none stroke=current stroke-w=2
+}
+icon archive viewbox=24 {
+  path "M 2,3 h 20 v 5 h -20 Z" bg=none stroke=current stroke-w=2
+  path "M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8" bg=none stroke=current stroke-w=2
+  path "M10 12h4" bg=none stroke=current stroke-w=2
+}
+icon history viewbox=24 {
+  path "M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" bg=none stroke=current stroke-w=2
+  path "M3 3v5h5" bg=none stroke=current stroke-w=2
+  path "M12 7v5l4 2" bg=none stroke=current stroke-w=2
+}
+icon users viewbox=24 {
+  path "M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" bg=none stroke=current stroke-w=2
+  path "M16 3.128a4 4 0 0 1 0 7.744" bg=none stroke=current stroke-w=2
+  path "M22 21v-2a4 4 0 0 0-3-3.87" bg=none stroke=current stroke-w=2
+  path "M 5, 7 a 4,4 0 1,0 8,0 a 4,4 0 1,0 -8,0" bg=none stroke=current stroke-w=2
+}
+icon tags viewbox=24 {
+  path "M13.172 2a2 2 0 0 1 1.414.586l6.71 6.71a2.4 2.4 0 0 1 0 3.408l-4.592 4.592a2.4 2.4 0 0 1-3.408 0l-6.71-6.71A2 2 0 0 1 6 9.172V3a1 1 0 0 1 1-1z" bg=none stroke=current stroke-w=2
+  path "M2 7v6.172a2 2 0 0 0 .586 1.414l6.71 6.71a2.4 2.4 0 0 0 3.191.193" bg=none stroke=current stroke-w=2
+  path "M 10, 6.5 a 0.5,0.5 0 1,0 1,0 a 0.5,0.5 0 1,0 -1,0" bg=none stroke=current stroke-w=2
+}
+icon gitpullrequest viewbox=24 {
+  path "M 15, 18 a 3,3 0 1,0 6,0 a 3,3 0 1,0 -6,0" bg=none stroke=current stroke-w=2
+  path "M 3, 6 a 3,3 0 1,0 6,0 a 3,3 0 1,0 -6,0" bg=none stroke=current stroke-w=2
+  path "M13 6h3a2 2 0 0 1 2 2v7" bg=none stroke=current stroke-w=2
+  path "M 6 9 L 6 21" bg=none stroke=current stroke-w=2
+}
+icon globe viewbox=24 {
+  path "M 3,12 a 9,9 0 1,0 18,0 a 9,9 0 1,0 -18,0" bg=none stroke=current stroke-w=2
+  path "M3 12h18" bg=none stroke=current stroke-w=2
+  path "M12 3a15.3 15.3 0 0 1 4 9 15.3 15.3 0 0 1-4 9 15.3 15.3 0 0 1-4-9 15.3 15.3 0 0 1 4-9z" bg=none stroke=current stroke-w=2
+}
+icon circle_dot viewbox=24 {
+  path "M 4,12 a 8,8 0 1,0 16,0 a 8,8 0 1,0 -16,0" bg=none stroke=current stroke-w=2
+  path "M 10.5,12 a 1.5,1.5 0 1,0 3,0 a 1.5,1.5 0 1,0 -3,0" bg=current
+}
+icon submodule viewbox=24 {
+  path "M4 4h9v9H4z" bg=none stroke=current stroke-w=2
+  path "M13 13h7v7h-7z" bg=none stroke=current stroke-w=2
+}
+icon box viewbox=24 {
+  path "M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z" bg=none stroke=current stroke-w=2
+  path "m3.3 7 8.7 5 8.7-5" bg=none stroke=current stroke-w=2
+  path "M12 22V12" bg=none stroke=current stroke-w=2
+}
+icon chevronleft viewbox=24 {
+  path "m15 18-6-6 6-6" bg=none stroke=current stroke-w=2
+}
+icon chevronup viewbox=24 {
+  path "m6 15 6-6 6 6" bg=none stroke=current stroke-w=2
+}
+icon chevronright viewbox=24 {
+  path "m9 18 6-6-6-6" bg=none stroke=current stroke-w=2
+}
+icon folder_open viewbox=24 {
+  path "M3 6h7l2 2h9l-2 11H5Z" bg=none stroke=current stroke-w=2
+  path "M3 6v13" bg=none stroke=current stroke-w=2
+}
+icon file_code viewbox=24 {
+  path "M6 2h8l4 4v16H6Z" bg=none stroke=current stroke-w=2
+  path "M14 2v5h5" bg=none stroke=current stroke-w=2
+  path "m10 12-2 2 2 2" bg=none stroke=current stroke-w=2
+  path "m14 12 2 2-2 2" bg=none stroke=current stroke-w=2
+}
+icon unified viewbox=24 {
+  path "M5 6h14" bg=none stroke=current stroke-w=2
+  path "M5 12h14" bg=none stroke=current stroke-w=2
+  path "M5 18h14" bg=none stroke=current stroke-w=2
+}
+icon split viewbox=24 {
+  path "M3 4h8v16H3Z" bg=none stroke=current stroke-w=2
+  path "M13 4h8v16h-8Z" bg=none stroke=current stroke-w=2
+}
+icon warning viewbox=24 {
+  path "M12 3 22 20H2Z" bg=none stroke=current stroke-w=2
+  path "M12 9v5" bg=none stroke=current stroke-w=2
+  path "M12 17v1" bg=none stroke=current stroke-w=2
+}
+

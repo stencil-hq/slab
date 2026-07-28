@@ -1,0 +1,286 @@
+params diff {
+  scope text = "UNSTAGED"
+  old_label text = "a/file"
+  new_label text = "b/file"
+  split bool = true
+  file_view bool = false
+  history bool = false
+  search_open bool = false
+  search text = ""
+  search_count text = ""
+  file_action_visible bool = false
+  file_action_label text = "Stage File"
+  has_rows bool = false
+  show_labels bool = false
+  empty_message text = "Loading file diff…"
+  content_width num = 900
+  rows list(DiffItem) = []
+  map list(DiffMapItem) = []
+}
+
+// ---------- diff ----------
+def DiffTextRun(content="", tone=#E5E5E5) export {
+  span content color=tone size=11 weight=450 family="JetBrainsMono Nerd Font Mono" tracking=0
+}
+
+def DiffMark(x=0, width=0, tone=#00000000, current=false) export {
+  row key=mark w=fill h=20 align=center {
+    rect w=x h=1 bg=color.transparent
+    rect w=width h=16 radius=2 bg=tone {
+      when current { stroke=color.yellow stroke-w=1 }
+    }
+  }
+}
+
+def DiffHatch() {
+  canvas w=fill h=20 bg=#0A0A0A {
+    path "M-20 20L0 0M4 20L24 0M28 20L48 0M52 20L72 0M76 20L96 0M100 20L120 0M124 20L144 0M148 20L168 0M172 20L192 0M196 20L216 0M220 20L240 0M244 20L264 0M268 20L288 0M292 20L312 0M316 20L336 0M340 20L360 0M364 20L384 0M388 20L408 0M412 20L432 0M436 20L456 0M460 20L480 0M484 20L504 0M508 20L528 0M532 20L552 0M556 20L576 0M580 20L600 0M604 20L624 0M628 20L648 0M652 20L672 0M676 20L696 0M700 20L720 0M724 20L744 0M748 20L768 0M772 20L792 0M796 20L816 0M820 20L840 0M844 20L864 0M868 20L888 0M892 20L912 0M916 20L936 0M940 20L960 0M964 20L984 0M988 20L1008 0M1012 20L1032 0M1036 20L1056 0M1060 20L1080 0M1084 20L1104 0M1108 20L1128 0M1132 20L1152 0M1156 20L1176 0M1180 20L1200 0M1204 20L1224 0M1228 20L1248 0M1252 20L1272 0M1276 20L1296 0M1300 20L1320 0M1324 20L1344 0M1348 20L1368 0M1372 20L1392 0M1396 20L1416 0M1420 20L1440 0M1444 20L1464 0M1468 20L1488 0M1492 20L1512 0M1516 20L1536 0M1540 20L1560 0M1564 20L1584 0M1588 20L1608 0" bg=none stroke=#2B2B2B stroke-w=1
+  }
+}
+
+def DiffCode(runs=list(DiffTextRun), marks=list(DiffMark), press_action="begin-unified-diff-text-selection") {
+  stack w=fill h=20 clip press=press_action drag=diff-text-drag \
+    drag-update=diff-text-drag-update drag-end=diff-text-drag-end {
+    each marks key=marks
+    para w=hug h=20 pad=2,6 nowrap {
+      each runs key=runs
+    }
+  }
+}
+
+def DiffNumber(number="", number_tone=#737373, width=44, background=#0C0C0C) {
+  row w=width h=20 bg=background pad=2,5 align=center pack=end \
+    press=begin-diff-selection drag=diff-selection-drag \
+    drag-update=diff-selection-drag-update drag-end=diff-selection-drag-end {
+    text number style=text.mono size=10 color=number_tone nowrap
+  }
+}
+
+def DiffPane(number="", number_tone=#737373, pane_bg=#00000000, empty=false, runs=list(DiffTextRun), marks=list(DiffMark), press_action="begin-new-diff-text-selection") {
+  stack w=50% h=20 bg=pane_bg clip {
+    when empty { DiffHatch }
+    row w=fill h=20 {
+      DiffNumber number number_tone 44 color.panel
+      DiffCode runs marks press_action
+    }
+  }
+}
+
+def DiffItem(old_no="", new_no="", hunk_text="", prefix="", prefix_tone=#A3A3A3, old_tone=#737373, new_tone=#737373, old_bg=#00000000, new_bg=#00000000, unified_bg=#00000000, old_empty=false, new_empty=false, split=true, hunk=false, selected=false, old_runs=list(DiffTextRun), new_runs=list(DiffTextRun), unified_runs=list(DiffTextRun), old_marks=list(DiffMark), new_marks=list(DiffMark), unified_marks=list(DiffMark), interactive=true) export {
+  stack key=diff-entry w=param.diff.content_width h=20 act=diff-row context=diff-row-context role="row" label="Diff row" {
+    when !interactive { inert }
+    when old_empty { opacity=1 }
+    when new_empty { opacity=1 }
+    when hover { bg=#FFFFFF08 }
+    when selected { bg=color.selected }
+    when hunk {
+      row w=fill h=20 bg=color.panelAlt pad=2,9 align=center stroke=color.border stroke-w=1 stroke-sides=top,bottom {
+        text hunk_text style=text.mono size=10 color=color.purple nowrap ellipsis
+      }
+    }
+    when !hunk {
+      stack w=fill h=20 {
+        when split {
+          row w=fill h=20 {
+            DiffPane old_no old_tone old_bg old_empty old_runs old_marks "begin-old-diff-text-selection"
+            stack w=1 h=20 bg=color.borderStrong
+            DiffPane new_no new_tone new_bg new_empty new_runs new_marks "begin-new-diff-text-selection"
+          }
+        }
+        when !split {
+          row w=fill h=20 bg=unified_bg clip {
+            DiffNumber old_no old_tone 38 color.panel
+            DiffNumber new_no new_tone 38 color.panelAlt
+            row w=14 h=20 pad=2,3 align=center {
+              text prefix style=text.mono size=10 color=prefix_tone nowrap
+            }
+            DiffCode unified_runs unified_marks "begin-unified-diff-text-selection"
+          }
+        }
+      }
+    }
+    rect w=2 h=20 bg=color.accent self=start opacity=0 {
+      when selected { opacity=1 }
+    }
+    rect w=0 h=0 bg=old_bg inert
+    rect w=0 h=0 bg=new_bg inert
+    rect w=0 h=0 bg=old_tone inert
+    rect w=0 h=0 bg=new_tone inert
+  }
+}
+
+// HEAD views/diff.rs ghost_button (icon variant): 36x28 hunk-arrow button.
+// Muted codicon glyph, row_hover pill + text tone on hover, text_disabled
+// with no hover feedback while the file view is active (enabled =
+// !diff_file_view in build).
+def DiffHunkBtn(glyph="", action="noop", tip="") {
+  stack w=36 h=28 radius=3 act=action role="button" label=tip color=color.muted {
+    when hover { bg=color.hover; color=color.text }
+    when diff.file_view { bg=color.transparent; color=color.disabled }
+    text glyph family="JetBrainsMono Nerd Font Mono" size=13 weight=400 self=center nowrap
+  }
+}
+
+// Toolbar cluster shared by every diff scope, mirroring HEAD views/diff.rs
+// build: File/Diff segmented_tab pair in a panelAlt+border track at the
+// left; right side pins Blame/History ghost buttons (both enabled=false at
+// HEAD, sans 11 text_disabled), the hunk arrows, and the layout_icon_button
+// track ending 30px from the panel edge. Active tab/toggle = 2px-inset
+// surface_3 card with a border_strong outline (segmented_tab geometry).
+def DiffToolbarMain() {
+  row w=fill h=28 gap=8 align=center {
+    row w=hug h=28 radius=4 bg=color.panelAlt stroke=color.border stroke-w=1 {
+      stack w=67 h=28 pad=2 act=show-file-view role="tab" label="File View" {
+        row w=fill h=fill radius=2 pad=0,6 align=center {
+          when hover { bg=color.hover }
+          when diff.file_view { bg=color.surface; stroke=color.borderStrong stroke-w=1 }
+          text "File View" style=text.ui size=11 color=color.muted nowrap {
+            when diff.file_view { color=color.text }
+          }
+        }
+      }
+      stack w=75 h=28 pad=2 act=show-diff-view role="tab" label="Diff View" {
+        row w=fill h=fill radius=2 pad=0,6 align=center {
+          when hover { bg=color.hover }
+          when !diff.file_view { bg=color.surface; stroke=color.borderStrong stroke-w=1 }
+          text "Diff View" style=text.ui size=11 color=color.muted nowrap {
+            when !diff.file_view { color=color.text }
+          }
+        }
+      }
+    }
+    spacer
+    row w=hug h=28 {
+      row w=54 h=28 pad=0,8 align=center role="button" label="Blame is available after history indexing" {
+        text "Blame" style=text.ui size=11 color=color.disabled nowrap
+      }
+      row w=62 h=28 pad=0,8 align=center act=toggle-file-history role="button" label="File History" {
+        text "History" style=text.ui size=11 color=color.disabled nowrap
+      }
+    }
+    row w=hug h=28 {
+      DiffHunkBtn "" "previous-hunk" "Previous change"
+      DiffHunkBtn "" "next-hunk" "Next change"
+    }
+    row w=hug h=28 radius=4 bg=color.panelAlt stroke=color.border stroke-w=1 {
+      stack w=46 h=28 pad=2 act=toggle-diff-layout role="button" label="Unified diff layout" {
+        row w=fill h=fill radius=2 align=center pack=center color=color.muted {
+          when hover { bg=color.hover }
+          when !diff.split { bg=color.surface; stroke=color.borderStrong stroke-w=1; color=color.text }
+          text "" family="JetBrainsMono Nerd Font Mono" size=13 weight=400 nowrap
+        }
+      }
+      stack w=46 h=28 pad=2 act=toggle-diff-layout role="button" label="Split diff layout" {
+        row w=fill h=fill radius=2 align=center pack=center color=color.muted {
+          when hover { bg=color.hover }
+          when diff.split { bg=color.surface; stroke=color.borderStrong stroke-w=1; color=color.text }
+          text "" family="JetBrainsMono Nerd Font Mono" size=13 weight=400 nowrap
+        }
+      }
+    }
+    spacer w=12
+  }
+}
+
+
+def DiffMapItem(tone=#303030, extent=1, current=false) export {
+  stack w=fill h=extent bg=tone act=seek-diff-row role="button" label="Diff position" {
+    when hover { bg=color.text }
+    when current { rect w=2 h=extent bg=color.yellow self=end }
+  }
+}
+
+def DiffView() {
+  col w=fill h=fill bg=color.window clip {
+    col h=78 bg=color.panel stroke=color.border stroke-w=1 stroke-sides=bottom {
+      // HEAD build: plain mono 13 path at the left (no file-icon chip),
+      // "UTF-8" sans 11 text_muted sitting ~134px left of the close ghost
+      // when no stage/unstage action is shown (commit scope).
+      row h=40 pad=0,10 gap=8 align=center {
+        text param.selected_file.name style=text.mono size=13 color=color.text w=fill nowrap ellipsis
+        when diff.file_action_visible {
+          text param.selected_file.encoding style=text.ui size=11 color=color.muted nowrap
+          TextButton param.diff.file_action_label "stage-file"
+          IconButton "x" "close-diff" "Close diff"
+        }
+        when !diff.file_action_visible {
+          text param.selected_file.encoding style=text.ui size=11 color=color.muted nowrap
+          spacer w=118
+          IconButton "x" "close-diff" "Close diff"
+        }
+      }
+      row h=38 pad=0,10 gap=8 align=center {
+        // HEAD build: the accent scope chip (88x28, accent_soft fill,
+        // 35%-alpha accent border, uppercase 10px accent_active label +
+        // chevron) only exists for Staged/Unstaged scopes; commits get none.
+        when diff.file_action_visible {
+          row w=88 h=28 radius=3 bg=color.accentSoft stroke=#EDEDED59 stroke-w=1 pad=0,8 gap=5 align=center act=toggle-diff-scope role="button" label="Toggle staged and unstaged diff" {
+            text param.diff.scope style=text.small size=10 color=color.accentActive nowrap
+            Codicon "" 10 color.accentActive
+          }
+          DiffToolbarMain
+        }
+        when !diff.file_action_visible {
+          DiffToolbarMain
+        }
+      }
+    }
+    when diff.search_open {
+      row h=38 bg=color.panelAlt stroke=color.border stroke-w=1 stroke-sides=bottom pad=4,10 gap=7 align=center {
+        icon search size=13 color=color.muted
+        SubmitField param.diff.search "Search diff" "focus-diff-search" "change-diff-search" "submit-diff-search"
+        text param.diff.search_count style=text.small color=color.muted nowrap
+        IconButton "chevronleft" "previous-diff-search" "Previous match"
+        IconButton "chevronright" "next-diff-search" "Next match"
+        IconButton "x" "close-diff-search" "Close diff search"
+      }
+    }
+    when diff.show_labels {
+      row h=24 bg=color.panelAlt stroke=color.border stroke-w=1 stroke-sides=bottom {
+        when diff.file_view {
+          row w=fill pad=0,48 align=center clip {
+            text param.diff.new_label style=text.mono size=9 color=color.dim nowrap ellipsis
+          }
+        }
+        when !diff.file_view {
+          row w=fill h=fill {
+            when diff.split {
+              row w=50% pad=0,48 align=center clip {
+                text param.diff.old_label style=text.mono size=9 color=color.dim nowrap ellipsis
+              }
+              row w=50% pad=0,48 align=center clip {
+                text param.diff.new_label style=text.mono size=9 color=color.dim nowrap ellipsis
+              }
+            }
+            when !diff.split {
+              row w=fill pad=0,82 align=center clip {
+                text param.diff.new_label style=text.mono size=9 color=color.dim nowrap ellipsis
+              }
+            }
+          }
+        }
+      }
+    }
+    when diff.has_rows {
+      row w=fill h=fill {
+        col#diff-scroll w=fill h=fill scroll=both scrollbar=always scrollbar-w=6 scrollbar-fg=color.borderHard scrollbar-bg=color.panelAlt clip {
+          each param.diff.rows #diff-rows virtual item-extent=20 overscan=10
+        }
+        when !diff.file_view {
+          col#diff-minimap w=20 h=fill bg=color.panelAlt clip {
+            each param.diff.map #diff-map
+          }
+        }
+      }
+    }
+    when !diff.has_rows {
+      stack w=fill h=fill bg=color.input {
+        col w=hug max-w=420 gap=10 align=center self=center {
+          icon file_code size=24 color=color.dim
+          text param.diff.empty_message style=text.ui color=color.muted align-text=center
+        }
+      }
+    }
+  }
+}
+

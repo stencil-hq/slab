@@ -1,0 +1,251 @@
+// ---------- detail ----------
+params {
+  view_all_files bool = false
+  path_tree bool = false
+}
+
+params detail {
+  title text = "Select a commit"
+  body text = ""
+  sha text = ""
+  author text = ""
+  email text = ""
+  time text = ""
+  loading bool = false
+  avatar text = ""
+  ai_label text = "Explain commit"
+  message_height num = 150
+  multi_height num = 210
+  has_body bool = false
+  has_conflicts bool = false
+  selection_count text = ""
+  selection_short text = ""
+  overflow text = ""
+  modified text = ""
+  added text = ""
+  range text = ""
+  files list(DetailFileItem) = []
+  parents list(DetailParentItem) = []
+  conflicts list(DetailConflictItem) = []
+  commits list(DetailCommitItem) = []
+}
+
+// Plain right-aligned parent sha, matching HEAD's commit_detail: mono 11
+// accent text, clickable (JumpToCommit) with pointer cursor and no chip
+// background, border, or hover fill.
+def DetailParentItem(label="ROOT") export {
+  row key=parent-sha w=hug h=18 align=center act=detail-parent role="link" label=label {
+    text label style=text.mono color=color.accent nowrap
+  }
+}
+
+def DetailConflictItem(path="") export {
+  row key=conflict h=18 gap=6 align=center {
+    icon warning size=11 color=color.red
+    text path style=text.mono size=10 color=color.muted w=fill nowrap ellipsis
+  }
+}
+
+// HEAD's build_multi lists "sha  subject" as one monospace muted run with no
+// click affordance.
+def DetailCommitItem(sha="", subject="") export {
+  row key=selected-commit h=18 gap=8 align=center {
+    text sha style=text.mono color=color.muted nowrap
+    text subject style=text.mono color=color.muted w=fill nowrap ellipsis
+  }
+}
+
+def DetailFileItem(marker="", prefix="", name="", additions="", deletions="", indent=0, folder=false, changed=true, selected=false, marker_tone=#F7A550, marker_bg=#34260F, tooltip="") export {
+  stack key=detail-entry w=fill h=25 clip {
+    when selected { bg=color.selected }
+    when hover { bg=color.hover }
+    rect w=2 h=fill bg=color.accent self=start opacity=0 {
+      when selected { opacity=1 }
+    }
+    when folder {
+      row w=fill h=25 pad=0,12 gap=6 align=center role="treeitem" label=tooltip {
+        spacer w=indent
+        icon chevron_down size=11 color=color.muted
+        icon folder_open size=13 color=color.dim
+        text name style=text.ui color=color.text w=fill nowrap ellipsis
+      }
+    }
+    when !folder {
+      row w=fill h=25 pad=0,12 gap=6 align=center act=detail-file context=detail-file-context role="treeitem" label=tooltip {
+        spacer w=indent
+        stack w=16 h=16 {
+          rect w=16 h=16 radius=3 bg=marker_bg
+          icon file_code size=13 color=color.transparent self=center {
+            when !changed { color=color.dim }
+          }
+          text marker style=text.mono size=9 color=marker_tone self=center nowrap
+        }
+        text prefix style=text.mono size=11 color=color.dim nowrap
+        text name style=text.mono size=11 color=color.text w=fill nowrap ellipsis
+        text additions style=text.small color=color.green nowrap
+        text deletions style=text.small color=color.red nowrap
+      }
+    }
+  }
+}
+
+def DetailAiButton() {
+  row w=hug h=28 pad=5,9 gap=6 radius=4 stroke=color.purple stroke-w=1 act=show-ai role="button" label=param.detail.ai_label align=center {
+    when hover { bg=color.purpleSoft }
+    Codicon "" 12 color.purple
+    text param.detail.ai_label style=text.small color=color.text nowrap
+  }
+}
+
+// HEAD widgets: 120x26 segmented control, 60px halves; active half is the
+// segment inset by 2 (56x22) filled surface_3 (#181818) with border_strong
+// (#303030) stroke, radius RADIUS_MD-2 = 2; labels sans 11 muted/text.
+def DetailSegment(label, active=false) {
+  row w=56 h=22 radius=2 align=center pack=center act=toggle-path-tree role="tab" label=label {
+    when active { bg=color.surface; stroke=color.borderStrong stroke-w=1 }
+    when hover { bg=color.hover }
+    text label style=text.ui size=11 color=color.muted nowrap {
+      when active { color=color.text }
+    }
+  }
+}
+
+def DetailPathToggle() {
+  row w=120 h=26 pad=2 gap=4 radius=4 bg=color.panelAlt {
+    when path_tree {
+      DetailSegment "PATH" false
+      DetailSegment "TREE" true
+    }
+    when !path_tree {
+      DetailSegment "PATH" true
+      DetailSegment "TREE" false
+    }
+  }
+}
+
+// HEAD commit_detail stats: "N MODIFIED" sans 11 orange at x+16 in a 92px
+// slot, "+ N ADDED" green at x+96.
+def DetailStats() {
+  row w=hug h=26 gap=4 align=center {
+    text param.detail.modified style=text.ui size=11 color=color.orange nowrap w=92
+    text param.detail.added style=text.ui size=11 color=color.green nowrap
+  }
+}
+
+def CommitDetail() {
+  col w=param.detail_width h=fill bg=color.window stroke=color.border stroke-w=1 stroke-sides=left clip {
+    row h=40 pad=0,10 gap=8 align=center stroke=color.border stroke-w=1 stroke-sides=bottom {
+      row w=fill h=40 gap=5 align=center pack=center act=detail-current-commit role="link" label="Jump to commit in graph" clip {
+        text "COMMIT:" style=text.label color=color.dim nowrap
+        text param.detail.sha style=text.mono color=color.accent nowrap
+      }
+      DetailAiButton
+      IconButton "x" "close-detail" "Close commit details"
+    }
+    stack w=fill {
+      col w=fill {
+        col h=param.detail.message_height bg=color.panelAlt pad=15,16 gap=9 clip {
+          when detail.loading {
+            row h=30 gap=8 align=center {
+              icon history size=14 color=color.purple
+              text "Loading commit details…" style=text.ui color=color.muted nowrap
+            }
+          }
+          when !detail.loading {
+            col w=fill h=hug gap=9 {
+              text param.detail.title style=text.heading size=15 weight=500 w=fill max-h=54
+              when detail.has_body {
+                text param.detail.body style=text.ui size=13 color=color.muted w=fill max-h=188
+              }
+              when detail.has_conflicts {
+                col w=fill gap=5 {
+                  row h=18 gap=7 align=center {
+                    icon warning size=12 color=color.red
+                    text "CONFLICTS" style=text.label color=color.red nowrap
+                  }
+                  col w=fill gap=1 {
+                    each param.detail.conflicts #detail-conflicts
+                  }
+                }
+              }
+            }
+          }
+        }
+        // HEAD: the dark message block's bottom 14px is the DetailMessage
+        // resize strip; a single 1px border sits at its bottom edge and the
+        // grabber pill (60x2, theme.border) floats centered 6px into it.
+        divider h=14 resize=resize-detail-message bg=color.panelAlt stroke=color.border stroke-w=1 stroke-sides=bottom
+        row h=72 pad=0,16 gap=12 align=center {
+          group w=28 h=28 radius=99 stroke=#46464680 stroke-w=1 {
+            img param.detail.avatar w=28 h=28 radius=99 fit=cover
+          }
+          col w=fill h=fill pad=20,0,0,0 gap=2 clip {
+            text param.detail.author style=text.ui size=13 color=color.text nowrap ellipsis
+            text param.detail.email style=text.mono color=color.dim nowrap ellipsis
+            text param.detail.time style=text.ui size=11 color=color.dim nowrap
+          }
+          // HEAD commit_detail: "PARENT:" (sans 11 dim) pinned at
+          // rect.right()-150, parent shas (mono 11 accent) from
+          // rect.right()-94 on the author-name line; one 134px-wide column,
+          // single flow — no wrap container (it mis-sizes inside a hug row).
+          col w=134 h=fill pad=24,0,0,0 {
+            row w=fill h=18 gap=2 align=center {
+              text "PARENT:" style=text.ui size=11 color=color.dim nowrap w=54
+              each param.detail.parents #detail-parents
+            }
+          }
+        }
+      }
+      rect w=60 h=2 radius=1 bg=color.border self=bottom offset=0,-78 inert
+    }
+    // HEAD commit_detail: stats left at x+16, PATH|TREE toggle centered in
+    // the panel (not right-packed), "View all files" checkbox in a 110px
+    // block ending at rect.right()-10, label sans 14 theme.text.
+    stack w=fill h=38 {
+      row w=fill h=38 pad=0,10,0,16 gap=10 align=center {
+        DetailStats
+        spacer
+        row w=110 h=26 gap=12 align=center {
+          Checkbox param.view_all_files "toggle-view-all-files" "View all files"
+          text "View all files" style=text.ui size=14 color=color.text nowrap
+        }
+      }
+      group self=center {
+        DetailPathToggle
+      }
+    }
+    col#commit-detail-scroll w=fill h=fill scroll scrollbar=auto scrollbar-w=5 scrollbar-fg=color.borderHard scrollbar-bg=color.transparent clip {
+      each param.detail.files #commit-detail-files virtual item-extent=25 overscan=8
+    }
+  }
+}
+
+def MultiDetail() {
+  col w=param.detail_width h=fill bg=color.window stroke=color.border stroke-w=1 stroke-sides=left clip {
+    row h=40 pad=0,12 gap=8 align=center stroke=color.border stroke-w=1 stroke-sides=bottom {
+      text "COMMITS:" style=text.ui size=11 color=color.dim nowrap
+      text param.detail.selection_short style=text.mono color=color.accent nowrap
+      spacer
+      IconButton "x" "close-detail" "Clear commit selection"
+    }
+    // Fixed line boxes mirror build_multi's vertical rhythm: title 30,
+    // range 22, rows 18 each, overflow 18, pad 15/16.
+    col h=param.detail.multi_height bg=color.panelAlt pad=15,16 stroke=color.border stroke-w=1 stroke-sides=bottom clip {
+      text param.detail.selection_count style=text.heading size=15 weight=500 color=color.text w=fill h=30 nowrap
+      text param.detail.range style=text.mono size=12 color=color.accent w=fill h=22 nowrap ellipsis
+      col w=fill {
+        each param.detail.commits #multi-detail-commits
+      }
+      text param.detail.overflow style=text.ui size=11 color=color.dim h=18 nowrap
+    }
+    row h=38 pad=0,14 gap=10 align=center {
+      DetailStats
+      spacer
+      DetailPathToggle
+    }
+    col#multi-detail-scroll w=fill h=fill scroll scrollbar=auto scrollbar-w=5 scrollbar-fg=color.borderHard scrollbar-bg=color.transparent clip {
+      each param.detail.files #multi-detail-files virtual item-extent=25 overscan=8
+    }
+  }
+}
+

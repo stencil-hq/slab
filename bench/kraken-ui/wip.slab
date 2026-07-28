@@ -1,0 +1,157 @@
+params {
+  can_commit bool = false
+  cannot_commit bool = false
+}
+
+params wip {
+  title text = "Working Tree"
+  subtitle text = "No file changes"
+  stage_label text = "Stage All Changes"
+  unstaged_empty bool = true
+  staged_empty bool = true
+  unstaged_height num = 100
+  staged_height num = 100
+}
+
+params unstaged {
+  count text = "0"
+  files list(WipFileItem) = []
+}
+
+params staged {
+  count text = "0"
+  files list(WipFileItem) = []
+}
+
+params commit {
+  count text = "0 commits loaded"
+  summary text = ""
+  body text = ""
+  amend bool = false
+}
+
+params search {
+  open bool = false
+  text text = ""
+  count text = ""
+}
+
+// ---------- WIP/detail ----------
+def WipFileItem(marker="M", path="file", selected=false, conflict=false, staged=false, kind_bg=#0E2A1E, kind_fg=#4CB782, open=false) export {
+  row w=fill h=24 pad=0,9 gap=7 align=center act=wip-file context=wip-file-context role="row" label=path {
+    when open { bg=color.selected }
+    when selected { bg=color.selected }
+    when hover { bg=color.hover }
+    Checkbox selected "toggle-file-selection" "Select file"
+    stack w=16 h=16 radius=2 bg=kind_bg align=center pack=center {
+      text marker style=text.mono size=10 color=kind_fg nowrap {
+        when conflict { color=color.red }
+      }
+    }
+    text path style=text.ui w=fill nowrap ellipsis {
+      when open { color=color.accent }
+      when selected { color=color.accent }
+    }
+    row h=24 align=center {
+      when !hover { opacity=0 }
+      when staged { TextButton "Unstage" "unstage-file" }
+      when !staged { TextButton "Stage File" "stage-file" }
+    }
+  }
+}
+
+def WipHeader(title, count, staged=false) {
+  row h=28 bg=color.panelAlt stroke=color.border stroke-w=1 stroke-sides=bottom pad=0,10 gap=6 align=center {
+    text title style=text.label color=color.text nowrap
+    text count style=text.small color=color.muted nowrap
+    spacer
+    when !staged {
+      row w=hug h=24 pad=4,9 radius=3 stroke=color.borderStrong stroke-w=1 act=stage-selection role="button" label=param.wip.stage_label {
+        when hover { bg=color.hover; stroke=color.borderHard }
+        when pressed { bg=color.selected }
+        text param.wip.stage_label style=text.small color=color.text nowrap
+      }
+    }
+    when staged {
+      row w=hug h=24 pad=4,9 radius=3 stroke=color.borderStrong stroke-w=1 act=unstage-all role="button" label="Unstage All" {
+        when hover { bg=color.hover; stroke=color.borderHard }
+        when pressed { bg=color.selected }
+        text "Unstage All" style=text.small color=color.text nowrap
+      }
+    }
+  }
+}
+
+def CommitForm() {
+  col w=fill h=274 bg=color.panel stroke=color.border stroke-w=1 stroke-sides=top clip {
+    row w=fill h=38 pad=12,9 gap=8 align=center {
+      Checkbox param.commit.amend "toggle-amend" "Amend previous commit"
+      text "Amend previous commit" style=text.ui color=color.text nowrap
+    }
+    col w=fill h=fill pad=0,13 {
+      col w=fill h=126 radius=4 bg=color.input stroke=color.borderStrong stroke-w=1 clip {
+        row w=fill h=34 align=center {
+          Field param.commit.summary "Commit summary" "focus-commit-summary" "change-commit-summary"
+          text "72" style=text.mono color=color.muted size=10
+          stack w=24 h=24 align=center pack=center act=show-ai {
+            when hover { bg=color.panelAlt radius=3 }
+            icon sparkle size=14 color=color.accent
+          }
+        }
+        SectionRule
+        MultilineField param.commit.body "Description" "focus-commit-body" "change-commit-body"
+      }
+      row w=fill h=40 pad=8,0 align=center {
+        row w=hug h=24 pad=4,8 gap=4 radius=4 stroke=color.borderStrong stroke-w=1 align=center act=toggle-commit-options {
+          when hover { bg=color.hover; stroke=color.borderHard }
+          text "Commit options" style=text.ui nowrap
+          icon chevron_down size=12 color=color.muted
+        }
+      }
+      when can_commit { PrimaryButton "Commit changes" "commit" }
+      when cannot_commit { PrimaryButton "Nothing to commit" "commit" }
+    }
+  }
+}
+
+def WipDetail() {
+  col w=param.detail_width h=fill bg=color.window stroke=color.border stroke-w=1 stroke-sides=left clip {
+    row h=68 pad=10,12 align=center {
+      col w=fill gap=5 {
+        row gap=7 align=center {
+          rect w=7 h=7 radius=99 bg=color.purple
+          text "WORKING TREE · LIVE" style=text.label color=color.purple nowrap
+        }
+        text param.wip.subtitle style=text.heading nowrap ellipsis
+      }
+      TextButton "PATH" "toggle-path-tree"
+      TextButton "TREE" "toggle-path-tree"
+    }
+    col w=fill h=fill gap=8 clip {
+      col w=fill h=param.wip.unstaged_height clip {
+        WipHeader "UNSTAGED FILES" param.unstaged.count false
+        col#unstaged-scroll w=fill h=fill scroll scrollbar=auto scrollbar-w=4 scrollbar-fg=color.borderHard scrollbar-bg=color.transparent clip {
+          when wip.unstaged_empty {
+            stack w=fill h=fill {
+              text "No unstaged files" style=text.ui color=color.muted nowrap self=center
+            }
+          }
+          each param.unstaged.files #unstaged-files virtual item-extent=24
+        }
+      }
+      col w=fill h=param.wip.staged_height clip {
+        WipHeader "STAGED FILES" param.staged.count true
+        col#staged-scroll w=fill h=fill scroll scrollbar=auto scrollbar-w=4 scrollbar-fg=color.borderHard scrollbar-bg=color.transparent clip {
+          when wip.staged_empty {
+            stack w=fill h=fill {
+              text "No staged files" style=text.ui color=color.muted nowrap self=center
+            }
+          }
+          each param.staged.files #staged-files virtual item-extent=24
+        }
+      }
+    }
+    CommitForm
+  }
+}
+
