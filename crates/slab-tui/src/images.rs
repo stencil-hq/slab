@@ -11,8 +11,11 @@ use std::path::Path;
 /// Host image-painting mode from `--images` (default `auto`).
 #[derive(Clone, Copy, PartialEq)]
 pub enum Mode {
+    /// Enables images when the terminal supports kitty graphics.
     Auto,
+    /// Enables kitty graphics without terminal detection.
     On,
+    /// Disables image transmission and keeps cell placeholders.
     Off,
 }
 

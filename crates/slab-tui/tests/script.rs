@@ -4,6 +4,9 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+static NEXT_DUMP: AtomicUsize = AtomicUsize::new(0);
 
 fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -11,14 +14,9 @@ fn root() -> PathBuf {
 
 /// Run slab-tui headless; return the dump text.
 fn run(example: &str, args: &[&str]) -> String {
-    let dump = std::env::temp_dir().join(format!(
-        "slab-tui-test-{}-{}.txt",
-        std::process::id(),
-        args.join("")
-            .chars()
-            .filter(char::is_ascii_alphanumeric)
-            .count()
-    ));
+    let serial = NEXT_DUMP.fetch_add(1, Ordering::Relaxed);
+    let dump =
+        std::env::temp_dir().join(format!("slab-tui-test-{}-{serial}.txt", std::process::id(),));
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_slab-tui"));
     cmd.arg(root().join(example))
         .args(args)

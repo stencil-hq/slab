@@ -11,7 +11,7 @@ use crossterm::event::{
     MouseButton, MouseEvent, MouseEventKind,
 };
 use crossterm::{cursor, execute, terminal};
-use slab_kernel::{cells, frame as kframe};
+use slab_kernel::{cells, dispatch, frame as kframe};
 use std::io::Write;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -20,20 +20,34 @@ fn ioerr(e: std::io::Error) -> String {
     format!("terminal: {e}")
 }
 
-/// One terminal cell covers CW×CH slab units (`slab_kernel::cells` quantization).
-fn env_for(cols: u16, doc_rows: u16) -> (f64, f64) {
+/// Converts terminal dimensions to slab layout units.
+pub fn terminal_env(cols: u16, doc_rows: u16) -> (f64, f64) {
     (f64::from(cols) * cells::CW, f64::from(doc_rows) * cells::CH)
 }
 
-/// Live terminal session: raw mode + alt screen, restored on scope exit.
-/// Built by [`Term::new`], drives documents through [`Term::run`]; `kitty`
-/// mirrors whether enhancement flags were pushed (pop must precede
-/// LeaveAlternateScreen).
-pub struct Term {
+/// Applies terminal dimensions and returns the document row count.
+pub fn resize(
+    inst: &mut kframe::Instance,
+    cols: u16,
+    rows: u16,
+    reserved_rows: u16,
+    dark: bool,
+    coarse: bool,
+) -> u16 {
+    let doc_rows = rows.saturating_sub(reserved_rows).max(1);
+    let (vw, vh) = terminal_env(cols, doc_rows);
+    kframe::inst_set_env(inst, vw, vh, 2, dark, coarse);
+    doc_rows
+}
+
+/// Raw-mode alternate-screen terminal lifecycle.
+///
+/// Create this value with [`Terminal::new`]. Dropping it restores the terminal.
+pub struct Terminal {
     kitty: bool,
 }
 
-impl Drop for Term {
+impl Drop for Terminal {
     fn drop(&mut self) {
         let mut out = std::io::stdout();
         if self.kitty {
@@ -95,9 +109,8 @@ fn x256(rgb: u32) -> u8 {
     (16 + 36 * q(r) + 6 * q(g) + q(b)) as u8
 }
 
-/// Diff-paints cell grids: cursor moves + SGR runs, full clear+repaint on
-/// resize or first frame. Truecolor unless COLORTERM lacks 24-bit.
-struct Painter {
+/// Stateful ANSI diff painter for kernel cell grids.
+pub struct Painter {
     truecolor: bool,
     prev: Option<cells::CellGrid>,
     buf: String,
@@ -107,10 +120,16 @@ struct Painter {
 }
 
 impl Painter {
-    fn new() -> Self {
+    /// Detects terminal truecolor support and creates an empty painter.
+    pub fn new() -> Self {
         let truecolor = std::env::var("COLORTERM")
             .map(|v| v.contains("truecolor") || v.contains("24bit"))
             .unwrap_or(false);
+        Self::with_truecolor(truecolor)
+    }
+
+    /// Creates an empty painter with explicit color capability.
+    pub fn with_truecolor(truecolor: bool) -> Self {
         Painter {
             truecolor,
             prev: None,
@@ -146,8 +165,9 @@ impl Painter {
         self.cur_bg = bg;
     }
 
-    /// Paint `g` clipped to a cols×rows terminal window.
-    fn paint(&mut self, g: &cells::CellGrid, cols: u16, rows: u16, full: bool) {
+    /// Paints `grid` into the buffered terminal diff.
+    pub fn paint(&mut self, grid: &cells::CellGrid, cols: u16, rows: u16, full: bool) {
+        let g = grid;
         let full = full
             || match &self.prev {
                 Some(p) => p.cols != g.cols || p.rows != g.rows,
@@ -203,9 +223,8 @@ impl Painter {
         self.prev = Some(g.clone());
     }
 
-    /// Paint one dim status line across 1-based `row`, clipped and padded
-    /// to `cols`. Buffered like a frame; the caller flushes.
-    fn footer(&mut self, row: u16, cols: u16, text: &str) {
+    /// Appends one clipped and padded status line to the buffered diff.
+    pub fn footer(&mut self, row: u16, cols: u16, text: &str) {
         let mut line: String = text.chars().take(usize::from(cols)).collect();
         let pad = usize::from(cols).saturating_sub(line.chars().count());
         line.extend(std::iter::repeat_n(' ', pad));
@@ -214,6 +233,22 @@ impl Painter {
         self.cur_fg = cells::NO_COLOR;
         self.cur_bg = cells::NO_COLOR;
         self.cur_pos = None;
+    }
+
+    /// Returns the complete buffered terminal write.
+    pub fn buffer(&self) -> &str {
+        &self.buf
+    }
+
+    /// Marks the terminal cursor position as unknown after an overlay.
+    pub fn invalidate_cursor(&mut self) {
+        self.cur_pos = None;
+    }
+}
+
+impl Default for Painter {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -246,20 +281,23 @@ fn mouse_xy(col: u16, row: u16) -> (f64, f64) {
     )
 }
 
-struct ClickTracker {
+/// Stateful terminal click counter and pointer delta tracker.
+pub struct ClickTracker {
     last: Option<(Instant, u32, f64, f64, u32)>,
     cursor: Option<(f64, f64)>,
 }
 
 impl ClickTracker {
-    fn new() -> Self {
+    /// Creates an empty click and pointer history.
+    pub fn new() -> Self {
         Self {
             last: None,
             cursor: None,
         }
     }
 
-    fn pointer_down(&mut self, button: u32, x: f64, y: f64) -> u32 {
+    /// Records a press and returns its consecutive click count.
+    pub fn pointer_down(&mut self, button: u32, x: f64, y: f64) -> u32 {
         let now = Instant::now();
         let clicks = self
             .last
@@ -279,12 +317,19 @@ impl ClickTracker {
         clicks
     }
 
-    fn move_to(&mut self, x: f64, y: f64) -> (f64, f64) {
+    /// Records a pointer position and returns its event-local delta.
+    pub fn move_to(&mut self, x: f64, y: f64) -> (f64, f64) {
         let delta = self
             .cursor
             .map_or((0.0, 0.0), |(last_x, last_y)| (x - last_x, y - last_y));
         self.cursor = Some((x, y));
         delta
+    }
+}
+
+impl Default for ClickTracker {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -296,10 +341,132 @@ fn mouse_button_code(button: MouseButton) -> u32 {
     }
 }
 
+/// Result of translating one crossterm input event.
+pub enum Translated {
+    /// No kernel input corresponds to this event.
+    Ignored,
+    /// Dispatches one event and an optional following text event.
+    Events(dispatch::Event, Option<dispatch::Event>),
+    /// Resizes the terminal viewport in cells.
+    Resize(u16, u16),
+    /// Requests a clean host shutdown.
+    Quit,
+}
+
+/// Stateful crossterm-to-kernel event translator.
+#[derive(Default)]
+pub struct Translator {
+    clicks: ClickTracker,
+}
+
+impl Translator {
+    /// Creates a translator with empty click and pointer history.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Translates one crossterm event without dispatching it.
+    pub fn translate(&mut self, event: Event) -> Translated {
+        match event {
+            Event::Key(KeyEvent {
+                code,
+                modifiers,
+                kind,
+                ..
+            }) => {
+                if kind == KeyEventKind::Release {
+                    return Translated::Ignored;
+                }
+                let mods = mods_of(modifiers);
+                let key = match code {
+                    KeyCode::Char('c') if modifiers.contains(KeyModifiers::CONTROL) => {
+                        return Translated::Quit;
+                    }
+                    KeyCode::Tab => app::key_event("Tab", mods),
+                    KeyCode::BackTab => app::key_event("Tab", mods | app::M_SHIFT),
+                    KeyCode::Enter => app::key_event("Enter", mods),
+                    KeyCode::Backspace => app::key_event("Backspace", mods),
+                    KeyCode::Delete => app::key_event("Delete", mods),
+                    KeyCode::Esc => app::key_event("Escape", mods),
+                    KeyCode::Insert => app::key_event("Insert", mods),
+                    KeyCode::Home => app::key_event("Home", mods),
+                    KeyCode::End => app::key_event("End", mods),
+                    KeyCode::PageUp => app::key_event("PageUp", mods),
+                    KeyCode::PageDown => app::key_event("PageDown", mods),
+                    KeyCode::Left => app::key_event("ArrowLeft", mods),
+                    KeyCode::Right => app::key_event("ArrowRight", mods),
+                    KeyCode::Up => app::key_event("ArrowUp", mods),
+                    KeyCode::Down => app::key_event("ArrowDown", mods),
+                    KeyCode::F(number) if number <= 24 => {
+                        app::key_event(&format!("F{number}"), mods)
+                    }
+                    KeyCode::Char(ch) => {
+                        let text =
+                            accepts_printable_text(mods).then(|| app::text_event(&ch.to_string()));
+                        return Translated::Events(app::key_event(&ch.to_string(), mods), text);
+                    }
+                    _ => return Translated::Ignored,
+                };
+                Translated::Events(key, None)
+            }
+            Event::Mouse(MouseEvent {
+                kind,
+                column,
+                row,
+                modifiers,
+            }) => {
+                let (x, y) = mouse_xy(column, row);
+                let (pointer_dx, pointer_dy) = self.clicks.move_to(x, y);
+                let mut event = match kind {
+                    MouseEventKind::Down(button) => {
+                        let button = mouse_button_code(button);
+                        let count = self.clicks.pointer_down(button, x, y);
+                        app::pointer_button_event(app::E_POINTER_DOWN, x, y, button, count)
+                    }
+                    MouseEventKind::Up(button) => app::pointer_button_event(
+                        app::E_POINTER_UP,
+                        x,
+                        y,
+                        mouse_button_code(button),
+                        0,
+                    ),
+                    MouseEventKind::Drag(button) => app::pointer_button_event(
+                        app::E_POINTER_MOVE,
+                        x,
+                        y,
+                        mouse_button_code(button),
+                        0,
+                    ),
+                    MouseEventKind::Moved => app::pointer_event(app::E_POINTER_MOVE, x, y),
+                    MouseEventKind::ScrollDown => app::wheel_event(x, y, 3.0 * cells::CH),
+                    MouseEventKind::ScrollUp => app::wheel_event(x, y, -3.0 * cells::CH),
+                    _ => return Translated::Ignored,
+                };
+                event.mods = mods_of(modifiers);
+                if matches!(event.etype, app::E_POINTER_MOVE | app::E_POINTER_UP) {
+                    event.dx = pointer_dx;
+                    event.dy = pointer_dy;
+                }
+                Translated::Events(event, None)
+            }
+            Event::Paste(text) => Translated::Events(app::paste_event(&text), None),
+            Event::Resize(cols, rows) => Translated::Resize(cols, rows),
+            _ => Translated::Ignored,
+        }
+    }
+}
+
+/// Translates one crossterm event with caller-owned input history.
+pub fn translate(translator: &mut Translator, event: Event) -> Translated {
+    translator.translate(event)
+}
+
 /// `--examples` gallery: the document list plus the entry on screen.
 /// Ctrl-N/Ctrl-P step through it; the bottom row shows the position.
 pub struct Gallery<'a> {
+    /// Ordered document paths.
     pub files: &'a [PathBuf],
+    /// Current document index.
     pub index: usize,
 }
 
@@ -329,6 +496,7 @@ impl Gallery<'_> {
 
 /// Why the document loop stopped.
 pub enum Exit {
+    /// Ends the terminal session.
     Quit,
     /// Load the gallery entry at this index instead.
     Switch(usize),
@@ -343,177 +511,85 @@ enum Handled {
 
 fn handle(
     inst: &mut kframe::Instance,
-    ev: Event,
+    event: Event,
     signals: &mut Vec<app::Signal>,
-    clicks: &mut ClickTracker,
+    translator: &mut Translator,
     gallery: Option<&Gallery>,
 ) -> Handled {
-    match ev {
-        Event::Key(KeyEvent {
-            code,
-            modifiers,
-            kind,
-            ..
-        }) => {
-            if kind == KeyEventKind::Release {
-                return Handled::Continue;
-            }
-            let mods = mods_of(modifiers);
-            let kev = |k: &str| Some(app::key_event(k, mods));
-            let dispatch = match code {
-                KeyCode::Char('c') if modifiers.contains(KeyModifiers::CONTROL) => {
-                    app::close_instance(inst, signals);
-                    return Handled::Quit;
-                }
-                // Gallery navigation: Ctrl-N/Ctrl-P are unbound in the
-                // kernel, so intercepting them costs the document nothing.
-                KeyCode::Char(c @ ('n' | 'p')) if modifiers.contains(KeyModifiers::CONTROL) => {
-                    let Some(gallery) = gallery else {
-                        return Handled::Continue;
-                    };
-                    let next = if c == 'n' {
-                        gallery.next()
-                    } else {
-                        gallery.prev()
-                    };
-                    app::close_instance(inst, signals);
-                    return Handled::Switch(next);
-                }
-                KeyCode::Tab => kev("Tab"),
-                KeyCode::BackTab => Some(app::key_event("Tab", mods | app::M_SHIFT)),
-                KeyCode::Enter => kev("Enter"),
-                KeyCode::Backspace => kev("Backspace"),
-                KeyCode::Delete => kev("Delete"),
-                KeyCode::Esc => kev("Escape"),
-                KeyCode::Insert => kev("Insert"),
-                KeyCode::Home => kev("Home"),
-                KeyCode::End => kev("End"),
-                KeyCode::PageUp => kev("PageUp"),
-                KeyCode::PageDown => kev("PageDown"),
-                KeyCode::Left => kev("ArrowLeft"),
-                KeyCode::Right => kev("ArrowRight"),
-                KeyCode::Up => kev("ArrowUp"),
-                KeyCode::Down => kev("ArrowDown"),
-                KeyCode::F(number) if number <= 24 => {
-                    Some(app::key_event(&format!("F{number}"), mods))
-                }
-                KeyCode::Char(ch) => {
-                    // key-down first (Space/Enter button semantics, ctrl-A
-                    // select-all), then the text insert for plain chars.
-                    let s = ch.to_string();
-                    let eff = kframe::inst_dispatch(inst, &app::key_event(&s, mods));
-                    app::collect_signals(inst, &eff, signals);
-                    if accepts_printable_text(mods) {
-                        Some(app::text_event(&s))
-                    } else {
-                        None
-                    }
-                }
-                _ => None,
-            };
-            if let Some(ev) = dispatch {
-                let eff = kframe::inst_dispatch(inst, &ev);
-                app::collect_signals(inst, &eff, signals);
+    if let Event::Key(KeyEvent {
+        code: KeyCode::Char(c @ ('n' | 'p')),
+        modifiers,
+        kind,
+        ..
+    }) = &event
+        && *kind != KeyEventKind::Release
+        && modifiers.contains(KeyModifiers::CONTROL)
+        && let Some(gallery) = gallery
+    {
+        let next = if *c == 'n' {
+            gallery.next()
+        } else {
+            gallery.prev()
+        };
+        app::close_instance(inst, signals);
+        return Handled::Switch(next);
+    }
+
+    match translate(translator, event) {
+        Translated::Ignored => Handled::Continue,
+        Translated::Quit => {
+            app::close_instance(inst, signals);
+            Handled::Quit
+        }
+        Translated::Resize(cols, rows) => Handled::Resized(cols, rows),
+        Translated::Events(first, second) => {
+            for event in std::iter::once(first).chain(second) {
+                let effects = kframe::inst_dispatch(inst, &event);
+                app::collect_signals(inst, &effects, signals);
             }
             Handled::Continue
         }
-        Event::Mouse(MouseEvent {
-            kind,
-            column,
-            row,
-            modifiers,
-        }) => {
-            let (x, y) = mouse_xy(column, row);
-            let (pointer_dx, pointer_dy) = clicks.move_to(x, y);
-            let mods = mods_of(modifiers);
-            let ev = match kind {
-                MouseEventKind::Down(button) => {
-                    let button = mouse_button_code(button);
-                    let count = clicks.pointer_down(button, x, y);
-                    Some(app::pointer_button_event(
-                        app::E_POINTER_DOWN,
-                        x,
-                        y,
-                        button,
-                        count,
-                    ))
-                }
-                MouseEventKind::Up(button) => Some(app::pointer_button_event(
-                    app::E_POINTER_UP,
-                    x,
-                    y,
-                    mouse_button_code(button),
-                    0,
-                )),
-                MouseEventKind::Drag(button) => Some(app::pointer_button_event(
-                    app::E_POINTER_MOVE,
-                    x,
-                    y,
-                    mouse_button_code(button),
-                    0,
-                )),
-                MouseEventKind::Moved => Some(app::pointer_event(app::E_POINTER_MOVE, x, y)),
-                MouseEventKind::ScrollDown => Some(app::wheel_event(x, y, 3.0 * cells::CH)),
-                MouseEventKind::ScrollUp => Some(app::wheel_event(x, y, -3.0 * cells::CH)),
-                _ => None,
-            };
-            if let Some(mut ev) = ev {
-                ev.mods = mods;
-                if matches!(ev.etype, app::E_POINTER_MOVE | app::E_POINTER_UP) {
-                    ev.dx = pointer_dx;
-                    ev.dy = pointer_dy;
-                }
-                let eff = kframe::inst_dispatch(inst, &ev);
-                app::collect_signals(inst, &eff, signals);
-            }
-            Handled::Continue
-        }
-        Event::Paste(s) => {
-            let eff = kframe::inst_dispatch(inst, &app::paste_event(&s));
-            app::collect_signals(inst, &eff, signals);
-            Handled::Continue
-        }
-        Event::Resize(c, r) => Handled::Resized(c, r),
-        _ => Handled::Continue,
     }
 }
 
-fn forward_app_signals(
+fn forward_host_signals(
     inst: &mut kframe::Instance,
-    papp: &mut Option<&mut crate::player::PlayerApp>,
+    host: &mut dyn app::Host,
     signals: &[app::Signal],
     seen_signals: &mut usize,
 ) -> Result<(), String> {
-    if let Some(player) = papp.as_deref_mut() {
-        while *seen_signals < signals.len() {
-            player.on_signal(inst, &signals[*seen_signals].name)?;
-            *seen_signals += 1;
-        }
+    while *seen_signals < signals.len() {
+        host.on_signal(inst, &signals[*seen_signals])?;
+        *seen_signals += 1;
     }
     Ok(())
 }
 
-/// Session knobs shared by every document a `Term` drives.
+/// Session settings for a document run.
 pub struct Ui<'a> {
+    /// Maximum repaint frequency.
     pub fps: f64,
+    /// Shows the latest signal in a reserved footer row.
     pub debug: bool,
+    /// Enables the dark environment condition.
     pub dark: bool,
+    /// Enables the coarse-pointer environment condition.
     pub coarse: bool,
-    /// `Some` in `--examples` mode: enables the gallery row and Ctrl-N/P.
+    /// Enables gallery navigation and its reserved footer row.
     pub gallery: Option<Gallery<'a>>,
 }
 
-impl Term {
+impl Terminal {
     /// Enter raw mode + alt screen with mouse capture, bracketed paste and —
     /// where the terminal speaks it — the kitty keyboard protocol, which
     /// disambiguates Shift+Enter (multiline newline) from Enter. The probe is
     /// skipped under tmux, where it is known to misreport.
-    pub fn new() -> Result<Term, String> {
+    pub fn new() -> Result<Terminal, String> {
         terminal::enable_raw_mode().map_err(ioerr)?;
         let kitty = std::env::var_os("TMUX").is_none()
             && terminal::supports_keyboard_enhancement().unwrap_or(false);
         // Built before the fallible setup below so Drop still restores.
-        let term = Term { kitty };
+        let term = Terminal { kitty };
         let mut out = std::io::stdout();
         execute!(
             out,
@@ -536,11 +612,11 @@ impl Term {
         Ok(term)
     }
 
-    /// Drive one document until the user quits or picks another gallery entry.
+    /// Drives one document and invokes `host` between kernel frames.
     pub fn run(
         &self,
         inst: &mut kframe::Instance,
-        mut papp: Option<&mut crate::player::PlayerApp>,
+        host: &mut dyn app::Host,
         mut images: crate::images::Images,
         ui: &Ui,
     ) -> Result<Exit, String> {
@@ -549,9 +625,7 @@ impl Term {
         // Bottom rows are host chrome: gallery hint last, signals above it.
         let gallery_rows = u16::from(ui.gallery.is_some());
         let footer_rows = u16::from(ui.debug) + gallery_rows;
-        let mut doc_rows = rows.saturating_sub(footer_rows).max(1);
-        let (vw, vh) = env_for(cols, doc_rows);
-        kframe::inst_set_env(inst, vw, vh, 2, ui.dark, ui.coarse);
+        let mut doc_rows = resize(inst, cols, rows, footer_rows, ui.dark, ui.coarse);
 
         let start = Instant::now();
         let frame_dt = Duration::from_secs_f64(1.0 / ui.fps.max(1.0));
@@ -560,20 +634,16 @@ impl Term {
         let mut last_frame = Instant::now();
         let mut signals: Vec<app::Signal> = Vec::new();
         let mut footer_shown = String::new();
-        let mut app_tick = Instant::now();
+        let mut host_tick = Instant::now();
         let mut seen_signals = 0usize;
-        let mut clicks = ClickTracker::new();
+        let mut translator = Translator::new();
 
         loop {
-            // App layer first: forward freshly emitted signals, then advance
-            // the play clock; param writes mark the instance dirty, so the
-            // ordinary dirty/animating check below repaints through the
-            // kernel (times, progress knob, |>/|| swap, auto-advance).
-            forward_app_signals(inst, &mut papp, &signals, &mut seen_signals)?;
-            if let Some(player) = papp.as_deref_mut() {
-                player.advance(inst, app_tick.elapsed().as_secs_f64() * 1000.0)?;
-            }
-            app_tick = Instant::now();
+            // Forward new signals before the host clock advances. Host writes
+            // mark the instance dirty and repaint through the same kernel path.
+            forward_host_signals(inst, host, &signals, &mut seen_signals)?;
+            host.tick(inst, host_tick.elapsed().as_secs_f64() * 1000.0)?;
+            host_tick = Instant::now();
             if inst.dirty || !inst.solved || inst.ms.active || full {
                 let t = start.elapsed().as_secs_f64() * 1000.0;
                 let fr = kframe::inst_frame(inst, t);
@@ -589,7 +659,7 @@ impl Term {
                     painter.footer(bottom, cols, &g.footer());
                 }
                 if ui.debug {
-                    let badges = papp.as_deref().map(|p| p.badges()).unwrap_or_default();
+                    let badges = host.badges();
                     let text = match signals.last() {
                         Some(signal) => format!("sig: {}{badges}", app::format_signal(signal)),
                         None => format!("sig: —{badges}"),
@@ -603,9 +673,9 @@ impl Term {
                 // after the cell grid so real images cover the placeholder.
                 let mut overlay = String::new();
                 if images.paint(&mut overlay, &fr, full) {
-                    painter.cur_pos = None;
+                    painter.invalidate_cursor();
                 }
-                out.write_all(painter.buf.as_bytes()).map_err(ioerr)?;
+                out.write_all(painter.buffer().as_bytes()).map_err(ioerr)?;
                 out.write_all(overlay.as_bytes()).map_err(ioerr)?;
                 out.flush().map_err(ioerr)?;
                 full = false;
@@ -623,15 +693,15 @@ impl Term {
                         inst,
                         event::read().map_err(ioerr)?,
                         &mut signals,
-                        &mut clicks,
+                        &mut translator,
                         ui.gallery.as_ref(),
                     ) {
                         Handled::Quit => {
-                            forward_app_signals(inst, &mut papp, &signals, &mut seen_signals)?;
+                            forward_host_signals(inst, host, &signals, &mut seen_signals)?;
                             return Ok(Exit::Quit);
                         }
                         Handled::Switch(next) => {
-                            forward_app_signals(inst, &mut papp, &signals, &mut seen_signals)?;
+                            forward_host_signals(inst, host, &signals, &mut seen_signals)?;
                             // The next document reuses image ids 1..n for
                             // different pictures: drop this one's placements.
                             let mut buf = String::new();
@@ -643,9 +713,7 @@ impl Term {
                         Handled::Resized(c, r) => {
                             cols = c;
                             rows = r;
-                            doc_rows = rows.saturating_sub(footer_rows).max(1);
-                            let (vw, vh) = env_for(cols, doc_rows);
-                            kframe::inst_set_env(inst, vw, vh, 2, ui.dark, ui.coarse);
+                            doc_rows = resize(inst, cols, rows, footer_rows, ui.dark, ui.coarse);
                             full = true;
                         }
                         Handled::Continue => {}
@@ -657,6 +725,16 @@ impl Term {
             }
         }
     }
+}
+
+/// Enters a terminal session and drives one document with host callbacks.
+pub fn run(
+    inst: &mut kframe::Instance,
+    host: &mut dyn app::Host,
+    images: crate::images::Images,
+    ui: &Ui,
+) -> Result<Exit, String> {
+    Terminal::new()?.run(inst, host, images, ui)
 }
 
 #[cfg(test)]

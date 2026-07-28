@@ -117,17 +117,38 @@ pub fn wheel_event(x: f64, y: f64, dy: f64) -> dispatch::Event {
 }
 
 /// Driver signal with its resolved name, payload, list identity, and metadata.
-pub(crate) struct Signal {
+pub struct Signal {
     /// Resolved signal name.
-    pub(crate) name: String,
+    pub name: String,
     /// Committed text for Change, Submit, and Resize signals.
-    pub(crate) text: String,
+    pub text: String,
     /// Innermost list item key, or empty for a document node.
-    pub(crate) item: String,
-    /// Input and drag-source metadata (not yet surfaced by the TUI printer).
-    #[allow(dead_code)]
-    pub(crate) meta: dispatch::SigMeta,
+    pub item: String,
+    /// Input and drag-source metadata (key names, drag identities).
+    pub meta: dispatch::SigMeta,
 }
+
+/// Host hooks the driver loops call between kernel frames — the terminal
+/// analogue of wslab's `SlabElement` callbacks. Every method has a no-op
+/// default; implement only what the app needs.
+pub trait Host {
+    /// Reacts to one resolved kernel signal.
+    fn on_signal(&mut self, inst: &mut kframe::Instance, signal: &Signal) -> Result<(), String> {
+        let _ = (inst, signal);
+        Ok(())
+    }
+    /// Advances host time by `dt_ms` before a frame; param writes repaint.
+    fn tick(&mut self, inst: &mut kframe::Instance, dt_ms: f64) -> Result<(), String> {
+        let _ = (inst, dt_ms);
+        Ok(())
+    }
+    /// Extra text appended to the `--debug` footer.
+    fn badges(&self) -> String {
+        String::new()
+    }
+}
+
+impl Host for () {}
 
 /// Resolve all four parallel Effects signal channels.
 pub fn collect_signals(inst: &kframe::Instance, eff: &dispatch::Effects, out: &mut Vec<Signal>) {
@@ -149,7 +170,7 @@ pub fn drain_frame_signals(inst: &mut kframe::Instance, out: &mut Vec<Signal>) {
 
 /// Ends host-owned pointer gestures and preserves every signal emitted before
 /// the instance is discarded.
-pub(crate) fn close_instance(inst: &mut kframe::Instance, out: &mut Vec<Signal>) {
+pub fn close_instance(inst: &mut kframe::Instance, out: &mut Vec<Signal>) {
     drain_frame_signals(inst, out);
     let effects = kframe::inst_dispatch(inst, &event_new(E_CLOSE));
     collect_signals(inst, &effects, out);

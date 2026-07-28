@@ -195,3 +195,21 @@ impl PlayerApp {
         out
     }
 }
+
+impl crate::app::Host for PlayerApp {
+    fn on_signal(
+        &mut self,
+        inst: &mut kframe::Instance,
+        signal: &crate::app::Signal,
+    ) -> Result<(), String> {
+        PlayerApp::on_signal(self, inst, &signal.name)
+    }
+
+    fn tick(&mut self, inst: &mut kframe::Instance, dt_ms: f64) -> Result<(), String> {
+        self.advance(inst, dt_ms)
+    }
+
+    fn badges(&self) -> String {
+        PlayerApp::badges(self)
+    }
+}
