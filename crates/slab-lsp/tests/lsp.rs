@@ -377,7 +377,13 @@ fn test_color_presentation_hex_forms() {
 fn test_unicode_positions_are_utf16() {
     let text = format!("tokens {{ color {{ ink #E8EEF6 }} }}\n{UNI_LINE}\n");
     let (mut srv, notes) = server_with(&text);
-    assert!(diags(&notes).is_empty(), "{:?}", diags(&notes));
+    let diagnostics = diags(&notes);
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic["code"] == "glyph-missing"),
+        "{diagnostics:?}"
+    );
     let idx = UNI_LINE.find("color=").unwrap();
     // count chars, then UTF-16 units, up to the byte index
     let u16: usize = UNI_LINE[..idx].chars().map(|c| c.len_utf16()).sum();

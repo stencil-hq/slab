@@ -572,6 +572,10 @@ pub fn test_activation_key_bubbles_to_ancestor() {
         effects.sig_item.len() == 1 && effects.sig_item[0].is_empty(),
         "real signal item empty"
     );
+    assert_eq!(
+        effects.sig_meta[0].key, "Escape",
+        "metadata names fired key"
+    );
 }
 
 /// Verifies that disabled ancestors suppress matching activation keys.

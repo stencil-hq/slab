@@ -398,13 +398,60 @@ pub fn prune_vanished(d: &Doc, st: &mut St, ds: &mut DState) -> bool {
     state_changed
 }
 
+fn signal_attr(trigger: u32) -> Option<u32> {
+    match trigger {
+        TR_ACTIVATE => Some(slir::A_ACT),
+        TR_CHANGE => Some(slir::A_FIELD),
+        TR_SUBMIT => Some(slir::A_SUBMIT),
+        TR_PRESS => Some(slir::A_PRESS),
+        TR_CONTEXT => Some(slir::A_CONTEXT),
+        TR_DBLCLICK => Some(slir::A_DBLCLICK),
+        TR_DRAG_START => Some(slir::A_DRAG),
+        TR_DROP => Some(slir::A_DROP),
+        TR_RESIZE => Some(slir::A_RESIZE),
+        TR_POINTER_MOVE => Some(slir::A_POINTER_MOVE),
+        TR_POINTER_UP => Some(slir::A_POINTER_UP),
+        TR_DRAG_UPDATE => Some(slir::A_DRAG_UPDATE),
+        TR_DRAG_END => Some(slir::A_DRAG_END),
+        _ => None,
+    }
+}
+
+fn node_has_signal_channel(d: &Doc, base: u32, attr: u32) -> bool {
+    if slir::base_attr(d, base, attr) >= 0 {
+        return true;
+    }
+    d.patch_node.iter().enumerate().any(|(patch, &owner)| {
+        if owner != base {
+            return false;
+        }
+        let start = usize::try_from(d.patch_attr_off[patch]).expect("negative patch attr offset");
+        let end = usize::try_from(d.patch_attr_off[patch].wrapping_add(d.patch_attr_len[patch]))
+            .expect("negative patch attr end");
+        d.wattr_id[start..end].contains(&attr)
+    })
+}
+
 /// Finds the signal for `node` and one of the `TR_*` trigger constants.
 pub fn sig_of(d: &Doc, st: &St, node: u32, trigger: u32) -> i32 {
+    if !style::attached(d, st, node) {
+        return -1;
+    }
     let base = list::base(&st.lists, d, node);
+    let active_name = signal_attr(trigger).and_then(|attr| {
+        let value = crate::value::decode(d, style::attr_ix(d, st, node, attr));
+        (value.tag == slir::T_STR).then_some(value.h)
+    });
+    let uses_channel =
+        signal_attr(trigger).is_some_and(|attr| node_has_signal_channel(d, base, attr));
     d.sign_name
         .iter()
         .enumerate()
-        .find(|(index, _)| d.sign_node[*index] == base && d.sign_trigger[*index] == trigger)
+        .find(|(index, name)| {
+            d.sign_node[*index] == base
+                && d.sign_trigger[*index] == trigger
+                && (!uses_channel || active_name == Some(**name))
+        })
         .map_or(-1, |(index, _)| {
             i32::try_from(index).expect("too many signals")
         })
@@ -438,11 +485,11 @@ fn signal_name_of(d: &Doc, st: &St, node: u32, trigger: u32) -> Option<u32> {
         .map(|index| d.sign_name[index])
 }
 
-fn remember_drag_event(ds: &mut DState, ev: &Event) {
+fn remember_drag_event(ds: &mut DState, ev: &Event, dx: f64, dy: f64) {
     ds.drag_last_x = ev.x;
     ds.drag_last_y = ev.y;
-    ds.drag_last_dx = ev.dx;
-    ds.drag_last_dy = ev.dy;
+    ds.drag_last_dx = dx;
+    ds.drag_last_dy = dy;
     ds.drag_last_mods = ev.mods;
     ds.drag_last_button = ev.button;
     ds.drag_last_clicks = ev.clicks;
@@ -503,7 +550,7 @@ fn emit_drag_update(effects: &mut Effects, ds: &DState) {
 }
 
 fn emit_drag_end(effects: &mut Effects, ds: &DState, cancelled: bool, dropped: bool) {
-    if ds.drag_active {
+    if ds.drag_source != slir::NONE {
         push_cached_drag_signal(effects, ds, ds.drag_end_name, cancelled, dropped);
     }
 }
@@ -680,6 +727,42 @@ pub fn bind_edit_on_focus(d: &Doc, st: &mut St, ds: &mut DState) {
         ensure_edit(d, st, ds, focused);
     }
 }
+pub(crate) fn sync_bound_text_param(d: &Doc, st: &mut St, node: u32, text: &str) -> bool {
+    let signal_index = sig_of(d, st, node, TR_CHANGE);
+    if signal_index < 0 {
+        return false;
+    }
+    let signal_index = usize::try_from(signal_index).expect("negative signal index");
+    let signal_name = slir::str_at(d, d.sign_name[signal_index]);
+    let Some(param) = d.parm_name.iter().enumerate().find_map(|(index, name)| {
+        (d.parm_type[index] == slir::PARAM_TEXT && slir::str_at(d, *name) == signal_name)
+            .then_some(index)
+    }) else {
+        return false;
+    };
+    if st.pv_str[param] == text {
+        return false;
+    }
+    text.clone_into(&mut st.pv_str[param]);
+    true
+}
+
+/// Queues one host-driven field Change for the next [`take_pending_signals`] call.
+pub(crate) fn queue_field_change(d: &Doc, st: &St, ds: &mut DState, node: u32, text: &str) {
+    let signal_index = sig_of(d, st, node, TR_CHANGE);
+    if signal_index < 0 {
+        return;
+    }
+    let signal_index = usize::try_from(signal_index).expect("negative signal index");
+    let mut effects = effects_new();
+    emit_signal(d, st, &mut effects, signal_index, node, text.to_owned());
+    ds.pending_signals.push(PendingSignal {
+        name: effects.sig_name[0],
+        text: effects.sig_text.swap_remove(0),
+        item: effects.sig_item.swap_remove(0),
+        meta: effects.sig_meta.swap_remove(0),
+    });
+}
 
 /// Writes an edit's display text back into style and emits a change signal.
 pub fn sync_field(
@@ -697,17 +780,12 @@ pub fn sync_field(
     if !text_changed {
         return;
     }
+    let text = edit::text_str(&ds.ed[index]);
+    sync_bound_text_param(d, st, node, &text);
     let signal_index = sig_of(d, st, node, 1);
     if signal_index >= 0 {
         let signal_index = usize::try_from(signal_index).expect("negative signal index");
-        emit_signal(
-            d,
-            st,
-            eff,
-            signal_index,
-            node,
-            edit::text_str(&ds.ed[index]),
-        );
+        emit_signal(d, st, eff, signal_index, node, text);
     }
 }
 
@@ -1158,6 +1236,10 @@ pub fn activate_key_path(
         if key_list_has(&style::attr_str(d, st, node, slir::A_KEYS), key) && !disabled(d, st, node)
         {
             deliver_activate(d, st, eff, node);
+            eff.sig_meta
+                .last_mut()
+                .expect("activation has metadata")
+                .key = key.to_owned();
             return true;
         }
         scene_index = sc.parent[index];
@@ -1190,6 +1272,98 @@ pub fn line_of(tl: &TextLayout, at: i32) -> i32 {
         }
     }
     i32::try_from(tl.src_ls.len() - 1).expect("too many text lines")
+}
+
+/// Geometry needed to map a document-space hit into one editable field.
+pub(crate) struct FieldHit<'a> {
+    pub(crate) d: &'a Doc,
+    pub(crate) st: &'a St,
+    pub(crate) lay: &'a Lay,
+    pub(crate) sc: &'a Scene,
+    pub(crate) node: u32,
+}
+
+/// Maps a document-space field hit to the nearest source caret.
+fn field_caret_at(hit: &FieldHit<'_>, text: &str, scroll_x: f64, x: f64, y: f64) -> i32 {
+    let d = hit.d;
+    let st = hit.st;
+    let lay = hit.lay;
+    let sc = hit.sc;
+    let node = hit.node;
+    let scene_index = scene::index_of(sc, node);
+    let text_layout_index = crate::layout::text_layout_ix(lay, node);
+    if scene_index < 0 || text_layout_index < 0 {
+        return 0;
+    }
+    let scene_index = usize::try_from(scene_index).expect("negative scene index");
+    let text_layout =
+        &lay.tls[usize::try_from(text_layout_index).expect("negative text layout index")];
+    if text_layout.src_ls.is_empty() {
+        return 0;
+    }
+    let (font, size, tracking, pad_top, pad_left, pad_right, align) =
+        if let Some(resolved) = st.rs.iter().rev().find(|resolved| resolved.node == node) {
+            let align = match resolved.talign {
+                1 => 0.5,
+                2 => 1.0,
+                _ => 0.0,
+            };
+            (
+                resolved.font,
+                resolved.size,
+                resolved.tracking,
+                resolved.pad_t,
+                resolved.pad_l,
+                resolved.pad_r,
+                align,
+            )
+        } else {
+            (-1, 14.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+        };
+    let line = (((y - sc.y[scene_index] - pad_top) / text_layout.line_h).floor() as i32).clamp(
+        0,
+        i32::try_from(text_layout.src_ls.len() - 1).expect("too many text lines"),
+    );
+    let line_index = usize::try_from(line).expect("negative line index");
+    let start = text_layout.src_ls[line_index];
+    let end = text_layout.src_le[line_index];
+    let content_width = sc.w[scene_index] - pad_left - pad_right;
+    let origin =
+        sc.x[scene_index] + pad_left + (content_width - text_layout.line_w[line_index]) * align
+            - scroll_x;
+    let mut advance = 0.0;
+    for (index, character) in text
+        .chars()
+        .map(u32::from)
+        .enumerate()
+        .skip(usize::try_from(start).expect("negative line start"))
+        .take(usize::try_from(end - start).expect("negative line length"))
+    {
+        let width = crate::textm::char_w(d, font, size, tracking, character);
+        if x < origin + advance + width * 0.5 {
+            return i32::try_from(index).expect("field text exceeds i32");
+        }
+        advance += width;
+    }
+    end
+}
+
+/// Applies secondary-click selection semantics to one editable field.
+pub(crate) fn place_context_caret(
+    hit: &FieldHit<'_>,
+    edit_state: &mut edit::EditState,
+    x: f64,
+    y: f64,
+) -> bool {
+    let hit = field_caret_at(hit, &edit_state.text, edit_state.scroll_x, x, y);
+    if hit >= edit::sel_lo(edit_state) && hit <= edit::sel_hi(edit_state) {
+        return false;
+    }
+    edit::history_barrier(edit_state);
+    edit_state.caret = hit;
+    edit_state.anchor = hit;
+    edit_state.goal_x = -1.0;
+    true
 }
 
 /// Emits a submit signal containing the field's committed text.
@@ -1498,6 +1672,16 @@ pub fn dispatch(
     ev: &Event,
 ) -> Effects {
     let mut effects = effects_new();
+    let (pointer_dx, pointer_dy) = if ev.etype == E_POINTER_MOVE
+        && ds.drag_source != slir::NONE
+        && ev.dx == 0.0
+        && ev.dy == 0.0
+        && (ev.x != ds.drag_last_x || ev.y != ds.drag_last_y)
+    {
+        (ev.x - ds.drag_last_x, ev.y - ds.drag_last_y)
+    } else {
+        (ev.dx, ev.dy)
+    };
     let mut path = Vec::new();
     if matches!(
         ev.etype,
@@ -1509,7 +1693,7 @@ pub fn dispatch(
     match ev.etype {
         E_POINTER_MOVE => {
             if ds.drag_source != slir::NONE {
-                remember_drag_event(ds, ev);
+                remember_drag_event(ds, ev, pointer_dx, pointer_dy);
             }
             let mut signal_path = Vec::new();
             routed_pointer_path(sc, ds, &path, &mut signal_path);
@@ -1635,9 +1819,9 @@ pub fn dispatch(
         }
         E_POINTER_DOWN => {
             // A fresh down cancels stale capture without disturbing keyboard
-            // focus. Secondary and auxiliary buttons never press or focus.
+            // focus, except that a secondary field hit applies pointer focus.
             if ds.drag_active {
-                remember_drag_event(ds, ev);
+                remember_drag_event(ds, ev, ev.dx, ev.dy);
                 emit_drag_end(&mut effects, ds, true, false);
             }
             cancel_pointer(d, st, ds, &mut effects);
@@ -1647,6 +1831,32 @@ pub fn dispatch(
                 slir::NONE
             };
             if ev.button == 2 {
+                let field_target = path.iter().rev().find_map(|&scene_index| {
+                    let index = usize::try_from(scene_index).expect("negative scene index");
+                    let node = sc.node[index];
+                    (sc.flags[index] & slir::F_FOCUSABLE != 0
+                        && sig_of(d, st, node, TR_CHANGE) >= 0
+                        && !disabled(d, st, node))
+                    .then_some(node)
+                });
+                if let Some(field) = field_target {
+                    ensure_edit(d, st, ds, field);
+                    let edit_index =
+                        usize::try_from(ed_ix(ds, field)).expect("field edit state is missing");
+                    effects.repaint |= place_context_caret(
+                        &FieldHit {
+                            d,
+                            st,
+                            lay,
+                            sc,
+                            node: field,
+                        },
+                        &mut ds.ed[edit_index],
+                        ev.x,
+                        ev.y,
+                    );
+                    effects.repaint |= focus::set_focus(d, st, &mut ds.fs, field, false);
+                }
                 let target = path_trigger_node(d, st, sc, &path, TR_CONTEXT);
                 if target != slir::NONE {
                     deliver_trigger(d, st, &mut effects, target, TR_CONTEXT, String::new());
@@ -1684,7 +1894,7 @@ pub fn dispatch(
                 ds.drag_x = ev.x;
                 ds.drag_y = ev.y;
                 if ds.drag_source != slir::NONE {
-                    remember_drag_event(ds, ev);
+                    remember_drag_event(ds, ev, ev.dx, ev.dy);
                     ds.drag_source_key = scene::key_of(d, &st.lists, ds.drag_source);
                     ds.drag_source_item = list::item_key(&st.lists, d, ds.drag_source);
                     ds.drag_update_name = signal_name_of(d, st, ds.drag_source, TR_DRAG_UPDATE);
@@ -1738,7 +1948,7 @@ pub fn dispatch(
         }
         E_POINTER_UP => {
             if ds.drag_source != slir::NONE {
-                remember_drag_event(ds, ev);
+                remember_drag_event(ds, ev, ev.dx, ev.dy);
             }
             let mut signal_path = Vec::new();
             routed_pointer_path(sc, ds, &path, &mut signal_path);
@@ -1838,10 +2048,20 @@ pub fn dispatch(
             let selecting = ev.mods & M_SHIFT != 0;
             let focused = ds.fs.focus;
 
+            // Escape cancels pointer capture before editing or authored keys.
+            let mut handled = if ev.key == "Escape" && ds.drag_source != slir::NONE {
+                emit_drag_end(&mut effects, ds, true, false);
+                cancel_pointer(d, st, ds, &mut effects);
+                true
+            } else {
+                false
+            };
             // Editing has precedence, followed by divider adjustment, scrolling,
             // activation-key bubbling, and focus-ring navigation.
-            let mut handled = focused != slir::NONE
-                && route_edit_key(d, st, lay, sc, ds, focused, &ev.key, ev.mods, &mut effects);
+            if !handled && focused != slir::NONE {
+                handled =
+                    route_edit_key(d, st, lay, sc, ds, focused, &ev.key, ev.mods, &mut effects);
+            }
             if !handled && focused != slir::NONE && ed_ix(ds, focused) < 0 {
                 handled = divider_key(d, st, sc, focused, &ev.key, ev.mods, &mut effects);
             }
@@ -1874,6 +2094,11 @@ pub fn dispatch(
                         != 0
                 {
                     deliver_activate(d, st, &mut effects, focused);
+                    effects
+                        .sig_meta
+                        .last_mut()
+                        .expect("activation has metadata")
+                        .key = ev.key.clone();
                 }
             // Without an active editor, arrows walk the focus ring.
             } else if !handled
@@ -1986,8 +2211,8 @@ pub fn dispatch(
         if pointer_origin {
             meta.x = ev.x;
             meta.y = ev.y;
-            meta.dx = ev.dx;
-            meta.dy = ev.dy;
+            meta.dx = pointer_dx;
+            meta.dy = pointer_dy;
             if ds.drag_active {
                 meta.drag_dx = ev.x - ds.drag_x;
                 meta.drag_dy = ev.y - ds.drag_y;

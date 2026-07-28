@@ -5,9 +5,9 @@
 //! `research/tests/test_app.py`.
 
 use crate::{
-    dispatch, edit, flatten, frame, layout, motion,
+    dispatch, edit, flatten, frame, layout, motion, scene,
     slir::{self, Doc},
-    style, textm,
+    style, test_hit, textm,
 };
 
 /// Verifies that caret movement and deletion respect grapheme clusters.
@@ -548,4 +548,213 @@ pub fn test_host_focus_binds_field_and_rejects_inert() {
         dispatch::ed_ix(&inert.ds, 0) < 0,
         "rejection binds no edit state"
     );
+}
+
+/// Builds a keyed field with same-named text parameter and Submit binding.
+pub fn host_field_instance() -> frame::Instance {
+    let mut inst = frame::inst_shell();
+    inst.doc = paint_doc();
+    inst.doc
+        .strs
+        .extend(["field-key".into(), "draft".into(), "submit-draft".into()]);
+    inst.doc.node_key[0] = 1;
+    inst.doc.node_flags[0] |= slir::F_FOCUSABLE;
+    inst.doc.sign_name[0] = 2;
+    inst.doc.sign_name.push(3);
+    inst.doc.sign_node.push(0);
+    inst.doc.sign_trigger.push(dispatch::TR_SUBMIT);
+    inst.doc.aval_tag.push(slir::T_STR);
+    inst.doc.aval_lo.push(0);
+    inst.doc.aval_hi.push(0);
+    inst.doc.aval_num.push(0.0);
+    inst.doc.parm_name.push(2);
+    inst.doc.parm_type.push(slir::PARAM_TEXT);
+    inst.doc.parm_default.push(1);
+    inst.doc.parm_enum_off.push(0);
+    inst.doc.parm_enum_len.push(0);
+    inst.doc.parm_site_off.push(0);
+    inst.doc.parm_site_len.push(0);
+    frame::inst_init(&mut inst);
+    frame::inst_set_env(&mut inst, 500.0, 500.0, 0, false, false);
+    frame::inst_frame(&mut inst, 0.0);
+    inst
+}
+
+/// Builds one keyboard or text event for host field API tests.
+pub fn host_field_event(etype: u32, key: &str, text: &str) -> dispatch::Event {
+    dispatch::Event {
+        etype,
+        x: 0.0,
+        y: 0.0,
+        dx: 0.0,
+        dy: 0.0,
+        button: 0,
+        clicks: 0,
+        key: key.into(),
+        text: text.into(),
+        mods: 0,
+    }
+}
+
+/// Verifies submit, host clear, and subsequent typing use the replaced buffer.
+pub fn test_field_set_submit_clear_then_type() {
+    let mut inst = host_field_instance();
+    assert!(frame::inst_set_focus(&mut inst, "field-key", true));
+    frame::inst_dispatch(&mut inst, &host_field_event(dispatch::E_TEXT, "", "first"));
+    let submit = frame::inst_dispatch(
+        &mut inst,
+        &host_field_event(dispatch::E_KEY_DOWN, "Enter", ""),
+    );
+    assert_eq!(submit.sig_text, ["first"], "Submit carries committed text");
+
+    assert!(frame::inst_set_field_text(&mut inst, "field-key", ""));
+    assert_eq!(
+        frame::inst_field_text(&inst, "field-key").as_deref(),
+        Some("")
+    );
+    assert_eq!(
+        frame::inst_param_json(&inst, "draft").as_deref(),
+        Some("\"\"")
+    );
+    let changed = frame::inst_take_signals(&mut inst);
+    assert_eq!(changed.sig_text, [""], "host clear emits Change");
+    let edit_index = usize::try_from(dispatch::ed_ix(&inst.ds, 0)).expect("field is bound");
+    assert!(
+        inst.ds.ed[edit_index].u_text.is_empty(),
+        "undo baseline reset"
+    );
+    assert!(
+        inst.ds.ed[edit_index].r_text.is_empty(),
+        "redo baseline reset"
+    );
+    assert_eq!(
+        (inst.ds.ed[edit_index].caret, inst.ds.ed[edit_index].anchor),
+        (0, 0),
+        "selection collapses at the new end"
+    );
+
+    frame::inst_dispatch(&mut inst, &host_field_event(dispatch::E_TEXT, "", "second"));
+    assert_eq!(
+        frame::inst_field_text(&inst, "field-key").as_deref(),
+        Some("second"),
+        "typing starts from cleared buffer"
+    );
+    assert_eq!(
+        frame::inst_param_json(&inst, "draft").as_deref(),
+        Some("\"second\""),
+        "field mutation keeps the same-named parameter synchronized"
+    );
+}
+
+/// Verifies a blurred host reseed survives focus and accepts appended text.
+pub fn test_field_set_blurred_reseed_then_focus() {
+    let mut inst = host_field_instance();
+    assert!(frame::inst_set_field_text(&mut inst, "field-key", "seed"));
+    assert_eq!(frame::inst_focus(&inst), slir::NONE);
+    assert!(frame::inst_set_focus(&mut inst, "field-key", true));
+    frame::inst_dispatch(&mut inst, &host_field_event(dispatch::E_TEXT, "", "-typed"));
+    assert_eq!(
+        frame::inst_field_text(&inst, "field-key").as_deref(),
+        Some("seed-typed"),
+        "first focus does not overwrite the host seed"
+    );
+}
+
+/// Verifies field read-back and the canonical focus query.
+pub fn test_field_text_and_focus_queries() {
+    let mut inst = host_field_instance();
+    assert_eq!(
+        frame::inst_field_text(&inst, "field-key").as_deref(),
+        Some(""),
+        "unbound field reads resolved content"
+    );
+    assert_eq!(frame::inst_field_text(&inst, "missing"), None);
+    assert!(
+        !frame::inst_set_field_text(&mut inst, "missing", "ignored"),
+        "unknown key is rejected"
+    );
+    let mut non_field = host_field_instance();
+    non_field.doc.sign_trigger.clear();
+    non_field.doc.sign_name.clear();
+    non_field.doc.sign_node.clear();
+    assert!(
+        !frame::inst_set_field_text(&mut non_field, "field-key", "ignored"),
+        "non-field key is rejected"
+    );
+    assert_eq!(frame::inst_focus(&inst), slir::NONE);
+    assert!(frame::inst_set_focus(&mut inst, "field-key", false));
+    assert_eq!(frame::inst_focus(&inst), 0);
+    assert!(frame::inst_set_focus(&mut inst, "", false));
+    assert_eq!(frame::inst_focus(&inst), slir::NONE);
+}
+
+/// Verifies scalar and list parameters serialize from current kernel state.
+pub fn test_param_json_scalar_and_list_reads() {
+    let scalar = host_field_instance();
+    assert_eq!(
+        frame::inst_param_json(&scalar, "draft").as_deref(),
+        Some("\"\"")
+    );
+    assert_eq!(frame::inst_param_json(&scalar, "missing"), None);
+
+    let mut lists = frame::inst_shell();
+    lists.doc = crate::test_list::list_doc();
+    frame::inst_init(&mut lists);
+    assert_eq!(
+        frame::inst_param_json(&lists, "items").as_deref(),
+        Some(
+            "[{\"key\":\"0\",\"label\":\"A\",\"shown\":true},{\"key\":\"1\",\"label\":\"B\",\"shown\":false}]"
+        )
+    );
+}
+
+/// Secondary field hits preserve an existing selection or collapse outside it.
+pub fn test_context_caret_preserves_selection_only_for_inside_hit() {
+    let doc = paint_doc();
+    let text = "abcdef";
+    let mut st = style::st_new();
+    style::field_set(&mut st, 0, text);
+    style::begin_solve(&doc, &mut st);
+    let mut lay = layout::lay_new();
+    let root = layout::solve(&doc, &mut st, &mut lay, 100.0, 100.0, true);
+    let root = usize::try_from(root).expect("root placement is valid");
+    let mut sc = scene::scene_new();
+    test_hit::add(
+        &mut sc,
+        0,
+        -1,
+        lay.p_x[root],
+        lay.p_y[root],
+        lay.p_w[root],
+        lay.p_h[root],
+        0.0,
+        0.0,
+        slir::F_FOCUSABLE,
+    );
+    let rule = st.rs.last().expect("field has resolved style");
+    let origin = sc.x[0] + rule.pad_l;
+    let inside_x =
+        origin + textm::str_slice_w(&doc, rule.font, rule.size, rule.tracking, text, 0, 3);
+    let mut es = edit::es_new(0, text);
+    es.anchor = 2;
+    es.caret = 4;
+    let hit = dispatch::FieldHit {
+        d: &doc,
+        st: &st,
+        lay: &lay,
+        sc: &sc,
+        node: 0,
+    };
+    assert!(!dispatch::place_context_caret(
+        &hit, &mut es, inside_x, sc.y[0],
+    ));
+    assert_eq!((es.anchor, es.caret), (2, 4));
+
+    assert!(dispatch::place_context_caret(
+        &hit,
+        &mut es,
+        origin - 1.0,
+        sc.y[0],
+    ));
+    assert_eq!((es.anchor, es.caret), (0, 0));
 }

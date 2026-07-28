@@ -519,6 +519,31 @@ pub fn synthetic_transition(d: &Doc, st: &mut St, ms: &MSt, tr: i32, node: u32, 
     true
 }
 
+fn node_has_patch_attr(d: &Doc, node: u32, attr: u32) -> bool {
+    d.patch_node.iter().enumerate().any(|(patch, &owner)| {
+        if owner != node {
+            return false;
+        }
+        let start = index(d.patch_attr_off[patch]);
+        let end = index(d.patch_attr_off[patch].wrapping_add(d.patch_attr_len[patch]));
+        d.wattr_id[start..end].contains(&attr)
+    })
+}
+
+fn animation_binding_active(d: &Doc, st: &St, node: u32, animation: i32) -> bool {
+    if !style::attached(d, st, node) {
+        return false;
+    }
+    let base = list::base(&st.lists, d, node);
+    let uses_channel = slir::base_attr(d, base, slir::A_ANIMATE) >= 0
+        || node_has_patch_attr(d, base, slir::A_ANIMATE);
+    if !uses_channel {
+        return true;
+    }
+    let value = value::decode(d, style::attr_ix(d, st, node, slir::A_ANIMATE));
+    value.tag == slir::T_STR && value.h == d.anim_name[index(animation)]
+}
+
 /// Builds the motion overlay for one solve.
 ///
 /// Call this after [`style::begin_solve`] has seeded patch activity and before
@@ -685,6 +710,27 @@ pub fn apply(d: &Doc, st: &mut St, ms: &mut MSt, t: f64) -> bool {
         }
         let node = d.bind_node[binding];
         let animation = i32::try_from(d.bind_anim[binding]).expect("animation index exceeds i32");
+        let mut owner = node;
+        while owner != slir::NONE
+            && d.node_kind[index(i32::try_from(owner).expect("node index exceeds i32"))]
+                != slir::K_EACH
+        {
+            owner = d.node_parent[index(i32::try_from(owner).expect("node index exceeds i32"))];
+        }
+        let has_active_target = if owner == slir::NONE {
+            animation_binding_active(d, st, node, animation)
+        } else {
+            list::materialized(&st.lists)
+                .iter()
+                .copied()
+                .any(|synthetic| {
+                    list::base(&st.lists, d, synthetic) == node
+                        && animation_binding_active(d, st, synthetic, animation)
+                })
+        };
+        if !has_active_target {
+            continue;
+        }
         let dur = d.bind_dur[binding];
         let mode = d.bind_mode[binding];
         let delay = d.bind_delay[binding];
@@ -711,13 +757,6 @@ pub fn apply(d: &Doc, st: &mut St, ms: &mut MSt, t: f64) -> bool {
             if v.tag == value::V_MISSING {
                 continue;
             }
-            let mut owner = node;
-            while owner != slir::NONE
-                && d.node_kind[index(i32::try_from(owner).expect("node index exceeds i32"))]
-                    != slir::K_EACH
-            {
-                owner = d.node_parent[index(i32::try_from(owner).expect("node index exceeds i32"))];
-            }
             if owner == slir::NONE {
                 style::ov_push(st, node, attr, v.tag, v.num, v.h, v.off, v.ln);
             } else {
@@ -725,7 +764,9 @@ pub fn apply(d: &Doc, st: &mut St, ms: &mut MSt, t: f64) -> bool {
                 for synthetic_index in 0..synthetic_count {
                     let synthetic = list::materialized(&st.lists)[synthetic_index];
                     note_synthetic_work();
-                    if list::base(&st.lists, d, synthetic) == node {
+                    if list::base(&st.lists, d, synthetic) == node
+                        && animation_binding_active(d, st, synthetic, animation)
+                    {
                         style::ov_push(st, synthetic, attr, v.tag, v.num, v.h, v.off, v.ln);
                     }
                 }
@@ -1100,6 +1141,9 @@ fn static_square(d: &Doc, node: u32) -> bool {
 /// kernel-driven.
 fn lift_of(d: &Doc, binding: usize) -> Option<Lift> {
     let node = d.bind_node[binding];
+    if node_has_patch_attr(d, node, slir::A_ANIMATE) {
+        return None;
+    }
     let dur = d.bind_dur[binding];
     let easing = d.bind_easing[binding];
     if dur <= 0.0 {

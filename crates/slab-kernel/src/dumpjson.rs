@@ -515,6 +515,81 @@ pub fn emit_scene(out: &mut Vec<u32>, fr: &flatten::Frame, index: i32) {
     out.push(OBJECT_CLOSE);
 }
 
+fn emit_param_scalar(out: &mut Vec<u32>, kind: u32, num: f64, text: &str, rgba: u32, symbol: &str) {
+    match kind {
+        slir::PARAM_TEXT => emit_jstr(out, text),
+        slir::PARAM_NUM | slir::PARAM_PCT => emit_num(out, num),
+        slir::PARAM_COLOR => emit_color(out, rgba),
+        slir::PARAM_BOOL => emit_bool(out, num != 0.0),
+        slir::PARAM_ENUM => emit_jstr(out, symbol),
+        _ => emit(out, "null"),
+    }
+}
+
+fn emit_param_list(out: &mut Vec<u32>, d: &slir::Doc, st: &style::St, param: u32, path: &str) {
+    let list_id = list::resolve_path(d, &st.lists, param, path);
+    let schema = list::list_schema(&st.lists, list_id);
+    let length = list::length(d, &st.lists, list_id);
+    if schema < 0 || length < 0 {
+        emit(out, "[]");
+        return;
+    }
+    let schema = usize::try_from(schema).expect("negative list schema");
+    let field_off = d.list_field_off[schema];
+    let field_len = d.list_field_len[schema];
+    out.push(ARRAY_OPEN);
+    for item in 0..length {
+        if item > 0 {
+            out.push(COMMA);
+        }
+        emit(out, "{\"key\":");
+        emit_jstr(out, &list::key_at(d, &st.lists, list_id, item));
+        for field in field_off..field_off.wrapping_add(field_len) {
+            let absolute = usize::try_from(field).expect("list field index exceeds usize");
+            let relative =
+                u32::try_from(field.wrapping_sub(field_off)).expect("negative list field offset");
+            let name = slir::str_at(d, d.list_field_name[absolute]);
+            out.push(COMMA);
+            emit_jstr(out, &name);
+            out.push(u32::from(b':'));
+            let kind = d.list_field_type[absolute];
+            if kind == slir::PARAM_LIST {
+                let nested_path = if path.is_empty() {
+                    format!("{item}.{name}")
+                } else {
+                    format!("{path}.{item}.{name}")
+                };
+                emit_param_list(out, d, st, param, &nested_path);
+            } else {
+                let value = list::get_ref(&st.lists, list_id, item, relative);
+                emit_param_scalar(out, kind, value.num, value.s, value.rgba, value.sym);
+            }
+        }
+        out.push(OBJECT_CLOSE);
+    }
+    out.push(ARRAY_CLOSE);
+}
+
+/// Returns one current parameter value as deterministic JSON.
+pub fn param_json(d: &slir::Doc, st: &style::St, param: u32) -> Option<String> {
+    let index = usize::try_from(param).ok()?;
+    let kind = *d.parm_type.get(index)?;
+    let mut out = Vec::new();
+    if kind == slir::PARAM_LIST {
+        emit_param_list(&mut out, d, st, param, "");
+    } else {
+        emit_param_scalar(
+            &mut out,
+            kind,
+            st.pv_num[index],
+            &st.pv_str[index],
+            st.pv_h[index],
+            &st.pv_sym[index],
+        );
+    }
+    Some(crate::rt::str_from_chars(&out))
+}
+
 /// Emits the complete conformance payload: frame data and solved diagnostics.
 pub fn dump(d: &slir::Doc, st: &style::St, fr: &flatten::Frame) -> String {
     let mut out: Vec<u32> = vec![];

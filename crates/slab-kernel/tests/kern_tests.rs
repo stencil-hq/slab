@@ -35,12 +35,17 @@ kernel_tests! {
     test_edit__test_coalesced_undo_and_redo_invalidation => slab_kernel::test_edit::test_coalesced_undo_and_redo_invalidation;
     test_edit__test_collapse_selection_on_move => slab_kernel::test_edit::test_collapse_selection_on_move;
     test_edit__test_composition_update_then_commit => slab_kernel::test_edit::test_composition_update_then_commit;
+    test_edit__test_context_caret_preserves_selection_only_for_inside_hit => slab_kernel::test_edit::test_context_caret_preserves_selection_only_for_inside_hit;
     test_edit__test_field_scroll_offsets_text_and_forces_clip => slab_kernel::test_edit::test_field_scroll_offsets_text_and_forces_clip;
+    test_edit__test_field_set_blurred_reseed_then_focus => slab_kernel::test_edit::test_field_set_blurred_reseed_then_focus;
+    test_edit__test_field_set_submit_clear_then_type => slab_kernel::test_edit::test_field_set_submit_clear_then_type;
+    test_edit__test_field_text_and_focus_queries => slab_kernel::test_edit::test_field_text_and_focus_queries;
     test_edit__test_host_focus_binds_field_and_rejects_inert => slab_kernel::test_edit::test_host_focus_binds_field_and_rejects_inert;
     test_edit__test_insert_preserves_newlines => slab_kernel::test_edit::test_insert_preserves_newlines;
     test_edit__test_kills_and_word_deletes => slab_kernel::test_edit::test_kills_and_word_deletes;
     test_edit__test_movement_selection_and_word_kill_break_undo_runs => slab_kernel::test_edit::test_movement_selection_and_word_kill_break_undo_runs;
     test_edit__test_overwide_field_stays_clipped_at_zero_scroll => slab_kernel::test_edit::test_overwide_field_stays_clipped_at_zero_scroll;
+    test_edit__test_param_json_scalar_and_list_reads => slab_kernel::test_edit::test_param_json_scalar_and_list_reads;
     test_edit__test_selection_and_words => slab_kernel::test_edit::test_selection_and_words;
     test_edit__test_selection_bands_for_wrapped_two_lines => slab_kernel::test_edit::test_selection_bands_for_wrapped_two_lines;
     test_edit__test_source_line_maps_and_layout_lookup => slab_kernel::test_edit::test_source_line_maps_and_layout_lookup;
@@ -80,6 +85,9 @@ kernel_tests! {
     test_gesture__test_drag_cancel_and_blur_clear_all_gesture_state => slab_kernel::test_gesture::test_drag_cancel_and_blur_clear_all_gesture_state;
     test_gesture__test_drag_release_revalidates_source => slab_kernel::test_gesture::test_drag_release_revalidates_source;
     test_gesture__test_drag_threshold_deepest_drop_and_source_metadata => slab_kernel::test_gesture::test_drag_threshold_deepest_drop_and_source_metadata;
+    test_gesture__test_escape_cancels_drag_and_consumes_activation => slab_kernel::test_gesture::test_escape_cancels_drag_and_consumes_activation;
+    test_gesture__test_keyboard_activate_metadata_names_fired_key => slab_kernel::test_gesture::test_keyboard_activate_metadata_names_fired_key;
+    test_gesture__test_pointer_move_delta_fallback_and_authority => slab_kernel::test_gesture::test_pointer_move_delta_fallback_and_authority;
     test_gesture__test_press_and_context_button_semantics => slab_kernel::test_gesture::test_press_and_context_button_semantics;
     test_gesture__test_pruned_drag_source_clears_surviving_drop_state => slab_kernel::test_gesture::test_pruned_drag_source_clears_surviving_drop_state;
     test_gesture__test_secondary_pointer_up_routes_without_releasing_primary_capture => slab_kernel::test_gesture::test_secondary_pointer_up_routes_without_releasing_primary_capture;
@@ -105,6 +113,7 @@ kernel_tests! {
     test_layout__test_hug_hole_report_is_clamped_by_min_and_max => slab_kernel::test_layout::test_hug_hole_report_is_clamped_by_min_and_max;
     test_layout__test_hug_hole_reported_dimensions_in_both_orientations => slab_kernel::test_layout::test_hug_hole_reported_dimensions_in_both_orientations;
     test_layout__test_hug_hole_unreported_is_zero_across_solves => slab_kernel::test_layout::test_hug_hole_unreported_is_zero_across_solves;
+    test_layout__test_zero_maximum_is_a_real_clamp => slab_kernel::test_layout::test_zero_maximum_is_a_real_clamp;
 
     test_list__test_list_defaults_extend_truncate_and_atomic_rejection => slab_kernel::test_list::test_list_defaults_extend_truncate_and_atomic_rejection;
     test_list__test_list_keyed_reorder_identity_prune_and_key_addressing => slab_kernel::test_list::test_list_keyed_reorder_identity_prune_and_key_addressing;
@@ -158,6 +167,10 @@ kernel_tests! {
     test_value__test_tuple_dyn_members_track_params => slab_kernel::test_value::test_tuple_dyn_members_track_params;
     test_value__test_value_decode => slab_kernel::test_value::test_value_decode;
 
+    test_when__test_conditional_animation_idle => slab_kernel::test_when::test_conditional_animation_idle;
+    test_when__test_conditional_child_animation_idle => slab_kernel::test_when::test_conditional_child_animation_idle;
+    test_when__test_conditional_binder_tab_exclusion => slab_kernel::test_when::test_conditional_binder_tab_exclusion;
+    test_when__test_conditional_signal_firing => slab_kernel::test_when::test_conditional_signal_firing;
     test_when__test_bool_param_override => slab_kernel::test_when::test_bool_param_override;
     test_when__test_client_code => slab_kernel::test_when::test_client_code;
     test_when__test_client_cond => slab_kernel::test_when::test_client_cond;

@@ -654,4 +654,25 @@ pub fn test_serialize() {
         str_eq(&ansi, "\u{1B}[0;38;2;255;0;0mA\u{1B}[0m\n"),
         "ansi: sgr on change, reset at row end"
     );
+
+    let mut default_frame = flatten::frame_new();
+    default_frame.strings.push("D".to_owned());
+    default_frame
+        .ops
+        .push(FrameOp::Text(text_op(0.0, 12.0, 0, 0x1111_11FF)));
+    let default_grid = cells::cells_from_frame(&doc, &default_frame, 8.0, 16.0);
+    assert_eq!(
+        default_grid.ch[0],
+        u32::from('D'),
+        "default ink stays visible"
+    );
+    assert_eq!(
+        default_grid.flags[0] & cells::CF_FG,
+        0,
+        "default ink reserves terminal foreground"
+    );
+    assert!(
+        str_eq(&cells::cells_to_text(&default_grid, false), "D\u{1B}[0m\n"),
+        "default ink emits no foreground SGR"
+    );
 }

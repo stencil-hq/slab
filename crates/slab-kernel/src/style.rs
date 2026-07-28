@@ -12,7 +12,7 @@
 //! inputs. Overlay tuples are stored in [`St::mo_f`] under [`T_OV_TUPLE`].
 use rustc_hash::FxHashMap;
 
-const ATTR_COUNT: usize = 89;
+const ATTR_COUNT: usize = 90;
 
 /// Mutable style-resolution state owned by an instance.
 ///
@@ -1417,6 +1417,38 @@ pub fn eff_flags(d: &crate::slir::Doc, st: &crate::style::St, node: u32) -> u32 
         }
     }
     flags
+}
+
+/// Reports whether every detached ancestor is selected by an active patch.
+pub fn attached(d: &crate::slir::Doc, st: &crate::style::St, node: u32) -> bool {
+    let first_base = crate::list::base(&st.lists, d, node);
+    let mut materialized = first_base != crate::slir::NONE && node != first_base;
+    let mut current = node;
+    while current != crate::slir::NONE {
+        let base = crate::list::base(&st.lists, d, current);
+        if base == crate::slir::NONE {
+            return false;
+        }
+        materialized |= current != base;
+        let parent = crate::list::parent(&st.lists, d, current);
+        if d.node_flags[index_u32(base)] & crate::slir::F_DETACHED != 0 {
+            if parent == crate::slir::NONE {
+                return false;
+            }
+            let parent_base = crate::list::base(&st.lists, d, parent);
+            if !materialized {
+                let selected = d.patch_node.iter().enumerate().any(|(patch, &owner)| {
+                    let patch_i32 = i32::try_from(patch).expect("patch index exceeds i32");
+                    owner == parent_base && patch_on_for(d, st, patch_i32, parent)
+                });
+                if !selected {
+                    return false;
+                }
+            }
+        }
+        current = parent;
+    }
+    true
 }
 
 /// Collects this solve's children in deterministic document order.

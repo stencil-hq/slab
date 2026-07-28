@@ -145,6 +145,25 @@ impl KInst {
     pub fn set_focus(&mut self, key: &str, visible: bool) -> bool {
         kframe::inst_set_focus(&mut self.inner, key, visible)
     }
+    /// Replaces one keyed field edit buffer and queues its Change signal.
+    pub fn set_field_text(&mut self, key: &str, text: &str) -> bool {
+        kframe::inst_set_field_text(&mut self.inner, key, text)
+    }
+
+    /// Returns one keyed field's committed text.
+    pub fn field_text(&self, key: &str) -> Option<String> {
+        kframe::inst_field_text(&self.inner, key)
+    }
+
+    /// Returns the focused node, or `u32::MAX` when focus is clear.
+    pub fn focus(&self) -> u32 {
+        kframe::inst_focus(&self.inner)
+    }
+
+    /// Returns one current parameter value as JSON.
+    pub fn param_json(&self, name: &str) -> Option<String> {
+        kframe::inst_param_json(&self.inner, name)
+    }
 
     /// Selects a compiled theme by name.
     pub fn set_theme(&mut self, name: &str) -> bool {

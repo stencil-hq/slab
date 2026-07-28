@@ -9,6 +9,7 @@
 
 use crate::{
     dispatch::{self, DState, Effects, Event},
+    dumpjson, edit,
     flatten::{self, Frame, FrameOp},
     focus, hit, layout,
     layout::Lay,
@@ -479,6 +480,98 @@ pub fn inst_set_focus(i: &mut Instance, key: &str, visible: bool) -> bool {
     }
     dispatch::bind_edit_on_focus(&i.doc, &mut i.st, &mut i.ds);
     true
+}
+/// Replaces a keyed field's edit buffer and synchronizes a same-named text parameter.
+///
+/// The replacement clears composition, selection, and undo/redo history, then
+/// places the caret at the end. A changed value queues one Change signal for
+/// [`inst_take_signals`] and marks the instance dirty. Unknown and non-field
+/// keys return `false` without side effects.
+pub fn inst_set_field_text(i: &mut Instance, key: &str, text: &str) -> bool {
+    let node = scene::node_by_key(&i.doc, &i.st.lists, key);
+    if node == slir::NONE {
+        return false;
+    }
+    let signal_index = dispatch::sig_of(&i.doc, &i.st, node, dispatch::TR_CHANGE);
+    if signal_index < 0 {
+        return false;
+    }
+
+    let edit_index = dispatch::ed_ix(&i.ds, node);
+    let (previous, display_changed) = if edit_index >= 0 {
+        let index = usize::try_from(edit_index).expect("negative edit index");
+        let state = &i.ds.ed[index];
+        (
+            edit::text_str(state),
+            edit::display_str(state) != text
+                || state.caret != crate::rt::str_len(text)
+                || state.anchor != state.caret,
+        )
+    } else {
+        let content = style::content_str(&i.doc, &i.st, node);
+        let changed = content != text;
+        (content, changed)
+    };
+    let text_changed = previous != text;
+
+    let replacement = edit::es_new(node, text);
+    if edit_index >= 0 {
+        let index = usize::try_from(edit_index).expect("negative edit index");
+        i.ds.ed[index] = replacement;
+    } else {
+        i.ds.ed_node.push(node);
+        i.ds.ed.push(replacement);
+    }
+    let composing_changed = style::set_node_state(&i.doc, &mut i.st, node, "composing", false);
+    let scroll_changed = style::field_scroll_x(&i.st, node) != 0.0;
+    if scroll_changed {
+        style::field_scroll_set(&mut i.st, node, 0.0);
+    }
+    if display_changed {
+        style::field_set(&mut i.st, node, text);
+    }
+    let param_changed = dispatch::sync_bound_text_param(&i.doc, &mut i.st, node, text);
+    if text_changed || param_changed {
+        dispatch::queue_field_change(&i.doc, &i.st, &mut i.ds, node, text);
+    }
+    if display_changed || param_changed || composing_changed || scroll_changed {
+        i.dirty = true;
+    }
+    true
+}
+
+/// Returns a keyed field's committed edit text, or its content before first bind.
+pub fn inst_field_text(i: &Instance, key: &str) -> Option<String> {
+    let node = scene::node_by_key(&i.doc, &i.st.lists, key);
+    if node == slir::NONE || dispatch::sig_of(&i.doc, &i.st, node, dispatch::TR_CHANGE) < 0 {
+        return None;
+    }
+    let edit_index = dispatch::ed_ix(&i.ds, node);
+    if edit_index < 0 {
+        Some(style::content_str(&i.doc, &i.st, node))
+    } else {
+        let index = usize::try_from(edit_index).expect("negative edit index");
+        Some(edit::text_str(&i.ds.ed[index]))
+    }
+}
+
+/// Returns the focused node, or [`slir::NONE`] when focus is clear.
+pub fn inst_focus(i: &Instance) -> u32 {
+    i.ds.fs.focus
+}
+
+/// Returns a named parameter's current value as deterministic JSON.
+pub fn inst_param_json(i: &Instance, name: &str) -> Option<String> {
+    let param = i
+        .doc
+        .parm_name
+        .iter()
+        .position(|param_name| slir::str_at(&i.doc, *param_name) == name)?;
+    dumpjson::param_json(
+        &i.doc,
+        &i.st,
+        u32::try_from(param).expect("parameter index exceeds u32"),
+    )
 }
 
 /// Sets one axis of a keyed scroll node, clamped to retained geometry.

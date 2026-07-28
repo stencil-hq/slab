@@ -32,6 +32,26 @@ fn intern(doc: &mut Doc, value: &str) -> u32 {
     index
 }
 
+fn set_string_attr(fixture: &mut Fixture, node: u32, attr: u32, value: &str) {
+    let string_ref = intern(&mut fixture.doc, value);
+    let value_index =
+        u32::try_from(fixture.doc.aval_tag.len()).expect("test attribute count fits u32");
+    fixture.doc.aval_tag.push(slir::T_STR);
+    fixture.doc.aval_lo.push(string_ref);
+    fixture.doc.aval_hi.push(0);
+    fixture.doc.aval_num.push(0.0);
+    fixture.doc.attr_id.push(attr);
+    fixture.doc.attr_val.push(value_index);
+    for boundary in fixture
+        .doc
+        .attr_index
+        .iter_mut()
+        .skip(usize::try_from(node + 1).expect("node fits usize"))
+    {
+        *boundary += 1;
+    }
+}
+
 fn fixture(signals: &[(u32, u32, &str)]) -> Fixture {
     let mut doc = slir::doc_new();
     doc.ok = true;
@@ -141,6 +161,12 @@ fn pointer(etype: u32, x: f64, y: f64, button: u32, clicks: u32, mods: u32) -> E
     }
 }
 
+fn key_event(key: &str) -> Event {
+    let mut event = pointer(dispatch::E_KEY_DOWN, 0.0, 0.0, 0, 0, 0);
+    event.key = key.into();
+    event
+}
+
 fn send(fixture: &mut Fixture, event: &Event) -> Effects {
     dispatch::dispatch(
         &fixture.doc,
@@ -205,7 +231,10 @@ pub fn test_press_and_context_button_semantics() {
     assert!(up.sig_name.is_empty());
     assert_eq!(primary.dispatch.pressed, slir::NONE);
 
-    let mut secondary = fixture(&[(SOURCE, dispatch::TR_CONTEXT, "context-signal")]);
+    let mut secondary = fixture(&[
+        (SOURCE, dispatch::TR_CONTEXT, "context-signal"),
+        (SOURCE, dispatch::TR_DRAG_START, "drag-start"),
+    ]);
     let context = send(
         &mut secondary,
         &pointer(dispatch::E_POINTER_DOWN, 20.0, 20.0, 2, 1, 0),
@@ -213,6 +242,7 @@ pub fn test_press_and_context_button_semantics() {
     assert_eq!(signal_names(&secondary, &context), ["context-signal"]);
     assert_eq!(secondary.dispatch.pressed, slir::NONE);
     assert_eq!(secondary.dispatch.fs.focus, slir::NONE);
+    assert_eq!(secondary.dispatch.drag_source, slir::NONE);
     assert!(!style::node_state_on(
         &secondary.doc,
         &secondary.state,
@@ -221,6 +251,25 @@ pub fn test_press_and_context_button_semantics() {
     ));
     assert_eq!(context.sig_meta[0].button, 2);
     assert_eq!(context.sig_meta[0].key, "root/source");
+
+    let mut field = fixture(&[
+        (SOURCE, dispatch::TR_CONTEXT, "field-context"),
+        (SOURCE, dispatch::TR_CHANGE, "field-change"),
+        (SOURCE, dispatch::TR_DRAG_START, "field-drag"),
+    ]);
+    let field_context = send(
+        &mut field,
+        &pointer(dispatch::E_POINTER_DOWN, 20.0, 20.0, 2, 1, dispatch::M_ALT),
+    );
+    assert_eq!(signal_names(&field, &field_context), ["field-context"]);
+    assert_eq!(field.dispatch.fs.focus, SOURCE);
+    assert_eq!(field.dispatch.pressed, slir::NONE);
+    assert_eq!(field.dispatch.drag_source, slir::NONE);
+    assert_eq!(
+        (field_context.sig_meta[0].x, field_context.sig_meta[0].y),
+        (20.0, 20.0)
+    );
+    assert_eq!(field_context.sig_meta[0].mods, dispatch::M_ALT);
 }
 
 /// A handled double-click emits on down and suppresses that gesture's Activate.
@@ -675,4 +724,94 @@ pub fn test_blur_and_close_emit_cancelled_drag_end_once() {
         assert_eq!(fixture.dispatch.drop_target, slir::NONE);
         assert!(!fixture.dispatch.drag_active);
     }
+}
+
+/// Escape cancels armed and active drags before authored key activation.
+pub fn test_escape_cancels_drag_and_consumes_activation() {
+    for active in [false, true] {
+        let mut fixture = fixture(&[
+            (SOURCE, dispatch::TR_ACTIVATE, "activate"),
+            (SOURCE, dispatch::TR_DRAG_START, "drag-start"),
+            (SOURCE, dispatch::TR_DRAG_END, "drag-end"),
+            (TARGET_INNER, dispatch::TR_DROP, "drop"),
+        ]);
+        set_string_attr(&mut fixture, SOURCE, slir::A_KEYS, "Escape");
+        fixture.dispatch.fs.focus = SOURCE;
+        send(
+            &mut fixture,
+            &pointer(dispatch::E_POINTER_DOWN, 20.0, 20.0, 0, 1, 0),
+        );
+        if active {
+            send(
+                &mut fixture,
+                &pointer(dispatch::E_POINTER_MOVE, 150.0, 20.0, 0, 0, 0),
+            );
+            assert_eq!(fixture.dispatch.drop_target, TARGET_INNER);
+        }
+        let escaped = send(&mut fixture, &key_event("Escape"));
+        assert_eq!(signal_names(&fixture, &escaped), ["drag-end"]);
+        assert!(escaped.sig_meta[0].cancelled);
+        assert!(!escaped.sig_meta[0].dropped);
+        assert_eq!(escaped.sig_meta[0].key, "root/source");
+        assert_eq!(fixture.dispatch.drag_source, slir::NONE);
+        assert_eq!(fixture.dispatch.drop_target, slir::NONE);
+        assert!(!fixture.dispatch.drag_active);
+    }
+}
+
+/// Zero local deltas fall back to successive coordinates; supplied deltas remain authoritative.
+pub fn test_pointer_move_delta_fallback_and_authority() {
+    let mut fixture = fixture(&[
+        (SOURCE, dispatch::TR_POINTER_MOVE, "pointer-move"),
+        (SOURCE, dispatch::TR_DRAG_START, "drag-start"),
+    ]);
+    send(
+        &mut fixture,
+        &pointer(dispatch::E_POINTER_DOWN, 20.0, 20.0, 0, 1, 0),
+    );
+    let fallback = send(
+        &mut fixture,
+        &pointer(dispatch::E_POINTER_MOVE, 22.0, 23.0, 0, 0, 0),
+    );
+    assert_eq!(signal_names(&fixture, &fallback), ["pointer-move"]);
+    assert_eq!(
+        (fallback.sig_meta[0].dx, fallback.sig_meta[0].dy),
+        (2.0, 3.0)
+    );
+
+    let mut supplied = pointer(dispatch::E_POINTER_MOVE, 30.0, 32.0, 0, 0, 0);
+    supplied.dx = 90.0;
+    supplied.dy = -7.0;
+    let authoritative = send(&mut fixture, &supplied);
+    assert_eq!(
+        signal_names(&fixture, &authoritative),
+        ["pointer-move", "drag-start"]
+    );
+    for meta in &authoritative.sig_meta {
+        assert_eq!((meta.dx, meta.dy), (90.0, -7.0));
+    }
+}
+
+/// Keyboard Activate metadata names the fired key; pointer Activate keeps the node key.
+pub fn test_keyboard_activate_metadata_names_fired_key() {
+    let mut fixture = fixture(&[(SOURCE, dispatch::TR_ACTIVATE, "activate")]);
+    fixture.dispatch.fs.focus = SOURCE;
+    let keyboard = send(&mut fixture, &key_event("Enter"));
+    assert_eq!(signal_names(&fixture, &keyboard), ["activate"]);
+    assert_eq!(keyboard.sig_meta[0].key, "Enter");
+    assert_eq!(
+        (keyboard.sig_meta[0].x, keyboard.sig_meta[0].y),
+        (-1.0, -1.0)
+    );
+
+    send(
+        &mut fixture,
+        &pointer(dispatch::E_POINTER_DOWN, 20.0, 20.0, 0, 1, 0),
+    );
+    let pointer = send(
+        &mut fixture,
+        &pointer(dispatch::E_POINTER_UP, 20.0, 20.0, 0, 1, 0),
+    );
+    assert_eq!(signal_names(&fixture, &pointer), ["activate"]);
+    assert_eq!(pointer.sig_meta[0].key, "root/source");
 }

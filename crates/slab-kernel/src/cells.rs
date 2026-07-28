@@ -2,8 +2,9 @@
 //!
 //! One terminal cell represents 8 by 16 layout units. Geometry snaps to that
 //! grid with round-half-even rounding. Rectangles become box-drawing borders
-//! and background fills; gradients are sampled per cell. Paint more than half
-//! transparent over an unknown terminal default drops because cells cannot blend.
+//! and background fills; gradients are sampled per cell. The document default
+//! ink maps to terminal foreground. Other translucent paint below half coverage
+//! over an unknown terminal default drops because cells cannot blend.
 //! Paths, rotation, blur, and backdrops degrade according to the capability
 //! notes accumulated on the grid.
 //! The railyard research fixture is the byte-exact reference for this renderer.
@@ -60,6 +61,9 @@ pub const CH: f64 = 16.0;
 /// Cell colors are packed as `0xRRGGBB`, so a value with its high byte set
 /// cannot be a valid color.
 pub const NO_COLOR: u32 = 0xFF00_0000;
+
+// The inherited document ink is an internal style default, not authored paint.
+const DOCUMENT_DEFAULT_INK: u32 = 0x1111_11FF;
 
 /// Marks a cell occupied by the right half of a wide grapheme cluster.
 pub const CONT: u32 = 0xFFFF_FFFF;
@@ -791,8 +795,8 @@ fn draw_rect_outline(
 
 /// Draws grapheme clusters with terminal-width clipping and composited color.
 ///
-/// A gradient text color (`color_kind == 2`) and any active fade masks are
-/// sampled per cell over their boxes.
+/// Unauthored document ink becomes [`NO_COLOR`], which preserves terminal
+/// foreground. Gradient color and active fade masks sample per cell.
 pub fn draw_text(
     doc: &Doc,
     grid: &mut CellGrid,
@@ -805,7 +809,12 @@ pub fn draw_text(
     // A terminal cell baseline sits 12 layout units into the cell.
     let row = cell_row(text_op.y_baseline - 12.0);
     let base_opacity = opacity * text_op.opacity;
-    if text_op.color_kind != 2 && masks.is_empty() && alpha_of(text_op.color, base_opacity) < 8 {
+    let terminal_default = text_op.color_kind == 1 && text_op.color == DOCUMENT_DEFAULT_INK;
+    if !terminal_default
+        && text_op.color_kind != 2
+        && masks.is_empty()
+        && alpha_of(text_op.color, base_opacity) < 8
+    {
         return;
     }
 
@@ -853,17 +862,26 @@ pub fn draw_text(
         } else {
             text_op.color
         };
-        let alpha = alpha_of(
-            rgba,
-            base_opacity * mask_alpha_at(doc, masks, point_x, point_y),
-        );
-        let mut foreground = rgb_of(rgba);
+        let coverage = base_opacity * mask_alpha_at(doc, masks, point_x, point_y);
+        let mut foreground = if terminal_default {
+            NO_COLOR
+        } else {
+            rgb_of(rgba)
+        };
         let background = under_bg(grid, column, row);
-        if background != NO_COLOR {
-            foreground = blend_rgb(background, foreground, alpha);
-        } else if alpha < 128 {
-            column_offset = column_offset.wrapping_add(if wide { 2 } else { 1 });
-            continue;
+        if terminal_default {
+            if coverage < 0.5 {
+                column_offset = column_offset.wrapping_add(if wide { 2 } else { 1 });
+                continue;
+            }
+        } else {
+            let alpha = alpha_of(rgba, coverage);
+            if background != NO_COLOR {
+                foreground = blend_rgb(background, foreground, alpha);
+            } else if alpha < 128 {
+                column_offset = column_offset.wrapping_add(if wide { 2 } else { 1 });
+                continue;
+            }
         }
 
         let cluster = crate::rt::str_slice(text, start, end);

@@ -133,6 +133,32 @@ pub fn test_hug_hole_report_is_clamped_by_min_and_max() {
     );
 }
 
+/// Verifies that authored zero maxima clamp both physical axes to zero.
+pub fn test_zero_maximum_is_a_real_clamp() {
+    assert_eq!(
+        layout::clamp(33.0, 33.0, 100.0, 0.0, 0.0),
+        0.0,
+        "authored zero maximum overrides a parent minimum"
+    );
+    let mut height = hole_inst(false, 0.0, 0.0);
+    frame::inst_set_hole_size(&mut height, 0, 37.0, 19.0);
+    let root = usize::try_from(solve(&mut height)).expect("fixture root index is valid");
+    assert_eq!(height.lay.p_h[root], 0.0, "max-h=0 clamps height");
+
+    let mut width = hole_inst(false, 0.0, 0.0);
+    let maximum = width
+        .doc
+        .attr_id
+        .iter_mut()
+        .find(|attr| **attr == slir::A_MAX_H)
+        .expect("fixture has authored maximum");
+    *maximum = slir::A_MAX_W;
+    style::init_params(&width.doc, &mut width.st);
+    frame::inst_set_hole_size(&mut width, 0, 37.0, 19.0);
+    let root = usize::try_from(solve(&mut width)).expect("fixture root index is valid");
+    assert_eq!(width.lay.p_w[root], 0.0, "max-w=0 clamps width");
+}
+
 /// Verifies that reports affect only hug axes belonging to hole nodes.
 pub fn test_hole_report_does_not_override_non_hug_or_non_hole() {
     let mut fixed = hole_inst(false, 0.0, style::INF);

@@ -333,11 +333,16 @@ pub fn resolve_len(
 
 /// Clamps a measured size to constraints and authored bounds.
 ///
-/// `amax == INF` means there is no authored maximum. The authored minimum is
-/// applied last, making it the explicit escape valve from parent constraints.
+/// `amax == INF` means there is no authored maximum. Authored bounds apply
+/// last, making them explicit escape valves from parent constraints.
 pub fn clamp(v: f64, cmin: f64, cmax: f64, amin: f64, amax: f64) -> f64 {
-    let below_author_max = if amax == INF { v } else { v.min(amax) };
-    cmin.max(below_author_max.min(cmax)).max(amin)
+    let constrained = cmin.max(v.min(cmax));
+    let below_author_max = if amax == INF {
+        constrained
+    } else {
+        constrained.min(amax)
+    };
+    below_author_max.max(amin)
 }
 
 /// Emits a diagnostic when a fixed authored size had to be squeezed.

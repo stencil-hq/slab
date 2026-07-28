@@ -2,7 +2,9 @@
 //! parameter overrides, client equality, width and height boundaries, and negation.
 
 use crate::{
+    dispatch, motion, scene,
     slir::{self, Doc},
+    style,
     when::{self, Env},
 };
 
@@ -293,4 +295,160 @@ pub fn test_client_code() {
     assert_eq!(when::client_code("svg"), 3, "svg");
     assert_eq!(when::client_code("png"), 4, "png");
     assert_eq!(when::client_code("gui"), -1, "gui is gone (rule 6)");
+}
+
+fn gated_interactivity_doc() -> Doc {
+    let mut doc = slir::doc_new();
+    doc.strs
+        .extend(["", "enabled", "fire", "pulse"].map(str::to_owned));
+    doc.node_kind.push(slir::K_RECT);
+    doc.node_flags.push(0);
+    doc.node_parent.push(slir::NONE);
+    doc.node_first.push(slir::NONE);
+    doc.node_next.push(slir::NONE);
+    doc.node_key.push(0);
+    doc.node_id.push(0);
+    doc.node_line.push(1);
+    doc.attr_index.extend([0, 0]);
+
+    doc.cond_kind.push(slir::C_STATE);
+    doc.cond_neg.push(0);
+    doc.cond_op.push(0);
+    doc.cond_num.push(0.0);
+    doc.cond_sym.push(1);
+    doc.patch_node.push(0);
+    doc.patch_cond.push(0);
+    doc.patch_attr_off.push(0);
+    doc.patch_attr_len.push(3);
+    doc.patch_child_off.push(0);
+    doc.patch_child_len.push(0);
+
+    let signal = doc.aval_tag.len() as u32;
+    doc.aval_tag.push(slir::T_STR);
+    doc.aval_lo.push(2);
+    doc.aval_hi.push(0);
+    doc.aval_num.push(0.0);
+    let flags = doc.aval_tag.len() as u32;
+    doc.aval_tag.push(slir::T_NUM);
+    doc.aval_lo.push(0);
+    doc.aval_hi.push(0);
+    doc.aval_num.push(f64::from(slir::F_FOCUSABLE));
+    let animation = doc.aval_tag.len() as u32;
+    doc.aval_tag.push(slir::T_STR);
+    doc.aval_lo.push(3);
+    doc.aval_hi.push(0);
+    doc.aval_num.push(0.0);
+    doc.wattr_id
+        .extend([slir::A_ACT, slir::A_FLAGS, slir::A_ANIMATE]);
+    doc.wattr_val.extend([signal, flags, animation]);
+
+    doc.sign_name.push(2);
+    doc.sign_node.push(0);
+    doc.sign_trigger.push(dispatch::TR_ACTIVATE);
+    doc.anim_name.push(3);
+    doc.anim_stop_off.push(0);
+    doc.anim_stop_len.push(0);
+    doc.bind_node.push(0);
+    doc.bind_anim.push(0);
+    doc.bind_dur.push(1_000.0);
+    doc.bind_mode.push(0);
+    doc.bind_easing.push(0);
+    doc.bind_delay.push(0.0);
+    doc
+}
+
+fn gated_style(doc: &Doc, enabled: bool) -> style::St {
+    let mut st = style::st_new();
+    style::init_params(doc, &mut st);
+    if enabled {
+        st.states.push(1);
+    }
+    style::begin_solve(doc, &mut st);
+    st
+}
+
+/// Verifies that a conditional signal fires only while its patch condition holds.
+pub fn test_conditional_signal_firing() {
+    let doc = gated_interactivity_doc();
+    let mut effects = dispatch::effects_new();
+    let inactive = gated_style(&doc, false);
+    assert!(
+        !dispatch::deliver_trigger(
+            &doc,
+            &inactive,
+            &mut effects,
+            0,
+            dispatch::TR_ACTIVATE,
+            String::new(),
+        ),
+        "false condition suppresses dispatch"
+    );
+    let active = gated_style(&doc, true);
+    assert!(dispatch::deliver_trigger(
+        &doc,
+        &active,
+        &mut effects,
+        0,
+        dispatch::TR_ACTIVATE,
+        String::new(),
+    ));
+    assert_eq!(effects.sig_name, [2], "true condition emits its signal");
+}
+
+/// Verifies that a false conditional binder removes its node from the tab ring.
+pub fn test_conditional_binder_tab_exclusion() {
+    let doc = gated_interactivity_doc();
+    for (enabled, expected) in [(false, Vec::new()), (true, vec![0])] {
+        let st = gated_style(&doc, enabled);
+        let mut retained = scene::scene_new();
+
+        retained.node.push(0);
+        retained.flags.push(style::eff_flags(&doc, &st, 0));
+        retained.disabled.push(false);
+        retained.authored_order.push(0);
+        let mut focusable = Vec::new();
+        scene::focusables(&retained, &mut focusable);
+        assert_eq!(focusable, expected);
+    }
+}
+
+/// Verifies that animation on a child declared under `when` follows parent materialization.
+pub fn test_conditional_child_animation_idle() {
+    let mut doc = gated_interactivity_doc();
+    doc.node_kind.push(slir::K_RECT);
+    doc.node_flags.push(slir::F_DETACHED);
+    doc.node_parent.push(0);
+    doc.node_first.push(slir::NONE);
+    doc.node_next.push(slir::NONE);
+    doc.node_key.push(0);
+    doc.node_id.push(0);
+    doc.node_line.push(2);
+    doc.attr_index.push(1);
+    doc.attr_id.push(slir::A_ANIMATE);
+    doc.attr_val.push(2);
+    doc.patch_children.push(1);
+    doc.patch_child_len[0] = 1;
+    doc.bind_node[0] = 1;
+
+    let mut inactive = gated_style(&doc, false);
+    let mut ms = motion::mst_new();
+    assert!(!motion::apply(&doc, &mut inactive, &mut ms, 100.0));
+    assert!(!ms.active, "detached child permits idle repaint");
+
+    let mut active = gated_style(&doc, true);
+    assert!(motion::apply(&doc, &mut active, &mut ms, 100.0));
+    assert!(ms.active, "materialized child runs its animation clock");
+}
+
+/// Verifies that a false animation condition leaves motion inactive.
+pub fn test_conditional_animation_idle() {
+    let doc = gated_interactivity_doc();
+    let mut inactive = gated_style(&doc, false);
+    let mut ms = motion::mst_new();
+    assert!(!motion::apply(&doc, &mut inactive, &mut ms, 100.0));
+    assert!(!ms.active, "false condition permits idle repaint");
+
+    let mut active = gated_style(&doc, true);
+    assert!(motion::apply(&doc, &mut active, &mut ms, 100.0));
+    assert!(ms.active, "true condition runs the animation clock");
 }
