@@ -1,0 +1,6 @@
+// The root owns composition; the imported module owns its declarations.
+import "14-modular-panel.slab"
+
+col w=360 h=220 pad=20 bg=modular.page {
+  ModularPanel
+}

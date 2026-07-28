@@ -1,0 +1,6 @@
+// Imports assemble declarations before root expansion.
+import "imports-lib.slab"
+
+col w=260 h=140 pad=12 bg=#0d131a {
+  ImportedPanel
+}

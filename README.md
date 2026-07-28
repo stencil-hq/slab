@@ -125,6 +125,9 @@ cargo run -p slab-cli -- render examples/07-monitor.slab -o monitor.apng --dur 3
 
 `slab gen rust FILE -o OUT.rs` emits a typed module over the kernel — scalar params, typed list
 item structs and setters, item-aware signals, holes, and `Doc::set_theme`.
+`slab gen go FILE -o OUT.go` emits the same typed surface for Go, wrapping a
+`slab.Session` from the `github.com/stencil-hq/slab-go/slab` runtime around the
+document's SLIR bytes, lowered at generation time.
 
 ## Packages
 
@@ -133,6 +136,14 @@ item structs and setters, item-aware signals, holes, and `Doc::set_theme`.
 | [`@stencil-hq/slab`](packages/slab) | WASM-backed CLI: compile, check, render, generate — no Rust install. |
 | [`@stencil-hq/wslab`](clients/web) | Web runtime: `SlabElement` base class, DOM painter, kernel WASM sidecar. |
 | [`@stencil-hq/dslab`](packages/dslab) | Typed client + CLI for the Slab Drive Protocol (live kernel sessions). |
+| [`slab-go`](clients/go) | Go module `github.com/stencil-hq/slab-go`: `slab` runtime over the kernel WASM (wazero) plus the `slabtui` terminal driver. |
+| [`slab-lang`](packages/pyslab) | Python `slab` package: the same runtime over wasmtime, plus a terminal driver and `python -m slab FILE.slab`. |
+
+The Go and Python clients embed `slab_abi.wasm.gz` and speak SDP in process
+([`spec/SDP.md`](spec/SDP.md) §7), so neither needs a Rust toolchain or a
+separate compiler binary. Generated Go modules load their precompiled SLIR with
+`doc.open_slir`; the Python client compiles `.slab` source at runtime with
+`doc.open`.
 
 ## Developing
 
@@ -164,6 +175,7 @@ kernel WASM lives in `clients/web/wasm/` and is shared by the runtime, the playg
 | `crates/slab-kernel` | The one solver: layout, animation, interaction, editing, dispatch. |
 | `crates/slab-{cli,tui,native,lsp,wasm}` | Command line, terminal, wgpu, language server, and browser hosts. |
 | `clients/web` · `packages/slab` · `packages/dslab` | The three npm packages. |
+| `crates/slab-abi` · `clients/go` · `packages/pyslab` | Embeddable SDP ABI (WASM) and the Go and Python runtimes built on it. |
 | `site/` | The playground (GitHub Pages). |
 | `conformance/` | Shared cases and goldens; native and WASM must match byte for byte. |
 | `spec/` | `SPEC.md`, `SLIR.md`, `FRAME.md`, [`SDP.md`](spec/SDP.md), `support.toml` — the normative contracts. |

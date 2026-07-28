@@ -1,0 +1,33 @@
+// Declaration-only module for compile-time import conformance.
+tokens {
+  imported {
+    surface #17202b
+    ink     #eef4fa
+    accent  #4fc7e0
+  }
+}
+
+def ImportRow(caption="", tone=imported.accent) export {
+  row key=row h=22 gap=6 align=center {
+    rect w=8 h=8 radius=2 bg=tone
+    text caption size=12 color=imported.ink
+  }
+}
+
+params panel {
+  open  bool = false
+  title text = "Module panel"
+  rows  list(ImportRow) = [
+    ImportRow(caption="First"),
+    ImportRow(caption="Second", tone=#e06c75)
+  ]
+}
+
+def ImportedPanel() {
+  col w=220 pad=12 gap=8 bg=imported.surface radius=8 {
+    text param.panel.title size=15 weight=600 color=imported.ink
+    when panel.open {
+      col gap=4 { each param.panel.rows key=rows }
+    }
+  }
+}

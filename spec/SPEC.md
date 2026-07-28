@@ -86,13 +86,13 @@ col #card w=360 pad=24 gap=12 bg=color.surface radius=12 {
 
 ```ebnf
 document   := stmt*
-stmt       := tokens | theme | params | def | anim | topwhen | node
+stmt       := import | tokens | theme | params | def | anim | topwhen | node
+import     := "import" STRING
 tokens     := "tokens" "{" group* "}"
 theme      := "theme" IDENT "{" group* "}"
 group      := IDENT ( "{" entry* "}" )
 entry      := IDENT ( value | "{" entry* "}" )   // value: tuples allowed (shadow tokens)
-params     := "params" "{" pdecl* "}"            // typed host inputs (§13.1)
-pdecl      := IDENT ptype "=" pdefault            // the default is required
+params     := "params" [ IDENT ] "{" pdecl* "}"  // typed host inputs (§13.1)
 ptype      := "text" | "num" | "pct" | "color" | "bool"
             | "enum" "(" IDENT ("," IDENT)* ")"
             | "list" "(" UIDENT ")"
@@ -116,7 +116,8 @@ scalar     := NUMBER | PERCENT | STRING | HASHCOLOR | REF | IDENT
             | IDENT "(" ... ")"                // color fn: oklch(...), rgb(...)
 block      := "{" ( node | STRING | when )* "}"
 when       := "when" cond block
-cond       := IDENT | "!" IDENT | ("w"|"h") ("<"|"<="|">"|">=") NUMBER
+cond       := IDENT | REF | "!" (IDENT | REF)
+            | ("w"|"h") ("<"|"<="|">"|">=") NUMBER
             | "theme" "(" IDENT ")"
 ```
 
@@ -155,10 +156,35 @@ cond       := IDENT | "!" IDENT | ("w"|"h") ("<"|"<="|">"|">=") NUMBER
 - A `cond` ident resolves, in order: renderer classes `web gpu tui svg png`
   (1.0 renames 0.5's `gui` to `gpu`, §18), environment idents
   `portrait landscape dark coarse`, component props (§9), **bool params**
-  (§13.1; a non-bool param here is `err[param-type]`), else a state ident
-  (§10, §15).
+  (§13.1; grouped params use their dotted names), else a state ident
+  (§10, §15). A non-bool param here is `err[param-type]`.
 - `export` between a def's parameter list and its body marks the def for
   standalone compilation (§13.4).
+
+### 2.2 Imports
+
+`import "path.slab"` assembles declarations from another source file at compile
+time. Every compile expands one complete import closure into one semantic
+document. Imports create no namespace, runtime dependency, or separate kernel
+instance.
+
+- An import is legal only at document top level and must occupy its source
+  line. Its path resolves relative to the importing file's directory.
+- Resolution normalizes `/`, `.`, and `..` segments lexically. A normalized
+  path occurs once in the closure, even when a diamond reaches it repeatedly.
+- The compiler loads imports depth first. Dependencies precede their importers,
+  and the root source is last. Existing declaration precedence then applies:
+  tokens and definitions use the last declaration, while params use the first.
+- An import cycle is `err[import-cycle]`. Import nesting beyond 32 files is
+  `err[import-depth]`. A missing or unreadable source is `err[import-io]`.
+- Imported files may contain imports, tokens, themes, params, definitions,
+  icons, animations, and top-level token conditions. They may not contain root
+  content nodes (`err[import-content]`).
+- A declaration-only module is a valid standalone source. `slab check` can
+  validate it without a root content node.
+- Filesystem hosts resolve the root against its containing directory.
+  Non-filesystem hosts provide a complete map from normalized import paths to
+  source text. When that map exists, the compiler performs no filesystem reads.
 
 ## 3. Units
 
@@ -906,6 +932,12 @@ Compile time (`slab-syntax` + `slab-compile`):
 | code | level | meaning |
 |---|---|---|
 | `parse` | error | syntax error; a node-header attribute after a newline suggests the missing continuation `\` once |
+| `import-io` | error | an imported source is missing, unreadable, or absent from the host's virtual source map (§2.2) |
+| `import-cycle` | error | normalized import paths form a cycle (§2.2) |
+| `import-depth` | error | import nesting exceeds 32 files (§2.2) |
+| `import-content` | error | an imported file contains a root content node (§2.2) |
+| `param-group` | error | a named param group contains another group |
+| `param-collide` | error | two param names become equal after host-name folding (§13.1) |
 | `when-compose` | error | a `when` block is nested inside another patch; remedy uses one state patch with active-theme tokens |
 | `ref` | error | unknown token/param/prop/component reference; token cycle; malformed value |
 | `param-type` | error | a param default does not fit its declared type, or a non-bool param used as a `when` condition (§13.1) |
@@ -993,31 +1025,41 @@ col#panel clip { hole rows w=fill h=336 scroll }  // host-filled (§13.2)
 
 - Seven types: `text num pct color bool enum(a, b, …) list(Def)`. Every
   default is **required** and must fit the declared type (`err[param-type]`).
-  List types and defaults are specified in §13.6. Duplicate declarations warn
-  `dup-param`; the first wins.
-- Reference a **scalar** `param.NAME` at any whole-value site — attribute
-  values and text content/args. `num`/`pct` param refs are also legal in
+  List types and defaults are specified in §13.6.
+- `params { … }` declares flat names. `params GROUP { … }` prefixes every
+  leaf with `GROUP.`. For example, `params panel { open bool = true }`
+  declares the full name `panel.open`. Groups are one level deep and create
+  name structure only. The kernel still stores one flat param table.
+  A nested group is `err[param-group]`.
+- Reference a grouped scalar through its full path, such as
+  `param.panel.title`. Reference a grouped List only through
+  `each param.panel.rows` (§13.6). Use a grouped bool condition without the
+  `param.` head: `when panel.open { … }`.
+- A scalar `param.NAME` is legal at any whole-value site, including attribute
+  values and text content or arguments. `num` and `pct` refs are also legal in
   tuple member positions (`offset=param.x,param.y`, `at=`, `pad=`, `gap=`,
-  `stroke-dash=`, `backdrop=`); any other param type in a tuple member, or
-  a param used where its type cannot fit, is `err[ref]` at the use site.
-  Dynamic tuples cannot size grid tracks. A List
-  param is referenced only by `each param.NAME` (§13.6).
-- **Bool params are `when` conditions** (`when compact { gap=8 }`); a
-  non-bool param in a condition is `err[param-type]`. Resolution order:
-  §10.
+  `stroke-dash=`, `backdrop=`). Any other param type in a tuple member is
+  `err[ref]` at the use site. Dynamic tuples cannot size grid tracks.
+- A non-bool param in a condition is `err[param-type]`. Condition resolution
+  order is specified in §10.
+- Duplicate full names warn `dup-param`; the first declaration wins. Names
+  that differ but fold to one host name are `err[param-collide]`. In
+  particular, `.`, `_`, and `-` all become `-` for this collision check.
 - Setting a param marks the instance dirty on change; the next frame re-solves.
   `inst_set_param` handles scalar types and is total: `false` (never a throw)
   on an unknown name, List param, type mismatch, or unknown enum member.
 
-Per client: **web** — every param is an observed attribute (name
-kebab-cased) and a typed property on the generated element (§13.4); bool
-attributes use presence semantics (absent or `"false"` = false), other
-attributes coerce from the string, property writes set the param directly.
-**native** — `slab gen rust` emits `PARAM_*` ids and one typed setter per
-param on the generated `Doc` wrapper (`set_title(&str)`,
-`set_compact(bool)`, …). **CLI** — `slab render --set param=value` coerces
-to the declared type and fails on unknown names or bad enum members.
-Static renders otherwise show the declared defaults.
+| Surface | Name mapping | `panel.open` example |
+|---|---|---|
+| source refs, SLIR, kernel, CLI `--set` | full name unchanged | `panel.open` |
+| web observed attribute | kebab case; `.`, `_` become `-` | `panel-open` |
+| JavaScript property and generated React prop | full name as a string key | `element['panel.open']` |
+| generated Rust identifier | lowercase; punctuation becomes `_` | `set_panel_open`, `PARAM_PANEL_OPEN` |
+
+Web bool attributes use presence semantics; absent or `"false"` means false.
+Other web attributes coerce from strings. Property writes set params directly.
+The CLI coerces `--set NAME=value` to the declared type and rejects unknown
+names or invalid enum members. Static renders otherwise use declared defaults.
 
 ### 13.2 Holes
 
@@ -1929,6 +1971,10 @@ exporters print to stderr). Machine-readable source:
   keyboard protocol and paints real images over the cell placeholder
   where the terminal supports kitty graphics; `slab fmt` and LSP
   `textDocument/formatting` reformat sources canonically (§17).
+  - **rule 14** — compile-time imports form one declaration namespace.
+    Imported files cannot add root content, and each normalized path compiles
+    once. Named param groups flatten to dotted names; colliding host names are
+    errors instead of ambiguous generated bindings.
 
 - **1.1.0** — the dynamic-content release. Typed `list(Def)` params and
   `each` add stable keyed rows; multiline fields add wrapped navigation,

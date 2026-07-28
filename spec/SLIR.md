@@ -174,7 +174,8 @@ radial. Gradient stops are in ramp order. Animation stops are sorted by
 position, and durations and delays are milliseconds.
 
 Parameter types are `Text=0`, `Num=1`, `Pct=2`, `Color=3`, `Bool=4`,
-`Enum=5`, and `List=6`. A `list_field_sub` entry is zero for a scalar field
+`Enum=5`, and `List=6`. Parameter names are free strings in SLIR and may
+contain `.` for named groups. A `list_field_sub` entry is zero for a scalar field
 and one plus the referenced list-schema row for a `List` field. Sub-schema
 rows use `list_param=0xFFFF_FFFF` because hosts address them through a root
 list parameter and an item path. List defaults are normalized before reaching

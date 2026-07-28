@@ -1,0 +1,42 @@
+// Reusable declarations stay in a root-free module.
+tokens {
+  modular {
+    page    #0b1118
+    surface #17212c
+    border  #2d3b49
+    ink     #edf4fb
+    muted   #91a2b4
+    accent  #4fc7e0
+  }
+}
+
+def SettingRow(caption="", detail="") export {
+  row key=row h=30 align=center {
+    text caption size=12 color=modular.muted
+    spacer
+    text detail size=12 weight=600 color=modular.ink
+  }
+}
+
+params panel {
+  open  bool = true
+  title text = "Imported settings"
+  rows  list(SettingRow) = [
+    SettingRow(caption="Theme", detail="Dusk"),
+    SettingRow(caption="Density", detail="Compact"),
+    SettingRow(caption="Motion", detail="Reduced")
+  ]
+}
+
+def ModularPanel() {
+  col w=320 pad=18 gap=12 bg=modular.surface radius=12 stroke=modular.border stroke-w=1 {
+    row h=24 align=center {
+      text param.panel.title size=17 weight=600 color=modular.ink
+      spacer
+      rect w=8 h=8 radius=4 bg=modular.accent
+    }
+    when panel.open {
+      col gap=2 { each param.panel.rows key=settings }
+    }
+  }
+}

@@ -121,6 +121,8 @@ constants. Human-authored probes MAY use unique ids and id-rooted suffixes.
 | Method | Parameters | Result / behavior |
 |---|---|---|
 | `doc.load` | `{file:string}` | `{ok,diags,reloaded?,theme_reset?}`; successful loads replace all kernel state. |
+| `doc.open` | `{source:string,name:string?}` | Compiles inline source with `doc.load` semantics; never reads the filesystem. |
+| `doc.open_slir` | `{slir:base64,name:string?}` | Installs precompiled SLIR with `doc.load` semantics; skips the compiler. |
 | `doc.reload` | none | Reloads the current path with `doc.load` semantics. |
 | `doc.info` | none | File, declarations, themes, holes, signals, environment, and clock. |
 | `env.get` | none | `{width,height,client,dark,coarse,theme}`. |
@@ -142,6 +144,20 @@ states, focus, edits, scroll offsets, image registrations, and hole sizes reset.
 A compile failure is returned as `{ok:false,diags}` and leaves the prior document
 running. If a requested theme does not exist, the authored base theme is used
 and `theme_reset:true` is returned.
+
+`doc.open` is the load path for embedders without a filesystem, such as a
+WebAssembly host that reads `.slab` text itself and passes it in. `name` only
+labels diagnostics and `doc.info` and defaults to `<source>`; it is never
+opened. Image `src` values resolve against an empty in-memory asset map instead
+of host storage.
+
+`doc.open_slir` is the load path for generated modules that embed lowered bytes
+at build time. It decodes the SLIR document and installs it directly, so no
+compilation runs and there are no compile diagnostics; malformed bytes return
+`{ok:false,diags}` with a single `decode` diagnostic. `name` defaults to
+`<slir>` and labels diagnostics and `doc.info` exactly as for `doc.open`.
+Both methods return the same result shape as `doc.load` and appear in
+`protocol.info.methods`.
 
 ### 5.2 Images, scrolling, lists, dividers, and holes
 
@@ -188,7 +204,7 @@ parameter; they are not scene keys. `each` locators use the grammar in §4.
 | `input.paste` | `{text}` | Dispatches paste input, subject to a mounted host callback. |
 | `render.png` | `{scale?,path?}` | PNG bytes/data, dimensions, and notes. |
 | `render.svg` | `{path?}` | UTF-8 SVG/data, byte count, and notes. |
-| `render.cells` | `{plain?,path?}` | UTF-8 terminal cells, dimensions, and notes. |
+| `render.cells` | `{plain?,caret?,path?}` | UTF-8 terminal cells, dimensions, and notes. |
 | `render.apng` | `{dur?,fps?,scale?,path?}` | Deterministic APNG, frame count, and advanced clock. |
 
 Modifiers are `shift`, `alt`, `ctrl`, and `meta`. Input success returns
@@ -196,6 +212,10 @@ Modifiers are `shift`, `alt`, `ctrl`, and `meta`. Input success returns
 scroll offsets, caret and IME rectangles, cursor, and focus. A host-consumed
 key/text result additionally contains `host_consumed:true` and is not dispatched
 to the kernel.
+
+`render.cells` accepts `caret`, defaulting to false. When true, the returned
+grid carries the kernel caret overlaid on the cell it occupies, which is what a
+live terminal client paints.
 
 ### 5.4 Accessibility and diagnostics
 
@@ -229,10 +249,11 @@ automation can drive the same behavior.
 
 ### 6.1 Load and reload policy
 
-Host-mounted pumps deny `doc.load` and `doc.reload` by default. Replacing only
-the kernel instance can otherwise leave generated typed-setter caches holding
-values the fresh instance has never received. A denied request is an explicit
-`-32000` error and leaves the live instance unchanged.
+Host-mounted pumps deny `doc.load`, `doc.open`, `doc.open_slir`, and
+`doc.reload` by default. Replacing only the kernel instance can otherwise leave
+generated typed-setter caches holding values the fresh instance has never
+received. A denied request is an explicit `-32000` error and leaves the live
+instance unchanged.
 
 A host MAY opt in with `ReloadPolicy::Allow`. On every successful load or reload,
 `PumpResponse.reloaded` is true and the wire result contains `reloaded:true`.
@@ -255,7 +276,40 @@ The host processes each `PumpResponse.effects` through the same ordered signal
 handler used for local input. It MUST NOT run a second solver or bypass the
 shared kernel to emulate SDP behavior.
 
-## 7. Compatibility and versioning
+## 7. In-process embedding
+
+A host that can run WebAssembly MAY speak SDP without a transport. The
+`slab-abi` module (`crates/slab-abi`, built for `wasm32-unknown-unknown` with no
+imports) exposes the whole protocol through these exports:
+
+| Export | Returns | Meaning |
+|---|---|---|
+| `slab_abi_version()` | `u32` | ABI revision; version 1 hosts MUST refuse any other value. |
+| `slab_alloc(len)` | pointer | 4-byte aligned block, `0` when unavailable. |
+| `slab_free(ptr,len)` | none | Releases a block from `slab_alloc` or `slab_request`. |
+| `slab_session_new()` | `u32` | Nonzero handle for a session with no document loaded. |
+| `slab_session_free(handle)` | none | Destroys a session and its kernel state. |
+| `slab_session_quit(handle)` | `u32` | `1` after `protocol.quit`, otherwise `0`. |
+| `slab_request(handle,ptr,len)` | pointer | Length-prefixed response block. |
+
+A request body is one NDJSON line passed as a `(ptr,len)` pair the host owns.
+`slab_request` answers with a block holding a little-endian `u32` byte count
+followed by that many UTF-8 bytes: exactly one JSON response object, without a
+trailing newline, for protocol failures and unknown handles alike. The host
+releases that block with `slab_free(ptr, 4 + n)`. Handles are opaque nonzero
+`u32` values. A new session starts with the default 800x600 `gpu` environment,
+so a terminal host sends `env.set` with `client: "tui"` and its cell-derived
+pixel size before rendering.
+
+Request envelopes, errors, determinism, addressing, and method semantics are
+those of §1 through §6, and §8 applies unchanged: a host driving this module is
+protocol-equivalent to a stdio or TCP client. Because the module has no
+filesystem, such a host loads documents with `doc.open` or `doc.open_slir`
+rather than `doc.load`.
+The module documentation of `crates/slab-abi/src/lib.rs` is the detailed
+reference for the calling convention.
+
+## 8. Compatibility and versioning
 
 `protocol.info.version` is the integer protocol major. Version 1 clients MUST
 ignore unknown object fields and methods they do not call. Servers MAY add

@@ -543,6 +543,18 @@
       "client": "tui"
     },
     {
+      "name": "imports",
+      "level": 4,
+      "kind": "ops",
+      "width": 260,
+      "height": 140,
+      "client": "web",
+      "set": {
+        "panel.open": true,
+        "panel.title": "Imported at runtime"
+      }
+    },
+    {
       "name": "x1-showcase",
       "source": "x1-showcase",
       "level": 4,
