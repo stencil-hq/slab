@@ -81,6 +81,12 @@ struct CachedGlyph {
 	allocation: Option<AllocId>,
 }
 
+enum CacheLookup {
+	Miss,
+	Empty,
+	Glyph(GlyphEntry),
+}
+
 struct AtlasLayer {
 	kind:     AtlasKind,
 	size:     u32,
@@ -112,11 +118,15 @@ impl AtlasLayer {
 		self.in_use.clear();
 	}
 
-	/// Outer option distinguishes a cache miss from a cached empty glyph.
-	fn get(&mut self, key: GlyphKey) -> Option<Option<GlyphEntry>> {
-		let cached = self.cache.get(&key).copied()?;
+	fn get(&mut self, key: GlyphKey) -> CacheLookup {
+		let Some(cached) = self.cache.get(&key).copied() else {
+			return CacheLookup::Miss;
+		};
 		self.in_use.insert(key);
-		Some(cached.entry)
+		match cached.entry {
+			Some(entry) => CacheLookup::Glyph(entry),
+			None => CacheLookup::Empty,
+		}
 	}
 
 	fn cache_empty(&mut self, key: GlyphKey) {
@@ -282,9 +292,7 @@ pub(crate) struct Atlas {
 
 impl Atlas {
 	pub(crate) fn new(max_texture_dimension: u32) -> Self {
-		let max_size = max_texture_dimension
-			.min(ATLAS_LIMIT)
-			.max(COLOR_INITIAL_SIZE);
+		let max_size = max_texture_dimension.clamp(COLOR_INITIAL_SIZE, ATLAS_LIMIT);
 		Self {
 			context: ScaleContext::new(),
 			mask:    AtlasLayer::new(AtlasKind::Mask, MASK_INITIAL_SIZE, max_size),
@@ -310,11 +318,15 @@ impl Atlas {
 	) -> Option<GlyphEntry> {
 		let px_quarters = (px * SUBPIXEL_BINS as f32).round().max(1.0) as u32;
 		let key = GlyphKey { doc, font, gid, px_quarters, x_bin, y_bin };
-		if let Some(entry) = self.mask.get(key) {
-			return entry;
+		match self.mask.get(key) {
+			CacheLookup::Glyph(entry) => return Some(entry),
+			CacheLookup::Empty => return None,
+			CacheLookup::Miss => {},
 		}
-		if let Some(entry) = self.color.get(key) {
-			return entry;
+		match self.color.get(key) {
+			CacheLookup::Glyph(entry) => return Some(entry),
+			CacheLookup::Empty => return None,
+			CacheLookup::Miss => {},
 		}
 
 		let Some(font_ref) = face.as_swash() else {
@@ -345,7 +357,9 @@ impl Atlas {
 				// Collapse an unexpected LCD mask to one conservative coverage.
 				image.data = image
 					.data
-					.as_chunks::<4>().0.iter()
+					.as_chunks::<4>()
+					.0
+					.iter()
 					.map(|pixel| pixel[0].max(pixel[1]).max(pixel[2]))
 					.collect();
 				AtlasKind::Mask
@@ -406,6 +420,41 @@ pub(crate) fn subpixel(pen: f32) -> (f32, u8) {
 #[cfg(test)]
 mod tests {
 	use super::*;
+
+	fn key(gid: u32) -> GlyphKey {
+		GlyphKey { doc: 0, font: 0, gid, px_quarters: 48, x_bin: 0, y_bin: 0 }
+	}
+
+	#[test]
+	fn color_layer_preserves_rgba_pixels_inside_gutter() {
+		let mut layer = AtlasLayer::new(AtlasKind::Color, 32, 32);
+		let rgba = [255, 0, 0, 255, 0, 128, 255, 64];
+		let entry = layer
+			.insert(key(1), &rgba, 2, 1, [0.0, 0.0])
+			.expect("color glyph");
+		assert_eq!(entry.kind, AtlasKind::Color);
+		let x = entry.uv[0] as usize;
+		let y = entry.uv[1] as usize;
+		let offset = (y * layer.size as usize + x) * 4;
+		assert_eq!(&layer.pixels[offset..offset + rgba.len()], &rgba);
+	}
+
+	#[test]
+	fn atlas_grows_without_invalidating_pixel_coordinates() {
+		let mut layer = AtlasLayer::new(AtlasKind::Mask, 16, 32);
+		let bitmap = vec![255; 12 * 12];
+		let first = layer
+			.insert(key(1), &bitmap, 12, 12, [0.0, 0.0])
+			.expect("first glyph");
+		layer
+			.insert(key(2), &bitmap, 12, 12, [0.0, 0.0])
+			.expect("glyph after growth");
+		assert_eq!(layer.size, 32);
+		let CacheLookup::Glyph(cached) = layer.get(key(1)) else {
+			panic!("first glyph was lost while growing the atlas");
+		};
+		assert_eq!(cached.uv, first.uv);
+	}
 
 	#[test]
 	fn subpixel_bins_preserve_integer_origin_at_rounding_boundary() {

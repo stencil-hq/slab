@@ -2208,18 +2208,17 @@ impl Renderer {
 	fn sync_atlas(&mut self) {
 		let mask_size = self.atlas.size(AtlasKind::Mask);
 		let color_size = self.atlas.size(AtlasKind::Color);
-		let mut rebind = false;
-		if mask_size != self.atlas_mask_size {
+		let mask_resized = mask_size != self.atlas_mask_size;
+		if mask_resized {
 			self.atlas_mask_tex = make_atlas_texture(&self.device, AtlasKind::Mask, mask_size);
 			self.atlas_mask_size = mask_size;
-			rebind = true;
 		}
-		if color_size != self.atlas_color_size {
+		let color_resized = color_size != self.atlas_color_size;
+		if color_resized {
 			self.atlas_color_tex = make_atlas_texture(&self.device, AtlasKind::Color, color_size);
 			self.atlas_color_size = color_size;
-			rebind = true;
 		}
-		if rebind {
+		if mask_resized || color_resized {
 			self.atlas_bg = make_atlas_bg(
 				&self.device,
 				&self.bgl_glyph,
