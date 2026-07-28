@@ -613,6 +613,11 @@ where
 		let Key::Character(action) = key else {
 			return false;
 		};
+		// A host `keys=` binding for the chord wins over the shell recipe:
+		// the key reaches kernel dispatch and bubbles to the binding.
+		if kframe::inst_key_claimed(&self.doc.inst, action.as_str()) {
+			return false;
+		}
 		self.clipboard_action(event_loop, action.as_str())
 	}
 
@@ -994,5 +999,29 @@ mod tests {
 		// The host signal handler mutates the document (param/state write).
 		kframe::inst_set_state(&mut doc.inst, "selected", true);
 		assert!(needs_redraw(&eff, &doc.inst), "host-dirtied instance redraws");
+	}
+
+	/// A `keys=` clipboard chord is claimed by the host and must bypass the
+	/// shell's built-in cut/copy/paste recipe.
+	#[test]
+	fn host_keys_claim_clipboard_chords() {
+		let src = "col w=200 h=100 { row#go focusable keys=v:smart_paste w=50 h=20 }";
+		let copts = slab_compile::Options::default();
+		let (slir, _diags) = slab_compile::compile(src, &copts);
+		let bytes = slab_slir::write(&slir.expect("fixture compiles"));
+		let mut doc = NativeDocument::decode(&bytes).expect("fixture decodes");
+		let _ = kframe::inst_frame(&mut doc.inst, 0.0);
+		assert!(kframe::inst_set_focus(&mut doc.inst, "go", false), "row focuses");
+
+		assert!(kframe::inst_key_claimed(&doc.inst, "v"), "bound chord is claimed");
+		assert!(!kframe::inst_key_claimed(&doc.inst, "c"), "unbound chord is free");
+
+		let plain = "col w=200 h=100 { row#go focusable w=50 h=20 }";
+		let (slir, _diags) = slab_compile::compile(plain, &copts);
+		let bytes = slab_slir::write(&slir.expect("plain fixture compiles"));
+		let mut doc = NativeDocument::decode(&bytes).expect("plain fixture decodes");
+		let _ = kframe::inst_frame(&mut doc.inst, 0.0);
+		assert!(kframe::inst_set_focus(&mut doc.inst, "go", false), "plain row focuses");
+		assert!(!kframe::inst_key_claimed(&doc.inst, "v"), "no binding keeps the recipe");
 	}
 }

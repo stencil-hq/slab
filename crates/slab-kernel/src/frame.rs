@@ -1369,6 +1369,32 @@ pub fn inst_clear_range(i: &mut Instance) -> bool {
 	changed
 }
 
+/// Reports whether `key` would be claimed by a `keys=` map on the focused
+/// scene path (or the root fallback) without dispatching anything.
+///
+/// Window drivers use this to keep their default recipes (clipboard,
+/// context affordances) out of the way of host-bound shortcuts.
+pub fn inst_key_claimed(i: &Instance, key: &str) -> bool {
+	let claimed = |node: u32| {
+		let keys = style::attr_str_ref(&i.doc, &i.st, node, slir::A_KEYS);
+		!dispatch::disabled(&i.doc, &i.st, node)
+			&& (dispatch::key_map_signal(&keys, key).is_some() || dispatch::key_list_has(&keys, key))
+	};
+	let focused = i.ds.fs.focus;
+	if focused != slir::NONE {
+		let mut scene_index = scene::index_of(&i.sc, focused);
+		while scene_index >= 0 {
+			let index = usize::try_from(scene_index).expect("negative scene index");
+			if claimed(i.sc.entries[index].node) {
+				return true;
+			}
+			scene_index = i.sc.entries[index].parent_ix;
+		}
+	}
+	let root = i.sc.entries.first().map_or(slir::NONE, |entry| entry.node);
+	root != slir::NONE && root != focused && claimed(root)
+}
+
 /// Returns the focused node, or [`slir::NONE`] when focus is clear.
 pub const fn inst_focus(i: &Instance) -> u32 {
 	i.ds.fs.focus
