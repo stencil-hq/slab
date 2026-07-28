@@ -1,0 +1,5 @@
+row 000: 0-2 bg=#315A8A; 3-7 fg=#FFFFFF bg=#315A8A; 8-21 bg=#315A8A
+row 001: 0-21 bg=#315A8A
+row 002: 0-0 bg=#76522E; 1-1 bg=#E4DCD5; 2-2 bg=#76522E; 3-7 fg=#FFFFFF bg=#76522E; 8-21 bg=#76522E
+row 003: 0-21 bg=#76522E
+row 004: 0-0 bg=#456B45; 1-1 bg=#DAE1DA; 2-2 bg=#456B45; 3-9 fg=#FFFFFF bg=#456B45; 10-21 bg=#456B45

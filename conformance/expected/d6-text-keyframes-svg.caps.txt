@@ -1,3 +1,4 @@
 chart degraded animation: animates paint attributes; text content and layout-affecting keyframes freeze at authored base (cap-anim-content)
 chart degraded text-keyframes: content keyframes freeze at the authored base (cap-anim-content)
 chart degraded text-raster: viewer-rasterized glyphs; textLength force-fits each run to the kernel-measured width
+chart degraded glyph-fallback: uncovered runs render as viewer-resolved text force-fit to the kernel-charged fallback advances

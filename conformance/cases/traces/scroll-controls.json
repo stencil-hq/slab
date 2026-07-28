@@ -53,7 +53,9 @@
       "event": {
         "type": "key-down",
         "key": "ArrowLeft",
-        "mods": ["shift"]
+        "mods": [
+          "shift"
+        ]
       }
     },
     {
@@ -93,7 +95,7 @@
       },
       {
         "key": "col@0/#vlist",
-        "off": 34
+        "off": 56
       }
     ]
   }
