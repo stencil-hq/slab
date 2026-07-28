@@ -6,9 +6,9 @@
 //! (signals, caret/IME rects, cursor). The renderer is window-independent:
 //! tests and `--headless-frame` render to a texture and read pixels back.
 //!
-//! External hosts consume [`input`] (winit → kernel translation, IME,
-//! clipboard) and [`a11y`] (the AccessKit bridge) — the same modules the
-//! in-repo reference binaries use.
+//! External hosts should start with [`shell`], which composes [`input`],
+//! [`a11y`], surface management and [`renderer`] into the same loop exercised
+//! by the in-repo viewer.
 
 pub mod a11y;
 pub mod atlas;
@@ -19,6 +19,7 @@ pub mod holes;
 pub mod input;
 pub mod player;
 pub mod renderer;
+pub mod shell;
 pub mod surface;
 pub mod tess;
 pub mod view;
@@ -49,6 +50,16 @@ impl NativeDocument {
         })
     }
 
+    /// Wraps a generated Rust document's public `inst` and `imgs` fields for
+    /// use with [`shell::NativeShell`].
+    pub fn from_parts(inst: slab_kernel::frame::Instance, imgs: Vec<Vec<u8>>) -> Self {
+        Self {
+            inst,
+            imgs,
+            fonts: Vec::new(),
+        }
+    }
+
     /// Registers a face for both kernel measurement and native glyph painting.
     /// Returns false when `bytes` is not a supported font.
     pub fn register_font(&mut self, name: &str, bytes: Vec<u8>) -> bool {
@@ -77,6 +88,12 @@ impl NativeDocument {
             bytes,
         });
         true
+    }
+
+    /// Selects a compiler-declared theme. The renderer synchronizes resolved
+    /// color resources from the document before every frame build.
+    pub fn set_theme(&mut self, name: &str) -> bool {
+        slab_kernel::frame::inst_set_theme(&mut self.inst, name)
     }
 
     pub fn registered_fonts(&self) -> &[RegisteredFont] {
@@ -112,6 +129,18 @@ impl NativeDriver {
         );
         self.doc_id = Some(doc_id);
         doc_id
+    }
+
+    /// Selects a theme and immediately refreshes registered GPU color tables.
+    pub fn set_theme(&mut self, name: &str) -> bool {
+        if !self.document.set_theme(name) {
+            return false;
+        }
+        if let Some(doc_id) = self.doc_id {
+            self.renderer
+                .refresh_registered_colors(doc_id, &self.document.inst.doc);
+        }
+        true
     }
 
     /// Registers a face for layout and painting, invalidating the glyph atlas

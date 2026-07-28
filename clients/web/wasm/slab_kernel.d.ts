@@ -13,6 +13,10 @@ export class FrameBuf {
     free(): void;
     [Symbol.dispose](): void;
     /**
+     * Returns host-visible frame diagnostics as JSON objects.
+     */
+    diagnostics_json(): string;
+    /**
      * Reports whether the solve dirtied the instance for another frame.
      */
     dirty(): boolean;
@@ -69,6 +73,10 @@ export class KInst {
      */
     chain_json(scene_index: number): string;
     /**
+     * Clears kernel focus and any visible focus ring.
+     */
+    clear_focus(): boolean;
+    /**
      * Dispatches one platform event and emits canonical conformance effects JSON.
      */
     dispatch_dump_json(event_type: number, x: number, y: number, dx: number, dy: number, button: number, key: string, text: string, modifiers: number, clicks: number): string;
@@ -89,6 +97,14 @@ export class KInst {
      */
     focus(): number;
     /**
+     * Reveals, materializes, and focuses one virtual-list item.
+     */
+    focus_item(each_key: string, item_index: number): boolean;
+    /**
+     * Returns the last failed focus request's actionable explanation.
+     */
+    focus_note(): string;
+    /**
      * Registers runtime font metrics and returns the selected font-table index.
      */
     font_register(family: string, weight: number, upem: number, ascent: number, descent: number, line_gap: number, default_advance: number, codepoints: Uint32Array, glyphs: Uint32Array, advances: Uint32Array): number;
@@ -108,6 +124,10 @@ export class KInst {
      * Returns one retained scroll offset by node key and axis.
      */
     get_scroll(key: string, axis: number): number;
+    /**
+     * Returns one active-theme token as typed JSON, or `undefined` when absent.
+     */
+    get_token_json(path: string): string | undefined;
     /**
      * Tests a point against one retained scene index, including clips and rotations.
      */
@@ -255,16 +275,20 @@ export interface InitOutput {
     readonly kinst_cells_ansi: (a: number, b: number) => [number, number];
     readonly kinst_cells_text: (a: number, b: number) => [number, number];
     readonly kinst_chain_json: (a: number, b: number) => [number, number];
+    readonly kinst_clear_focus: (a: number) => number;
     readonly kinst_dispatch_dump_json: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number) => [number, number];
     readonly kinst_dispatch_json: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number) => [number, number];
     readonly kinst_each_window_json: (a: number, b: number, c: number) => [number, number];
     readonly kinst_field_text: (a: number, b: number, c: number) => [number, number];
     readonly kinst_focus: (a: number) => number;
+    readonly kinst_focus_item: (a: number, b: number, c: number, d: number) => number;
+    readonly kinst_focus_note: (a: number) => [number, number];
     readonly kinst_font_register: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number, o: number) => number;
     readonly kinst_frame: (a: number, b: number) => number;
     readonly kinst_frame_json: (a: number, b: number) => [number, number];
     readonly kinst_get_divider: (a: number, b: number, c: number) => number;
     readonly kinst_get_scroll: (a: number, b: number, c: number, d: number) => number;
+    readonly kinst_get_token_json: (a: number, b: number, c: number) => [number, number];
     readonly kinst_hit_contains: (a: number, b: number, c: number, d: number) => number;
     readonly kinst_hit_json: (a: number, b: number, c: number) => [number, number];
     readonly kinst_holes_json: (a: number) => [number, number];
@@ -299,6 +323,7 @@ export interface InitOutput {
     readonly kinst_theme: (a: number) => [number, number];
     readonly kinst_trace_summary_json: (a: number) => [number, number];
     readonly __wbg_framebuf_free: (a: number, b: number) => void;
+    readonly framebuf_diagnostics_json: (a: number) => [number, number];
     readonly framebuf_dirty: (a: number) => number;
     readonly framebuf_f64s: (a: number) => [number, number];
     readonly framebuf_motion_active: (a: number) => number;

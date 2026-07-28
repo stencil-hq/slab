@@ -26,7 +26,7 @@
 //   (j) atomic list assignment renders/reflows and signals carry item identity
 //   (k) retained semantic DOM values, key identity, rotation, roving focus, click
 //   (l) omitted nested list fields atomically clear their child lists
-//   (m) CDP IME, right-click context, keyboard clipboard, drag ghost, and token read-back
+//   (m) typed tokens/fields/focus/settlement/diagnostics, IME, clipboard, and drag ghost
 //   (n) missing kernel WASM reports its URL, bundler remedy, and a visible alert
 
 import { dirname, extname, join } from 'node:path';
@@ -555,6 +555,12 @@ await page.evaluate(async () => {
       fieldText(key: string): string | undefined;
       getToken(path: string): string | number | undefined;
       setTheme(name: string): boolean;
+      focusedKey(): string | null;
+      inEditField(): boolean;
+      whenSettled(): Promise<void>;
+      readonly lastFrame: {
+         readonly diagnostics: readonly { code: string; line: number; msg: string }[];
+      } | null;
    };
    host.id = 'web-interactions-host';
    host.style.cssText = 'display:block;width:320px;height:180px';
@@ -562,11 +568,15 @@ await page.evaluate(async () => {
    g.__sig ??= {};
    g.__sig.menu = [];
    g.__sig.changed = [];
+   g.__sig.diagnostics = [];
    host.addEventListener('menu', (event) => {
       g.__sig?.menu?.push((event as CustomEvent).detail);
    });
    host.addEventListener('changed', (event) => {
       g.__sig?.changed?.push((event as CustomEvent).detail);
+   });
+   host.addEventListener('slab-diagnostics', (event) => {
+      g.__sig?.diagnostics?.push((event as CustomEvent).detail);
    });
    document.body.appendChild(host);
 });
@@ -611,6 +621,68 @@ check(
    JSON.stringify(tokenResult),
 );
 
+const deferredApiResult = await page.evaluate(async () => {
+   const host = document.getElementById('web-interactions-host') as HTMLElement & {
+      setParam(name: string, value: unknown): boolean;
+      whenSettled(): Promise<void>;
+      reveal(key: string, margin: number): boolean;
+      setFocus(key: string, visible?: boolean): boolean;
+      setFieldText(key: string, text: string): boolean;
+      fieldText(key: string): string | undefined;
+      focusedKey(): string | null;
+      inEditField(): boolean;
+      clearFocus(): boolean;
+      focusNote(): string;
+   };
+   const missingBeforeSolve = !host.setFocus('#board/#deferred');
+   const opened = host.setParam('show_extra', true);
+   await host.whenSettled();
+   const key =
+      ((globalThis as DebugGlobal).__slabDebug?.get(host)?.geom() ?? []).find((node) =>
+         node.key.includes('/deferred'),
+      )?.key ?? '';
+   const revealed = host.reveal(key, 0);
+   await host.whenSettled();
+   const focused = host.setFocus(key);
+   const seeded = host.setFieldText(key, 'deferred seed');
+   const focusNote = host.focusNote();
+   const cleared = host.clearFocus();
+   const clearedKey = host.focusedKey();
+   const restored = host.setFocus(key);
+   return {
+      missingBeforeSolve,
+      opened,
+      key,
+      revealed,
+      focused,
+      seeded,
+      focusNote,
+      cleared,
+      clearedKey,
+      restored,
+      value: host.fieldText(key),
+      focusedKey: host.focusedKey(),
+      inEditField: host.inEditField(),
+   };
+});
+check(
+   '(m) reveal-settle-focus-seed recipe works for a conditional field',
+   deferredApiResult.missingBeforeSolve &&
+      deferredApiResult.opened &&
+      deferredApiResult.key !== '' &&
+      deferredApiResult.revealed &&
+      deferredApiResult.focused &&
+      deferredApiResult.seeded &&
+      deferredApiResult.focusNote === '' &&
+      deferredApiResult.cleared &&
+      deferredApiResult.clearedKey === null &&
+      deferredApiResult.restored &&
+      deferredApiResult.value === 'deferred seed' &&
+      deferredApiResult.focusedKey === deferredApiResult.key &&
+      deferredApiResult.inEditField,
+   JSON.stringify(deferredApiResult),
+);
+
 let interactionKey = '';
 if (interactionField) {
    interactionKey = await page.evaluate(() => {
@@ -624,6 +696,64 @@ if (interactionField) {
    await page.mouse.click(interactionField.cx, interactionField.cy);
 }
 await page.waitForTimeout(100);
+const typedHostState = await page.evaluate(async () => {
+   const host = document.getElementById('web-interactions-host') as HTMLElement & {
+      focusedKey(): string | null;
+      inEditField(): boolean;
+      whenSettled(): Promise<void>;
+      readonly lastFrame: {
+         readonly diagnostics: readonly { code: string; line: number; msg: string }[];
+      } | null;
+   };
+   await host.whenSettled();
+   return {
+      focusedKey: host.focusedKey(),
+      inEditField: host.inEditField(),
+      frameDiagnostics: host.lastFrame?.diagnostics ?? [],
+      eventDiagnostics: (globalThis as DebugGlobal).__sig?.diagnostics ?? [],
+      paintsMissingGlyph: Array.from(
+         host.shadowRoot?.querySelectorAll('.slab-ops span') ?? [],
+      ).some((span) => span.textContent?.includes('◐') === true),
+   };
+});
+check(
+   '(m) typed focus and settlement APIs expose retained edit state',
+   typedHostState.focusedKey === interactionKey && typedHostState.inEditField,
+   JSON.stringify(typedHostState),
+);
+check(
+   '(m) frame and slab-diagnostics event expose current layout evidence',
+   typedHostState.frameDiagnostics.some(
+      (diagnostic) => diagnostic.code === 'squeeze' || diagnostic.code === 'clipped',
+   ) &&
+      typedHostState.eventDiagnostics.some(
+         (detail) =>
+            typeof detail === 'object' &&
+            detail !== null &&
+            'diagnostics' in detail &&
+            Array.isArray(detail.diagnostics),
+      ),
+   JSON.stringify(typedHostState),
+);
+check(
+   '(m) web painter suppresses browser fallback and emits glyph-missing',
+   !typedHostState.paintsMissingGlyph &&
+      typedHostState.eventDiagnostics.some(
+         (detail) =>
+            typeof detail === 'object' &&
+            detail !== null &&
+            'diagnostics' in detail &&
+            Array.isArray(detail.diagnostics) &&
+            detail.diagnostics.some(
+               (diagnostic: unknown) =>
+                  typeof diagnostic === 'object' &&
+                  diagnostic !== null &&
+                  'code' in diagnostic &&
+                  diagnostic.code === 'glyph-missing',
+            ),
+      ),
+   JSON.stringify(typedHostState),
+);
 const focusBeforeIme = await page.evaluate(() => {
    const host = document.getElementById('web-interactions-host');
    const active = host?.shadowRoot?.activeElement;

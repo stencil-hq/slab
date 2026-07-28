@@ -1,4 +1,6 @@
 // Browser interaction fixture for IME, clipboard, context, drag ghost, and tokens.
+params { show_extra bool = false }
+
 tokens {
   color { page #112233; marker #ff00ff }
   space { unit 8 }
@@ -15,4 +17,9 @@ col key=board w=320 h=180 gap=16 bg=color.page {
     para { span "drag" strike=true color=#ffffff size=14 }
   }
   box key=target w=80 h=48 drop=dropped bg=#226644
+  text "◐" key=missing w=16 h=16 size=14 color=#ffffff
+  box key=overflow w=400 h=1 bg=#000000
+  when show_extra {
+    text "" key=deferred field=deferred w=240 h=36 size=16 bg=#ffffff color=#111111
+  }
 }

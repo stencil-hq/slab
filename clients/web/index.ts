@@ -6,8 +6,10 @@ export {
    parseColor,
    type SignalMeta,
    type SlabDebugEntry,
+   type SlabDiagnostic,
+   type SlabDiagnosticsDetail,
    SlabElement,
    type SlabSignalDetail,
 } from './element.ts';
-export type { SceneNode, SignalDef, Statics } from './kernel.ts';
+export type { Frame, FrameDiagnostic, SceneNode, SignalDef, Statics } from './kernel.ts';
 export { type FontCss, gradientCss, Painter, rgbaCss } from './painter.ts';

@@ -22,6 +22,7 @@ usage: slab render FILE [-o OUT.{svg,png,apng,txt}] [--client web|gpu|tui|svg|pn
   --t       motion clock in ms (renders one instant)
   --env     dark/coarse media flags; portrait picks a 16:9 portrait height
             when --height is not given
+  --state   enable document-global preview states (not per-node state)
   --set     override a scalar param, or a list with a JSON array of objects
   --plain   tui: no ANSI colors (the conformance golden format)
   --font    register a font face from PATH under NAME (repeatable)
@@ -225,4 +226,16 @@ fn run(a: &Args) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::cmd_render;
+    use std::process::ExitCode;
+
+    #[test]
+    fn render_help_is_a_successful_command() {
+        assert_eq!(cmd_render(&["--help".to_string()]), ExitCode::SUCCESS);
+        assert_eq!(cmd_render(&["-h".to_string()]), ExitCode::SUCCESS);
+    }
 }

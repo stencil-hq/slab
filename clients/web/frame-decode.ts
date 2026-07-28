@@ -1,4 +1,4 @@
-import type { Frame, FrameOp, RtPath } from './kernel.ts';
+import type { Frame, FrameDiagnostic, FrameOp, RtPath } from './kernel.ts';
 import type { FrameBuf } from './wasm/slab_kernel.js';
 
 function signedWord(word: number): number {
@@ -47,6 +47,30 @@ function decodeRuntimePaths(json: string): RtPath[] {
    return paths;
 }
 
+function decodeDiagnostics(json: string): FrameDiagnostic[] {
+   const value: unknown = JSON.parse(json);
+   if (!Array.isArray(value)) throw new Error('invalid FrameBuf diagnostics: expected an array');
+   const diagnostics: FrameDiagnostic[] = [];
+   for (let index = 0; index < value.length; index++) {
+      const item: unknown = value[index];
+      if (typeof item !== 'object' || item === null || Array.isArray(item)) {
+         throw new Error(`invalid FrameBuf diagnostic ${index}: expected {code,line,msg}`);
+      }
+      const record = item as Record<string, unknown>;
+      if (
+         typeof record.code !== 'string' ||
+         typeof record.line !== 'number' ||
+         !Number.isInteger(record.line) ||
+         record.line < 0 ||
+         typeof record.msg !== 'string'
+      ) {
+         throw new Error(`invalid FrameBuf diagnostic ${index}: expected {code,line,msg}`);
+      }
+      diagnostics.push({ code: record.code, line: record.line, msg: record.msg });
+   }
+   return diagnostics;
+}
+
 /** Consumes a bindgen frame buffer and reconstructs the painter operation stream. */
 export function decodeFrame(frame: FrameBuf): Frame {
    try {
@@ -56,6 +80,7 @@ export function decodeFrame(frame: FrameBuf): Frame {
       const pathsRt = decodeRuntimePaths(frame.rt_paths_json());
       const dirty = frame.dirty();
       const motionActive = frame.motion_active();
+      const diagnostics = decodeDiagnostics(frame.diagnostics_json());
       let wi = 0;
       let fi = 0;
 
@@ -268,7 +293,7 @@ export function decodeFrame(frame: FrameBuf): Frame {
       if (fi !== floats.length)
          throw new Error(`invalid FrameBuf: ${floats.length - fi} trailing f64 values`);
 
-      return { width, height, ops, strings, pathsRt, dirty, motionActive };
+      return { width, height, ops, strings, pathsRt, dirty, motionActive, diagnostics };
    } finally {
       frame.free();
    }

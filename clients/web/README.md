@@ -20,8 +20,12 @@ bunx @stencil-hq/slab gen wc doc.slab -o dist --tag my-doc
 ```
 
 Set attributes or properties for document params. Use `setFieldText` and
-`fieldText` for keyed edit buffers, and use `getToken` for generated
-active-theme tokens. Listen for authored signals as `CustomEvent`s.
+`fieldText` for keyed edit buffers, `focusedKey`/`inEditField` for host
+keyboard layers, and `getToken` for kernel-resolved active-theme tokens.
+`whenSettled()` awaits the next retained solve when a following focus/field
+operation depends on a just-revealed subtree. Listen for authored signals as
+`CustomEvent`s and for current layout/runtime evidence through the typed
+`slab-diagnostics` event or `lastFrame.diagnostics`.
 
 Keep the emitted runtime and `wasm/slab_kernel_bg.wasm` sidecar at their
 generated relative paths. Bundlers change `import.meta.url`; copy the `wasm/`
@@ -40,7 +44,8 @@ the context-menu target. Build a host menu from the Context `CustomEvent`.
 import { SlabElement } from '@stencil-hq/wslab';
 ```
 
-Exports: `SlabElement`, `Painter`, param/color coercion helpers, and the types
-generated components rely on (`SceneNode`, `SignalDef`, `SlabSignalDetail`, …).
-Ships both compiled JS (`dist/`) and TypeScript source; Bun resolves the
-source directly via the `bun` export condition.
+Exports: `SlabElement`, `Painter`, param/color coercion helpers, and the public
+types generated components rely on (`Frame`, `FrameDiagnostic`, `SceneNode`,
+`SignalDef`, `SlabDiagnostic`, `SlabDiagnosticsDetail`,
+`SlabSignalDetail`, …). Ships both compiled JS (`dist/`) and TypeScript source;
+Bun resolves the source directly via the `bun` export condition.

@@ -192,6 +192,7 @@ fn cmd_check(args: &[String]) -> ExitCode {
         eprintln!("error: check needs a FILE");
         return ExitCode::from(2);
     };
+    eprintln!("slab compiler {}", env!("CARGO_PKG_VERSION"));
     let (_, diags) = compile_file(&file, false, true);
     let name = file.display().to_string();
     print_diags(&diags, &name);

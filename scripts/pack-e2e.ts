@@ -107,12 +107,37 @@ writeFileSync(
 }
 
 copyFileSync(join(ROOT, 'examples/10-settings.slab'), join(proj, '10-settings.slab'));
+copyFileSync(join(ROOT, 'examples/12-tracklist.slab'), join(proj, '12-tracklist.slab'));
 
 // ── 3. CLI journey ───────────────────────────────────────────────────
 
 {
    const r = run(['bun', 'x', 'slab', 'check', '10-settings.slab'], proj);
-   check('slab check exit 0', r.code === 0, r.out.trim().split('\n').pop() ?? '');
+   check(
+      'slab check version stamp',
+      r.code === 0 &&
+         r.out.includes('slab compiler ') &&
+         r.out.includes('package @stencil-hq/slab '),
+      r.out.trim().split('\n').slice(0, 2).join(' | '),
+   );
+}
+
+{
+   const r = run(['bun', 'x', 'slab', 'render', '--help'], proj);
+   check(
+      'slab render help',
+      r.code === 0 && r.out.includes('--theme NAME'),
+      r.out.trim().split('\n')[0] ?? '',
+   );
+}
+
+{
+   const r = run(
+      ['bun', 'x', 'slab', 'render', '12-tracklist.slab', '-o', 'themed.svg', '--theme', 'dusk'],
+      proj,
+   );
+   const svg = r.code === 0 ? readFileSync(join(proj, 'themed.svg'), 'utf8') : '';
+   check('slab render named theme', r.code === 0 && svg.startsWith('<svg'), `${svg.length} chars`);
 }
 
 {

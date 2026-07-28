@@ -884,12 +884,12 @@ pub struct WindowAccessibility {
 }
 
 impl WindowAccessibility {
-    /// Mounts AccessKit for one winit window and event-loop proxy.
-    pub fn new(
-        event_loop: &ActiveEventLoop,
-        window: &Window,
-        proxy: EventLoopProxy<Event>,
-    ) -> Self {
+    /// Mounts AccessKit for one winit window and an event-loop proxy whose
+    /// user-event type can carry accessibility alongside application events.
+    pub fn new<T>(event_loop: &ActiveEventLoop, window: &Window, proxy: EventLoopProxy<T>) -> Self
+    where
+        T: From<Event> + Send + 'static,
+    {
         Self {
             adapter: Adapter::with_event_loop_proxy(event_loop, window, proxy),
             bridge: Bridge::default(),
@@ -1015,6 +1015,7 @@ mod tests {
             scene,
             strings: Vec::new(),
             paths_rt: Vec::new(),
+            diagnostics: Vec::new(),
         }
     }
 

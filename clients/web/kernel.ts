@@ -45,6 +45,12 @@ export interface Statics {
    font_upem: number[];
    font_ascent: number[];
    font_descent: number[];
+   font_default_adv: number[];
+   font_cmap_off: number[];
+   font_cmap_len: number[];
+   font_cmap_cp: number[];
+   font_cmap_gid: number[];
+   font_adv: number[];
    img_src: number[];
    grad_kind: number[];
    grad_angle: number[];
@@ -390,6 +396,13 @@ export type ImageInfo = readonly [
 /** Immutable materialized range `[start, end)` for a virtual list. */
 export type EachWindow = readonly [start: number, end: number];
 
+/** One layout or runtime diagnostic produced by the current solve. */
+export interface FrameDiagnostic {
+   code: string;
+   line: number;
+   msg: string;
+}
+
 /** Decoded hot-path frame ready for the DOM painter. */
 export interface Frame {
    width: number;
@@ -399,4 +412,5 @@ export interface Frame {
    pathsRt: RtPath[];
    dirty: boolean;
    motionActive: boolean;
+   diagnostics: FrameDiagnostic[];
 }

@@ -12,6 +12,7 @@ import type {
    EachWindow,
    Effects,
    Frame,
+   FrameDiagnostic,
    HoleRect,
    ImageInfo,
    LiftedAnimation,
@@ -34,6 +35,21 @@ export interface SlabSignalDetail {
    readonly meta: SignalMeta;
    /** Change/Submit text or a Divider's final resize extent. */
    readonly text?: string;
+}
+
+/** One current-frame layout or runtime diagnostic. */
+export type SlabDiagnostic = FrameDiagnostic;
+
+/** Detail carried by the `slab-diagnostics` CustomEvent. */
+export interface SlabDiagnosticsDetail {
+   /** Complete diagnostics evidence for the current frame. */
+   readonly diagnostics: readonly SlabDiagnostic[];
+}
+
+declare global {
+   interface HTMLElementEventMap {
+      'slab-diagnostics': CustomEvent<SlabDiagnosticsDetail>;
+   }
 }
 
 const KERNEL_WASM_URL = new URL('./wasm/slab_kernel_bg.wasm', import.meta.url);
@@ -387,8 +403,6 @@ export class SlabElement extends HTMLElement {
    /** Generated subclasses embed SLIR as base64 here (or a URL with slirIsUrl). */
    static slir: string | Uint8Array = '';
    static slirIsUrl = false;
-   /** Resolved token tables injected by generated subclasses, keyed by theme name. */
-   static tokenTables: Readonly<Record<string, Readonly<Record<string, string | number>>>> = {};
    /** Generated subclasses describe list element fields here. */
    static listSchemas: Readonly<Record<string, ListSchema>> = {};
    /** Generated schema rows referenced by nested list fields. */
@@ -421,7 +435,6 @@ export class SlabElement extends HTMLElement {
    #focusNode = 0xffffffff;
    #contextEdit: { start: number; end: number; x: number; y: number } | null = null;
    #contextTimer = 0;
-   #tokensAvailable = true;
    #ownImageUrls: string[] = [];
    #appliedFonts = new Set<string>();
    #ro: ResizeObserver | null = null;
@@ -436,6 +449,8 @@ export class SlabElement extends HTMLElement {
    #runtimeImages = new Map<string, RuntimeImageRegistration>();
    #dividers = new Map<string, number>();
    #pendingFocus: [string, boolean] | null = null;
+   #settledWaiters: Array<() => void> = [];
+   #diagnosticsSignature = '';
    #theme = '';
    // Per-element sheet holding lifted @keyframes (names are binding-scoped).
    #animSheet = new CSSStyleSheet();
@@ -554,7 +569,6 @@ export class SlabElement extends HTMLElement {
          this.#showKernelError();
          return false;
       }
-      this.#tokensAvailable = false;
       this.#inited = true; // supersedes any pending static-slir boot
       this.#teardown();
       if (!this.#mount(bytes, false)) return false;
@@ -727,6 +741,7 @@ export class SlabElement extends HTMLElement {
       this.#painter = null;
       this.#lastFrame = null;
       this.#scene = null;
+      this.#diagnosticsSignature = '';
    }
 
    /** Replace this class's cached SLIR with `bytes` so every future mount decodes them (HMR hook; pair with `loadSlir()` on live elements). */
@@ -807,7 +822,8 @@ export class SlabElement extends HTMLElement {
    #applyFont(key: string, face: RegisteredFace): void {
       const inst = this.#inst;
       const painter = this.#painter;
-      if (!inst || !painter || this.#appliedFonts.has(key)) return;
+      const statics = this.#statics;
+      if (!inst || !painter || !statics || this.#appliedFonts.has(key)) return;
       const metrics = face.metrics;
       const table = inst.font_register(
          face.family,
@@ -821,6 +837,13 @@ export class SlabElement extends HTMLElement {
          metrics.gids,
          metrics.advs,
       );
+      if (table < 0) return;
+      statics.font_default_adv[table] = metrics.defaultAdvance;
+      statics.font_cmap_off[table] = statics.font_cmap_cp.length;
+      statics.font_cmap_len[table] = metrics.cps.length;
+      for (const codepoint of metrics.cps) statics.font_cmap_cp.push(codepoint);
+      for (const glyph of metrics.gids) statics.font_cmap_gid.push(glyph);
+      for (const advance of metrics.advs) statics.font_adv.push(advance);
       painter.fonts[table] = {
          family: face.cssFamily,
          upem: metrics.upem,
@@ -893,6 +916,8 @@ export class SlabElement extends HTMLElement {
       const statics = this.#statics;
       const painter = this.#painter;
       if (!inst || !statics || !painter || !this.#envReady) return;
+      const settledWaiters = this.#settledWaiters.length === 0 ? null : this.#settledWaiters;
+      if (settledWaiters !== null) this.#settledWaiters = [];
       const decoded = decodeFrame(inst.frame(t));
       this.#lastFrame = decoded;
       this.#scene = null;
@@ -906,6 +931,21 @@ export class SlabElement extends HTMLElement {
       }
       const pending: Effects = JSON.parse(inst.take_signals_json());
       this.#emitSignals(pending, statics);
+      if (decoded.diagnostics.length === 0) {
+         this.#diagnosticsSignature = '';
+      } else {
+         const signature = JSON.stringify(decoded.diagnostics);
+         if (signature !== this.#diagnosticsSignature) {
+            this.#diagnosticsSignature = signature;
+            this.dispatchEvent(
+               new CustomEvent<SlabDiagnosticsDetail>('slab-diagnostics', {
+                  detail: { diagnostics: decoded.diagnostics },
+                  bubbles: true,
+                  composed: true,
+               }),
+            );
+         }
+      }
       // Geometry consumers (design overlays) resync after every paint.
       this.dispatchEvent(new CustomEvent('slab-frame'));
       if (decoded.dirty || decoded.motionActive) this.#schedule();
@@ -913,6 +953,9 @@ export class SlabElement extends HTMLElement {
          const [key, visible] = this.#pendingFocus;
          this.#pendingFocus = null;
          if (inst.set_focus(key, visible)) this.#schedule();
+      }
+      if (settledWaiters !== null) {
+         for (const settle of settledWaiters) settle();
       }
    };
 
@@ -1395,6 +1438,13 @@ export class SlabElement extends HTMLElement {
       }
       return false;
    }
+   /** Resolve after the next retained solve has painted and `lastFrame` and
+    * `sceneSnapshot()` describe it. Calling this schedules a frame when needed. */
+   whenSettled(): Promise<void> {
+      const settled = new Promise<void>((resolve) => this.#settledWaiters.push(resolve));
+      this.#schedule();
+      return settled;
+   }
 
    /** Last value set through the property/attribute surface (not kernel state). */
    getParam(name: string): unknown {
@@ -1413,12 +1463,27 @@ export class SlabElement extends HTMLElement {
    fieldText(key: string): string | undefined {
       return this.#inst?.field_text(key);
    }
+   /** Return the focused retained scene key, or null when kernel focus is clear. */
+   focusedKey(): string | null {
+      const inst = this.#inst;
+      if (!inst) return null;
+      const focused = inst.focus();
+      if (focused === 0xffffffff) return null;
+      return this.sceneSnapshot().find((node) => node.node === focused)?.key ?? null;
+   }
 
-   /** Read one resolved generated token for the active theme. */
+   /** Report whether kernel focus currently belongs to an editable field. */
+   inEditField(): boolean {
+      const key = this.focusedKey();
+      return key !== null && this.#inst?.field_text(key) !== undefined;
+   }
+
+   /** Read one token resolved by the kernel for the active theme. */
    getToken(path: string): string | number | undefined {
-      if (!this.#tokensAvailable) return undefined;
-      const tables = slabConstructor(this).tokenTables;
-      return tables[this.getTheme()]?.[path];
+      const json = this.#inst?.get_token_json(path);
+      if (json === undefined) return undefined;
+      const value: unknown = JSON.parse(json);
+      return typeof value === 'string' || typeof value === 'number' ? value : undefined;
    }
 
    /** Validate, then replace a root or nested declared list and its descendants. */
@@ -1695,6 +1760,27 @@ export class SlabElement extends HTMLElement {
       if (!inst.set_focus(key, visible)) return false;
       this.#schedule();
       return true;
+   }
+
+   /** Clear kernel focus and its visible focus ring. */
+   clearFocus(): boolean {
+      const inst = this.#inst;
+      if (!inst?.clear_focus()) return false;
+      this.#schedule();
+      return true;
+   }
+
+   /** Reveal, materialize, and keyboard-focus one virtual-list item. */
+   focusItem(each: string, index: number): boolean {
+      const inst = this.#inst;
+      if (!inst?.focus_item(each, index)) return false;
+      this.#schedule();
+      return true;
+   }
+
+   /** Explain the most recent failed focus request; empty after success. */
+   focusNote(): string {
+      return this.#inst?.focus_note() ?? '';
    }
 
    /** Read a keyed scroll offset on axis `0` (main) or `1` (cross). */

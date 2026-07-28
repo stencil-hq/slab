@@ -25,6 +25,22 @@ export class FrameBuf {
         wasm.__wbg_framebuf_free(ptr, 0);
     }
     /**
+     * Returns host-visible frame diagnostics as JSON objects.
+     * @returns {string}
+     */
+    diagnostics_json() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.framebuf_diagnostics_json(this.__wbg_ptr);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
      * Reports whether the solve dirtied the instance for another frame.
      * @returns {boolean}
      */
@@ -205,6 +221,14 @@ export class KInst {
         }
     }
     /**
+     * Clears kernel focus and any visible focus ring.
+     * @returns {boolean}
+     */
+    clear_focus() {
+        const ret = wasm.kinst_clear_focus(this.__wbg_ptr);
+        return ret !== 0;
+    }
+    /**
      * Dispatches one platform event and emits canonical conformance effects JSON.
      * @param {number} event_type
      * @param {number} x
@@ -308,6 +332,34 @@ export class KInst {
         return ret >>> 0;
     }
     /**
+     * Reveals, materializes, and focuses one virtual-list item.
+     * @param {string} each_key
+     * @param {number} item_index
+     * @returns {boolean}
+     */
+    focus_item(each_key, item_index) {
+        const ptr0 = passStringToWasm0(each_key, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.kinst_focus_item(this.__wbg_ptr, ptr0, len0, item_index);
+        return ret !== 0;
+    }
+    /**
+     * Returns the last failed focus request's actionable explanation.
+     * @returns {string}
+     */
+    focus_note() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.kinst_focus_note(this.__wbg_ptr);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
      * Registers runtime font metrics and returns the selected font-table index.
      * @param {string} family
      * @param {number} weight
@@ -381,6 +433,22 @@ export class KInst {
         const len0 = WASM_VECTOR_LEN;
         const ret = wasm.kinst_get_scroll(this.__wbg_ptr, ptr0, len0, axis);
         return ret;
+    }
+    /**
+     * Returns one active-theme token as typed JSON, or `undefined` when absent.
+     * @param {string} path
+     * @returns {string | undefined}
+     */
+    get_token_json(path) {
+        const ptr0 = passStringToWasm0(path, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.kinst_get_token_json(this.__wbg_ptr, ptr0, len0);
+        let v2;
+        if (ret[0] !== 0) {
+            v2 = getStringFromWasm0(ret[0], ret[1]).slice();
+            wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+        }
+        return v2;
     }
     /**
      * Tests a point against one retained scene index, including clips and rotations.

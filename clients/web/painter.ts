@@ -69,6 +69,33 @@ export function fontRulesCss(fonts: (FontCss | null)[]): string {
    return rules;
 }
 
+/** Replace codepoints outside the selected SLIR font cmap with non-inking
+ * placeholders. Browser fallback must never exceed the shared coverage contract. */
+function coveredText(doc: Statics, font: number, text: string): string {
+   if (font < 0) return text;
+   const start = doc.font_cmap_off[font] ?? 0;
+   const end = start + (doc.font_cmap_len[font] ?? 0);
+   let output = '';
+   let retainedFrom = 0;
+   let offset = 0;
+   for (const character of text) {
+      const codepoint = character.codePointAt(0) ?? 0;
+      let low = start;
+      let high = end;
+      while (low < high) {
+         const middle = (low + high) >>> 1;
+         if (doc.font_cmap_cp[middle] < codepoint) low = middle + 1;
+         else high = middle;
+      }
+      if (low >= end || doc.font_cmap_cp[low] !== codepoint || doc.font_cmap_gid[low] === 0) {
+         output += `${text.slice(retainedFrom, offset)}\u200b`;
+         retainedFrom = offset + character.length;
+      }
+      offset += character.length;
+   }
+   return retainedFrom === 0 ? text : output + text.slice(retainedFrom);
+}
+
 /** Converts the kernel's little-endian packed RGBA word into a CSS color. */
 export function rgbaCss(v: number): string {
    const r = v & 0xff;
@@ -1010,7 +1037,7 @@ export class Painter {
                const lineH = f ? ((f.ascent - f.descent) * o.size) / f.upem : o.size;
                const cls = f ? `f${o.font}` : '';
                if (el.getAttribute('class') !== cls) el.setAttribute('class', cls);
-               let css = `left:${o.x - ox}px;top:${o.y_baseline - oy - asc}px;line-height:${lineH}px;font-size:${o.size}px;`;
+               let css = `left:${o.x - ox}px;top:${o.y_baseline - oy - asc}px;width:${o.measured_w}px;line-height:${lineH}px;font-size:${o.size}px;`;
                if (o.weight !== 400) css += `font-weight:${o.weight};`;
                if (o.color_kind === 2) {
                   // W5 gradient text: the paint spans the node's content box
@@ -1032,7 +1059,7 @@ export class Painter {
                if (o.opacity !== 1) css += `opacity:${o.opacity};`;
                css += this.animations.get(o.node) ?? '';
                setCss(el, css);
-               const text = fr.strings[o.str_ref];
+               const text = coveredText(doc, o.font, fr.strings[o.str_ref]);
                if (el.textContent !== text) el.textContent = text;
                break;
             }

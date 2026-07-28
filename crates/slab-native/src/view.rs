@@ -32,6 +32,87 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy}
 use winit::keyboard::{Key, NamedKey};
 use winit::window::{Window, WindowId};
 
+/// User-event envelope used by [`NativeShell`]. Hosts can send application
+/// events through the same winit loop AccessKit uses.
+pub enum ShellEvent<U> {
+    Accessibility(a11y::Event),
+    User(U),
+}
+
+impl<U> From<a11y::Event> for ShellEvent<U> {
+    fn from(event: a11y::Event) -> Self {
+        Self::Accessibility(event)
+    }
+}
+
+/// Window and scheduler policy supplied to [`NativeShell`].
+#[derive(Clone)]
+pub struct ShellOptions {
+    pub title: String,
+    pub width: f64,
+    pub height: f64,
+    pub dark: bool,
+    pub undecorated: bool,
+    pub max_frames: Option<u64>,
+    pub exit_after_ms: Option<u64>,
+}
+
+impl Default for ShellOptions {
+    fn default() -> Self {
+        Self {
+            title: "Slab".to_owned(),
+            width: 960.0,
+            height: 640.0,
+            dark: false,
+            undecorated: false,
+            max_frames: None,
+            exit_after_ms: None,
+        }
+    }
+}
+
+/// Application policy plugged into the reusable native window driver.
+///
+/// Signal callbacks own model synchronization. User events are suitable for
+/// draining a `RequestPump`; mutate the document, then return `true` to request
+/// a redraw. Input, IME, accessibility, presentation and motion scheduling
+/// remain shell-owned.
+pub trait ShellHost<U> {
+    fn signal(&mut self, _document: &mut NativeDocument, name: &str, text: &str) {
+        if text.is_empty() {
+            println!("signal: {name}");
+        } else {
+            println!("signal: {name} {text:?}");
+        }
+    }
+
+    /// Receives the complete kernel effect batch so hosts can retain typed
+    /// signal metadata. The default forwards each signal to [`Self::signal`].
+    fn effects(&mut self, document: &mut NativeDocument, effects: &kdispatch::Effects) {
+        for index in 0..effects.sig_name.len() {
+            let name =
+                slab_kernel::slir::str_at(&document.inst.doc, effects.sig_name[index]).to_owned();
+            let text = effects.sig_text.get(index).cloned().unwrap_or_default();
+            self.signal(document, &name, &text);
+        }
+    }
+
+    fn user_event(
+        &mut self,
+        _document: &mut NativeDocument,
+        _window: &Window,
+        _event_loop: &ActiveEventLoop,
+        _event: U,
+    ) -> bool {
+        false
+    }
+}
+
+/// Default host policy: print signals and ignore application user events.
+pub struct DefaultShellHost;
+
+impl<U> ShellHost<U> for DefaultShellHost {}
+
 /// Kernel client code for the GPU driver (`caps::CLIENTS` index).
 const CLIENT_GPU: u32 = 1;
 /// Window actions a document's own chrome requests through reserved
@@ -121,12 +202,20 @@ pub fn run_source(
         return headless_frame(&mut doc, &opts);
     }
 
-    let title = format!("slab — {name}");
-    let event_loop = EventLoop::<a11y::Event>::with_user_event()
+    let options = ShellOptions {
+        title: format!("slab — {name}"),
+        width: opts.width,
+        height: opts.height,
+        dark: opts.dark,
+        undecorated: opts.undecorated,
+        max_frames: opts.max_frames,
+        exit_after_ms: opts.exit_after_ms,
+    };
+    let event_loop = EventLoop::<ShellEvent<()>>::with_user_event()
         .build()
         .map_err(|e| e.to_string())?;
     event_loop.set_control_flow(ControlFlow::Wait);
-    let mut app = ViewApp::new(doc, title, opts, event_loop.create_proxy());
+    let mut app = NativeShell::new(doc, options, event_loop.create_proxy(), DefaultShellHost);
     event_loop.run_app(&mut app).map_err(|e| e.to_string())?;
     eprintln!("slab-native: presented {} frames", app.frames);
     if app.frames == 0 {
@@ -185,17 +274,22 @@ fn headless_frame(doc: &mut NativeDocument, opts: &demo::Opts) -> Result<(), Str
     Ok(())
 }
 
-struct ViewApp {
-    opts: demo::Opts,
-    title: String,
+/// Reusable winit/wgpu host for one Slab document.
+///
+/// Construct an `EventLoop<ShellEvent<U>>`, pass its proxy to [`Self::new`],
+/// and implement [`ShellHost`] for application signal and user-event policy.
+/// The shell owns all platform translation and redraw lifecycle.
+pub struct NativeShell<U: 'static, H> {
+    opts: ShellOptions,
     window: Option<Arc<Window>>,
-    a11y_proxy: EventLoopProxy<a11y::Event>,
+    a11y_proxy: EventLoopProxy<ShellEvent<U>>,
     accessibility: Option<a11y::WindowAccessibility>,
     surface: Option<wgpu::Surface<'static>>,
     surface_format: wgpu::TextureFormat,
     renderer: Option<Renderer>,
     doc: NativeDocument,
     doc_id: usize,
+    host: H,
     mods: u32,
     cursor: (f64, f64),
     cursor_sample: Option<(f64, f64)>,
@@ -203,24 +297,28 @@ struct ViewApp {
     ime: ImeState,
     clipboard: Clipboard,
     context_actions: bool,
+    occluded: bool,
     start: Instant,
-    frames: u64,
+    pub frames: u64,
     exit_deadline: Option<Instant>,
 }
 
-impl ViewApp {
-    fn new(
+impl<U, H> NativeShell<U, H>
+where
+    U: Send + 'static,
+    H: ShellHost<U>,
+{
+    pub fn new(
         doc: NativeDocument,
-        title: String,
-        opts: demo::Opts,
-        a11y_proxy: EventLoopProxy<a11y::Event>,
-    ) -> ViewApp {
-        ViewApp {
+        opts: ShellOptions,
+        a11y_proxy: EventLoopProxy<ShellEvent<U>>,
+        host: H,
+    ) -> Self {
+        Self {
             exit_deadline: opts
                 .exit_after_ms
                 .map(|ms| Instant::now() + std::time::Duration::from_millis(ms)),
             opts,
-            title,
             window: None,
             a11y_proxy,
             accessibility: None,
@@ -229,6 +327,7 @@ impl ViewApp {
             renderer: None,
             doc,
             doc_id: 0,
+            host,
             mods: 0,
             cursor: (0.0, 0.0),
             cursor_sample: None,
@@ -236,9 +335,22 @@ impl ViewApp {
             ime: ImeState::default(),
             clipboard: Clipboard::default(),
             context_actions: false,
+            occluded: false,
             start: Instant::now(),
             frames: 0,
         }
+    }
+
+    pub fn document(&self) -> &NativeDocument {
+        &self.doc
+    }
+
+    pub fn document_mut(&mut self) -> &mut NativeDocument {
+        &mut self.doc
+    }
+
+    pub fn window(&self) -> Option<&Window> {
+        self.window.as_deref()
     }
 
     fn t_ms(&self) -> f64 {
@@ -293,7 +405,7 @@ impl ViewApp {
         let layer = a11y::SceneLayer::new(self.doc_id, &self.doc.inst, frame);
         if let Some(accessibility) = &mut self.accessibility {
             accessibility.refresh(
-                &self.title,
+                &self.opts.title,
                 f64::from(size.width) / scale,
                 f64::from(size.height) / scale,
                 scale,
@@ -304,6 +416,9 @@ impl ViewApp {
     }
 
     fn draw(&mut self) {
+        if self.occluded {
+            return;
+        }
         let t = self.t_ms();
         let Some(window) = self.window.clone() else {
             return;
@@ -314,12 +429,7 @@ impl ViewApp {
         }
         let fr = kframe::inst_frame(&mut self.doc.inst, t);
         let pending = kframe::inst_take_signals(&mut self.doc.inst);
-        for name in pending.sig_name {
-            println!(
-                "signal: {}",
-                slab_kernel::slir::str_at(&self.doc.inst.doc, name)
-            );
-        }
+        self.host.effects(&mut self.doc, &pending);
         self.refresh_accessibility(&fr, size);
         let Some(renderer) = self.renderer.as_mut() else {
             return;
@@ -388,15 +498,11 @@ impl ViewApp {
                 .strs
                 .get(eff.sig_name[k] as usize)
                 .map(String::as_str)
-                .unwrap_or("?");
-            let text = &eff.sig_text[k];
-            if text.is_empty() {
-                println!("signal: {name}");
-            } else {
-                println!("signal: {name} {text:?}");
-            }
-            cmd = cmd.or_else(|| WindowCmd::from_signal(name));
+                .unwrap_or("?")
+                .to_owned();
+            cmd = cmd.or_else(|| WindowCmd::from_signal(&name));
         }
+        self.host.effects(&mut self.doc, &eff);
         match cmd {
             Some(WindowCmd::Close) => event_loop.exit(),
             Some(WindowCmd::Minimize) => {
@@ -485,7 +591,7 @@ impl ViewApp {
             window.set_title(if open {
                 "Text actions — C Copy · X Cut · V Paste · Esc Close"
             } else {
-                &self.title
+                &self.opts.title
             });
         }
     }
@@ -532,14 +638,18 @@ impl ViewApp {
     }
 }
 
-impl ApplicationHandler<a11y::Event> for ViewApp {
+impl<U, H> ApplicationHandler<ShellEvent<U>> for NativeShell<U, H>
+where
+    U: Send + 'static,
+    H: ShellHost<U>,
+{
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.window.is_some() {
             return;
         }
         let window = match event_loop.create_window(
             Window::default_attributes()
-                .with_title(&self.title)
+                .with_title(&self.opts.title)
                 .with_inner_size(LogicalSize::new(self.opts.width, self.opts.height))
                 .with_decorations(!self.opts.undecorated)
                 .with_visible(false),
@@ -591,6 +701,15 @@ impl ApplicationHandler<a11y::Event> for ViewApp {
         window.request_redraw();
     }
 
+    fn suspended(&mut self, _event_loop: &ActiveEventLoop) {
+        // Drop the surface before its window; mobile platforms invalidate both
+        // across suspension. The retained kernel instance stays live.
+        self.surface = None;
+        self.renderer = None;
+        self.accessibility = None;
+        self.window = None;
+    }
+
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
         if let (Some(accessibility), Some(window)) = (&mut self.accessibility, &self.window) {
             accessibility.process_event(window, &event);
@@ -620,10 +739,11 @@ impl ApplicationHandler<a11y::Event> for ViewApp {
                 self.configure_surface();
                 self.draw();
             }
-            WindowEvent::Occluded(false) => {
+            WindowEvent::Occluded(occluded) => {
+                self.occluded = occluded;
                 // Draws skipped while hidden never queue retries; repaint as
                 // soon as the window is visible again.
-                if let Some(window) = &self.window {
+                if !occluded && let Some(window) = &self.window {
                     window.request_redraw();
                 }
             }
@@ -755,24 +875,39 @@ impl ApplicationHandler<a11y::Event> for ViewApp {
         }
     }
 
-    fn user_event(&mut self, event_loop: &ActiveEventLoop, event: a11y::Event) {
-        if self
-            .window
-            .as_ref()
-            .is_none_or(|window| window.id() != event.window_id)
-        {
-            return;
-        }
-        match event.window_event {
-            a11y::EventKind::InitialTreeRequested => {
-                if let Some(accessibility) = &mut self.accessibility {
-                    accessibility.update(true);
+    fn user_event(&mut self, event_loop: &ActiveEventLoop, event: ShellEvent<U>) {
+        match event {
+            ShellEvent::Accessibility(event) => {
+                if self
+                    .window
+                    .as_ref()
+                    .is_none_or(|window| window.id() != event.window_id)
+                {
+                    return;
+                }
+                match event.window_event {
+                    a11y::EventKind::InitialTreeRequested => {
+                        if let Some(accessibility) = &mut self.accessibility {
+                            accessibility.update(true);
+                        }
+                    }
+                    a11y::EventKind::ActionRequested(request) => {
+                        self.accessibility_action(event_loop, &request);
+                    }
+                    a11y::EventKind::AccessibilityDeactivated => {}
                 }
             }
-            a11y::EventKind::ActionRequested(request) => {
-                self.accessibility_action(event_loop, &request);
+            ShellEvent::User(event) => {
+                let Some(window) = self.window.clone() else {
+                    return;
+                };
+                if self
+                    .host
+                    .user_event(&mut self.doc, &window, event_loop, event)
+                {
+                    window.request_redraw();
+                }
             }
-            a11y::EventKind::AccessibilityDeactivated => {}
         }
     }
 

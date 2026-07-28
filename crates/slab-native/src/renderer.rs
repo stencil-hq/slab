@@ -137,11 +137,37 @@ struct TiltI {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(Clone, Copy, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
 struct GradGpu {
     info: [u32; 4],
     pos: [f32; 8],
     col: [[f32; 4]; 8],
+}
+
+fn gradient_gpu(doc: &Doc, gradient: usize) -> GradGpu {
+    let lo = doc.grad_stop_off[gradient] as usize;
+    let n = (doc.grad_stop_len[gradient] as usize).min(MAX_GRAD_STOPS);
+    let mut gpu = GradGpu::zeroed();
+    gpu.info[0] = doc.grad_kind[gradient];
+    gpu.info[1] = n as u32;
+    for stop in 0..n {
+        gpu.pos[stop] = doc.grad_stop_pos[lo + stop] as f32;
+        gpu.col[stop] = rgba(doc.grad_stop_rgba[lo + stop], 1.0);
+    }
+    gpu
+}
+
+fn refresh_gradient_table(table: &mut [GradGpu], base: usize, doc: &Doc) -> bool {
+    let mut changed = false;
+    for gradient in 0..doc.grad_kind.len() {
+        let next = gradient_gpu(doc, gradient);
+        let slot = base + gradient;
+        if table[slot] != next {
+            table[slot] = next;
+            changed = true;
+        }
+    }
+    changed
 }
 
 const RECT_ATTRS: [wgpu::VertexAttribute; 9] = wgpu::vertex_attr_array![
@@ -621,15 +647,25 @@ pub struct Renderer {
     glyph_upload: UploadBuffer,
     mesh_upload: UploadBuffer,
     tex_upload: UploadBuffer,
-    notes: HashSet<&'static str>,
+    notes: HashSet<String>,
     pub scale: f64,
 }
 
 impl Renderer {
     /// One-time capability note on stderr (§12 `cap-*` wording).
     fn note(&mut self, code: &'static str, msg: &str) {
-        if self.notes.insert(code) {
+        if self.notes.insert(code.to_owned()) {
             eprintln!("slab-native: {code}: {msg}");
+        }
+    }
+    fn frame_note(&mut self, code: &str, line: u32, msg: &str) {
+        let key = format!("{code}\u{1f}{line}\u{1f}{msg}");
+        if self.notes.insert(key) {
+            if line == 0 {
+                eprintln!("slab-native: {code}: {msg}");
+            } else {
+                eprintln!("slab-native: {code} line {line}: {msg}");
+            }
         }
     }
 
@@ -952,19 +988,10 @@ impl Renderer {
     ) -> usize {
         let grad_base = self.grads_cpu.len() as u32;
         for g in 0..doc.grad_kind.len() {
-            let lo = doc.grad_stop_off[g] as usize;
-            let n = (doc.grad_stop_len[g] as usize).min(MAX_GRAD_STOPS);
             if doc.grad_stop_len[g] as usize > MAX_GRAD_STOPS {
                 self.note("cap-gradient-stops", "gradients use at most 8 stops on gpu");
             }
-            let mut gg = GradGpu::zeroed();
-            gg.info[0] = doc.grad_kind[g];
-            gg.info[1] = n as u32;
-            for i in 0..n {
-                gg.pos[i] = doc.grad_stop_pos[lo + i] as f32;
-                gg.col[i] = rgba(doc.grad_stop_rgba[lo + i], 1.0);
-            }
-            self.grads_cpu.push(gg);
+            self.grads_cpu.push(gradient_gpu(doc, g));
         }
         if self.grads_cpu.is_empty() {
             self.grads_cpu.push(GradGpu::zeroed());
@@ -1043,6 +1070,37 @@ impl Renderer {
             images,
         });
         self.docs.len() - 1
+    }
+
+    /// Refresh the color resources copied from a registered document.
+    ///
+    /// Theme selection mutates the document's resolved gradient stops while
+    /// solid colors travel directly in each kernel frame. Keeping this table
+    /// synchronized makes runtime theme changes paint identically in GPU and
+    /// CPU paths. Returns whether any GPU resource changed.
+    pub fn refresh_registered_colors(&mut self, doc_id: usize, doc: &Doc) -> bool {
+        let Some(resources) = self.docs.get(doc_id) else {
+            return false;
+        };
+        let count = resources.grad_count as usize;
+        if count != doc.grad_kind.len() {
+            self.note(
+                "cap-gradient-table",
+                "a registered document changed gradient count; re-register the document",
+            );
+            return false;
+        }
+        let base = resources.grad_base as usize;
+        let changed = refresh_gradient_table(&mut self.grads_cpu, base, doc);
+        if changed {
+            let offset = (base * std::mem::size_of::<GradGpu>()) as u64;
+            self.queue.write_buffer(
+                &self.grads_buf,
+                offset,
+                bytemuck::cast_slice(&self.grads_cpu[base..base + count]),
+            );
+        }
+        changed
     }
 
     /// Rebuild faces for FONT tables appended by runtime registration and
@@ -1270,6 +1328,10 @@ impl Renderer {
     #[allow(clippy::too_many_lines)]
     fn build_layer(&mut self, fb: &mut FrameBuild, li: &LayerInput<'_>, s: f32, tw: u32, th: u32) {
         self.sync_runtime_images(li.doc_id, li.inst);
+        self.refresh_registered_colors(li.doc_id, &li.inst.doc);
+        for diagnostic in &li.frame.diagnostics {
+            self.frame_note(&diagnostic.code, diagnostic.line, &diagnostic.msg);
+        }
         let doc = &li.inst.doc;
         let full: Sc = (0, 0, tw, th);
         let huge = [-1.0e9f32, -1.0e9, 1.0e9, 1.0e9];
@@ -1601,6 +1663,9 @@ impl Renderer {
                     let px = (t.size * self.scale) as f32;
                     let glyphs = slab_kernel::frame::text_glyphs(li.inst, li.frame, op_ix as i32);
                     for g in &glyphs {
+                        if g.gid == 0 {
+                            continue;
+                        }
                         let have_face = self.docs[li.doc_id]
                             .fonts
                             .get(g.font as usize)
@@ -3114,4 +3179,29 @@ fn make_pipeline(
         multiview_mask: None,
         cache: None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gradient_resource_reflects_runtime_theme_stop_changes() {
+        let mut doc = Doc {
+            grad_kind: vec![0],
+            grad_stop_off: vec![0],
+            grad_stop_len: vec![2],
+            grad_stop_pos: vec![0.0, 1.0],
+            grad_stop_rgba: vec![0x11_22_33_ff, 0x44_55_66_ff],
+            ..Doc::default()
+        };
+        let mut resources = vec![gradient_gpu(&doc, 0)];
+
+        // Theme application updates the resolved SLIR table in place. The
+        // renderer must replace its registration copy before the next build.
+        doc.grad_stop_rgba[0] = 0xaa_bb_cc_ff;
+        assert!(refresh_gradient_table(&mut resources, 0, &doc));
+        assert_eq!(resources[0].col[0], rgba(0xaa_bb_cc_ff, 1.0));
+        assert!(!refresh_gradient_table(&mut resources, 0, &doc));
+    }
 }
