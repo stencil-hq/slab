@@ -1,22 +1,24 @@
-//! Detection and reporting for support-chart features used by a solved document.
+//! Detection and reporting for support-chart features used by a solved
+//! document.
 //!
 //! This is the single capability scan shared by native and WebAssembly hosts.
 //! It combines immutable SLIR pools with the solved frame operations so every
 //! runtime reports the same features in [`crate::caps::FEATURES`] order.
 
 use crate::{
-    caps,
-    flatten::{Frame, FrameOp},
-    slir::{A_CONTENT, Doc, F_SCROLL, F_SCROLL_CROSS, F_STICKY, K_DIVIDER},
+	caps,
+	flatten::{Frame, FrameOp},
+	slir::{A_CONTENT, Doc, F_SCROLL, F_SCROLL_CROSS, F_STICKY, K_DIVIDER},
 };
 
-/// Reports whether a decoded document and solved frame use a support-chart feature.
+/// Reports whether a decoded document and solved frame use a support-chart
+/// feature.
 ///
 /// `feature` is normally one of [`caps::FEATURES`]. Unknown feature names are
 /// treated as unused.
 pub fn uses(doc: &Doc, frame: &Frame, feature: &str) -> bool {
-    let ops = &frame.ops;
-    match feature {
+	let ops = &frame.ops;
+	match feature {
         "radius" => ops.iter().any(|op| match op {
             FrameOp::Rect(rect) => rect.radius > 0.0,
             FrameOp::Image(image) => image.radius > 0.0,
@@ -135,10 +137,11 @@ pub fn uses(doc: &Doc, frame: &Frame, feature: &str) -> bool {
 
 /// Reports whether a paint `(kind, handle)` pair references a conic gradient.
 fn conic_paint(doc: &Doc, kind: u32, handle: u32) -> bool {
-    kind == 2 && usize::try_from(handle).is_ok_and(|index| doc.grad_kind.get(index) == Some(&2))
+	kind == 2 && usize::try_from(handle).is_ok_and(|index| doc.grad_kind.get(index) == Some(&2))
 }
 
-/// Builds canonical support-chart lines for used features degraded or omitted by a client.
+/// Builds canonical support-chart lines for used features degraded or omitted
+/// by a client.
 ///
 /// `client_index` indexes [`caps::CLIENTS`]. Lines retain the generated chart
 /// row order and omit features with full support.
@@ -147,124 +150,122 @@ fn conic_paint(doc: &Doc, kind: u32, handle: u32) -> bool {
 ///
 /// Panics when `client_index` is not an index in [`caps::CLIENTS`].
 pub fn chart_lines(doc: &Doc, frame: &Frame, client_index: usize) -> Vec<String> {
-    let mut lines = Vec::new();
-    for (feature_index, &feature) in caps::FEATURES.iter().enumerate() {
-        let level = caps::LEVELS[feature_index][client_index];
-        if level == caps::FULL || !uses(doc, frame, feature) {
-            continue;
-        }
-        let level_name = if level == caps::NONE {
-            "none"
-        } else {
-            "degraded"
-        };
-        lines.push(format!(
-            "chart {level_name} {feature}: {}",
-            caps::NOTES[feature_index][client_index]
-        ));
-    }
-    lines
+	let mut lines = Vec::new();
+	for (feature_index, &feature) in caps::FEATURES.iter().enumerate() {
+		let level = caps::LEVELS[feature_index][client_index];
+		if level == caps::FULL || !uses(doc, frame, feature) {
+			continue;
+		}
+		let level_name = if level == caps::NONE {
+			"none"
+		} else {
+			"degraded"
+		};
+		lines.push(format!(
+			"chart {level_name} {feature}: {}",
+			caps::NOTES[feature_index][client_index]
+		));
+	}
+	lines
 }
 
 fn uses_text_keyframes(doc: &Doc) -> bool {
-    for &animation in &doc.bind_anim {
-        let animation_index = index_u32(animation);
-        let stop_start = index_i32(doc.anim_stop_off[animation_index]);
-        let stop_length = index_i32(doc.anim_stop_len[animation_index]);
-        for stop in stop_start..stop_start + stop_length {
-            let attribute_start = index_i32(doc.anim_stop_attr_off[stop]);
-            let attribute_length = index_i32(doc.anim_stop_attr_len[stop]);
-            if doc.aattr_id[attribute_start..attribute_start + attribute_length]
-                .contains(&A_CONTENT)
-            {
-                return true;
-            }
-        }
-    }
-    false
+	for &animation in &doc.bind_anim {
+		let animation_index = index_u32(animation);
+		let stop_start = index_i32(doc.anim_stop_off[animation_index]);
+		let stop_length = index_i32(doc.anim_stop_len[animation_index]);
+		for stop in stop_start..stop_start + stop_length {
+			let attribute_start = index_i32(doc.anim_stop_attr_off[stop]);
+			let attribute_length = index_i32(doc.anim_stop_attr_len[stop]);
+			if doc.aattr_id[attribute_start..attribute_start + attribute_length].contains(&A_CONTENT) {
+				return true;
+			}
+		}
+	}
+	false
 }
 
 fn index_i32(value: i32) -> usize {
-    usize::try_from(value).expect("kernel index must be nonnegative")
+	usize::try_from(value).expect("kernel index must be nonnegative")
 }
 
 fn index_u32(value: u32) -> usize {
-    usize::try_from(value).expect("kernel index exceeds usize")
+	usize::try_from(value).expect("kernel index exceeds usize")
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::{flatten, slir};
+	use super::*;
+	use crate::{flatten, slir};
 
-    #[test]
-    fn detects_document_pool_capability_features_at_empty_and_nonempty_boundaries() {
-        let mut doc = slir::doc_new();
-        let solved = flatten::frame_new();
-        for feature in [
-            "animation",
-            "transition",
-            "input",
-            "signals",
-            "ime",
-            "text-edit",
-            "scroll",
-            "divider",
-            "holes",
-            "themes",
-            "lists",
-        ] {
-            assert!(!uses(&doc, &solved, feature), "{feature}");
-        }
+	#[test]
+	fn detects_document_pool_capability_features_at_empty_and_nonempty_boundaries() {
+		let mut doc = slir::doc_new();
+		let solved = flatten::frame_new();
+		for feature in [
+			"animation",
+			"transition",
+			"input",
+			"signals",
+			"ime",
+			"text-edit",
+			"scroll",
+			"divider",
+			"holes",
+			"themes",
+			"lists",
+		] {
+			assert!(!uses(&doc, &solved, feature), "{feature}");
+		}
 
-        doc.bind_node.push(0);
-        doc.trans_node.push(0);
-        doc.sign_name.push(0);
-        doc.sign_trigger.push(1);
-        doc.node_flags.push(F_SCROLL);
-        doc.node_kind.push(K_DIVIDER);
-        doc.hole_name.push(0);
-        doc.theme_name.push(0);
-        doc.list_param.push(0);
-        for feature in [
-            "animation",
-            "transition",
-            "input",
-            "signals",
-            "ime",
-            "text-edit",
-            "scroll",
-            "divider",
-            "holes",
-            "themes",
-            "lists",
-        ] {
-            assert!(uses(&doc, &solved, feature), "{feature}");
-        }
-    }
+		doc.bind_node.push(0);
+		doc.trans_node.push(0);
+		doc.sign_name.push(0);
+		doc.sign_trigger.push(1);
+		doc.node_flags.push(F_SCROLL);
+		doc.node_kind.push(K_DIVIDER);
+		doc.hole_name.push(0);
+		doc.theme_name.push(0);
+		doc.list_param.push(0);
+		for feature in [
+			"animation",
+			"transition",
+			"input",
+			"signals",
+			"ime",
+			"text-edit",
+			"scroll",
+			"divider",
+			"holes",
+			"themes",
+			"lists",
+		] {
+			assert!(uses(&doc, &solved, feature), "{feature}");
+		}
+	}
 
-    #[test]
-    fn detects_only_content_attributes_as_text_keyframes() {
-        let mut doc = slir::doc_new();
-        doc.bind_anim.push(0);
-        doc.anim_stop_off.push(0);
-        doc.anim_stop_len.push(1);
-        doc.anim_stop_attr_off.push(0);
-        doc.anim_stop_attr_len.push(1);
-        doc.aattr_id.push(A_CONTENT.wrapping_add(1));
-        assert!(!uses_text_keyframes(&doc));
+	#[test]
+	fn detects_only_content_attributes_as_text_keyframes() {
+		let mut doc = slir::doc_new();
+		doc.bind_anim.push(0);
+		doc.anim_stop_off.push(0);
+		doc.anim_stop_len.push(1);
+		doc.anim_stop_attr_off.push(0);
+		doc.anim_stop_attr_len.push(1);
+		doc.aattr_id.push(A_CONTENT.wrapping_add(1));
+		assert!(!uses_text_keyframes(&doc));
 
-        doc.aattr_id[0] = A_CONTENT;
-        assert!(uses_text_keyframes(&doc));
-    }
+		doc.aattr_id[0] = A_CONTENT;
+		assert!(uses_text_keyframes(&doc));
+	}
 
-    #[test]
-    fn capability_feature_table_is_exhaustively_classified() {
-        let doc = slir::doc_new();
-        let solved = flatten::frame_new();
-        for feature in caps::FEATURES {
-            assert!(!uses(&doc, &solved, feature), "{feature}");
-        }
-        assert!(!uses(&doc, &solved, "unknown"));
-    }
+	#[test]
+	fn capability_feature_table_is_exhaustively_classified() {
+		let doc = slir::doc_new();
+		let solved = flatten::frame_new();
+		for feature in caps::FEATURES {
+			assert!(!uses(&doc, &solved, feature), "{feature}");
+		}
+		assert!(!uses(&doc, &solved, "unknown"));
+	}
 }

@@ -327,7 +327,7 @@ pub const PARAM_ENUM: u32 = 5u32;
 pub const PARAM_LIST: u32 = 6u32;
 
 /// Sentinel representing the absence of a node link.
-pub const NONE: u32 = 0xFFFFFFFFu32;
+pub const NONE: u32 = 0xffffffffu32;
 
 #[derive(Clone, Debug, Default)]
 /// A fully decoded SLIR document.
@@ -335,312 +335,313 @@ pub const NONE: u32 = 0xFFFFFFFFu32;
 /// Pool slices use `(offset, length)` fenceposts into parallel arrays.
 /// `attr_index` instead contains `node_count + 1` fenceposts.
 pub struct Doc {
-    pub ok: bool,
-    pub errs: Vec<String>,
-    // STRS pool.
-    pub strs: Vec<String>,
-    // NODE pool (indices are node IDs).
-    pub node_kind: Vec<u32>,
-    pub node_flags: Vec<u32>,
-    pub node_parent: Vec<u32>,
-    pub node_first: Vec<u32>,
-    pub node_next: Vec<u32>,
-    pub node_key: Vec<u32>,
-    pub node_id: Vec<u32>,
-    pub node_line: Vec<u32>,
-    // AVAL pool.
-    pub aval_tag: Vec<u32>,
-    pub aval_lo: Vec<u32>,
-    pub aval_hi: Vec<u32>,
-    pub aval_num: Vec<f64>,
-    pub f64s: Vec<f64>,
-    // TUPLE_DYN member pool: tag 0 = literal (`tup_dyn_num`), 1 = num/pct
-    // param reference (`tup_dyn_param`).
-    pub tup_dyn_tag: Vec<u32>,
-    pub tup_dyn_num: Vec<f64>,
-    pub tup_dyn_param: Vec<u32>,
-    // GRAD pool.
-    pub grad_kind: Vec<u32>,
-    pub grad_angle: Vec<f64>,
-    pub grad_stop_off: Vec<i32>,
-    pub grad_stop_len: Vec<i32>,
-    pub grad_stop_pos: Vec<f64>,
-    pub grad_stop_rgba: Vec<u32>,
-    // SHDW pool.
-    pub shdw_x: Vec<f64>,
-    pub shdw_y: Vec<f64>,
-    pub shdw_blur: Vec<f64>,
-    pub shdw_spread: Vec<f64>,
-    pub shdw_rgba: Vec<u32>,
-    pub shdw_inset: Vec<u32>,
-    // ATTR pool.
-    pub attr_index: Vec<i32>,
-    pub attr_id: Vec<u32>,
-    pub attr_val: Vec<u32>,
-    // PATH pool.
-    pub path_verb_off: Vec<i32>,
-    pub path_verb_len: Vec<i32>,
-    pub path_coord_off: Vec<i32>,
-    pub path_coord_len: Vec<i32>,
-    pub path_verbs: Vec<u32>,
-    pub path_coords: Vec<f64>,
-    // FONT pool.
-    pub font_family: Vec<u32>,
-    pub font_class: Vec<u32>,
-    pub font_weight: Vec<u32>,
-    pub font_upem: Vec<u32>,
-    pub font_ascent: Vec<i32>,
-    pub font_descent: Vec<i32>,
-    pub font_line_gap: Vec<i32>,
-    pub font_default_adv: Vec<u32>,
-    pub font_cmap_off: Vec<i32>,
-    pub font_cmap_len: Vec<i32>,
-    pub font_cmap_cp: Vec<u32>,
-    pub font_cmap_gid: Vec<u32>,
-    pub font_adv: Vec<u32>,
-    // WHEN pools.
-    pub cond_kind: Vec<u32>,
-    pub cond_neg: Vec<u32>,
-    pub cond_op: Vec<u32>,
-    pub cond_num: Vec<f64>,
-    pub cond_sym: Vec<u32>,
-    pub patch_node: Vec<u32>,
-    pub patch_cond: Vec<u32>,
-    pub patch_attr_off: Vec<i32>,
-    pub patch_attr_len: Vec<i32>,
-    pub patch_child_off: Vec<i32>,
-    pub patch_child_len: Vec<i32>,
-    pub wattr_id: Vec<u32>,
-    pub wattr_val: Vec<u32>,
-    pub patch_children: Vec<u32>,
-    // ANIM pools.
-    pub anim_name: Vec<u32>,
-    pub anim_stop_off: Vec<i32>,
-    pub anim_stop_len: Vec<i32>,
-    pub anim_stop_pos: Vec<f64>,
-    pub anim_stop_attr_off: Vec<i32>,
-    pub anim_stop_attr_len: Vec<i32>,
-    pub aattr_id: Vec<u32>,
-    pub aattr_val: Vec<u32>,
-    pub bind_node: Vec<u32>,
-    pub bind_anim: Vec<u32>,
-    pub bind_dur: Vec<f64>,
-    pub bind_mode: Vec<u32>,
-    pub bind_easing: Vec<u32>,
-    pub bind_delay: Vec<f64>,
-    pub trans_node: Vec<u32>,
-    pub trans_easing: Vec<u32>,
-    pub trans_dur: Vec<f64>,
-    pub trans_delay: Vec<f64>,
-    // PARM pool.
-    pub parm_name: Vec<u32>,
-    pub parm_type: Vec<u32>,
-    pub parm_default: Vec<u32>,
-    pub parm_enum_off: Vec<i32>,
-    pub parm_enum_len: Vec<i32>,
-    pub parm_site_off: Vec<i32>,
-    pub parm_site_len: Vec<i32>,
-    pub parm_enum_syms: Vec<u32>,
-    pub parm_site_node: Vec<u32>,
-    pub parm_site_attr: Vec<u32>,
-    // LIST pools.
-    pub list_param: Vec<u32>,
-    pub list_field_off: Vec<i32>,
-    pub list_field_len: Vec<i32>,
-    pub list_field_name: Vec<u32>,
-    pub list_field_type: Vec<u32>,
-    pub list_field_default: Vec<u32>,
-    /// Zero for scalar fields, otherwise one plus a nested list-schema row.
-    pub list_field_sub: Vec<u32>,
-    pub list_field_enum_off: Vec<i32>,
-    pub list_field_enum_len: Vec<i32>,
-    pub list_enum_syms: Vec<u32>,
-    pub list_item_field_off: Vec<i32>,
-    pub list_item_field_len: Vec<i32>,
-    pub list_item_value_field: Vec<u32>,
-    pub list_item_value_val: Vec<u32>,
-    // THEM pool.
-    pub theme_name: Vec<u32>,
-    // TOKN pool. Public rows precede typed use-site rows.
-    pub token_name: Vec<u32>,
-    pub token_base: Vec<u32>,
-    pub token_base_repr: Vec<u32>,
-    pub token_theme_off: Vec<i32>,
-    pub token_theme_len: Vec<i32>,
-    pub token_theme_name: Vec<u32>,
-    pub token_theme_val: Vec<u32>,
-    pub token_theme_repr: Vec<u32>,
-    // HOLE pool.
-    pub hole_name: Vec<u32>,
-    pub hole_node: Vec<u32>,
-    // SIGN pool.
-    pub sign_name: Vec<u32>,
-    pub sign_node: Vec<u32>,
-    pub sign_trigger: Vec<u32>,
-    // ICON pool.
-    pub icon_name: Vec<u32>,
-    pub icon_node: Vec<u32>,
-    pub icon_viewbox: Vec<f64>,
-    // IMGS pool.
-    pub img_src: Vec<u32>,
-    pub img_w: Vec<u32>,
-    pub img_h: Vec<u32>,
-    /// Embedded image payloads parallel to `img_src`.
-    pub img_data: Vec<Vec<u8>>,
-    pub img_format: Vec<u32>,
+	pub ok:                    bool,
+	pub errs:                  Vec<String>,
+	// STRS pool.
+	pub strs:                  Vec<String>,
+	// NODE pool (indices are node IDs).
+	pub node_kind:             Vec<u32>,
+	pub node_flags:            Vec<u32>,
+	pub node_parent:           Vec<u32>,
+	pub node_first:            Vec<u32>,
+	pub node_next:             Vec<u32>,
+	pub node_key:              Vec<u32>,
+	pub node_id:               Vec<u32>,
+	pub node_line:             Vec<u32>,
+	// AVAL pool.
+	pub aval_tag:              Vec<u32>,
+	pub aval_lo:               Vec<u32>,
+	pub aval_hi:               Vec<u32>,
+	pub aval_num:              Vec<f64>,
+	pub f64s:                  Vec<f64>,
+	// TUPLE_DYN member pool: tag 0 = literal (`tup_dyn_num`), 1 = num/pct
+	// param reference (`tup_dyn_param`).
+	pub tup_dyn_tag:           Vec<u32>,
+	pub tup_dyn_num:           Vec<f64>,
+	pub tup_dyn_param:         Vec<u32>,
+	// GRAD pool.
+	pub grad_kind:             Vec<u32>,
+	pub grad_angle:            Vec<f64>,
+	pub grad_stop_off:         Vec<i32>,
+	pub grad_stop_len:         Vec<i32>,
+	pub grad_stop_pos:         Vec<f64>,
+	pub grad_stop_rgba:        Vec<u32>,
+	// SHDW pool.
+	pub shdw_x:                Vec<f64>,
+	pub shdw_y:                Vec<f64>,
+	pub shdw_blur:             Vec<f64>,
+	pub shdw_spread:           Vec<f64>,
+	pub shdw_rgba:             Vec<u32>,
+	pub shdw_inset:            Vec<u32>,
+	// ATTR pool.
+	pub attr_index:            Vec<i32>,
+	pub attr_id:               Vec<u32>,
+	pub attr_val:              Vec<u32>,
+	// PATH pool.
+	pub path_verb_off:         Vec<i32>,
+	pub path_verb_len:         Vec<i32>,
+	pub path_coord_off:        Vec<i32>,
+	pub path_coord_len:        Vec<i32>,
+	pub path_verbs:            Vec<u32>,
+	pub path_coords:           Vec<f64>,
+	// FONT pool.
+	pub font_family:           Vec<u32>,
+	pub font_class:            Vec<u32>,
+	pub font_weight:           Vec<u32>,
+	pub font_upem:             Vec<u32>,
+	pub font_ascent:           Vec<i32>,
+	pub font_descent:          Vec<i32>,
+	pub font_line_gap:         Vec<i32>,
+	pub font_default_adv:      Vec<u32>,
+	pub font_cmap_off:         Vec<i32>,
+	pub font_cmap_len:         Vec<i32>,
+	pub font_cmap_cp:          Vec<u32>,
+	pub font_cmap_gid:         Vec<u32>,
+	pub font_adv:              Vec<u32>,
+	// WHEN pools.
+	pub cond_kind:             Vec<u32>,
+	pub cond_neg:              Vec<u32>,
+	pub cond_op:               Vec<u32>,
+	pub cond_num:              Vec<f64>,
+	pub cond_sym:              Vec<u32>,
+	pub patch_node:            Vec<u32>,
+	pub patch_cond:            Vec<u32>,
+	pub patch_attr_off:        Vec<i32>,
+	pub patch_attr_len:        Vec<i32>,
+	pub patch_child_off:       Vec<i32>,
+	pub patch_child_len:       Vec<i32>,
+	pub wattr_id:              Vec<u32>,
+	pub wattr_val:             Vec<u32>,
+	pub patch_children:        Vec<u32>,
+	// ANIM pools.
+	pub anim_name:             Vec<u32>,
+	pub anim_stop_off:         Vec<i32>,
+	pub anim_stop_len:         Vec<i32>,
+	pub anim_stop_pos:         Vec<f64>,
+	pub anim_stop_attr_off:    Vec<i32>,
+	pub anim_stop_attr_len:    Vec<i32>,
+	pub aattr_id:              Vec<u32>,
+	pub aattr_val:             Vec<u32>,
+	pub bind_node:             Vec<u32>,
+	pub bind_anim:             Vec<u32>,
+	pub bind_dur:              Vec<f64>,
+	pub bind_mode:             Vec<u32>,
+	pub bind_easing:           Vec<u32>,
+	pub bind_delay:            Vec<f64>,
+	pub trans_node:            Vec<u32>,
+	pub trans_easing:          Vec<u32>,
+	pub trans_dur:             Vec<f64>,
+	pub trans_delay:           Vec<f64>,
+	// PARM pool.
+	pub parm_name:             Vec<u32>,
+	pub parm_type:             Vec<u32>,
+	pub parm_default:          Vec<u32>,
+	pub parm_enum_off:         Vec<i32>,
+	pub parm_enum_len:         Vec<i32>,
+	pub parm_site_off:         Vec<i32>,
+	pub parm_site_len:         Vec<i32>,
+	pub parm_enum_syms:        Vec<u32>,
+	pub parm_site_node:        Vec<u32>,
+	pub parm_site_attr:        Vec<u32>,
+	// LIST pools.
+	pub list_param:            Vec<u32>,
+	pub list_field_off:        Vec<i32>,
+	pub list_field_len:        Vec<i32>,
+	pub list_field_name:       Vec<u32>,
+	pub list_field_type:       Vec<u32>,
+	pub list_field_default:    Vec<u32>,
+	/// Zero for scalar fields, otherwise one plus a nested list-schema row.
+	pub list_field_sub:        Vec<u32>,
+	pub list_field_enum_off:   Vec<i32>,
+	pub list_field_enum_len:   Vec<i32>,
+	pub list_enum_syms:        Vec<u32>,
+	pub list_item_field_off:   Vec<i32>,
+	pub list_item_field_len:   Vec<i32>,
+	pub list_item_value_field: Vec<u32>,
+	pub list_item_value_val:   Vec<u32>,
+	// THEM pool.
+	pub theme_name:            Vec<u32>,
+	// TOKN pool. Public rows precede typed use-site rows.
+	pub token_name:            Vec<u32>,
+	pub token_base:            Vec<u32>,
+	pub token_base_repr:       Vec<u32>,
+	pub token_theme_off:       Vec<i32>,
+	pub token_theme_len:       Vec<i32>,
+	pub token_theme_name:      Vec<u32>,
+	pub token_theme_val:       Vec<u32>,
+	pub token_theme_repr:      Vec<u32>,
+	// HOLE pool.
+	pub hole_name:             Vec<u32>,
+	pub hole_node:             Vec<u32>,
+	// SIGN pool.
+	pub sign_name:             Vec<u32>,
+	pub sign_node:             Vec<u32>,
+	pub sign_trigger:          Vec<u32>,
+	// ICON pool.
+	pub icon_name:             Vec<u32>,
+	pub icon_node:             Vec<u32>,
+	pub icon_viewbox:          Vec<f64>,
+	// IMGS pool.
+	pub img_src:               Vec<u32>,
+	pub img_w:                 Vec<u32>,
+	pub img_h:                 Vec<u32>,
+	/// Embedded image payloads parallel to `img_src`.
+	pub img_data:              Vec<Vec<u8>>,
+	pub img_format:            Vec<u32>,
 }
 
 /// Creates an empty, invalid document ready to be populated by a decoder.
 pub fn doc_new() -> Doc {
-    Doc::default()
+	Doc::default()
 }
 
 fn u32_index(value: u32) -> usize {
-    usize::try_from(value).expect("SLIR index exceeds usize")
+	usize::try_from(value).expect("SLIR index exceeds usize")
 }
 
 fn i32_index(value: i32) -> usize {
-    usize::try_from(value).expect("negative SLIR index")
+	usize::try_from(value).expect("negative SLIR index")
 }
 
-fn signed(value: u32) -> i32 {
-    i32::from_ne_bytes(value.to_ne_bytes())
+const fn signed(value: u32) -> i32 {
+	i32::from_ne_bytes(value.to_ne_bytes())
 }
 
 fn count(value: usize) -> i32 {
-    i32::try_from(value).expect("SLIR table exceeds i32 capacity")
+	i32::try_from(value).expect("SLIR table exceeds i32 capacity")
 }
 
 // Accessors and font metric selection.
 /// Borrows string-pool entry `i`.
 pub fn str_ref(d: &Doc, i: u32) -> &str {
-    d.strs[u32_index(i)].as_str()
+	d.strs[u32_index(i)].as_str()
 }
 
 /// Borrows string-pool entry `i`.
 pub fn str_at(d: &Doc, i: u32) -> &str {
-    &d.strs[u32_index(i)]
+	&d.strs[u32_index(i)]
 }
 
 /// Finds an attribute-value index in a node's base attribute run.
 ///
 /// Returns `-1` when `attr` is absent.
 pub fn base_attr(d: &Doc, node: u32, attr: u32) -> i32 {
-    let lo = d.attr_index[u32_index(node)];
-    let hi = d.attr_index[u32_index(node.wrapping_add(1))];
-    for index in lo..hi {
-        let index = i32_index(index);
-        if d.attr_id[index] == attr {
-            return signed(d.attr_val[index]);
-        }
-    }
-    -1
+	let lo = d.attr_index[u32_index(node)];
+	let hi = d.attr_index[u32_index(node.wrapping_add(1))];
+	for index in lo..hi {
+		let index = i32_index(index);
+		if d.attr_id[index] == attr {
+			return signed(d.attr_val[index]);
+		}
+	}
+	-1
 }
 
 /// Binary-searches a font's cmap slice.
 ///
 /// Returns the index in the shared cmap arrays, or `-1` when missing.
 pub fn font_cmap_ix(d: &Doc, font: i32, codepoint: u32) -> i32 {
-    let font = i32_index(font);
-    let offset = d.font_cmap_off[font];
-    let mut lo = 0;
-    let mut hi = d.font_cmap_len[font];
-    while lo < hi {
-        let mid = lo.wrapping_add(hi.wrapping_sub(lo).wrapping_div(2));
-        let value = d.font_cmap_cp[i32_index(offset.wrapping_add(mid))];
-        if value == codepoint {
-            return offset.wrapping_add(mid);
-        }
-        if value < codepoint {
-            lo = mid.wrapping_add(1);
-        } else {
-            hi = mid;
-        }
-    }
-    -1
+	let font = i32_index(font);
+	let offset = d.font_cmap_off[font];
+	let mut lo = 0;
+	let mut hi = d.font_cmap_len[font];
+	while lo < hi {
+		let mid = lo.wrapping_add(hi.wrapping_sub(lo).wrapping_div(2));
+		let value = d.font_cmap_cp[i32_index(offset.wrapping_add(mid))];
+		if value == codepoint {
+			return offset.wrapping_add(mid);
+		}
+		if value < codepoint {
+			lo = mid.wrapping_add(1);
+		} else {
+			hi = mid;
+		}
+	}
+	-1
 }
 
 /// Returns the glyph ID for a codepoint, or `0` when it is missing.
 pub fn font_gid(d: &Doc, font: i32, codepoint: u32) -> u32 {
-    let index = font_cmap_ix(d, font, codepoint);
-    if index < 0 {
-        0
-    } else {
-        d.font_cmap_gid[i32_index(index)]
-    }
+	let index = font_cmap_ix(d, font, codepoint);
+	if index < 0 {
+		0
+	} else {
+		d.font_cmap_gid[i32_index(index)]
+	}
 }
 
 /// Folds an ASCII uppercase codepoint to lowercase, leaving all others intact.
 pub fn ascii_fold(codepoint: u32) -> u32 {
-    if (65..=90).contains(&codepoint) {
-        codepoint.wrapping_add(32)
-    } else {
-        codepoint
-    }
+	if (65..=90).contains(&codepoint) {
+		codepoint.wrapping_add(32)
+	} else {
+		codepoint
+	}
 }
 
 /// Compares authored family names using ASCII-only case folding.
 pub fn family_eq(a: &str, b: &str) -> bool {
-    a.chars()
-        .map(u32::from)
-        .map(ascii_fold)
-        .eq(b.chars().map(u32::from).map(ascii_fold))
+	a.chars()
+		.map(u32::from)
+		.map(ascii_fold)
+		.eq(b.chars().map(u32::from).map(ascii_fold))
 }
 
 /// Classifies a registered family for fallback metrics when no name matches.
 pub fn family_class(name: &str) -> u32 {
-    let mut previous = [0; 3];
-    for (index, codepoint) in name.chars().map(u32::from).map(ascii_fold).enumerate() {
-        if index >= 3 && previous == [109, 111, 110] && codepoint == 111 {
-            return 1;
-        }
-        previous.rotate_left(1);
-        previous[2] = codepoint;
-    }
-    0
+	let mut previous = [0; 3];
+	for (index, codepoint) in name.chars().map(u32::from).map(ascii_fold).enumerate() {
+		if index >= 3 && previous == [109, 111, 110] && codepoint == 111 {
+			return 1;
+		}
+		previous.rotate_left(1);
+		previous[2] = codepoint;
+	}
+	0
 }
 
 fn nearest_family_font(d: &Doc, family: &str, weight: u32) -> i32 {
-    let mut best = -1;
-    let mut best_distance = 100_000;
-    for (index, (&candidate, &candidate_weight)) in
-        d.font_family.iter().zip(&d.font_weight).enumerate()
-    {
-        if family_eq(&d.strs[u32_index(candidate)], family) {
-            let distance = signed(candidate_weight)
-                .wrapping_sub(signed(weight))
-                .wrapping_abs();
-            let index = count(index);
-            if distance < best_distance || (distance == best_distance && index > best) {
-                best = index;
-                best_distance = distance;
-            }
-        }
-    }
-    best
+	let mut best = -1;
+	let mut best_distance = 100_000;
+	for (index, (&candidate, &candidate_weight)) in
+		d.font_family.iter().zip(&d.font_weight).enumerate()
+	{
+		if family_eq(&d.strs[u32_index(candidate)], family) {
+			let distance = signed(candidate_weight)
+				.wrapping_sub(signed(weight))
+				.wrapping_abs();
+			let index = count(index);
+			if distance < best_distance || (distance == best_distance && index > best) {
+				best = index;
+				best_distance = distance;
+			}
+		}
+	}
+	best
 }
 
 /// Selects the nearest weight for a runtime-resolved family name, preferring
 /// later equal matches and then falling back to the document's default family.
 pub fn font_select_name(d: &Doc, family: &str, weight: u32) -> i32 {
-    if d.font_family.is_empty() {
-        return -1;
-    }
-    let best = nearest_family_font(d, family, weight);
-    if best >= 0 {
-        return best;
-    }
-    let fallback = d.strs.first().map_or("", String::as_str);
-    if !family_eq(family, fallback) {
-        let best = nearest_family_font(d, fallback, weight);
-        if best >= 0 {
-            return best;
-        }
-    }
-    0
+	if d.font_family.is_empty() {
+		return -1;
+	}
+	let best = nearest_family_font(d, family, weight);
+	if best >= 0 {
+		return best;
+	}
+	let fallback = d.strs.first().map_or("", String::as_str);
+	if !family_eq(family, fallback) {
+		let best = nearest_family_font(d, fallback, weight);
+		if best >= 0 {
+			return best;
+		}
+	}
+	0
 }
 
-/// Selects the nearest weight for an interned family, preferring later equal matches.
+/// Selects the nearest weight for an interned family, preferring later equal
+/// matches.
 pub fn font_select(d: &Doc, family: u32, weight: u32) -> i32 {
-    font_select_name(d, &d.strs[u32_index(family)], weight)
+	font_select_name(d, &d.strs[u32_index(family)], weight)
 }

@@ -6,34 +6,29 @@ use slab_compile::{Options, compile};
 use slab_kernel::{flatten::FrameOp, frame};
 
 fn compile_instance(source: &str, width: f64, height: f64) -> frame::Instance {
-    let (slir, diagnostics) = compile(
-        source,
-        &Options {
-            embed_assets: false,
-            ..Options::default()
-        },
-    );
-    assert!(!diagnostics.has_errors(), "{:#?}", diagnostics.0);
-    let bytes = slab_slir::write(&slir.expect("valid source"));
-    let (mut instance, _) = slab_slir::instance(&bytes).expect("decode fixture");
-    frame::inst_set_env(&mut instance, width, height, 0, false, false);
-    instance
+	let (slir, diagnostics) =
+		compile(source, &Options { embed_assets: false, ..Options::default() });
+	assert!(!diagnostics.has_errors(), "{:#?}", diagnostics.0);
+	let bytes = slab_slir::write(&slir.expect("valid source"));
+	let (mut instance, _) = slab_slir::instance(&bytes).expect("decode fixture");
+	frame::inst_set_env(&mut instance, width, height, 0, false, false);
+	instance
 }
 
 fn painted_strings(instance: &mut frame::Instance) -> Vec<String> {
-    let fr = frame::inst_frame(instance, 0.0);
-    fr.ops
-        .iter()
-        .filter_map(|op| match op {
-            FrameOp::Text(t) => Some(fr.strings[t.str_ref as usize].clone()),
-            _ => None,
-        })
-        .collect()
+	let fr = frame::inst_frame(instance, 0.0);
+	fr.ops
+		.iter()
+		.filter_map(|op| match op {
+			FrameOp::Text(t) => Some(fr.strings[t.str_ref as usize].clone()),
+			_ => None,
+		})
+		.collect()
 }
 
 #[test]
 fn item_bool_field_when_selects_branch() {
-    let source = r#"
+	let source = r#"
 def Item(no="", split=true, hunk=false, empty=false, selected=false, interactive=true) export {
   stack key=entry w=param.content_width h=20 act=diff-row role="row" label="Diff row" {
     when !interactive { inert }
@@ -67,42 +62,23 @@ col w=420 h=100 scroll=both clip {
   each param.rows key=rows virtual item-extent=20 overscan=10
 }
 "#;
-    let mut instance = compile_instance(source, 420.0, 100.0);
-    assert!(frame::inst_set_list_len(&mut instance, 1, "", 1));
-    let mut pv = frame::ParamValue {
-        kind: 4,
-        num: 1.0,
-        s: String::new(),
-        rgba: 0,
-        sym: String::new(),
-    };
-    assert!(frame::inst_set_list_field(
-        &mut instance,
-        1,
-        "",
-        0,
-        "split",
-        &pv
-    ));
-    let strings = painted_strings(&mut instance);
-    assert_eq!(strings, vec!["SPLIT".to_string()], "split=true");
+	let mut instance = compile_instance(source, 420.0, 100.0);
+	assert!(frame::inst_set_list_len(&mut instance, 1, "", 1));
+	let mut pv =
+		frame::ParamValue { kind: 4, num: 1.0, s: String::new(), rgba: 0, sym: String::new() };
+	assert!(frame::inst_set_list_field(&mut instance, 1, "", 0, "split", &pv));
+	let strings = painted_strings(&mut instance);
+	assert_eq!(strings, vec!["SPLIT".to_string()], "split=true");
 
-    pv.num = 0.0;
-    assert!(frame::inst_set_list_field(
-        &mut instance,
-        1,
-        "",
-        0,
-        "split",
-        &pv
-    ));
-    let strings = painted_strings(&mut instance);
-    assert_eq!(strings, vec!["UNIFIED".to_string()], "split=false");
+	pv.num = 0.0;
+	assert!(frame::inst_set_list_field(&mut instance, 1, "", 0, "split", &pv));
+	let strings = painted_strings(&mut instance);
+	assert_eq!(strings, vec!["UNIFIED".to_string()], "split=false");
 }
 
 #[test]
 fn spans_join_without_synthetic_gaps() {
-    let source = r##"
+	let source = r##"
 col w=600 h=200 {
   para w=hug h=20 nowrap {
     span "#" color=#FF0000
@@ -126,45 +102,45 @@ col w=600 h=200 {
   }
 }
 "##;
-    let mut instance = compile_instance(source, 600.0, 200.0);
-    let fr = frame::inst_frame(&mut instance, 0.0);
-    let texts: Vec<(f64, f64, String)> = fr
-        .ops
-        .iter()
-        .filter_map(|op| match op {
-            FrameOp::Text(t) => Some((t.x, t.measured_w, fr.strings[t.str_ref as usize].clone())),
-            _ => None,
-        })
-        .collect();
+	let mut instance = compile_instance(source, 600.0, 200.0);
+	let fr = frame::inst_frame(&mut instance, 0.0);
+	let texts: Vec<(f64, f64, String)> = fr
+		.ops
+		.iter()
+		.filter_map(|op| match op {
+			FrameOp::Text(t) => Some((t.x, t.measured_w, fr.strings[t.str_ref as usize].clone())),
+			_ => None,
+		})
+		.collect();
 
-    // Adjacent spans without whitespace butt together with zero gap.
-    let hash = texts.iter().find(|t| t.2 == "#").expect("# op");
-    let rest = texts.iter().find(|t| t.2 == "[cfg(unix)]").expect("rest");
-    assert!(
-        (rest.0 - (hash.0 + hash.1)).abs() < 0.01,
-        "expected zero gap, got {}",
-        rest.0 - (hash.0 + hash.1)
-    );
+	// Adjacent spans without whitespace butt together with zero gap.
+	let hash = texts.iter().find(|t| t.2 == "#").expect("# op");
+	let rest = texts.iter().find(|t| t.2 == "[cfg(unix)]").expect("rest");
+	assert!(
+		(rest.0 - (hash.0 + hash.1)).abs() < 0.01,
+		"expected zero gap, got {}",
+		rest.0 - (hash.0 + hash.1)
+	);
 
-    // One and two source spaces produce proportional gaps.
-    let a_ops: Vec<&(f64, f64, String)> = texts.iter().filter(|t| t.2 == "a").collect();
-    let b_ops: Vec<&(f64, f64, String)> = texts.iter().filter(|t| t.2 == "b").collect();
-    let gap1 = b_ops[0].0 - (a_ops[0].0 + a_ops[0].1);
-    let gap2 = b_ops[1].0 - (a_ops[1].0 + a_ops[1].1);
-    assert!(gap1 > 0.5, "single space gap missing: {gap1}");
-    assert!(
-        (gap2 - 2.0 * gap1).abs() < 0.01,
-        "two spaces should double the gap: gap1={gap1} gap2={gap2}"
-    );
+	// One and two source spaces produce proportional gaps.
+	let a_ops: Vec<&(f64, f64, String)> = texts.iter().filter(|t| t.2 == "a").collect();
+	let b_ops: Vec<&(f64, f64, String)> = texts.iter().filter(|t| t.2 == "b").collect();
+	let gap1 = b_ops[0].0 - (a_ops[0].0 + a_ops[0].1);
+	let gap2 = b_ops[1].0 - (a_ops[1].0 + a_ops[1].1);
+	assert!(gap1 > 0.5, "single space gap missing: {gap1}");
+	assert!(
+		(gap2 - 2.0 * gap1).abs() < 0.01,
+		"two spaces should double the gap: gap1={gap1} gap2={gap2}"
+	);
 
-    // Same-style spans merge into one segment; source spacing decides the join.
-    assert!(texts.iter().any(|t| t.2 == "abcd"), "no-space merge");
-    assert!(texts.iter().any(|t| t.2 == "ab cd"), "one-space merge");
+	// Same-style spans merge into one segment; source spacing decides the join.
+	assert!(texts.iter().any(|t| t.2 == "abcd"), "no-space merge");
+	assert!(texts.iter().any(|t| t.2 == "ab cd"), "one-space merge");
 }
 
 #[test]
 fn strike_resolves_for_text_spans_patches_params_and_list_props() {
-    let source = r#"
+	let source = r#"
 def Item(done=false) export {
   para w=100 { span text="item" strike=done }
 }
@@ -187,45 +163,38 @@ col w=300 h=180 strike=param.crossed {
   each param.rows key=rows
 }
 "#;
-    let mut instance = compile_instance(source, 300.0, 180.0);
-    assert!(frame::inst_set_list_len(&mut instance, 1, "", 1));
-    assert!(frame::inst_set_list_field(
-        &mut instance,
-        1,
-        "",
-        0,
-        "done",
-        &frame::ParamValue {
-            kind: 4,
-            num: 1.0,
-            s: String::new(),
-            rgba: 0,
-            sym: String::new(),
-        },
-    ));
-    let fr = frame::inst_frame(&mut instance, 0.0);
-    let runs: Vec<(&str, bool)> = fr
-        .ops
-        .iter()
-        .filter_map(|op| match op {
-            FrameOp::Text(text) => Some((fr.strings[text.str_ref as usize].as_str(), text.strike)),
-            _ => None,
-        })
-        .collect();
-    assert!(runs.contains(&("bare", true)));
-    assert!(runs.contains(&("inherited", true)));
-    assert!(runs.contains(&("cleared", false)));
-    assert!(runs.contains(&("patched", false)));
-    assert!(runs.contains(&("span", true)));
-    assert!(runs.contains(&("span-on", true)));
-    assert!(runs.contains(&("span-off", false)));
-    assert!(runs.contains(&("item", true)));
+	let mut instance = compile_instance(source, 300.0, 180.0);
+	assert!(frame::inst_set_list_len(&mut instance, 1, "", 1));
+	assert!(frame::inst_set_list_field(&mut instance, 1, "", 0, "done", &frame::ParamValue {
+		kind: 4,
+		num:  1.0,
+		s:    String::new(),
+		rgba: 0,
+		sym:  String::new(),
+	},));
+	let fr = frame::inst_frame(&mut instance, 0.0);
+	let runs: Vec<(&str, bool)> = fr
+		.ops
+		.iter()
+		.filter_map(|op| match op {
+			FrameOp::Text(text) => Some((fr.strings[text.str_ref as usize].as_str(), text.strike)),
+			_ => None,
+		})
+		.collect();
+	assert!(runs.contains(&("bare", true)));
+	assert!(runs.contains(&("inherited", true)));
+	assert!(runs.contains(&("cleared", false)));
+	assert!(runs.contains(&("patched", false)));
+	assert!(runs.contains(&("span", true)));
+	assert!(runs.contains(&("span-on", true)));
+	assert!(runs.contains(&("span-off", false)));
+	assert!(runs.contains(&("item", true)));
 }
 
 #[test]
 fn nowrap_paragraph_ellipsizes_once_across_styled_spans() {
-    let mut instance = compile_instance(
-        r#"col w=320 h=80 {
+	let mut instance = compile_instance(
+		r#"col w=320 h=80 {
   para w=90 nowrap ellipsis {
     span text="Alpha " color=#FF0000
     span text="Beta Gamma Delta" color=#00FF00
@@ -235,140 +204,131 @@ fn nowrap_paragraph_ellipsizes_once_across_styled_spans() {
     span text="Beta Gamma Delta" color=#00FF00
   }
 }"#,
-        320.0,
-        80.0,
-    );
-    let frame = frame::inst_frame(&mut instance, 0.0);
-    let runs: Vec<_> = frame
-        .ops
-        .iter()
-        .filter_map(|op| match op {
-            FrameOp::Text(text) => Some((
-                text.node,
-                frame.strings[text.str_ref as usize].clone(),
-                text.y_baseline,
-                text.color,
-            )),
-            _ => None,
-        })
-        .collect();
-    let narrow_node = runs
-        .iter()
-        .find(|(_, text, _, _)| text.ends_with('…'))
-        .map(|(node, _, _, _)| *node)
-        .expect("narrow paragraph emits an ellipsis");
-    let narrow: Vec<_> = runs.iter().filter(|run| run.0 == narrow_node).collect();
-    assert!(
-        narrow.iter().all(|run| run.2 == narrow[0].2),
-        "nowrap paragraph must have one baseline"
-    );
-    assert_eq!(
-        narrow.iter().map(|run| run.1.as_str()).collect::<String>(),
-        "AlphaBeta…"
-    );
+		320.0,
+		80.0,
+	);
+	let frame = frame::inst_frame(&mut instance, 0.0);
+	let runs: Vec<_> = frame
+		.ops
+		.iter()
+		.filter_map(|op| match op {
+			FrameOp::Text(text) => Some((
+				text.node,
+				frame.strings[text.str_ref as usize].clone(),
+				text.y_baseline,
+				text.color,
+			)),
+			_ => None,
+		})
+		.collect();
+	let narrow_node = runs
+		.iter()
+		.find(|(_, text, ..)| text.ends_with('…'))
+		.map(|(node, ..)| *node)
+		.expect("narrow paragraph emits an ellipsis");
+	let narrow: Vec<_> = runs.iter().filter(|run| run.0 == narrow_node).collect();
+	assert!(
+		narrow.iter().all(|run| run.2 == narrow[0].2),
+		"nowrap paragraph must have one baseline"
+	);
+	assert_eq!(narrow.iter().map(|run| run.1.as_str()).collect::<String>(), "AlphaBeta…");
 
-    let wide_node = runs
-        .iter()
-        .find(|(_, text, _, _)| text == "Beta Gamma Delta")
-        .map(|(node, _, _, _)| *node)
-        .expect("wide paragraph retains the complete second run");
-    let wide: Vec<_> = runs.iter().filter(|run| run.0 == wide_node).collect();
-    assert!(
-        wide.iter().all(|run| run.2 == wide[0].2),
-        "wide nowrap paragraph must also remain one line"
-    );
-    assert_eq!(
-        wide.iter().map(|run| run.1.as_str()).collect::<String>(),
-        "AlphaBeta Gamma Delta"
-    );
-    assert_eq!(
-        narrow.last().expect("narrow paragraph run").3,
-        wide.last().expect("wide paragraph run").3,
-        "ellipsis inherits the last retained run color"
-    );
+	let wide_node = runs
+		.iter()
+		.find(|(_, text, ..)| text == "Beta Gamma Delta")
+		.map(|(node, ..)| *node)
+		.expect("wide paragraph retains the complete second run");
+	let wide: Vec<_> = runs.iter().filter(|run| run.0 == wide_node).collect();
+	assert!(
+		wide.iter().all(|run| run.2 == wide[0].2),
+		"wide nowrap paragraph must also remain one line"
+	);
+	assert_eq!(wide.iter().map(|run| run.1.as_str()).collect::<String>(), "AlphaBeta Gamma Delta");
+	assert_eq!(
+		narrow.last().expect("narrow paragraph run").3,
+		wide.last().expect("wide paragraph run").3,
+		"ellipsis inherits the last retained run color"
+	);
 }
 
 #[test]
 fn strike_never_changes_text_measurement() {
-    let mut instance = compile_instance(
-        r#"col w=200 h=60 {
+	let mut instance = compile_instance(
+		r#"col w=200 h=60 {
   text "same"
   text "same" strike
 }"#,
-        200.0,
-        60.0,
-    );
-    let frame = frame::inst_frame(&mut instance, 0.0);
-    let runs: Vec<_> = frame
-        .ops
-        .iter()
-        .filter_map(|op| match op {
-            FrameOp::Text(text) => Some((text.measured_w, text.strike)),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(runs.len(), 2);
-    assert_eq!(runs[0].0, runs[1].0);
-    assert!(!runs[0].1);
-    assert!(runs[1].1);
+		200.0,
+		60.0,
+	);
+	let frame = frame::inst_frame(&mut instance, 0.0);
+	let runs: Vec<_> = frame
+		.ops
+		.iter()
+		.filter_map(|op| match op {
+			FrameOp::Text(text) => Some((text.measured_w, text.strike)),
+			_ => None,
+		})
+		.collect();
+	assert_eq!(runs.len(), 2);
+	assert_eq!(runs[0].0, runs[1].0);
+	assert!(!runs[0].1);
+	assert!(runs[1].1);
 }
 
 #[test]
 fn svg_emits_strike_only_for_true_runs() {
-    let (slir, diagnostics) = compile(
-        r#"col w=200 h=60 {
+	let (slir, diagnostics) = compile(
+		r#"col w=200 h=60 {
   text "done" strike=true
   text "open" strike=false
 }"#,
-        &Options {
-            embed_assets: false,
-            ..Options::default()
-        },
-    );
-    assert!(!diagnostics.has_errors(), "{:#?}", diagnostics.0);
-    let slir = slir.expect("valid source");
-    let bytes = slab_slir::write(&slir);
-    let (mut instance, _) = slab_slir::instance(&bytes).expect("decode fixture");
-    frame::inst_set_env(&mut instance, 200.0, 60.0, 0, false, false);
-    let rendered = frame::inst_frame(&mut instance, 0.0);
-    let svg =
-        slab_compile::svg::render_svg(&slir, &[], &[], &[], &rendered, std::path::Path::new("."));
-    assert_eq!(svg.matches("text-decoration=\"line-through\"").count(), 1);
-    assert!(svg.contains(">done</text>"));
-    assert!(svg.contains(">open</text>"));
+		&Options { embed_assets: false, ..Options::default() },
+	);
+	assert!(!diagnostics.has_errors(), "{:#?}", diagnostics.0);
+	let slir = slir.expect("valid source");
+	let bytes = slab_slir::write(&slir);
+	let (mut instance, _) = slab_slir::instance(&bytes).expect("decode fixture");
+	frame::inst_set_env(&mut instance, 200.0, 60.0, 0, false, false);
+	let rendered = frame::inst_frame(&mut instance, 0.0);
+	let svg =
+		slab_compile::svg::render_svg(&slir, &[], &[], &[], &rendered, std::path::Path::new("."));
+	assert_eq!(svg.matches("text-decoration=\"line-through\"").count(), 1);
+	assert!(svg.contains(">done</text>"));
+	assert!(svg.contains(">open</text>"));
 }
 
 #[test]
 fn runtime_glyph_diagnostics_are_once_per_family_and_codepoint() {
-    let mut instance = compile_instance(
-        r#"
+	let mut instance = compile_instance(
+		r#"
 params { value text = "✕" }
 col {
   text param.value family="sans"
   text param.value family="sans"
 }
 "#,
-        200.0,
-        80.0,
-    );
-    let first = frame::inst_frame(&mut instance, 0.0);
-    let missing: Vec<_> = first
-        .diagnostics
-        .iter()
-        .filter(|diagnostic| diagnostic.code == "glyph-missing")
-        .collect();
-    assert_eq!(missing.len(), 1, "{missing:?}");
-    assert!(missing[0].msg.contains("'✕'"), "{missing:?}");
-    assert!(missing[0].msg.contains("U+2715"), "{missing:?}");
-    assert!(missing[0].msg.contains("family 'sans'"), "{missing:?}");
+		200.0,
+		80.0,
+	);
+	let first = frame::inst_frame(&mut instance, 0.0);
+	let missing: Vec<_> = first
+		.diagnostics
+		.iter()
+		.filter(|diagnostic| diagnostic.code == "glyph-missing")
+		.collect();
+	assert_eq!(missing.len(), 1, "{missing:?}");
+	assert!(missing[0].msg.contains("'✕'"), "{missing:?}");
+	assert!(missing[0].msg.contains("U+2715"), "{missing:?}");
+	assert!(missing[0].msg.contains("family 'sans'"), "{missing:?}");
 
-    let second = frame::inst_frame(&mut instance, 0.0);
-    assert!(
-        second
-            .diagnostics
-            .iter()
-            .all(|diagnostic| diagnostic.code != "glyph-missing"),
-        "{:?}",
-        second.diagnostics
-    );
+	let second = frame::inst_frame(&mut instance, 0.0);
+	assert!(
+		second
+			.diagnostics
+			.iter()
+			.all(|diagnostic| diagnostic.code != "glyph-missing"),
+		"{:?}",
+		second.diagnostics
+	);
 }

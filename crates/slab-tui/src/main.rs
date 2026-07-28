@@ -3,5 +3,5 @@
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
-    slab_tui::cli::main(std::env::args().skip(1))
+	slab_tui::cli::main(std::env::args().skip(1))
 }

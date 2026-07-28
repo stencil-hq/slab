@@ -14,5 +14,6 @@
 //! its [`ShellHost::user_event`] implementation drains requests against the
 //! supplied [`NativeDocument`](crate::NativeDocument) and returns `true`.
 
-pub use crate::view::{DefaultShellHost, NativeShell, ShellEvent, ShellHost, ShellOptions};
 pub use winit;
+
+pub use crate::view::{DefaultShellHost, NativeShell, ShellEvent, ShellHost, ShellOptions};

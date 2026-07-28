@@ -5,74 +5,78 @@
 //! each solve. Event dispatch, retained-scene hit testing, and the motion
 //! overlay all meet here: running animation and in-flight transitions re-solve
 //! as the clock advances, while an idle instance solves only when an input
-//! marks it dirty. [`Event`] and [`Effects`] are defined by the dispatch module.
+//! marks it dirty. [`Event`] and [`Effects`] are defined by the dispatch
+//! module.
+
+use std::collections::BTreeSet;
+
+use rustc_hash::FxHashSet;
 
 use crate::{
-    dispatch::{self, DState, Effects, Event},
-    dumpjson, edit,
-    flatten::{self, Frame, FrameDiagnostic, FrameOp},
-    focus, graphemes, hit, layout,
-    layout::Lay,
-    list, motion,
-    motion::MSt,
-    scene,
-    scene::Scene,
-    slir::{self, Doc},
-    style::{self, St},
-    textm,
+	dispatch::{self, DState, Effects, Event},
+	dumpjson, edit,
+	flatten::{self, Frame, FrameDiagnostic, FrameOp},
+	focus, graphemes, hit, layout,
+	layout::Lay,
+	list, motion,
+	motion::MSt,
+	scene,
+	scene::Scene,
+	slir::{self, Doc},
+	style::{self, St},
+	textm,
 };
-use rustc_hash::FxHashSet;
-use std::collections::BTreeSet;
 
 /// Mutable state for one decoded document and its most recent solve.
 #[derive(Clone, Debug)]
 pub struct Instance {
-    /// Whether the assigned document decoded successfully.
-    pub ok: bool,
-    /// The decoded document and its static pools.
-    pub doc: Doc,
-    /// Runtime style, parameter, list, environment, and scroll state.
-    pub st: St,
-    /// Scratch state and results from the latest layout solve.
-    pub lay: Lay,
-    /// Retained scene from the latest solve.
-    pub sc: Scene,
-    /// Interaction state, including focus, hover, presses, and edits.
-    pub ds: DState,
-    /// Per-patch transition clocks and animation liveness.
-    pub ms: MSt,
-    /// Whether the host has supplied an environment.
-    pub has_env: bool,
-    /// Whether changed inputs require another solve.
-    pub dirty: bool,
-    /// Whether the instance has completed at least one solve.
-    pub solved: bool,
-    /// Motion clock used for the latest solve.
-    pub last_t: f64,
-    /// Root patch index produced by the latest solve.
-    pub root_pi: i32,
-    /// Actionable result of the most recent failed focus request.
-    focus_note: String,
-    /// Runtime glyph notes already surfaced, keyed by authored family and codepoint.
-    glyph_warned: BTreeSet<(String, u32)>,
-    /// Codepoints already coverage-checked per font table index.
-    /// Never iterated; invalidated when the font table changes.
-    glyph_scanned: Vec<FxHashSet<u32>>,
-    /// Every distinct diagnostic observed since the document was assigned, in
-    /// first-occurrence order. Solves append; only [`inst_init`] clears.
-    diags_cum: Vec<FrameDiagnostic>,
+	/// Whether the assigned document decoded successfully.
+	pub ok:        bool,
+	/// The decoded document and its static pools.
+	pub doc:       Doc,
+	/// Runtime style, parameter, list, environment, and scroll state.
+	pub st:        St,
+	/// Scratch state and results from the latest layout solve.
+	pub lay:       Lay,
+	/// Retained scene from the latest solve.
+	pub sc:        Scene,
+	/// Interaction state, including focus, hover, presses, and edits.
+	pub ds:        DState,
+	/// Per-patch transition clocks and animation liveness.
+	pub ms:        MSt,
+	/// Whether the host has supplied an environment.
+	pub has_env:   bool,
+	/// Whether changed inputs require another solve.
+	pub dirty:     bool,
+	/// Whether the instance has completed at least one solve.
+	pub solved:    bool,
+	/// Motion clock used for the latest solve.
+	pub last_t:    f64,
+	/// Root patch index produced by the latest solve.
+	pub root_pi:   i32,
+	/// Actionable result of the most recent failed focus request.
+	focus_note:    String,
+	/// Runtime glyph notes already surfaced, keyed by authored family and
+	/// codepoint.
+	glyph_warned:  BTreeSet<(String, u32)>,
+	/// Codepoints already coverage-checked per font table index.
+	/// Never iterated; invalidated when the font table changes.
+	glyph_scanned: Vec<FxHashSet<u32>>,
+	/// Every distinct diagnostic observed since the document was assigned, in
+	/// first-occurrence order. Solves append; only [`inst_init`] clears.
+	diags_cum:     Vec<FrameDiagnostic>,
 }
 
 /// One stable runtime image slot; inactive slots retain their unified index.
 #[derive(Clone, Debug)]
 pub(crate) struct RuntimeImage {
-    pub(crate) name: String,
-    pub(crate) w: u32,
-    pub(crate) h: u32,
-    pub(crate) format: u32,
-    pub(crate) data: Vec<u8>,
-    pub(crate) generation: u32,
-    pub(crate) active: bool,
+	pub(crate) name:       String,
+	pub(crate) w:          u32,
+	pub(crate) h:          u32,
+	pub(crate) format:     u32,
+	pub(crate) data:       Vec<u8>,
+	pub(crate) generation: u32,
+	pub(crate) active:     bool,
 }
 
 /// Host-facing parameter value.
@@ -82,16 +86,16 @@ pub(crate) struct RuntimeImage {
 /// as numeric zero or one, and `5` is an enum symbol.
 #[derive(Clone, Debug)]
 pub struct ParamValue {
-    /// Parameter type tag.
-    pub kind: u32,
-    /// Numeric, percentage, or boolean payload.
-    pub num: f64,
-    /// Text payload.
-    pub s: String,
-    /// Packed RGBA color payload.
-    pub rgba: u32,
-    /// Enum symbol payload.
-    pub sym: String,
+	/// Parameter type tag.
+	pub kind: u32,
+	/// Numeric, percentage, or boolean payload.
+	pub num:  f64,
+	/// Text payload.
+	pub s:    String,
+	/// Packed RGBA color payload.
+	pub rgba: u32,
+	/// Enum symbol payload.
+	pub sym:  String,
 }
 
 /// One resolved public token value.
@@ -100,77 +104,77 @@ pub struct ParamValue {
 /// Text borrows the decoded document, so token lookup performs no allocation.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum TokenValue<'a> {
-    Number(f64),
-    Color(u32),
-    Text(&'a str),
+	Number(f64),
+	Color(u32),
+	Text(&'a str),
 }
 
 /// Absolute geometry for one document hole.
 #[derive(Clone, Debug)]
 pub struct HoleRect {
-    /// Index in the document's hole table.
-    pub hole: u32,
-    /// Absolute left coordinate.
-    pub x: f64,
-    /// Absolute top coordinate.
-    pub y: f64,
-    /// Width of the hole.
-    pub w: f64,
-    /// Height of the hole.
-    pub h: f64,
-    /// Whether the hole's node clips its contents.
-    pub clip: bool,
+	/// Index in the document's hole table.
+	pub hole: u32,
+	/// Absolute left coordinate.
+	pub x:    f64,
+	/// Absolute top coordinate.
+	pub y:    f64,
+	/// Width of the hole.
+	pub w:    f64,
+	/// Height of the hole.
+	pub h:    f64,
+	/// Whether the hole's node clips its contents.
+	pub clip: bool,
 }
 
 /// Positioned glyph for a text frame operation.
 #[derive(Clone, Debug)]
 pub struct GlyphPos {
-    /// Font table index.
-    pub font: i32,
-    /// Font glyph identifier.
-    pub gid: u32,
-    /// Glyph origin on the horizontal axis.
-    pub x: f64,
-    /// Glyph baseline coordinate.
-    pub y: f64,
-    /// Font size used for the glyph.
-    pub size: f64,
+	/// Font table index.
+	pub font: i32,
+	/// Font glyph identifier.
+	pub gid:  u32,
+	/// Glyph origin on the horizontal axis.
+	pub x:    f64,
+	/// Glyph baseline coordinate.
+	pub y:    f64,
+	/// Font size used for the glyph.
+	pub size: f64,
 }
 
 /// Creates an empty instance to which a host can assign a decoded document.
 pub fn inst_shell() -> Instance {
-    Instance {
-        ok: false,
-        doc: slir::doc_new(),
-        st: style::st_new(),
-        lay: layout::lay_new(),
-        sc: scene::scene_new(),
-        ds: dispatch::dstate_new(),
-        ms: motion::mst_new(),
-        has_env: false,
-        dirty: true,
-        solved: false,
-        last_t: 0.0,
-        root_pi: -1,
-        focus_note: String::new(),
-        glyph_warned: BTreeSet::new(),
-        glyph_scanned: Vec::new(),
-        diags_cum: Vec::new(),
-    }
+	Instance {
+		ok:            false,
+		doc:           slir::doc_new(),
+		st:            style::st_new(),
+		lay:           layout::lay_new(),
+		sc:            scene::scene_new(),
+		ds:            dispatch::dstate_new(),
+		ms:            motion::mst_new(),
+		has_env:       false,
+		dirty:         true,
+		solved:        false,
+		last_t:        0.0,
+		root_pi:       -1,
+		focus_note:    String::new(),
+		glyph_warned:  BTreeSet::new(),
+		glyph_scanned: Vec::new(),
+		diags_cum:     Vec::new(),
+	}
 }
 
 /// Initializes style state after a host assigns the decoded document.
 pub fn inst_init(i: &mut Instance) {
-    i.ok = i.doc.ok;
-    i.glyph_warned.clear();
-    i.glyph_scanned.clear();
-    i.diags_cum.clear();
-    i.focus_note.clear();
-    i.solved = false;
-    i.dirty = true;
-    if i.ok {
-        style::init_params(&i.doc, &mut i.st);
-    }
+	i.ok = i.doc.ok;
+	i.glyph_warned.clear();
+	i.glyph_scanned.clear();
+	i.diags_cum.clear();
+	i.focus_note.clear();
+	i.solved = false;
+	i.dirty = true;
+	if i.ok {
+		style::init_params(&i.doc, &mut i.st);
+	}
 }
 /// Returns every distinct diagnostic observed since the document was
 /// assigned, in first-occurrence order.
@@ -179,84 +183,85 @@ pub fn inst_init(i: &mut Instance) {
 /// consumed by an intermediate solve, this cumulative set stays queryable at
 /// any time. It resets only when a new document initializes via [`inst_init`].
 pub fn inst_diags(i: &Instance) -> &[FrameDiagnostic] {
-    &i.diags_cum
+	&i.diags_cum
 }
 
 fn finish_frame_diagnostics(i: &mut Instance, frame: &mut Frame) {
-    frame.diagnostics.clear();
-    frame.diagnostics.extend(
-        i.st.diag_code
-            .iter()
-            .zip(&i.st.diag_line)
-            .zip(&i.st.diag_msg)
-            .map(|((code, &line), msg)| FrameDiagnostic {
-                code: code.clone(),
-                line,
-                msg: msg.clone(),
-            }),
-    );
+	frame.diagnostics.clear();
+	frame.diagnostics.extend(
+		i.st
+			.diag_code
+			.iter()
+			.zip(&i.st.diag_line)
+			.zip(&i.st.diag_msg)
+			.map(|((code, &line), msg)| FrameDiagnostic {
+				code: code.clone(),
+				line,
+				msg: msg.clone(),
+			}),
+	);
 
-    if !i.doc.font_family.is_empty() {
-        scan_glyph_coverage(i, frame);
-    }
+	if !i.doc.font_family.is_empty() {
+		scan_glyph_coverage(i, frame);
+	}
 
-    for diagnostic in &frame.diagnostics {
-        if !i.diags_cum.contains(diagnostic) {
-            i.diags_cum.push(diagnostic.clone());
-        }
-    }
+	for diagnostic in &frame.diagnostics {
+		if !i.diags_cum.contains(diagnostic) {
+			i.diags_cum.push(diagnostic.clone());
+		}
+	}
 }
 
 fn scan_glyph_coverage(i: &mut Instance, frame: &mut Frame) {
-    for op in &frame.ops {
-        let FrameOp::Text(text) = op else {
-            continue;
-        };
-        let Ok(font) = usize::try_from(text.font) else {
-            continue;
-        };
-        let Some(&family_ref) = i.doc.font_family.get(font) else {
-            continue;
-        };
-        let family = i
-            .doc
-            .strs
-            .get(family_ref as usize)
-            .map(String::as_str)
-            .unwrap_or("");
-        let display_family = if family.is_empty() { "sans" } else { family };
-        let Some(content) = frame.strings.get(text.str_ref as usize) else {
-            continue;
-        };
-        if i.glyph_scanned.len() <= font {
-            i.glyph_scanned.resize_with(font + 1, FxHashSet::default);
-        }
-        for character in content.chars() {
-            let codepoint = u32::from(character);
-            if !i.glyph_scanned[font].insert(codepoint) {
-                continue;
-            }
-            if !graphemes::requires_glyph(codepoint)
-                || slir::font_gid(&i.doc, text.font, codepoint) != 0
-                || !i.glyph_warned.insert((family.to_owned(), codepoint))
-            {
-                continue;
-            }
-            let line = i
-                .doc
-                .node_line
-                .get(text.node as usize)
-                .copied()
-                .unwrap_or(0);
-            frame.diagnostics.push(FrameDiagnostic {
-                code: "glyph-missing".to_owned(),
-                line,
-                msg: format!(
-                    "character '{character}' (U+{codepoint:04X}) is missing from runtime font family '{display_family}'"
-                ),
-            });
-        }
-    }
+	for op in &frame.ops {
+		let FrameOp::Text(text) = op else {
+			continue;
+		};
+		let Ok(font) = usize::try_from(text.font) else {
+			continue;
+		};
+		let Some(&family_ref) = i.doc.font_family.get(font) else {
+			continue;
+		};
+		let family = i
+			.doc
+			.strs
+			.get(family_ref as usize)
+			.map_or("", String::as_str);
+		let display_family = if family.is_empty() { "sans" } else { family };
+		let Some(content) = frame.strings.get(text.str_ref as usize) else {
+			continue;
+		};
+		if i.glyph_scanned.len() <= font {
+			i.glyph_scanned.resize_with(font + 1, FxHashSet::default);
+		}
+		for character in content.chars() {
+			let codepoint = u32::from(character);
+			if !i.glyph_scanned[font].insert(codepoint) {
+				continue;
+			}
+			if !graphemes::requires_glyph(codepoint)
+				|| slir::font_gid(&i.doc, text.font, codepoint) != 0
+				|| !i.glyph_warned.insert((family.to_owned(), codepoint))
+			{
+				continue;
+			}
+			let line = i
+				.doc
+				.node_line
+				.get(text.node as usize)
+				.copied()
+				.unwrap_or(0);
+			frame.diagnostics.push(FrameDiagnostic {
+				code: "glyph-missing".to_owned(),
+				line,
+				msg: format!(
+					"character '{character}' (U+{codepoint:04X}) is missing from runtime font family \
+					 '{display_family}'"
+				),
+			});
+		}
+	}
 }
 
 /// Hands every natively replayable animation binding to the driver.
@@ -267,83 +272,83 @@ fn scan_glyph_coverage(i: &mut Instance, frame: &mut Frame) {
 /// Drivers that call this MUST replay the returned keyframes themselves
 /// (e.g. as CSS animations). Repeated calls are idempotent.
 pub fn inst_lift_animations(i: &mut Instance) -> Vec<motion::Lift> {
-    let lifted = motion::lifts(&i.doc);
-    if lifted.is_empty() {
-        return lifted;
-    }
-    i.ms.lifted = vec![false; i.doc.bind_node.len()];
-    i.ms.lift_node = vec![false; i.doc.node_kind.len()];
-    i.ms.lift_bg = vec![false; i.doc.node_kind.len()];
-    for lift in &lifted {
-        i.ms.lifted[lift.binding] = true;
-        let node = usize::try_from(lift.node).expect("node index exceeds usize");
-        i.ms.lift_node[node] = true;
-        i.ms.lift_bg[node] |= lift.stops.iter().any(|stop| stop.bg.is_some());
-    }
-    i.dirty = true;
-    lifted
+	let lifted = motion::lifts(&i.doc);
+	if lifted.is_empty() {
+		return lifted;
+	}
+	i.ms.lifted = vec![false; i.doc.bind_node.len()];
+	i.ms.lift_node = vec![false; i.doc.node_kind.len()];
+	i.ms.lift_bg = vec![false; i.doc.node_kind.len()];
+	for lift in &lifted {
+		i.ms.lifted[lift.binding] = true;
+		let node = usize::try_from(lift.node).expect("node index exceeds usize");
+		i.ms.lift_node[node] = true;
+		i.ms.lift_bg[node] |= lift.stops.iter().any(|stop| stop.bg.is_some());
+	}
+	i.dirty = true;
+	lifted
 }
 
 /// Appends a runtime font table, which wins equal compiled matches by index.
 #[allow(clippy::too_many_arguments)] // A font table is intrinsically defined by these parallel metrics and slices.
 pub fn inst_font_register(
-    i: &mut Instance,
-    family: &str,
-    weight: u32,
-    upem: u32,
-    ascent: i32,
-    descent: i32,
-    line_gap: i32,
-    default_adv: u32,
-    cmap_cp: &[u32],
-    cmap_gid: &[u32],
-    adv: &[u32],
+	i: &mut Instance,
+	family: &str,
+	weight: u32,
+	upem: u32,
+	ascent: i32,
+	descent: i32,
+	line_gap: i32,
+	default_adv: u32,
+	cmap_cp: &[u32],
+	cmap_gid: &[u32],
+	adv: &[u32],
 ) -> i32 {
-    let family_ref = u32::try_from(i.doc.strs.len()).expect("too many document strings");
-    let fallback_class = slir::family_class(family);
-    let cmap_off = i32::try_from(i.doc.font_cmap_cp.len()).expect("font cmap is too large");
+	let family_ref = u32::try_from(i.doc.strs.len()).expect("too many document strings");
+	let fallback_class = slir::family_class(family);
+	let cmap_off = i32::try_from(i.doc.font_cmap_cp.len()).expect("font cmap is too large");
 
-    i.doc.strs.push(family.to_owned());
-    i.doc.font_family.push(family_ref);
-    i.doc.font_class.push(fallback_class);
-    i.doc.font_weight.push(weight);
-    i.doc.font_upem.push(upem);
-    i.doc.font_ascent.push(ascent);
-    i.doc.font_descent.push(descent);
-    i.doc.font_line_gap.push(line_gap);
-    i.doc.font_default_adv.push(default_adv);
-    i.doc.font_cmap_off.push(cmap_off);
-    i.doc
-        .font_cmap_len
-        .push(i32::try_from(cmap_cp.len()).expect("font cmap is too large"));
-    i.doc.font_cmap_cp.extend_from_slice(cmap_cp);
-    i.doc.font_cmap_gid.extend_from_slice(cmap_gid);
-    i.doc.font_adv.extend_from_slice(adv);
-    style::invalidate_font_selection(&mut i.st);
-    i.glyph_scanned.clear();
-    i.dirty = true;
+	i.doc.strs.push(family.to_owned());
+	i.doc.font_family.push(family_ref);
+	i.doc.font_class.push(fallback_class);
+	i.doc.font_weight.push(weight);
+	i.doc.font_upem.push(upem);
+	i.doc.font_ascent.push(ascent);
+	i.doc.font_descent.push(descent);
+	i.doc.font_line_gap.push(line_gap);
+	i.doc.font_default_adv.push(default_adv);
+	i.doc.font_cmap_off.push(cmap_off);
+	i.doc
+		.font_cmap_len
+		.push(i32::try_from(cmap_cp.len()).expect("font cmap is too large"));
+	i.doc.font_cmap_cp.extend_from_slice(cmap_cp);
+	i.doc.font_cmap_gid.extend_from_slice(cmap_gid);
+	i.doc.font_adv.extend_from_slice(adv);
+	style::invalidate_font_selection(&mut i.st);
+	i.glyph_scanned.clear();
+	i.dirty = true;
 
-    i32::try_from(i.doc.font_family.len())
-        .expect("too many document fonts")
-        .wrapping_sub(1)
+	i32::try_from(i.doc.font_family.len())
+		.expect("too many document fonts")
+		.wrapping_sub(1)
 }
 
 fn valid_runtime_png(data: &[u8], w: u32, h: u32) -> bool {
-    let Ok(mut reader) = png::Decoder::new(std::io::Cursor::new(data)).read_info() else {
-        return false;
-    };
-    if reader.info().width != w || reader.info().height != h {
-        return false;
-    }
-    let Some(output_len) = reader.output_buffer_size() else {
-        return false;
-    };
-    let mut decoded = Vec::new();
-    if decoded.try_reserve_exact(output_len).is_err() {
-        return false;
-    }
-    decoded.resize(output_len, 0);
-    reader.next_frame(&mut decoded).is_ok()
+	let Ok(mut reader) = png::Decoder::new(std::io::Cursor::new(data)).read_info() else {
+		return false;
+	};
+	if reader.info().width != w || reader.info().height != h {
+		return false;
+	}
+	let Some(output_len) = reader.output_buffer_size() else {
+		return false;
+	};
+	let mut decoded = Vec::new();
+	if decoded.try_reserve_exact(output_len).is_err() {
+		return false;
+	}
+	decoded.resize(output_len, 0);
+	reader.next_frame(&mut decoded).is_ok()
 }
 
 /// Registers or replaces a named runtime image in the unified image table.
@@ -356,94 +361,96 @@ fn valid_runtime_png(data: &[u8], w: u32, h: u32) -> bool {
 /// atomically. Equal active registrations preserve the generation and do not
 /// dirty.
 pub fn inst_img_register(
-    i: &mut Instance,
-    name: &str,
-    w: u32,
-    h: u32,
-    format: u32,
-    data: &[u8],
+	i: &mut Instance,
+	name: &str,
+	w: u32,
+	h: u32,
+	format: u32,
+	data: &[u8],
 ) -> i32 {
-    if w == 0 || h == 0 {
-        return -1;
-    }
-    match format {
-        0 if !valid_runtime_png(data, w, h) => return -1,
-        1 => {
-            let Some(expected) = usize::try_from(w)
-                .ok()
-                .and_then(|width| {
-                    usize::try_from(h)
-                        .ok()
-                        .and_then(|height| width.checked_mul(height))
-                })
-                .and_then(|pixels| pixels.checked_mul(4))
-            else {
-                return -1;
-            };
-            if data.len() != expected {
-                return -1;
-            }
-        }
-        0 => {}
-        _ => return -1,
-    }
+	if w == 0 || h == 0 {
+		return -1;
+	}
+	match format {
+		0 if !valid_runtime_png(data, w, h) => return -1,
+		1 => {
+			let Some(expected) = usize::try_from(w)
+				.ok()
+				.and_then(|width| {
+					usize::try_from(h)
+						.ok()
+						.and_then(|height| width.checked_mul(height))
+				})
+				.and_then(|pixels| pixels.checked_mul(4))
+			else {
+				return -1;
+			};
+			if data.len() != expected {
+				return -1;
+			}
+		},
+		0 => {},
+		_ => return -1,
+	}
 
-    let position =
-        i.st.runtime_images
-            .iter()
-            .position(|image| image.name == name);
-    let runtime_index = position.unwrap_or(i.st.runtime_images.len());
-    let Some(unified_index) = i.doc.img_src.len().checked_add(runtime_index) else {
-        return -1;
-    };
-    let Ok(unified_index) = i32::try_from(unified_index) else {
-        return -1;
-    };
-    if let Some(position) = position {
-        let image = &mut i.st.runtime_images[position];
-        let changed = !image.active
-            || image.w != w
-            || image.h != h
-            || image.format != format
-            || image.data != data;
-        if changed {
-            image.w = w;
-            image.h = h;
-            image.format = format;
-            image.data.clear();
-            image.data.extend_from_slice(data);
-            image.generation = image.generation.wrapping_add(1);
-            image.active = true;
-            i.dirty = true;
-        }
-    } else {
-        i.st.runtime_images.push(RuntimeImage {
-            name: name.to_owned(),
-            w,
-            h,
-            format,
-            data: data.to_vec(),
-            generation: 1,
-            active: true,
-        });
-        i.dirty = true;
-    };
-    unified_index
+	let position = i
+		.st
+		.runtime_images
+		.iter()
+		.position(|image| image.name == name);
+	let runtime_index = position.unwrap_or(i.st.runtime_images.len());
+	let Some(unified_index) = i.doc.img_src.len().checked_add(runtime_index) else {
+		return -1;
+	};
+	let Ok(unified_index) = i32::try_from(unified_index) else {
+		return -1;
+	};
+	if let Some(position) = position {
+		let image = &mut i.st.runtime_images[position];
+		let changed = !image.active
+			|| image.w != w
+			|| image.h != h
+			|| image.format != format
+			|| image.data != data;
+		if changed {
+			image.w = w;
+			image.h = h;
+			image.format = format;
+			image.data.clear();
+			image.data.extend_from_slice(data);
+			image.generation = image.generation.wrapping_add(1);
+			image.active = true;
+			i.dirty = true;
+		}
+	} else {
+		i.st.runtime_images.push(RuntimeImage {
+			name: name.to_owned(),
+			w,
+			h,
+			format,
+			data: data.to_vec(),
+			generation: 1,
+			active: true,
+		});
+		i.dirty = true;
+	}
+	unified_index
 }
 
 /// Unregisters a runtime image while reserving its unified table index.
 pub fn inst_img_unregister(i: &mut Instance, name: &str) -> bool {
-    let Some(image) =
-        i.st.runtime_images
-            .iter_mut()
-            .find(|image| image.name == name && image.active)
-    else {
-        return false;
-    };
-    image.active = false;
-    image.generation = image.generation.wrapping_add(1);
-    i.dirty = true;
-    true
+	let Some(image) = i
+		.st
+		.runtime_images
+		.iter_mut()
+		.find(|image| image.name == name && image.active)
+	else {
+		return false;
+	};
+	image.active = false;
+	image.generation = image.generation.wrapping_add(1);
+	i.dirty = true;
+	true
 }
 
 /// Returns image dimensions, format, and generation for a unified image index.
@@ -451,34 +458,35 @@ pub fn inst_img_unregister(i: &mut Instance, name: &str) -> bool {
 /// Compiled images have generation zero; inactive and unknown indices return
 /// `None`.
 pub fn inst_img_info(i: &Instance, img: i32) -> Option<(u32, u32, u32, u32)> {
-    let index = usize::try_from(img).ok()?;
-    if index < i.doc.img_src.len() {
-        return Some((
-            *i.doc.img_w.get(index)?,
-            *i.doc.img_h.get(index)?,
-            *i.doc.img_format.get(index)?,
-            0,
-        ));
-    }
-    let image = i.st.runtime_images.get(index - i.doc.img_src.len())?;
-    image
-        .active
-        .then_some((image.w, image.h, image.format, image.generation))
+	let index = usize::try_from(img).ok()?;
+	if index < i.doc.img_src.len() {
+		return Some((
+			*i.doc.img_w.get(index)?,
+			*i.doc.img_h.get(index)?,
+			*i.doc.img_format.get(index)?,
+			0,
+		));
+	}
+	let image = i.st.runtime_images.get(index - i.doc.img_src.len())?;
+	image
+		.active
+		.then_some((image.w, image.h, image.format, image.generation))
 }
 
 /// Returns the immutable payload for a unified image index, or an empty slice.
 pub fn inst_img_bytes(i: &Instance, img: i32) -> &[u8] {
-    let Ok(index) = usize::try_from(img) else {
-        return &[];
-    };
-    if index < i.doc.img_src.len() {
-        return i.doc.img_data.get(index).map(Vec::as_slice).unwrap_or(&[]);
-    }
-    i.st.runtime_images
-        .get(index - i.doc.img_src.len())
-        .filter(|image| image.active)
-        .map(|image| image.data.as_slice())
-        .unwrap_or(&[])
+	let Ok(index) = usize::try_from(img) else {
+		return &[];
+	};
+	if index < i.doc.img_src.len() {
+		return i.doc.img_data.get(index).map(Vec::as_slice).unwrap_or(&[]);
+	}
+	i.st
+		.runtime_images
+		.get(index - i.doc.img_src.len())
+		.filter(|image| image.active)
+		.map(|image| image.data.as_slice())
+		.unwrap_or(&[])
 }
 
 /// Sets viewport, client class, and media flags.
@@ -486,22 +494,22 @@ pub fn inst_img_bytes(i: &Instance, img: i32) -> &[u8] {
 /// Portrait and landscape derive from `vw < vh`. A non-positive height means
 /// unbounded height for a static render invocation.
 pub fn inst_set_env(i: &mut Instance, vw: f64, vh: f64, client: u32, dark: bool, coarse: bool) {
-    if i.has_env
-        && i.st.env.vw == vw
-        && i.st.env.vh == vh
-        && i.st.env.client == client
-        && i.st.env.dark == dark
-        && i.st.env.coarse == coarse
-    {
-        return;
-    }
-    i.st.env.vw = vw;
-    i.st.env.vh = vh;
-    i.st.env.client = client;
-    i.st.env.dark = dark;
-    i.st.env.coarse = coarse;
-    i.has_env = true;
-    i.dirty = true;
+	if i.has_env
+		&& i.st.env.vw == vw
+		&& i.st.env.vh == vh
+		&& i.st.env.client == client
+		&& i.st.env.dark == dark
+		&& i.st.env.coarse == coarse
+	{
+		return;
+	}
+	i.st.env.vw = vw;
+	i.st.env.vh = vh;
+	i.st.env.client = client;
+	i.st.env.dark = dark;
+	i.st.env.coarse = coarse;
+	i.has_env = true;
+	i.dirty = true;
 }
 
 /// Selects a compiler-declared theme.
@@ -509,30 +517,30 @@ pub fn inst_set_env(i: &mut Instance, vw: f64, vh: f64, client: u32, dark: bool,
 /// The empty name restores the authored base. An unknown name returns `false`
 /// and leaves the current theme unchanged.
 pub fn inst_set_theme(i: &mut Instance, name: &str) -> bool {
-    let theme = if name.is_empty() {
-        Some(0)
-    } else {
-        i.doc
-            .theme_name
-            .iter()
-            .position(|&name_ref| slir::str_at(&i.doc, name_ref) == name)
-            .and_then(|index| u32::try_from(index).ok())
-            .and_then(|index| index.checked_add(1))
-    };
-    let Some(theme_index) = theme else {
-        return false;
-    };
-    if i.st.env.theme != name {
-        i.st.env.theme = name.to_owned();
-        i.st.theme_index = theme_index;
-        i.dirty = true;
-    }
-    true
+	let theme = if name.is_empty() {
+		Some(0)
+	} else {
+		i.doc
+			.theme_name
+			.iter()
+			.position(|&name_ref| slir::str_at(&i.doc, name_ref) == name)
+			.and_then(|index| u32::try_from(index).ok())
+			.and_then(|index| index.checked_add(1))
+	};
+	let Some(theme_index) = theme else {
+		return false;
+	};
+	if i.st.env.theme != name {
+		i.st.env.theme = name.to_owned();
+		i.st.theme_index = theme_index;
+		i.dirty = true;
+	}
+	true
 }
 
 /// Returns the current theme name; empty means the authored base.
 pub fn inst_theme(i: &Instance) -> String {
-    i.st.env.theme.clone()
+	i.st.env.theme.clone()
 }
 
 /// Returns one scalar token resolved through the active named theme.
@@ -541,30 +549,28 @@ pub fn inst_theme(i: &Instance) -> String {
 /// paths and non-scalar token groups return `None`. The returned value borrows
 /// document storage and the lookup itself does not allocate.
 pub fn inst_get_token<'a>(i: &'a Instance, path: &str) -> Option<TokenValue<'a>> {
-    let token = i
-        .doc
-        .token_name
-        .iter()
-        .position(|&name| slir::str_at(&i.doc, name) == path)?;
-    let token = u32::try_from(token).ok()?;
-    let value = crate::value::decode_active(
-        &i.doc,
-        i.st.theme_index,
-        crate::value::token_aval(&i.doc, i.st.theme_index, token),
-    );
-    match value.tag {
-        slir::T_NUM => Some(TokenValue::Number(value.num)),
-        slir::T_COLOR | slir::T_PAINT_SOLID => Some(TokenValue::Color(value.h)),
-        slir::T_STR | slir::T_ENUM_SYM => Some(TokenValue::Text(
-            i.doc.strs.get(usize::try_from(value.h).ok()?)?,
-        )),
-        _ => {
-            let repr = crate::value::token_repr(&i.doc, i.st.theme_index, token)?;
-            Some(TokenValue::Text(
-                i.doc.strs.get(usize::try_from(repr).ok()?)?,
-            ))
-        }
-    }
+	let token = i
+		.doc
+		.token_name
+		.iter()
+		.position(|&name| slir::str_at(&i.doc, name) == path)?;
+	let token = u32::try_from(token).ok()?;
+	let value = crate::value::decode_active(
+		&i.doc,
+		i.st.theme_index,
+		crate::value::token_aval(&i.doc, i.st.theme_index, token),
+	);
+	match value.tag {
+		slir::T_NUM => Some(TokenValue::Number(value.num)),
+		slir::T_COLOR | slir::T_PAINT_SOLID => Some(TokenValue::Color(value.h)),
+		slir::T_STR | slir::T_ENUM_SYM => {
+			Some(TokenValue::Text(i.doc.strs.get(usize::try_from(value.h).ok()?)?))
+		},
+		_ => {
+			let repr = crate::value::token_repr(&i.doc, i.st.theme_index, token)?;
+			Some(TokenValue::Text(i.doc.strs.get(usize::try_from(repr).ok()?)?))
+		},
+	}
 }
 
 /// Toggles a global state by name.
@@ -572,70 +578,70 @@ pub fn inst_get_token<'a>(i: &'a Instance, path: &str) -> Option<TokenValue<'a>>
 /// Names are interned against the document string pool. A name the document
 /// never mentions cannot affect a condition and is therefore a no-op.
 pub fn inst_set_state(i: &mut Instance, name: &str, on: bool) {
-    let Some(sym) = i
-        .doc
-        .strs
-        .iter()
-        .rposition(|candidate| candidate == name)
-        .and_then(|index| u32::try_from(index).ok())
-    else {
-        return;
-    };
-    let index = i.st.states.iter().rposition(|&state| state == sym);
-    match (on, index) {
-        (true, None) => {
-            i.st.states.push(sym);
-            i.dirty = true;
-        }
-        (false, Some(index)) => {
-            i.st.states.swap_remove(index);
-            i.dirty = true;
-        }
-        _ => {}
-    }
+	let Some(sym) = i
+		.doc
+		.strs
+		.iter()
+		.rposition(|candidate| candidate == name)
+		.and_then(|index| u32::try_from(index).ok())
+	else {
+		return;
+	};
+	let index = i.st.states.iter().rposition(|&state| state == sym);
+	match (on, index) {
+		(true, None) => {
+			i.st.states.push(sym);
+			i.dirty = true;
+		},
+		(false, Some(index)) => {
+			i.st.states.swap_remove(index);
+			i.dirty = true;
+		},
+		_ => {},
+	}
 }
 
 /// Toggles a named state on one node addressed by its full key path.
 ///
 /// Dispatch owns hover, pressed, and focus states; hosts use this API for app
-/// states such as `disabled` and `selected`. Returns `false` for an unknown key.
+/// states such as `disabled` and `selected`. Returns `false` for an unknown
+/// key.
 pub fn inst_set_node_state(i: &mut Instance, key: &str, name: &str, on: bool) -> bool {
-    let node = scene::node_by_key(&i.doc, &i.st.lists, key);
-    if node == slir::NONE {
-        return false;
-    }
-    if style::set_node_state(&i.doc, &mut i.st, node, name, on) {
-        i.dirty = true;
-    }
-    true
+	let node = scene::node_by_key(&i.doc, &i.st.lists, key);
+	if node == slir::NONE {
+		return false;
+	}
+	if style::set_node_state(&i.doc, &mut i.st, node, name, on) {
+		i.dirty = true;
+	}
+	true
 }
 /// Clears keyboard focus without discarding retained edit buffers.
 ///
 /// Returns whether focus or focus-ring visibility changed.
 pub fn inst_clear_focus(i: &mut Instance) -> bool {
-    i.focus_note.clear();
-    let changed = dispatch::clear_focus(&i.doc, &mut i.st, &mut i.ds);
-    if changed {
-        i.dirty = true;
-    }
-    changed
+	i.focus_note.clear();
+	let changed = dispatch::clear_focus(&i.doc, &mut i.st, &mut i.ds);
+	if changed {
+		i.dirty = true;
+	}
+	changed
 }
 
 fn focus_resolution_note(key: &str, resolution: &scene::KeyResolution) -> String {
-    match resolution {
-        scene::KeyResolution::Found(_) => String::new(),
-        scene::KeyResolution::Missing { candidates } if candidates.is_empty() => {
-            format!("unknown focus key '{key}'; inspect sceneSnapshot() for canonical keys")
-        }
-        scene::KeyResolution::Missing { candidates } => format!(
-            "unknown focus key '{key}'; try one of: {}",
-            candidates.join(", ")
-        ),
-        scene::KeyResolution::Ambiguous { candidates } => format!(
-            "focus key '{key}' is ambiguous; use one canonical full key: {}",
-            candidates.join(", ")
-        ),
-    }
+	match resolution {
+		scene::KeyResolution::Found(_) => String::new(),
+		scene::KeyResolution::Missing { candidates } if candidates.is_empty() => {
+			format!("unknown focus key '{key}'; inspect sceneSnapshot() for canonical keys")
+		},
+		scene::KeyResolution::Missing { candidates } => {
+			format!("unknown focus key '{key}'; try one of: {}", candidates.join(", "))
+		},
+		scene::KeyResolution::Ambiguous { candidates } => format!(
+			"focus key '{key}' is ambiguous; use one canonical full key: {}",
+			candidates.join(", ")
+		),
+	}
 }
 
 /// Moves focus to a keyed node, or clears focus when `key` is empty.
@@ -646,130 +652,128 @@ fn focus_resolution_note(key: &str, resolution: &scene::KeyResolution) -> String
 /// explains the most recent failure. `visible` selects the keyboard-grade
 /// focus ring. Unlike keyboard traversal, explicit focus does not auto-reveal.
 pub fn inst_set_focus(i: &mut Instance, key: &str, visible: bool) -> bool {
-    if key.is_empty() {
-        inst_clear_focus(i);
-        return true;
-    }
-    let resolution = scene::resolve_key(&i.doc, &i.st.lists, key);
-    let scene::KeyResolution::Found(node) = resolution else {
-        i.focus_note = focus_resolution_note(key, &resolution);
-        return false;
-    };
-    let mut focusables = Vec::new();
-    scene::focusables(&i.sc, &mut focusables);
-    if !focusables.contains(&node) {
-        let canonical = scene::key_of(&i.doc, &i.st.lists, node);
-        i.focus_note = format!(
-            "focus target '{canonical}' is not currently focusable and painted; \
-             settle conditional content or use focus_item(each_key, index)"
-        );
-        return false;
-    }
-    i.focus_note.clear();
-    if focus::set_focus(&i.doc, &mut i.st, &mut i.ds.fs, node, visible) {
-        i.dirty = true;
-    }
-    dispatch::bind_edit_on_focus(&i.doc, &mut i.st, &mut i.ds);
-    true
+	if key.is_empty() {
+		inst_clear_focus(i);
+		return true;
+	}
+	let resolution = scene::resolve_key(&i.doc, &i.st.lists, key);
+	let scene::KeyResolution::Found(node) = resolution else {
+		i.focus_note = focus_resolution_note(key, &resolution);
+		return false;
+	};
+	let mut focusables = Vec::new();
+	scene::focusables(&i.sc, &mut focusables);
+	if !focusables.contains(&node) {
+		let canonical = scene::key_of(&i.doc, &i.st.lists, node);
+		i.focus_note = format!(
+			"focus target '{canonical}' is not currently focusable and painted; settle conditional \
+			 content or use focus_item(each_key, index)"
+		);
+		return false;
+	}
+	i.focus_note.clear();
+	if focus::set_focus(&i.doc, &mut i.st, &mut i.ds.fs, node, visible) {
+		i.dirty = true;
+	}
+	dispatch::bind_edit_on_focus(&i.doc, &mut i.st, &mut i.ds);
+	true
 }
 
 /// Returns the actionable note from the most recent failed focus request.
 ///
 /// A successful focus or clear request resets the note.
 pub fn inst_focus_note(i: &Instance) -> &str {
-    &i.focus_note
+	&i.focus_note
 }
-/// Replaces a keyed field's edit buffer and synchronizes a same-named text parameter.
+/// Replaces a keyed field's edit buffer and synchronizes a same-named text
+/// parameter.
 ///
 /// The replacement clears composition, selection, and undo/redo history, then
 /// places the caret at the end. A changed value queues one Change signal for
 /// [`inst_take_signals`] and marks the instance dirty. Unknown and non-field
 /// keys return `false` without side effects.
 pub fn inst_set_field_text(i: &mut Instance, key: &str, text: &str) -> bool {
-    let node = scene::node_by_key(&i.doc, &i.st.lists, key);
-    if node == slir::NONE {
-        return false;
-    }
-    let signal_index = dispatch::sig_of(&i.doc, &i.st, node, dispatch::TR_CHANGE);
-    if signal_index < 0 {
-        return false;
-    }
+	let node = scene::node_by_key(&i.doc, &i.st.lists, key);
+	if node == slir::NONE {
+		return false;
+	}
+	let signal_index = dispatch::sig_of(&i.doc, &i.st, node, dispatch::TR_CHANGE);
+	if signal_index < 0 {
+		return false;
+	}
 
-    let edit_index = dispatch::ed_ix(&i.ds, node);
-    let (previous, display_changed) = if edit_index >= 0 {
-        let index = usize::try_from(edit_index).expect("negative edit index");
-        let state = &i.ds.ed[index];
-        (
-            edit::text_str(state),
-            edit::display_str(state) != text
-                || state.caret != crate::rt::str_len(text)
-                || state.anchor != state.caret,
-        )
-    } else {
-        let content = style::content_str(&i.doc, &i.st, node);
-        let changed = content != text;
-        (content, changed)
-    };
-    let text_changed = previous != text;
+	let edit_index = dispatch::ed_ix(&i.ds, node);
+	let (previous, display_changed) = if edit_index >= 0 {
+		let index = usize::try_from(edit_index).expect("negative edit index");
+		let state = &i.ds.ed[index];
+		(
+			edit::text_str(state),
+			edit::display_str(state) != text
+				|| state.caret != crate::rt::str_len(text)
+				|| state.anchor != state.caret,
+		)
+	} else {
+		let content = style::content_str(&i.doc, &i.st, node);
+		let changed = content != text;
+		(content, changed)
+	};
+	let text_changed = previous != text;
 
-    let replacement = edit::es_new(node, text);
-    if edit_index >= 0 {
-        let index = usize::try_from(edit_index).expect("negative edit index");
-        i.ds.ed[index] = replacement;
-    } else {
-        i.ds.ed_node.push(node);
-        i.ds.ed.push(replacement);
-    }
-    let composing_changed = style::set_node_state(&i.doc, &mut i.st, node, "composing", false);
-    let scroll_changed = style::field_scroll_x(&i.st, node) != 0.0;
-    if scroll_changed {
-        style::field_scroll_set(&mut i.st, node, 0.0);
-    }
-    if display_changed {
-        style::field_set(&mut i.st, node, text);
-    }
-    let param_changed = dispatch::sync_bound_text_param(&i.doc, &mut i.st, node, text);
-    if text_changed || param_changed {
-        dispatch::queue_field_change(&i.doc, &i.st, &mut i.ds, node, text);
-    }
-    if display_changed || param_changed || composing_changed || scroll_changed {
-        i.dirty = true;
-    }
-    true
+	let replacement = edit::es_new(node, text);
+	if edit_index >= 0 {
+		let index = usize::try_from(edit_index).expect("negative edit index");
+		i.ds.ed[index] = replacement;
+	} else {
+		i.ds.ed_node.push(node);
+		i.ds.ed.push(replacement);
+	}
+	let composing_changed = style::set_node_state(&i.doc, &mut i.st, node, "composing", false);
+	let scroll_changed = style::field_scroll_x(&i.st, node) != 0.0;
+	if scroll_changed {
+		style::field_scroll_set(&mut i.st, node, 0.0);
+	}
+	if display_changed {
+		style::field_set(&mut i.st, node, text);
+	}
+	let param_changed = dispatch::sync_bound_text_param(&i.doc, &mut i.st, node, text);
+	if text_changed || param_changed {
+		dispatch::queue_field_change(&i.doc, &i.st, &mut i.ds, node, text);
+	}
+	if display_changed || param_changed || composing_changed || scroll_changed {
+		i.dirty = true;
+	}
+	true
 }
 
-/// Returns a keyed field's committed edit text, or its content before first bind.
+/// Returns a keyed field's committed edit text, or its content before first
+/// bind.
 pub fn inst_field_text(i: &Instance, key: &str) -> Option<String> {
-    let node = scene::node_by_key(&i.doc, &i.st.lists, key);
-    if node == slir::NONE || dispatch::sig_of(&i.doc, &i.st, node, dispatch::TR_CHANGE) < 0 {
-        return None;
-    }
-    let edit_index = dispatch::ed_ix(&i.ds, node);
-    if edit_index < 0 {
-        Some(style::content_str(&i.doc, &i.st, node))
-    } else {
-        let index = usize::try_from(edit_index).expect("negative edit index");
-        Some(edit::text_str(&i.ds.ed[index]))
-    }
+	let node = scene::node_by_key(&i.doc, &i.st.lists, key);
+	if node == slir::NONE || dispatch::sig_of(&i.doc, &i.st, node, dispatch::TR_CHANGE) < 0 {
+		return None;
+	}
+	let edit_index = dispatch::ed_ix(&i.ds, node);
+	if edit_index < 0 {
+		Some(style::content_str(&i.doc, &i.st, node))
+	} else {
+		let index = usize::try_from(edit_index).expect("negative edit index");
+		Some(edit::text_str(&i.ds.ed[index]))
+	}
 }
 
 /// Returns the focused node, or [`slir::NONE`] when focus is clear.
-pub fn inst_focus(i: &Instance) -> u32 {
-    i.ds.fs.focus
+pub const fn inst_focus(i: &Instance) -> u32 {
+	i.ds.fs.focus
 }
 
 /// Returns a named parameter's current value as deterministic JSON.
 pub fn inst_param_json(i: &Instance, name: &str) -> Option<String> {
-    let param = i
-        .doc
-        .parm_name
-        .iter()
-        .position(|param_name| slir::str_at(&i.doc, *param_name) == name)?;
-    dumpjson::param_json(
-        &i.doc,
-        &i.st,
-        u32::try_from(param).expect("parameter index exceeds u32"),
-    )
+	let param = i
+		.doc
+		.parm_name
+		.iter()
+		.position(|param_name| slir::str_at(&i.doc, *param_name) == name)?;
+	dumpjson::param_json(&i.doc, &i.st, u32::try_from(param).expect("parameter index exceeds u32"))
 }
 
 /// Sets one axis of a keyed scroll node, clamped to retained geometry.
@@ -778,87 +782,87 @@ pub fn inst_param_json(i: &Instance, name: &str) -> Option<String> {
 /// before the first solve is retained and clamped after geometry is available.
 /// Unknown axes, keys, and inactive axes return `false`.
 pub fn inst_set_scroll(i: &mut Instance, key: &str, axis: u32, off: f64) -> bool {
-    if axis > 1 {
-        return false;
-    }
-    let node = scene::node_by_key(&i.doc, &i.st.lists, key);
-    if node == slir::NONE {
-        return false;
-    }
-    let flags = style::eff_flags(&i.doc, &i.st, node);
-    let required = if axis == 0 {
-        slir::F_SCROLL
-    } else {
-        slir::F_SCROLL_CROSS
-    };
-    if flags & required == 0 {
-        return false;
-    }
+	if axis > 1 {
+		return false;
+	}
+	let node = scene::node_by_key(&i.doc, &i.st.lists, key);
+	if node == slir::NONE {
+		return false;
+	}
+	let flags = style::eff_flags(&i.doc, &i.st, node);
+	let required = if axis == 0 {
+		slir::F_SCROLL
+	} else {
+		slir::F_SCROLL_CROSS
+	};
+	if flags & required == 0 {
+		return false;
+	}
 
-    let mut next = off;
-    if i.solved {
-        let scene_index = scene::index_of(&i.sc, node);
-        if scene_index >= 0 {
-            next = dispatch::clamp_scroll_axis(&i.sc, scene_index, axis, next);
-        }
-    }
-    if style::scroll_set_axis(&mut i.st, node, axis, next) {
-        i.dirty = true;
-    }
-    true
+	let mut next = off;
+	if i.solved {
+		let scene_index = scene::index_of(&i.sc, node);
+		if scene_index >= 0 {
+			next = dispatch::clamp_scroll_axis(&i.sc, scene_index, axis, next);
+		}
+	}
+	if style::scroll_set_axis(&mut i.st, node, axis, next) {
+		i.dirty = true;
+	}
+	true
 }
 
 /// Returns one axis of a keyed scroll node; unknown keys and axes read as zero.
 pub fn inst_get_scroll(i: &Instance, key: &str, axis: u32) -> f64 {
-    if axis > 1 {
-        return 0.0;
-    }
-    let node = scene::node_by_key(&i.doc, &i.st.lists, key);
-    if node == slir::NONE {
-        0.0
-    } else {
-        style::scroll_get_axis(&i.st, node, axis)
-    }
+	if axis > 1 {
+		return 0.0;
+	}
+	let node = scene::node_by_key(&i.doc, &i.st.lists, key);
+	if node == slir::NONE {
+		0.0
+	} else {
+		style::scroll_get_axis(&i.st, node, axis)
+	}
 }
 
 type RevealCorners = [(f64, f64); 4];
 
 fn rotate_reveal_corners(sc: &Scene, corners: &mut RevealCorners, scene_index: usize) {
-    let degrees = sc.rot[scene_index];
-    if degrees == 0.0 {
-        return;
-    }
-    let cosine = hit::cos_deg(degrees);
-    let sine = hit::sin_deg(degrees);
-    let cx = sc.cx[scene_index];
-    let cy = sc.cy[scene_index];
-    for (x, y) in corners {
-        let dx = *x - cx;
-        let dy = *y - cy;
-        *x = cx + dx * cosine - dy * sine;
-        *y = cy + dx * sine + dy * cosine;
-    }
+	let degrees = sc.rot[scene_index];
+	if degrees == 0.0 {
+		return;
+	}
+	let cosine = hit::cos_deg(degrees);
+	let sine = hit::sin_deg(degrees);
+	let cx = sc.cx[scene_index];
+	let cy = sc.cy[scene_index];
+	for (x, y) in corners {
+		let dx = *x - cx;
+		let dy = *y - cy;
+		*x = dy.mul_add(-sine, dx.mul_add(cosine, cx));
+		*y = dy.mul_add(cosine, dx.mul_add(sine, cy));
+	}
 }
 
 fn reveal_bounds(corners: &RevealCorners, physical_x: bool) -> (f64, f64) {
-    let mut start = f64::INFINITY;
-    let mut end = f64::NEG_INFINITY;
-    for &(x, y) in corners {
-        let value = if physical_x { x } else { y };
-        start = start.min(value);
-        end = end.max(value);
-    }
-    (start, end)
+	let mut start = f64::INFINITY;
+	let mut end = f64::NEG_INFINITY;
+	for &(x, y) in corners {
+		let value = if physical_x { x } else { y };
+		start = start.min(value);
+		end = end.max(value);
+	}
+	(start, end)
 }
 
 fn translate_reveal_corners(corners: &mut RevealCorners, physical_x: bool, delta: f64) {
-    for (x, y) in corners {
-        if physical_x {
-            *x -= delta;
-        } else {
-            *y -= delta;
-        }
-    }
+	for (x, y) in corners {
+		if physical_x {
+			*x -= delta;
+		} else {
+			*y -= delta;
+		}
+	}
 }
 
 /// Extent of `scroll_index`'s pinned sticky children covering its viewport
@@ -869,40 +873,40 @@ fn translate_reveal_corners(corners: &mut RevealCorners, physical_x: bool, delta
 /// it underneath them. The child scene index the reveal chain arrived from is
 /// excluded so revealing a sticky node never blocks on itself.
 fn sticky_start_cover(
-    sc: &Scene,
-    scroll_index: usize,
-    exclude_child: usize,
-    physical_x: bool,
+	sc: &Scene,
+	scroll_index: usize,
+	exclude_child: usize,
+	physical_x: bool,
 ) -> f64 {
-    let viewport_start = if physical_x {
-        sc.x[scroll_index]
-    } else {
-        sc.y[scroll_index]
-    };
-    let parent_ix = i32::try_from(scroll_index).expect("scene index exceeds i32");
-    let mut cover = 0.0_f64;
-    for child in 0..sc.node.len() {
-        if child == exclude_child
-            || sc.parent[child] != parent_ix
-            || sc.flags[child] & slir::F_STICKY == 0
-        {
-            continue;
-        }
-        let (child_start, child_end) = if physical_x {
-            (sc.x[child], sc.x[child] + sc.w[child])
-        } else {
-            (sc.y[child], sc.y[child] + sc.h[child])
-        };
-        // A sticky painted within its own extent of the viewport start is
-        // pinned there (or pins as soon as the reveal scrolls past it); its
-        // pinned offset is at most the container's start padding, so the
-        // painted end bounds the covered strip. A sticky pushed deeper by a
-        // follower or still far down in flow does not cover the start edge.
-        if child_start - viewport_start < child_end - child_start {
-            cover = cover.max(child_end - viewport_start);
-        }
-    }
-    cover.max(0.0)
+	let viewport_start = if physical_x {
+		sc.x[scroll_index]
+	} else {
+		sc.y[scroll_index]
+	};
+	let parent_ix = i32::try_from(scroll_index).expect("scene index exceeds i32");
+	let mut cover = 0.0_f64;
+	for child in 0..sc.node.len() {
+		if child == exclude_child
+			|| sc.parent[child] != parent_ix
+			|| sc.flags[child] & slir::F_STICKY == 0
+		{
+			continue;
+		}
+		let (child_start, child_end) = if physical_x {
+			(sc.x[child], sc.x[child] + sc.w[child])
+		} else {
+			(sc.y[child], sc.y[child] + sc.h[child])
+		};
+		// A sticky painted within its own extent of the viewport start is
+		// pinned there (or pins as soon as the reveal scrolls past it); its
+		// pinned offset is at most the container's start padding, so the
+		// painted end bounds the covered strip. A sticky pushed deeper by a
+		// follower or still far down in flow does not cover the start edge.
+		if child_start - viewport_start < child_end - child_start {
+			cover = cover.max(child_end - viewport_start);
+		}
+	}
+	cover.max(0.0)
 }
 
 /// Scrolls every active-axis ancestor minimally to reveal a current scene node.
@@ -912,164 +916,165 @@ fn sticky_start_cover(
 /// ancestor's local scroll frame. Returns `false` only when the key does not
 /// resolve to a retained scene entry.
 pub fn inst_reveal(i: &mut Instance, key: &str, margin: f64) -> bool {
-    let node = scene::node_by_key(&i.doc, &i.st.lists, key);
-    let target = scene::index_of(&i.sc, node);
-    if node == slir::NONE || target < 0 {
-        return false;
-    }
-    let target = usize::try_from(target).expect("negative scene index");
-    let x = i.sc.x[target];
-    let y = i.sc.y[target];
-    let w = i.sc.w[target];
-    let h = i.sc.h[target];
-    let mut corners = [(x, y), (x + w, y), (x + w, y + h), (x, y + h)];
-    let margin = if margin.is_finite() {
-        margin.max(0.0)
-    } else {
-        0.0
-    };
+	let node = scene::node_by_key(&i.doc, &i.st.lists, key);
+	let target = scene::index_of(&i.sc, node);
+	if node == slir::NONE || target < 0 {
+		return false;
+	}
+	let target = usize::try_from(target).expect("negative scene index");
+	let x = i.sc.x[target];
+	let y = i.sc.y[target];
+	let w = i.sc.w[target];
+	let h = i.sc.h[target];
+	let mut corners = [(x, y), (x + w, y), (x + w, y + h), (x, y + h)];
+	let margin = if margin.is_finite() {
+		margin.max(0.0)
+	} else {
+		0.0
+	};
 
-    let mut child = target;
-    let mut current = i.sc.parent[target];
-    while current >= 0 {
-        rotate_reveal_corners(&i.sc, &mut corners, child);
-        let index = usize::try_from(current).expect("negative scene index");
-        for axis in 0_u32..=1 {
-            let required = if axis == 0 {
-                slir::F_SCROLL
-            } else {
-                slir::F_SCROLL_CROSS
-            };
-            if i.sc.flags[index] & required == 0 {
-                continue;
-            }
+	let mut child = target;
+	let mut current = i.sc.parent[target];
+	while current >= 0 {
+		rotate_reveal_corners(&i.sc, &mut corners, child);
+		let index = usize::try_from(current).expect("negative scene index");
+		for axis in 0_u32..=1 {
+			let required = if axis == 0 {
+				slir::F_SCROLL
+			} else {
+				slir::F_SCROLL_CROSS
+			};
+			if i.sc.flags[index] & required == 0 {
+				continue;
+			}
 
-            let owner = i.sc.node[index];
-            let old = style::scroll_get_axis(&i.st, owner, axis);
-            let physical_x = i.sc.is_row[index] == (axis == 0);
-            let (mut start, mut end) = reveal_bounds(&corners, physical_x);
-            start -= margin;
-            end += margin;
-            let (viewport_start, viewport_end) = if physical_x {
-                (i.sc.x[index], i.sc.x[index] + i.sc.w[index])
-            } else {
-                (i.sc.y[index], i.sc.y[index] + i.sc.h[index])
-            };
-            // Sticky children pinned at the viewport start would cover a
-            // target parked at the raw start edge; reveal below them instead.
-            let cover = if i.sc.flags[child] & slir::F_STICKY != 0 {
-                // Revealing a sticky child (or its content) never scrolls
-                // against its own pinned position.
-                0.0
-            } else {
-                sticky_start_cover(&i.sc, index, child, physical_x)
-            };
-            let desired = if start < viewport_start + cover {
-                old + start - viewport_start - cover
-            } else if end > viewport_end {
-                old + end - viewport_end
-            } else {
-                old
-            };
-            let next = dispatch::clamp_scroll_axis(&i.sc, current, axis, desired);
-            if style::scroll_set_axis(&mut i.st, owner, axis, next) {
-                i.dirty = true;
-                translate_reveal_corners(&mut corners, physical_x, next - old);
-            }
-        }
-        child = index;
-        current = i.sc.parent[index];
-    }
-    true
+			let owner = i.sc.node[index];
+			let old = style::scroll_get_axis(&i.st, owner, axis);
+			let physical_x = i.sc.is_row[index] == (axis == 0);
+			let (mut start, mut end) = reveal_bounds(&corners, physical_x);
+			start -= margin;
+			end += margin;
+			let (viewport_start, viewport_end) = if physical_x {
+				(i.sc.x[index], i.sc.x[index] + i.sc.w[index])
+			} else {
+				(i.sc.y[index], i.sc.y[index] + i.sc.h[index])
+			};
+			// Sticky children pinned at the viewport start would cover a
+			// target parked at the raw start edge; reveal below them instead.
+			let cover = if i.sc.flags[child] & slir::F_STICKY != 0 {
+				// Revealing a sticky child (or its content) never scrolls
+				// against its own pinned position.
+				0.0
+			} else {
+				sticky_start_cover(&i.sc, index, child, physical_x)
+			};
+			let desired = if start < viewport_start + cover {
+				old + start - viewport_start - cover
+			} else if end > viewport_end {
+				old + end - viewport_end
+			} else {
+				old
+			};
+			let next = dispatch::clamp_scroll_axis(&i.sc, current, axis, desired);
+			if style::scroll_set_axis(&mut i.st, owner, axis, next) {
+				i.dirty = true;
+				translate_reveal_corners(&mut corners, physical_x, next - old);
+			}
+		}
+		child = index;
+		current = i.sc.parent[index];
+	}
+	true
 }
 
 fn virtual_scene_geometry(i: &Instance, parent: u32, each: u32) -> Option<(f64, f64, f64, f64)> {
-    let parent_index = scene::index_of(&i.sc, parent);
-    let each_index = scene::index_of(&i.sc, each);
-    if parent_index < 0 || each_index < 0 {
-        return None;
-    }
-    let parent_index = usize::try_from(parent_index).expect("negative scene index");
-    let each_index = usize::try_from(each_index).expect("negative scene index");
-    let row = i.sc.is_row[parent_index];
-    let viewport = if row {
-        i.sc.w[parent_index]
-    } else {
-        i.sc.h[parent_index]
-    };
-    let painted_origin = if row {
-        i.sc.x[each_index] - i.sc.x[parent_index]
-    } else {
-        i.sc.y[each_index] - i.sc.y[parent_index]
-    };
-    let origin = painted_origin + style::scroll_get(&i.st, parent);
-    let cover = sticky_start_cover(&i.sc, parent_index, each_index, row);
-    Some((viewport, i.sc.content_main[parent_index], origin, cover))
+	let parent_index = scene::index_of(&i.sc, parent);
+	let each_index = scene::index_of(&i.sc, each);
+	if parent_index < 0 || each_index < 0 {
+		return None;
+	}
+	let parent_index = usize::try_from(parent_index).expect("negative scene index");
+	let each_index = usize::try_from(each_index).expect("negative scene index");
+	let row = i.sc.is_row[parent_index];
+	let viewport = if row {
+		i.sc.w[parent_index]
+	} else {
+		i.sc.h[parent_index]
+	};
+	let painted_origin = if row {
+		i.sc.x[each_index] - i.sc.x[parent_index]
+	} else {
+		i.sc.y[each_index] - i.sc.y[parent_index]
+	};
+	let origin = painted_origin + style::scroll_get(&i.st, parent);
+	let cover = sticky_start_cover(&i.sc, parent_index, each_index, row);
+	Some((viewport, i.sc.content_main[parent_index], origin, cover))
 }
 
-/// Reveals an item in a virtual `each`; non-virtual and unknown lists return `false`.
+/// Reveals an item in a virtual `each`; non-virtual and unknown lists return
+/// `false`.
 pub fn inst_reveal_item(i: &mut Instance, each_key: &str, item_index: i32, align: u32) -> bool {
-    if align > 3 {
-        return false;
-    }
-    let each = scene::node_by_key(&i.doc, &i.st.lists, each_key);
-    let Some((extent, _, parent)) = list::virtual_config(&i.doc, &i.st.lists, each) else {
-        return false;
-    };
-    let list_id = list::each_list(&i.doc, &i.st.lists, each);
-    if list_id < 0
-        || item_index < 0
-        || item_index >= list::length(&i.doc, &i.st.lists, list_id as u32)
-    {
-        return false;
-    }
-    let Some((viewport, content, origin, cover)) = virtual_scene_geometry(i, parent, each) else {
-        return false;
-    };
-    if viewport <= 0.0 {
-        return false;
-    }
-    // Sticky siblings pinned at the viewport start (e.g. a list header) cover
-    // the first `cover` units, so start-side alignments land below them and
-    // centering happens within the uncovered region.
-    let cover = cover.min((viewport - extent).max(0.0));
-    let old = style::scroll_get(&i.st, parent);
-    let start = origin + f64::from(item_index) * extent;
-    let end = start + extent;
-    let target = match align {
-        0 => start - cover,
-        1 => start - cover - (viewport - cover - extent) / 2.0,
-        2 => end - viewport,
-        3 if start - cover < old => start - cover,
-        3 if end > old + viewport => end - viewport,
-        3 => old,
-        _ => unreachable!("align was validated"),
-    };
-    let target = target.clamp(0.0, (content - viewport).max(0.0));
-    if style::scroll_set(&mut i.st, parent, target) {
-        i.dirty = true;
-    }
-    true
+	if align > 3 {
+		return false;
+	}
+	let each = scene::node_by_key(&i.doc, &i.st.lists, each_key);
+	let Some((extent, _, parent)) = list::virtual_config(&i.doc, &i.st.lists, each) else {
+		return false;
+	};
+	let list_id = list::each_list(&i.doc, &i.st.lists, each);
+	if list_id < 0
+		|| item_index < 0
+		|| item_index >= list::length(&i.doc, &i.st.lists, list_id as u32)
+	{
+		return false;
+	}
+	let Some((viewport, content, origin, cover)) = virtual_scene_geometry(i, parent, each) else {
+		return false;
+	};
+	if viewport <= 0.0 {
+		return false;
+	}
+	// Sticky siblings pinned at the viewport start (e.g. a list header) cover
+	// the first `cover` units, so start-side alignments land below them and
+	// centering happens within the uncovered region.
+	let cover = cover.min((viewport - extent).max(0.0));
+	let old = style::scroll_get(&i.st, parent);
+	let start = f64::from(item_index).mul_add(extent, origin);
+	let end = start + extent;
+	let target = match align {
+		0 => start - cover,
+		1 => start - cover - (viewport - cover - extent) / 2.0,
+		2 => end - viewport,
+		3 if start - cover < old => start - cover,
+		3 if end > old + viewport => end - viewport,
+		3 => old,
+		_ => unreachable!("align was validated"),
+	};
+	let target = target.clamp(0.0, (content - viewport).max(0.0));
+	if style::scroll_set(&mut i.st, parent, target) {
+		i.dirty = true;
+	}
+	true
 }
 
 fn first_focusable_template(i: &mut Instance, each: u32, mut template: u32, item_key: &str) -> u32 {
-    while template != slir::NONE {
-        let node = list::synthetic(&i.doc, &mut i.st.lists, each, template, item_key);
-        let flags = style::eff_flags(&i.doc, &i.st, node);
-        if flags & slir::F_FOCUSABLE != 0
-            && flags & slir::F_INERT == 0
-            && !style::node_disabled(&i.st, node)
-        {
-            return node;
-        }
-        let child = i.doc.node_first[usize::try_from(template).expect("template id exceeds usize")];
-        let descendant = first_focusable_template(i, each, child, item_key);
-        if descendant != slir::NONE {
-            return descendant;
-        }
-        template = i.doc.node_next[usize::try_from(template).expect("template id exceeds usize")];
-    }
-    slir::NONE
+	while template != slir::NONE {
+		let node = list::synthetic(&i.doc, &mut i.st.lists, each, template, item_key);
+		let flags = style::eff_flags(&i.doc, &i.st, node);
+		if flags & slir::F_FOCUSABLE != 0
+			&& flags & slir::F_INERT == 0
+			&& !style::node_disabled(&i.st, node)
+		{
+			return node;
+		}
+		let child = i.doc.node_first[usize::try_from(template).expect("template id exceeds usize")];
+		let descendant = first_focusable_template(i, each, child, item_key);
+		if descendant != slir::NONE {
+			return descendant;
+		}
+		template = i.doc.node_next[usize::try_from(template).expect("template id exceeds usize")];
+	}
+	slir::NONE
 }
 
 /// Focuses the first active focusable descendant of one virtual `each` item.
@@ -1078,51 +1083,51 @@ fn first_focusable_template(i: &mut Instance, each: u32, mut template: u32, item
 /// materialized window. Focus becomes keyboard-visible. Failures populate
 /// [`inst_focus_note`] with an actionable explanation.
 pub fn inst_focus_item(i: &mut Instance, each_key: &str, item_index: i32) -> bool {
-    let resolution = scene::resolve_key(&i.doc, &i.st.lists, each_key);
-    let scene::KeyResolution::Found(each) = resolution else {
-        i.focus_note = focus_resolution_note(each_key, &resolution);
-        return false;
-    };
-    if list::virtual_config(&i.doc, &i.st.lists, each).is_none() {
-        i.focus_note = format!("focus_item target '{each_key}' is not a virtual each");
-        return false;
-    }
-    let list_id = list::each_list(&i.doc, &i.st.lists, each);
-    if list_id < 0
-        || item_index < 0
-        || item_index >= list::length(&i.doc, &i.st.lists, list_id as u32)
-    {
-        i.focus_note = format!("focus_item index {item_index} is outside the list");
-        return false;
-    }
-    if !inst_reveal_item(i, each_key, item_index, 3) {
-        i.focus_note = format!("focus_item could not reveal item {item_index} in '{each_key}'");
-        return false;
-    }
-    let item_key = list::key_at(&i.doc, &i.st.lists, list_id as u32, item_index);
-    let template = list::template_first(&i.doc, &i.st.lists, each);
-    let target = first_focusable_template(i, each, template, &item_key);
-    if target == slir::NONE {
-        i.focus_note =
-            format!("item {item_index} in '{each_key}' has no active focusable descendant");
-        return false;
-    }
-    i.focus_note.clear();
-    if focus::set_focus(&i.doc, &mut i.st, &mut i.ds.fs, target, true) {
-        i.dirty = true;
-    }
-    dispatch::bind_edit_on_focus(&i.doc, &mut i.st, &mut i.ds);
-    true
+	let resolution = scene::resolve_key(&i.doc, &i.st.lists, each_key);
+	let scene::KeyResolution::Found(each) = resolution else {
+		i.focus_note = focus_resolution_note(each_key, &resolution);
+		return false;
+	};
+	if list::virtual_config(&i.doc, &i.st.lists, each).is_none() {
+		i.focus_note = format!("focus_item target '{each_key}' is not a virtual each");
+		return false;
+	}
+	let list_id = list::each_list(&i.doc, &i.st.lists, each);
+	if list_id < 0
+		|| item_index < 0
+		|| item_index >= list::length(&i.doc, &i.st.lists, list_id as u32)
+	{
+		i.focus_note = format!("focus_item index {item_index} is outside the list");
+		return false;
+	}
+	if !inst_reveal_item(i, each_key, item_index, 3) {
+		i.focus_note = format!("focus_item could not reveal item {item_index} in '{each_key}'");
+		return false;
+	}
+	let item_key = list::key_at(&i.doc, &i.st.lists, list_id as u32, item_index);
+	let template = list::template_first(&i.doc, &i.st.lists, each);
+	let target = first_focusable_template(i, each, template, &item_key);
+	if target == slir::NONE {
+		i.focus_note =
+			format!("item {item_index} in '{each_key}' has no active focusable descendant");
+		return false;
+	}
+	i.focus_note.clear();
+	if focus::set_focus(&i.doc, &mut i.st, &mut i.ds.fs, target, true) {
+		i.dirty = true;
+	}
+	dispatch::bind_edit_on_focus(&i.doc, &mut i.st, &mut i.ds);
+	true
 }
 
 /// Returns the materialized range for a virtual `each`, or `(-1, -1)`.
 pub fn inst_each_window(i: &Instance, each_key: &str) -> (i32, i32) {
-    let each = scene::node_by_key(&i.doc, &i.st.lists, each_key);
-    if list::virtual_config(&i.doc, &i.st.lists, each).is_none() {
-        (-1, -1)
-    } else {
-        list::current_window(&i.st.lists, each)
-    }
+	let each = scene::node_by_key(&i.doc, &i.st.lists, each_key);
+	if list::virtual_config(&i.doc, &i.st.lists, each).is_none() {
+		(-1, -1)
+	} else {
+		list::current_window(&i.st.lists, each)
+	}
 }
 
 /// Sets a parameter's current value.
@@ -1132,66 +1137,66 @@ pub fn inst_each_window(i: &Instance, each_key: &str) -> (i32, i32) {
 ///
 /// Equal values are a no-op and do not mark the instance dirty.
 pub fn inst_set_param(i: &mut Instance, param: u32, v: &ParamValue) -> bool {
-    let Ok(param_index) = usize::try_from(param) else {
-        return false;
-    };
-    if param_index >= i.doc.parm_name.len()
-        || i.doc.parm_type[param_index] != v.kind
-        || v.kind == slir::PARAM_LIST
-    {
-        return false;
-    }
+	let Ok(param_index) = usize::try_from(param) else {
+		return false;
+	};
+	if param_index >= i.doc.parm_name.len()
+		|| i.doc.parm_type[param_index] != v.kind
+		|| v.kind == slir::PARAM_LIST
+	{
+		return false;
+	}
 
-    match v.kind {
-        0 => {
-            if i.st.pv_str[param_index] == v.s {
-                return true;
-            }
-            i.st.pv_str[param_index] = v.s.clone();
-            // A host write to a field-synced text param resets non-composing
-            // edit buffers so the painted field follows the parameter.
-            dispatch::reset_synced_edits(&i.doc, &mut i.st, &mut i.ds, param_index, &v.s);
-        }
-        1 | 2 => {
-            if i.st.pv_num[param_index] == v.num {
-                return true;
-            }
-            i.st.pv_num[param_index] = v.num;
-        }
-        3 => {
-            if i.st.pv_h[param_index] == v.rgba {
-                return true;
-            }
-            i.st.pv_h[param_index] = v.rgba;
-        }
-        4 => {
-            let next = if v.num == 0.0 { 0.0 } else { 1.0 };
-            if i.st.pv_num[param_index] == next {
-                return true;
-            }
-            i.st.pv_num[param_index] = next;
-        }
-        5 => {
-            let enum_offset = i.doc.parm_enum_off[param_index];
-            let enum_len = i.doc.parm_enum_len[param_index];
-            let declared = (enum_offset..enum_offset.wrapping_add(enum_len)).any(|index| {
-                let index = usize::try_from(index).expect("negative parameter enum index");
-                let symbol = i.doc.parm_enum_syms[index];
-                let symbol = usize::try_from(symbol).expect("enum string index is too large");
-                i.doc.strs[symbol] == v.sym
-            });
-            if !declared {
-                return false;
-            }
-            if i.st.pv_sym[param_index] == v.sym {
-                return true;
-            }
-            i.st.pv_sym[param_index] = v.sym.clone();
-        }
-        _ => {}
-    }
-    i.dirty = true;
-    true
+	match v.kind {
+		0 => {
+			if i.st.pv_str[param_index] == v.s {
+				return true;
+			}
+			i.st.pv_str[param_index] = v.s.clone();
+			// A host write to a field-synced text param resets non-composing
+			// edit buffers so the painted field follows the parameter.
+			dispatch::reset_synced_edits(&i.doc, &mut i.st, &mut i.ds, param_index, &v.s);
+		},
+		1 | 2 => {
+			if i.st.pv_num[param_index] == v.num {
+				return true;
+			}
+			i.st.pv_num[param_index] = v.num;
+		},
+		3 => {
+			if i.st.pv_h[param_index] == v.rgba {
+				return true;
+			}
+			i.st.pv_h[param_index] = v.rgba;
+		},
+		4 => {
+			let next = if v.num == 0.0 { 0.0 } else { 1.0 };
+			if i.st.pv_num[param_index] == next {
+				return true;
+			}
+			i.st.pv_num[param_index] = next;
+		},
+		5 => {
+			let enum_offset = i.doc.parm_enum_off[param_index];
+			let enum_len = i.doc.parm_enum_len[param_index];
+			let declared = (enum_offset..enum_offset.wrapping_add(enum_len)).any(|index| {
+				let index = usize::try_from(index).expect("negative parameter enum index");
+				let symbol = i.doc.parm_enum_syms[index];
+				let symbol = usize::try_from(symbol).expect("enum string index is too large");
+				i.doc.strs[symbol] == v.sym
+			});
+			if !declared {
+				return false;
+			}
+			if i.st.pv_sym[param_index] == v.sym {
+				return true;
+			}
+			i.st.pv_sym[param_index] = v.sym.clone();
+		},
+		_ => {},
+	}
+	i.dirty = true;
+	true
 }
 
 /// Returns a root or nested list's current length, or `-1` when unresolved.
@@ -1201,134 +1206,126 @@ pub fn inst_set_param(i: &mut Instance, param: u32, v: &ParamValue) -> bool {
 /// `3.segments.0.points`. Malformed paths, scalar fields, absent schemas, and
 /// out-of-range items are unknown.
 pub fn inst_list_len(i: &Instance, param: u32, path: &str) -> i32 {
-    let list_id = list::resolve_path(&i.doc, &i.st.lists, param, path);
-    if list_id == u32::MAX {
-        -1
-    } else {
-        list::length(&i.doc, &i.st.lists, list_id)
-    }
+	let list_id = list::resolve_path(&i.doc, &i.st.lists, param, path);
+	if list_id == u32::MAX {
+		-1
+	} else {
+		list::length(&i.doc, &i.st.lists, list_id)
+	}
 }
 
 /// Resizes the list selected by `param` and `path` atomically.
 pub fn inst_set_list_len(i: &mut Instance, param: u32, path: &str, n: i32) -> bool {
-    let changed = list::set_len_path(&i.doc, &mut i.st.lists, param, path, n);
-    if changed < 0 {
-        return false;
-    }
-    i.dirty |= changed > 0;
-    true
+	let changed = list::set_len_path(&i.doc, &mut i.st.lists, param, path, n);
+	if changed < 0 {
+		return false;
+	}
+	i.dirty |= changed > 0;
+	true
 }
 
 /// Sets one typed scalar field in an item of the selected list atomically.
 pub fn inst_set_list_field(
-    i: &mut Instance,
-    param: u32,
-    path: &str,
-    index: i32,
-    field: &str,
-    v: &ParamValue,
+	i: &mut Instance,
+	param: u32,
+	path: &str,
+	index: i32,
+	field: &str,
+	v: &ParamValue,
 ) -> bool {
-    let value = list::Val {
-        kind: v.kind,
-        num: v.num,
-        s: v.s.clone(),
-        rgba: v.rgba,
-        sym: v.sym.clone(),
-    };
-    let changed = list::set_field_path(&i.doc, &mut i.st.lists, param, path, index, field, &value);
-    if changed < 0 {
-        return false;
-    }
-    i.dirty |= changed > 0;
-    true
+	let value =
+		list::Val { kind: v.kind, num: v.num, s: v.s.clone(), rgba: v.rgba, sym: v.sym.clone() };
+	let changed = list::set_field_path(&i.doc, &mut i.st.lists, param, path, index, field, &value);
+	if changed < 0 {
+		return false;
+	}
+	i.dirty |= changed > 0;
+	true
 }
 
 /// Sets one stable item key in the list selected by `param` and `path`.
 pub fn inst_set_list_key(i: &mut Instance, param: u32, path: &str, index: i32, key: &str) -> bool {
-    let changed = list::set_key_path(&i.doc, &mut i.st.lists, param, path, index, key);
-    if changed < 0 {
-        return false;
-    }
-    i.dirty |= changed > 0;
-    true
+	let changed = list::set_key_path(&i.doc, &mut i.st.lists, param, path, index, key);
+	if changed < 0 {
+		return false;
+	}
+	i.dirty |= changed > 0;
+	true
 }
 
 fn divider_node(i: &Instance, key: &str) -> Option<u32> {
-    let node = scene::node_by_key(&i.doc, &i.st.lists, key);
-    let base = list::base(&i.st.lists, &i.doc, node);
-    let base_index = usize::try_from(base).ok()?;
-    if i.doc.node_kind.get(base_index) != Some(&slir::K_DIVIDER) {
-        return None;
-    }
+	let node = scene::node_by_key(&i.doc, &i.st.lists, key);
+	let base = list::base(&i.st.lists, &i.doc, node);
+	let base_index = usize::try_from(base).ok()?;
+	if i.doc.node_kind.get(base_index) != Some(&slir::K_DIVIDER) {
+		return None;
+	}
 
-    let parent = *i.doc.node_parent.get(base_index)?;
-    let parent_index = usize::try_from(parent).ok()?;
-    if !matches!(
-        i.doc.node_kind.get(parent_index),
-        Some(&slir::K_ROW) | Some(&slir::K_COL)
-    ) {
-        return None;
-    }
+	let parent = *i.doc.node_parent.get(base_index)?;
+	let parent_index = usize::try_from(parent).ok()?;
+	if !matches!(i.doc.node_kind.get(parent_index), Some(&slir::K_ROW | &slir::K_COL)) {
+		return None;
+	}
 
-    let next = *i.doc.node_next.get(base_index)?;
-    if next == slir::NONE {
-        return None;
-    }
-    let next_index = usize::try_from(next).ok()?;
-    if i.doc.node_parent.get(next_index) != Some(&parent) {
-        return None;
-    }
+	let next = *i.doc.node_next.get(base_index)?;
+	if next == slir::NONE {
+		return None;
+	}
+	let next_index = usize::try_from(next).ok()?;
+	if i.doc.node_parent.get(next_index) != Some(&parent) {
+		return None;
+	}
 
-    let mut sibling = *i.doc.node_first.get(parent_index)?;
-    for _ in 0..i.doc.node_kind.len() {
-        if sibling == base {
-            return (sibling != *i.doc.node_first.get(parent_index)?).then_some(node);
-        }
-        let sibling_index = usize::try_from(sibling).ok()?;
-        sibling = *i.doc.node_next.get(sibling_index)?;
-    }
-    None
+	let mut sibling = *i.doc.node_first.get(parent_index)?;
+	for _ in 0..i.doc.node_kind.len() {
+		if sibling == base {
+			return (sibling != *i.doc.node_first.get(parent_index)?).then_some(node);
+		}
+		let sibling_index = usize::try_from(sibling).ok()?;
+		sibling = *i.doc.node_next.get(sibling_index)?;
+	}
+	None
 }
 
 fn clamp_divider_authored(i: &Instance, node: u32, extent: f64) -> f64 {
-    let base = list::base(&i.st.lists, &i.doc, node);
-    let Ok(base_index) = usize::try_from(base) else {
-        return extent;
-    };
-    let Some(&parent) = i.doc.node_parent.get(base_index) else {
-        return extent;
-    };
-    let Ok(parent_index) = usize::try_from(parent) else {
-        return extent;
-    };
-    let row = i.doc.node_kind.get(parent_index) == Some(&slir::K_ROW);
-    let mut sibling = i.doc.node_first[parent_index];
-    let mut previous = slir::NONE;
-    while sibling != slir::NONE && sibling != base {
-        previous = sibling;
-        let Ok(index) = usize::try_from(sibling) else {
-            return extent;
-        };
-        sibling = i.doc.node_next[index];
-    }
-    if previous == slir::NONE || sibling != base {
-        return extent;
-    }
-    let min = style::attr_num(
-        &i.doc,
-        &i.st,
-        previous,
-        if row { slir::A_MIN_W } else { slir::A_MIN_H },
-        0.0,
-    );
-    let max = style::attr_num(
-        &i.doc,
-        &i.st,
-        previous,
-        if row { slir::A_MAX_W } else { slir::A_MAX_H },
-        style::INF,
-    );
-    style::divider_clamp(extent, min, max, max)
+	let base = list::base(&i.st.lists, &i.doc, node);
+	let Ok(base_index) = usize::try_from(base) else {
+		return extent;
+	};
+	let Some(&parent) = i.doc.node_parent.get(base_index) else {
+		return extent;
+	};
+	let Ok(parent_index) = usize::try_from(parent) else {
+		return extent;
+	};
+	let row = i.doc.node_kind.get(parent_index) == Some(&slir::K_ROW);
+	let mut sibling = i.doc.node_first[parent_index];
+	let mut previous = slir::NONE;
+	while sibling != slir::NONE && sibling != base {
+		previous = sibling;
+		let Ok(index) = usize::try_from(sibling) else {
+			return extent;
+		};
+		sibling = i.doc.node_next[index];
+	}
+	if previous == slir::NONE || sibling != base {
+		return extent;
+	}
+	let min = style::attr_num(
+		&i.doc,
+		&i.st,
+		previous,
+		if row { slir::A_MIN_W } else { slir::A_MIN_H },
+		0.0,
+	);
+	let max = style::attr_num(
+		&i.doc,
+		&i.st,
+		previous,
+		if row { slir::A_MAX_W } else { slir::A_MAX_H },
+		style::INF,
+	);
+	style::divider_clamp(extent, min, max, max)
 }
 
 /// Sets the size overlay controlled by a keyed, structurally valid divider.
@@ -1337,28 +1334,28 @@ fn clamp_divider_authored(i: &Instance, node: u32, extent: f64) -> f64 {
 /// pane's min/max and, after a solve, the next pane's minimum clamp the value.
 /// Non-finite extents and invalid keys return `false` without changing state.
 pub fn inst_set_divider(i: &mut Instance, key: &str, extent: f64) -> bool {
-    let Some(node) = divider_node(i, key) else {
-        return false;
-    };
-    if !extent.is_finite() {
-        return false;
-    }
-    let extent = if i.solved {
-        dispatch::clamp_divider_for_scene(&i.doc, &i.st, &i.sc, node, extent)
-            .unwrap_or_else(|| clamp_divider_authored(i, node, extent))
-    } else {
-        clamp_divider_authored(i, node, extent)
-    };
-    i.dirty |= style::divider_set(&mut i.st, node, extent);
-    true
+	let Some(node) = divider_node(i, key) else {
+		return false;
+	};
+	if !extent.is_finite() {
+		return false;
+	}
+	let extent = if i.solved {
+		dispatch::clamp_divider_for_scene(&i.doc, &i.st, &i.sc, node, extent)
+			.unwrap_or_else(|| clamp_divider_authored(i, node, extent))
+	} else {
+		clamp_divider_authored(i, node, extent)
+	};
+	i.dirty |= style::divider_set(&mut i.st, node, extent);
+	true
 }
 
 /// Returns a keyed divider overlay, or `-1` when unknown or unset.
 pub fn inst_get_divider(i: &Instance, key: &str) -> f64 {
-    let Some(node) = divider_node(i, key) else {
-        return -1.0;
-    };
-    style::divider_get(&i.st, node).unwrap_or(-1.0)
+	let Some(node) = divider_node(i, key) else {
+		return -1.0;
+	};
+	style::divider_get(&i.st, node).unwrap_or(-1.0)
 }
 
 /// Records hole content size.
@@ -1366,76 +1363,70 @@ pub fn inst_get_divider(i: &Instance, key: &str) -> f64 {
 /// Equal reports are a no-op so demand-driven hosts converge after the
 /// re-solve triggered by a changed measurement.
 pub fn inst_set_hole_size(i: &mut Instance, hole: u32, w: f64, h: f64) {
-    let Ok(hole) = usize::try_from(hole) else {
-        return;
-    };
-    let Some(current_width) = i.st.hole_w.get_mut(hole) else {
-        return;
-    };
-    if *current_width == w && i.st.hole_h[hole] == h {
-        return;
-    }
-    *current_width = w;
-    i.st.hole_h[hole] = h;
-    i.dirty = true;
+	let Ok(hole) = usize::try_from(hole) else {
+		return;
+	};
+	let Some(current_width) = i.st.hole_w.get_mut(hole) else {
+		return;
+	};
+	if *current_width == w && i.st.hole_h[hole] == h {
+		return;
+	}
+	*current_width = w;
+	i.st.hole_h[hole] = h;
+	i.dirty = true;
 }
 
 /// Solves and lowers one frame, optionally applying motion overlays.
 pub fn solve_frame(i: &mut Instance, t_ms: f64, with_motion: bool) -> Frame {
-    let mut frame = flatten::frame_new();
-    solve_frame_into(i, t_ms, with_motion, &mut frame);
-    finish_frame_diagnostics(i, &mut frame);
-    frame
+	let mut frame = flatten::frame_new();
+	solve_frame_into(i, t_ms, with_motion, &mut frame);
+	finish_frame_diagnostics(i, &mut frame);
+	frame
 }
 
 fn solve_frame_into(i: &mut Instance, t_ms: f64, with_motion: bool, frame: &mut Frame) {
-    solve_layout(i, t_ms, with_motion);
-    flatten::flatten_into(&i.doc, &i.st, &i.lay, &i.ds, &i.ms, i.root_pi, frame);
+	solve_layout(i, t_ms, with_motion);
+	flatten::flatten_into(&i.doc, &i.st, &i.lay, &i.ds, &i.ms, i.root_pi, frame);
 }
 
 fn solve_layout(i: &mut Instance, t_ms: f64, with_motion: bool) {
-    style::begin_solve(&i.doc, &mut i.st);
-    if dispatch::prune_vanished(&i.doc, &mut i.st, &mut i.ds) {
-        // A surviving Drop target changed state after list identity pruning;
-        // rebuild state conditions before layout consumes the fresh patches.
-        style::begin_solve(&i.doc, &mut i.st);
-    }
-    if with_motion {
-        motion::apply(&i.doc, &mut i.st, &mut i.ms, t_ms);
-    }
-    let viewport_width = i.st.env.vw;
-    let viewport_height = i.st.env.vh;
-    i.root_pi = layout::solve(
-        &i.doc,
-        &mut i.st,
-        &mut i.lay,
-        viewport_width,
-        viewport_height,
-        viewport_height > 0.0,
-    );
-    layout::place_attached(
-        &i.doc,
-        &i.st,
-        &mut i.lay,
-        i.root_pi,
-        viewport_width,
-        viewport_height,
-    );
+	style::begin_solve(&i.doc, &mut i.st);
+	if dispatch::prune_vanished(&i.doc, &mut i.st, &mut i.ds) {
+		// A surviving Drop target changed state after list identity pruning;
+		// rebuild state conditions before layout consumes the fresh patches.
+		style::begin_solve(&i.doc, &mut i.st);
+	}
+	if with_motion {
+		motion::apply(&i.doc, &mut i.st, &mut i.ms, t_ms);
+	}
+	let viewport_width = i.st.env.vw;
+	let viewport_height = i.st.env.vh;
+	i.root_pi = layout::solve(
+		&i.doc,
+		&mut i.st,
+		&mut i.lay,
+		viewport_width,
+		viewport_height,
+		viewport_height > 0.0,
+	);
+	layout::place_attached(&i.doc, &i.st, &mut i.lay, i.root_pi, viewport_width, viewport_height);
 }
 
 // A non-fixed divider handle can change after its pane overlay is clamped.
-// Iterate only to the layout solver's EPS tolerance and keep each frame call bounded.
-// Settling iterations only re-measure; the converged layout flattens once.
+// Iterate only to the layout solver's EPS tolerance and keep each frame call
+// bounded. Settling iterations only re-measure; the converged layout flattens
+// once.
 fn solve_frame_settled(i: &mut Instance, t_ms: f64, with_motion: bool, frame: &mut Frame) -> bool {
-    const LIMIT: usize = 16;
-    for _ in 0..LIMIT {
-        solve_layout(i, t_ms, with_motion);
-        if !i.st.divider_footprint_changed {
-            break;
-        }
-    }
-    flatten::flatten_into(&i.doc, &i.st, &i.lay, &i.ds, &i.ms, i.root_pi, frame);
-    i.st.divider_footprint_changed
+	const LIMIT: usize = 16;
+	for _ in 0..LIMIT {
+		solve_layout(i, t_ms, with_motion);
+		if !i.st.divider_footprint_changed {
+			break;
+		}
+	}
+	flatten::flatten_into(&i.doc, &i.st, &i.lay, &i.ds, &i.ms, i.root_pi, frame);
+	i.st.divider_footprint_changed
 }
 
 /// Solves if needed and lowers the result to a frame.
@@ -1449,222 +1440,226 @@ fn solve_frame_settled(i: &mut Instance, t_ms: f64, with_motion: bool, frame: &m
 /// vanished focus is restored. Either may mark the instance dirty for the next
 /// frame.
 fn refresh_virtual_window(i: &mut Instance, each: u32) -> bool {
-    let Some((_, _, parent)) = list::virtual_config(&i.doc, &i.st.lists, each) else {
-        return false;
-    };
-    let Some((viewport, _, origin, _)) = virtual_scene_geometry(i, parent, each) else {
-        return false;
-    };
-    let off = style::scroll_get(&i.st, parent);
-    list::set_virtual_viewport(&i.doc, &mut i.st.lists, each, viewport, off, origin)
+	let Some((_, _, parent)) = list::virtual_config(&i.doc, &i.st.lists, each) else {
+		return false;
+	};
+	let Some((viewport, _, origin, _)) = virtual_scene_geometry(i, parent, each) else {
+		return false;
+	};
+	let off = style::scroll_get(&i.st, parent);
+	list::set_virtual_viewport(&i.doc, &mut i.st.lists, each, viewport, off, origin)
 }
 
 fn refresh_virtual_windows(i: &mut Instance) -> bool {
-    let mut changed = false;
-    for each_index in 0..i.doc.node_kind.len() {
-        if i.doc.node_kind[each_index] != slir::K_EACH
-            || i.doc.node_flags[each_index] & slir::F_VIRTUAL == 0
-        {
-            continue;
-        }
-        let each = u32::try_from(each_index).expect("node index exceeds u32");
-        changed |= refresh_virtual_window(i, each);
-    }
-    let materialized_len = list::materialized(&i.st.lists).len();
-    for index in 0..materialized_len {
-        let each = list::materialized(&i.st.lists)[index];
-        let base = list::base(&i.st.lists, &i.doc, each);
-        let Ok(base_index) = usize::try_from(base) else {
-            continue;
-        };
-        if i.doc.node_kind.get(base_index) != Some(&slir::K_EACH)
-            || i.doc.node_flags.get(base_index).copied().unwrap_or(0) & slir::F_VIRTUAL == 0
-        {
-            continue;
-        }
-        changed |= refresh_virtual_window(i, each);
-    }
-    changed
+	let mut changed = false;
+	for each_index in 0..i.doc.node_kind.len() {
+		if i.doc.node_kind[each_index] != slir::K_EACH
+			|| i.doc.node_flags[each_index] & slir::F_VIRTUAL == 0
+		{
+			continue;
+		}
+		let each = u32::try_from(each_index).expect("node index exceeds u32");
+		changed |= refresh_virtual_window(i, each);
+	}
+	let materialized_len = list::materialized(&i.st.lists).len();
+	for index in 0..materialized_len {
+		let each = list::materialized(&i.st.lists)[index];
+		let base = list::base(&i.st.lists, &i.doc, each);
+		let Ok(base_index) = usize::try_from(base) else {
+			continue;
+		};
+		if i.doc.node_kind.get(base_index) != Some(&slir::K_EACH)
+			|| i.doc.node_flags.get(base_index).copied().unwrap_or(0) & slir::F_VIRTUAL == 0
+		{
+			continue;
+		}
+		changed |= refresh_virtual_window(i, each);
+	}
+	changed
 }
 
 fn clamp_retained_scrolls(i: &mut Instance) -> bool {
-    let mut changed = false;
-    for index in 0..i.st.scroll_node.len() {
-        let scene_index = scene::index_of(&i.sc, i.st.scroll_node[index]);
-        if scene_index < 0 {
-            continue;
-        }
-        let clamped = dispatch::clamp_scroll(&i.sc, scene_index, i.st.scroll_off[index]);
-        if clamped != i.st.scroll_off[index] {
-            i.st.scroll_off[index] = clamped;
-            changed = true;
-        }
-    }
+	let mut changed = false;
+	for index in 0..i.st.scroll_node.len() {
+		let scene_index = scene::index_of(&i.sc, i.st.scroll_node[index]);
+		if scene_index < 0 {
+			continue;
+		}
+		let clamped = dispatch::clamp_scroll(&i.sc, scene_index, i.st.scroll_off[index]);
+		if clamped != i.st.scroll_off[index] {
+			i.st.scroll_off[index] = clamped;
+			changed = true;
+		}
+	}
 
-    for index in 0..i.st.scroll_cross_node.len() {
-        let scene_index = scene::index_of(&i.sc, i.st.scroll_cross_node[index]);
-        if scene_index < 0 {
-            continue;
-        }
-        let clamped =
-            dispatch::clamp_scroll_axis(&i.sc, scene_index, 1, i.st.scroll_cross_off[index]);
-        if clamped != i.st.scroll_cross_off[index] {
-            i.st.scroll_cross_off[index] = clamped;
-            changed = true;
-        }
-    }
-    changed
+	for index in 0..i.st.scroll_cross_node.len() {
+		let scene_index = scene::index_of(&i.sc, i.st.scroll_cross_node[index]);
+		if scene_index < 0 {
+			continue;
+		}
+		let clamped =
+			dispatch::clamp_scroll_axis(&i.sc, scene_index, 1, i.st.scroll_cross_off[index]);
+		if clamped != i.st.scroll_cross_off[index] {
+			i.st.scroll_cross_off[index] = clamped;
+			changed = true;
+		}
+	}
+	changed
 }
 
-/// Updates a caller-retained frame when solving or animation changes its output.
+/// Updates a caller-retained frame when solving or animation changes its
+/// output.
 ///
 /// `frame` must remain paired with this instance from its first call. A clean
 /// instance leaves it untouched and returns `false`, preserving every backing
 /// allocation and avoiding a redundant flatten pass.
 pub fn inst_frame_update(i: &mut Instance, t_ms: f64, frame: &mut Frame) -> bool {
-    write_frame(i, t_ms, frame, true)
+	write_frame(i, t_ms, frame, true)
 }
 
-/// Solves if needed and lowers the result to a frame at the supplied motion clock.
+/// Solves if needed and lowers the result to a frame at the supplied motion
+/// clock.
 ///
 /// Fresh virtual-list viewport geometry is applied and solved before returning,
 /// without pruning identities outside the materialized window.
 pub fn inst_frame(i: &mut Instance, t_ms: f64) -> Frame {
-    let mut frame = flatten::frame_new();
-    write_frame(i, t_ms, &mut frame, false);
-    frame
+	let mut frame = flatten::frame_new();
+	write_frame(i, t_ms, &mut frame, false);
+	frame
 }
 
 fn write_frame(i: &mut Instance, t_ms: f64, frame: &mut Frame, retain_clean: bool) -> bool {
-    if !i.ok {
-        frame.clear();
-        return true;
-    }
+	if !i.ok {
+		frame.clear();
+		return true;
+	}
 
-    let has_motion = !i.doc.bind_node.is_empty() || !i.doc.trans_node.is_empty();
-    let needs_solve = i.dirty || !i.solved || i.ms.active || has_motion && t_ms != i.last_t;
-    if !needs_solve {
-        if retain_clean {
-            return false;
-        }
-        flatten::flatten_into(&i.doc, &i.st, &i.lay, &i.ds, &i.ms, i.root_pi, frame);
-        finish_frame_diagnostics(i, frame);
-        return true;
-    }
+	let has_motion = !i.doc.bind_node.is_empty() || !i.doc.trans_node.is_empty();
+	let needs_solve = i.dirty || !i.solved || i.ms.active || has_motion && t_ms != i.last_t;
+	if !needs_solve {
+		if retain_clean {
+			return false;
+		}
+		flatten::flatten_into(&i.doc, &i.st, &i.lay, &i.ds, &i.ms, i.root_pi, frame);
+		finish_frame_diagnostics(i, frame);
+		return true;
+	}
 
-    let divider_unsettled = solve_frame_settled(i, t_ms, true, frame);
-    i.dirty = divider_unsettled;
-    i.solved = true;
-    i.last_t = t_ms;
-    scene::load(&mut i.sc, frame);
-    if dispatch::cancel_invalid_drag(&i.doc, &mut i.st, &i.sc, &mut i.ds) {
-        i.dirty |= solve_frame_settled(i, t_ms, true, frame);
-        scene::load(&mut i.sc, frame);
-    }
-    if refresh_virtual_windows(i) {
-        i.dirty |= solve_frame_settled(i, t_ms, true, frame);
-        scene::load(&mut i.sc, frame);
-    }
-    if clamp_retained_scrolls(i) {
-        i.dirty = true;
-        refresh_virtual_windows(i);
-    }
+	let divider_unsettled = solve_frame_settled(i, t_ms, true, frame);
+	i.dirty = divider_unsettled;
+	i.solved = true;
+	i.last_t = t_ms;
+	scene::load(&mut i.sc, frame);
+	if dispatch::cancel_invalid_drag(&i.doc, &mut i.st, &i.sc, &mut i.ds) {
+		i.dirty |= solve_frame_settled(i, t_ms, true, frame);
+		scene::load(&mut i.sc, frame);
+	}
+	if refresh_virtual_windows(i) {
+		i.dirty |= solve_frame_settled(i, t_ms, true, frame);
+		scene::load(&mut i.sc, frame);
+	}
+	if clamp_retained_scrolls(i) {
+		i.dirty = true;
+		refresh_virtual_windows(i);
+	}
 
-    // Editing dispatch used the previous layout. Follow once more against the
-    // freshly wrapped lines, then settle any changed scroll inputs immediately.
-    if dispatch::follow_caret_fresh(&i.doc, &mut i.st, &i.lay, &i.sc, &mut i.ds) {
-        i.dirty = solve_frame_settled(i, t_ms, true, frame);
-        scene::load(&mut i.sc, frame);
-        if refresh_virtual_windows(i) {
-            i.dirty = true;
-        }
-        if dispatch::follow_caret_fresh(&i.doc, &mut i.st, &i.lay, &i.sc, &mut i.ds) {
-            i.dirty = true;
-        }
-    }
+	// Editing dispatch used the previous layout. Follow once more against the
+	// freshly wrapped lines, then settle any changed scroll inputs immediately.
+	if dispatch::follow_caret_fresh(&i.doc, &mut i.st, &i.lay, &i.sc, &mut i.ds) {
+		i.dirty = solve_frame_settled(i, t_ms, true, frame);
+		scene::load(&mut i.sc, frame);
+		if refresh_virtual_windows(i) {
+			i.dirty = true;
+		}
+		if dispatch::follow_caret_fresh(&i.doc, &mut i.st, &i.lay, &i.sc, &mut i.ds) {
+			i.dirty = true;
+		}
+	}
 
-    // Restore focus when its node vanished or is no longer visibly focusable.
-    if i.ds.fs.focus != slir::NONE
-        && !scene::is_focusable(&i.sc, i.ds.fs.focus)
-        && focus::restore(&i.doc, &mut i.st, &i.sc, &mut i.ds.fs)
-    {
-        i.dirty = true;
-    }
-    focus::refresh(&i.doc, &i.st, &i.sc, &mut i.ds.fs);
-    finish_frame_diagnostics(i, frame);
-    true
+	// Restore focus when its node vanished or is no longer visibly focusable.
+	if i.ds.fs.focus != slir::NONE
+		&& !scene::is_focusable(&i.sc, i.ds.fs.focus)
+		&& focus::restore(&i.doc, &mut i.st, &i.sc, &mut i.ds.fs)
+	{
+		i.dirty = true;
+	}
+	focus::refresh(&i.doc, &i.st, &i.sc, &mut i.ds.fs);
+	finish_frame_diagnostics(i, frame);
+	true
 }
 
 /// Solves without animation or transition overlays for static exporters.
 ///
 /// Current parameters, conditions, fields, and scroll offsets still apply.
 pub fn inst_frame_static(i: &mut Instance) -> Frame {
-    let mut frame = flatten::frame_new();
-    if !i.ok {
-        return frame;
-    }
-    solve_frame_settled(i, 0.0, false, &mut frame);
-    scene::load(&mut i.sc, &frame);
-    if refresh_virtual_windows(i) {
-        solve_frame_settled(i, 0.0, false, &mut frame);
-        scene::load(&mut i.sc, &frame);
-    }
-    if clamp_retained_scrolls(i) {
-        refresh_virtual_windows(i);
-        solve_frame_settled(i, 0.0, false, &mut frame);
-        scene::load(&mut i.sc, &frame);
-    }
-    finish_frame_diagnostics(i, &mut frame);
-    frame
+	let mut frame = flatten::frame_new();
+	if !i.ok {
+		return frame;
+	}
+	solve_frame_settled(i, 0.0, false, &mut frame);
+	scene::load(&mut i.sc, &frame);
+	if refresh_virtual_windows(i) {
+		solve_frame_settled(i, 0.0, false, &mut frame);
+		scene::load(&mut i.sc, &frame);
+	}
+	if clamp_retained_scrolls(i) {
+		refresh_virtual_windows(i);
+		solve_frame_settled(i, 0.0, false, &mut frame);
+		scene::load(&mut i.sc, &frame);
+	}
+	finish_frame_diagnostics(i, &mut frame);
+	frame
 }
 
 /// Solves pending changes and returns the resulting hole rectangles.
 pub fn inst_holes(i: &mut Instance) -> Vec<HoleRect> {
-    if !i.ok {
-        return Vec::new();
-    }
-    if i.dirty || !i.solved || i.ms.active {
-        let _ = inst_frame(i, i.last_t);
-    }
-    inst_holes_retained(i)
+	if !i.ok {
+		return Vec::new();
+	}
+	if i.dirty || !i.solved || i.ms.active {
+		let _ = inst_frame(i, i.last_t);
+	}
+	inst_holes_retained(i)
 }
 
-/// Returns hole rectangles from the most recently solved scene without re-solving.
+/// Returns hole rectangles from the most recently solved scene without
+/// re-solving.
 pub fn inst_holes_retained(i: &Instance) -> Vec<HoleRect> {
-    if !i.ok {
-        return Vec::new();
-    }
-    let mut holes = Vec::new();
-    for hole in 0..i.doc.hole_name.len() {
-        let node = i.doc.hole_node[hole];
-        for (scene_index, scene_node) in i.sc.node.iter().copied().enumerate() {
-            if scene_node == node {
-                holes.push(HoleRect {
-                    hole: u32::try_from(hole).expect("too many document holes"),
-                    x: i.sc.x[scene_index],
-                    y: i.sc.y[scene_index],
-                    w: i.sc.w[scene_index],
-                    h: i.sc.h[scene_index],
-                    clip: i.sc.flags[scene_index] & (slir::F_CLIP | slir::F_SCROLL) != 0,
-                });
-            }
-        }
-    }
-    holes
+	if !i.ok {
+		return Vec::new();
+	}
+	let mut holes = Vec::new();
+	for hole in 0..i.doc.hole_name.len() {
+		let node = i.doc.hole_node[hole];
+		for (scene_index, scene_node) in i.sc.node.iter().copied().enumerate() {
+			if scene_node == node {
+				holes.push(HoleRect {
+					hole: u32::try_from(hole).expect("too many document holes"),
+					x:    i.sc.x[scene_index],
+					y:    i.sc.y[scene_index],
+					w:    i.sc.w[scene_index],
+					h:    i.sc.h[scene_index],
+					clip: i.sc.flags[scene_index] & (slir::F_CLIP | slir::F_SCROLL) != 0,
+				});
+			}
+		}
+	}
+	holes
 }
 
 /// Returns the node path from root to target for a point in the retained scene.
 ///
 /// Hit testing observes reverse paint order, rotation, and clipping.
 pub fn inst_hit(i: &Instance, x: f64, y: f64) -> Vec<u32> {
-    let mut path = Vec::new();
-    hit::hit_test(&i.sc, x, y, &mut path);
-    path.into_iter()
-        .map(|index| {
-            let index = usize::try_from(index).expect("negative scene path index");
-            i.sc.node[index]
-        })
-        .collect()
+	let mut path = Vec::new();
+	hit::hit_test(&i.sc, x, y, &mut path);
+	path
+		.into_iter()
+		.map(|index| {
+			let index = usize::try_from(index).expect("negative scene path index");
+			i.sc.node[index]
+		})
+		.collect()
 }
 
 /// Dispatches an event against the retained scene.
@@ -1672,26 +1667,23 @@ pub fn inst_hit(i: &Instance, x: f64, y: f64) -> Vec<u32> {
 /// [`Effects::repaint`] also marks the instance dirty so the next frame call
 /// re-solves.
 pub fn inst_dispatch(i: &mut Instance, ev: &Event) -> Effects {
-    if !i.ok {
-        return dispatch::effects_new();
-    }
-    let before_focus = i.ds.fs.focus;
-    let effects = dispatch::dispatch(&i.doc, &mut i.st, &i.lay, &i.sc, &mut i.ds, ev);
-    let traversal_key = ev.etype == dispatch::E_KEY_DOWN
-        && matches!(
-            ev.key.as_str(),
-            "Tab" | "ArrowRight" | "ArrowDown" | "ArrowLeft" | "ArrowUp"
-        );
-    if traversal_key && i.ds.fs.focus != before_focus && i.ds.fs.visible {
-        let key = scene::key_of(&i.doc, &i.st.lists, i.ds.fs.focus);
-        if !key.is_empty() {
-            let _ = inst_reveal(i, &key, 0.0);
-        }
-    }
-    if effects.repaint {
-        i.dirty = true;
-    }
-    effects
+	if !i.ok {
+		return dispatch::effects_new();
+	}
+	let before_focus = i.ds.fs.focus;
+	let effects = dispatch::dispatch(&i.doc, &mut i.st, &i.lay, &i.sc, &mut i.ds, ev);
+	let traversal_key = ev.etype == dispatch::E_KEY_DOWN
+		&& matches!(ev.key.as_str(), "Tab" | "ArrowRight" | "ArrowDown" | "ArrowLeft" | "ArrowUp");
+	if traversal_key && i.ds.fs.focus != before_focus && i.ds.fs.visible {
+		let key = scene::key_of(&i.doc, &i.st.lists, i.ds.fs.focus);
+		if !key.is_empty() {
+			let _ = inst_reveal(i, &key, 0.0);
+		}
+	}
+	if effects.repaint {
+		i.dirty = true;
+	}
+	effects
 }
 
 /// Drains signals queued by frame-settle gesture cancellation.
@@ -1699,7 +1691,7 @@ pub fn inst_dispatch(i: &mut Instance, ev: &Event) -> Effects {
 /// Live hosts call this immediately after each settled frame. Dispatch-time
 /// signals remain in the [`Effects`] returned by [`inst_dispatch`].
 pub fn inst_take_signals(i: &mut Instance) -> Effects {
-    dispatch::take_pending_signals(&mut i.ds)
+	dispatch::take_pending_signals(&mut i.ds)
 }
 
 /// Returns glyph positions for a text frame operation.
@@ -1708,35 +1700,35 @@ pub fn inst_take_signals(i: &mut Instance) -> Effects {
 /// as the solver. `op` indexes `fr.ops` and must name a text operation; any
 /// other index or operation yields an empty vector.
 pub fn text_glyphs(i: &Instance, fr: &Frame, op: i32) -> Vec<GlyphPos> {
-    let Ok(op) = usize::try_from(op) else {
-        return Vec::new();
-    };
-    let Some(FrameOp::Text(text)) = fr.ops.get(op) else {
-        return Vec::new();
-    };
-    if text.font < 0 {
-        return Vec::new();
-    }
+	let Ok(op) = usize::try_from(op) else {
+		return Vec::new();
+	};
+	let Some(FrameOp::Text(text)) = fr.ops.get(op) else {
+		return Vec::new();
+	};
+	if text.font < 0 {
+		return Vec::new();
+	}
 
-    let string_index = usize::try_from(text.str_ref).expect("negative frame string index");
-    let mut x = text.x;
-    fr.strings[string_index]
-        .chars()
-        .map(|character| {
-            let codepoint = u32::from(character);
-            let glyph = GlyphPos {
-                font: text.font,
-                gid: if graphemes::is_glyph_modifier(codepoint) {
-                    0
-                } else {
-                    slir::font_gid(&i.doc, text.font, codepoint)
-                },
-                x,
-                y: text.y_baseline,
-                size: text.size,
-            };
-            x += textm::char_w(&i.doc, text.font, text.size, text.tracking, codepoint);
-            glyph
-        })
-        .collect()
+	let string_index = usize::try_from(text.str_ref).expect("negative frame string index");
+	let mut x = text.x;
+	fr.strings[string_index]
+		.chars()
+		.map(|character| {
+			let codepoint = u32::from(character);
+			let glyph = GlyphPos {
+				font: text.font,
+				gid: if graphemes::is_glyph_modifier(codepoint) {
+					0
+				} else {
+					slir::font_gid(&i.doc, text.font, codepoint)
+				},
+				x,
+				y: text.y_baseline,
+				size: text.size,
+			};
+			x += textm::char_w(&i.doc, text.font, text.size, text.tracking, codepoint);
+			glyph
+		})
+		.collect()
 }
