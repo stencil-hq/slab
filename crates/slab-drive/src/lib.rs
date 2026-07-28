@@ -1856,50 +1856,50 @@ fn scene_entry(doc: &LoadedDoc, index: usize) -> Value {
         "content_main": retained.content_main[index],
         "scroll_cross": retained.scroll_cross[index],
         "content_cross": retained.content_cross[index],
-        "role": scene_string(retained.role[index]),
-        "label": scene_string(retained.label[index]),
-        "desc": scene_string(retained.desc[index]),
-        "checked": match retained.checked[index] {
+        "role": scene_string(retained.sem[index].role),
+        "label": scene_string(retained.sem[index].label),
+        "desc": scene_string(retained.sem[index].desc),
+        "checked": match retained.sem[index].checked {
             1 => Value::Bool(false),
             2 => Value::Bool(true),
             3 => Value::String("mixed".into()),
             _ => Value::Null,
         },
-        "expanded": match retained.expanded[index] {
+        "expanded": match retained.sem[index].expanded {
             1 => Value::Bool(false),
             2 => Value::Bool(true),
             _ => Value::Null,
         },
-        "selected": match retained.selected[index] {
+        "selected": match retained.sem[index].selected {
             1 => Value::Bool(false),
             2 => Value::Bool(true),
             _ => Value::Null,
         },
-        "active_descendant": scene_string(retained.active_descendant[index]),
-        "controls": scene_string(retained.controls[index]),
-        "value_now": retained.value_now[index],
-        "value_min": retained.value_min[index],
-        "value_max": retained.value_max[index],
-        "value_text": scene_string(retained.value_text[index]),
-        "modal": match retained.modal[index] {
+        "active_descendant": scene_string(retained.sem[index].active_descendant),
+        "controls": scene_string(retained.sem[index].controls),
+        "value_now": retained.sem[index].value_now,
+        "value_min": retained.sem[index].value_min,
+        "value_max": retained.sem[index].value_max,
+        "value_text": scene_string(retained.sem[index].value_text),
+        "modal": match retained.sem[index].modal {
             1 => Value::Bool(false),
             2 => Value::Bool(true),
             _ => Value::Null,
         },
-        "live": match retained.live[index] {
+        "live": match retained.sem[index].live {
             1 => Value::String("off".into()),
             2 => Value::String("polite".into()),
             3 => Value::String("assertive".into()),
             _ => Value::Null,
         },
-        "live_atomic": match retained.live_atomic[index] {
+        "live_atomic": match retained.sem[index].live_atomic {
             1 => Value::Bool(false),
             2 => Value::Bool(true),
             _ => Value::Null,
         },
-        "level": retained.level[index],
-        "pos_in_set": retained.pos_in_set[index],
-        "set_size": retained.set_size[index],
+        "level": retained.sem[index].level,
+        "pos_in_set": retained.sem[index].pos_in_set,
+        "set_size": retained.sem[index].set_size,
         "disabled": retained.disabled[index],
         "focused": retained.focused[index],
         "is_row": retained.is_row[index],
