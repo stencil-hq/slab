@@ -72,8 +72,9 @@ pub struct State {
 	pub(crate) patches_by_node: Vec<Vec<usize>>,
 	/// Static authored keys mapped to their node; populated by [`init`].
 	key_index:                  HashMap<String, u32>,
-	/// First node per authored key's final `/` segment (with `#` stripped),
-	/// enabling bare-key lookup without a full scan.
+	/// Unique authored IDs mapped to their node; [`NONE`] marks ambiguity.
+	key_id_index:               HashMap<String, u32>,
+	/// Unique final key segments mapped to their node; [`NONE`] marks ambiguity.
 	key_leaf_index:             HashMap<String, u32>,
 	/// Set by [`init`]; un-initialized states resolve keys by linear scan.
 	key_index_ready:            bool,
@@ -213,6 +214,7 @@ pub fn state_new() -> State {
 		prune_pending:       false,
 		patches_by_node:     Vec::new(),
 		key_index:           HashMap::default(),
+		key_id_index:        HashMap::default(),
 		key_leaf_index:      HashMap::default(),
 		key_index_ready:     false,
 		win_each:            Vec::new(),
@@ -1119,6 +1121,16 @@ pub fn get(_d: &slir::Doc, s: &State, list: u32, item_index: i32, field: u32) ->
 	}
 }
 
+fn insert_unique_key(index: &mut HashMap<String, u32>, key: &str, node: u32) {
+	if let Some(existing) = index.get_mut(key) {
+		if *existing != node {
+			*existing = NONE;
+		}
+	} else {
+		index.insert(key.to_owned(), node);
+	}
+}
+
 /// Resets list state from document schemas and recursive default items.
 pub fn init(d: &slir::Doc, s: &mut State) {
 	*s = state_new();
@@ -1126,18 +1138,24 @@ pub fn init(d: &slir::Doc, s: &mut State) {
 	for (patch, &node) in d.patch_node.iter().enumerate() {
 		s.patches_by_node[usize::try_from(node).expect("node index exceeds usize")].push(patch);
 	}
-	// First entry in node order wins, mirroring the linear key scans.
+	// Exact full keys preserve the historical first-node behavior. Shorthand
+	// indexes retain only unique matches so the resolver can bypass synthetic
+	// identity scans without changing ambiguity semantics.
 	for (node, &key_ref) in d.node_key.iter().enumerate() {
 		let key = &d.strs[usize::try_from(key_ref).expect("string reference does not fit usize")];
-		if key.is_empty() {
-			continue;
-		}
+		let node_id = d.node_id.get(node).copied().unwrap_or(0);
+		let id = crate::slir::str_at(d, node_id);
 		let node = u32::try_from(node).expect("document has more than u32::MAX nodes");
-		s.key_index.entry(key.clone()).or_insert(node);
-		let leaf = key.rsplit('/').next().unwrap_or(key);
-		let leaf = leaf.strip_prefix('#').unwrap_or(leaf);
-		if !leaf.is_empty() {
-			s.key_leaf_index.entry(leaf.to_owned()).or_insert(node);
+		if !key.is_empty() {
+			s.key_index.entry(key.clone()).or_insert(node);
+			let leaf = key.rsplit('/').next().unwrap_or(key);
+			let leaf = leaf.strip_prefix('#').unwrap_or(leaf);
+			if !leaf.is_empty() {
+				insert_unique_key(&mut s.key_leaf_index, leaf, node);
+			}
+		}
+		if !id.is_empty() {
+			insert_unique_key(&mut s.key_id_index, id, node);
 		}
 	}
 	s.key_index_ready = true;
@@ -1230,6 +1248,20 @@ pub(crate) const fn key_index_ready(s: &State) -> bool {
 /// Returns the indexed node for a full authored key.
 pub(crate) fn key_index_get(s: &State, key: &str) -> Option<u32> {
 	s.key_index.get(key).copied()
+}
+
+/// Returns the uniquely indexed node for an authored ID.
+///
+/// [`NONE`] denotes an ambiguous ID.
+pub(crate) fn key_id_get(s: &State, id: &str) -> Option<u32> {
+	s.key_id_index.get(id).copied()
+}
+
+/// Returns the uniquely indexed node for a final authored key segment.
+///
+/// [`NONE`] denotes an ambiguous segment.
+pub(crate) fn key_leaf_get(s: &State, leaf: &str) -> Option<u32> {
+	s.key_leaf_index.get(leaf).copied()
 }
 
 fn synthetic_location(s: &State, d: &slir::Doc, node: u32) -> Option<(u32, i32)> {

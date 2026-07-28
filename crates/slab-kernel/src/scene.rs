@@ -279,6 +279,19 @@ pub fn resolve_key(d: &Doc, lists: &State, key: &str) -> KeyResolution {
 		{
 			return KeyResolution::Found(node);
 		}
+		if !key.contains('/') {
+			let wanted = key.strip_prefix('#').unwrap_or(key);
+			if let Some(node) = list::key_id_get(lists, wanted) {
+				if node != NONE && !detached_each_template(d, node) {
+					return KeyResolution::Found(node);
+				}
+			} else if let Some(node) = list::key_leaf_get(lists, wanted)
+				&& node != NONE
+				&& !detached_each_template(d, node)
+			{
+				return KeyResolution::Found(node);
+			}
+		}
 	} else {
 		for (node, &key_ref) in d.node_key.iter().enumerate() {
 			let node = u32::try_from(node).expect("document has more than u32::MAX nodes");
