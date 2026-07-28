@@ -1,9 +1,9 @@
-import { deepEqual, equal, match, ok } from 'node:assert/strict';
+import { deepEqual, equal, match, ok, rejects } from 'node:assert/strict';
 import { createServer, type Server, type Socket } from 'node:net';
 import { PassThrough } from 'node:stream';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { run } from '../src/cli.js';
+import { discoverSlab, run } from '../src/cli.js';
 import { DriveClient, DriveRemoteError } from '../src/index.ts';
 
 const DRIVE_FIXTURE = fileURLToPath(new URL('./drive-fixture.mjs', import.meta.url));
@@ -81,6 +81,24 @@ test('matches chunked TCP responses and exposes remote errors', async () => {
          socket.end(`${JSON.stringify({ id, result: { ok: true } })}\n`);
          return;
       }
+      if (method === 'field.set') {
+         socket.write(`${JSON.stringify({ id, result: { ok: true, changed: true } })}\n`);
+         return;
+      }
+      if (method === 'field.get') {
+         socket.write(`${JSON.stringify({ id, result: { text: 'hello' } })}\n`);
+         return;
+      }
+      if (method === 'param.get') {
+         socket.write(`${JSON.stringify({ id, result: { value: ['one', 'two'] } })}\n`);
+         return;
+      }
+      if (method === 'focus.get') {
+         socket.write(
+            `${JSON.stringify({ id, result: { focus: 4, key: 'search', visible: true } })}\n`,
+         );
+         return;
+      }
       socket.write(`${JSON.stringify({ id, result: { t: 0 } })}\n`);
    });
    const address = server.address();
@@ -104,6 +122,11 @@ test('matches chunked TCP responses and exposes remote errors', async () => {
             match(error.message, /state is locked/);
          }
       }
+
+      deepEqual(await client.setFieldText('search', 'hello'), { ok: true, changed: true });
+      equal(await client.fieldText('search'), 'hello');
+      deepEqual(await client.param('items'), ['one', 'two']);
+      deepEqual(await client.focus(), { focus: 4, key: 'search', visible: true });
 
       deepEqual(await client.quit(), { ok: true });
    } finally {
@@ -167,4 +190,36 @@ test('connects CLI invocations to one persistent drive session', async () => {
    } finally {
       await stopServer(server);
    }
+});
+
+test('discovers verified native slab candidates in documented order', async () => {
+   const attempted: string[] = [];
+   const result = await discoverSlab(
+      '/explicit/slab',
+      { SLAB_BIN: '/env/slab', PATH: '' },
+      '/home/tester',
+      async (candidate) => {
+         attempted.push(candidate);
+         return candidate === '/home/tester/.cargo/bin/slab';
+      },
+   );
+   equal(result, '/home/tester/.cargo/bin/slab');
+   deepEqual(attempted, ['/explicit/slab', '/env/slab', '/home/tester/.cargo/bin/slab']);
+});
+
+test('reports every attempted slab path when none supports drive', async () => {
+   const attempted: string[] = [];
+   await rejects(
+      discoverSlab(
+         '/explicit/slab',
+         { SLAB_BIN: '/env/slab', PATH: '' },
+         '/home/tester',
+         async (candidate) => {
+            attempted.push(candidate);
+            return false;
+         },
+      ),
+      /attempted paths:\n {2}- \/explicit\/slab\n {2}- \/env\/slab\n {2}- \/home\/tester\/\.cargo\/bin\/slab/,
+   );
+   deepEqual(attempted, ['/explicit/slab', '/env/slab', '/home/tester/.cargo/bin/slab']);
 });

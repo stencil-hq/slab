@@ -1,3 +1,7 @@
+import { spawn } from 'node:child_process';
+import { accessSync, constants } from 'node:fs';
+import { homedir } from 'node:os';
+import { delimiter, join } from 'node:path';
 import type { Writable } from 'node:stream';
 import { DriveClient, DriveRemoteError } from './index.js';
 
@@ -9,7 +13,8 @@ usage:
 Run one Slab Drive Protocol request and print its result JSON.
 
 options:
-  --slab PATH   native Slab executable for standalone mode (default: slab)
+  --slab PATH   preferred native Slab executable for standalone mode
+  SLAB_BIN      preferred executable when --slab is absent
   --port PORT   connect to an existing slab drive --port session
   --host HOST   SDP host with --port (default: 127.0.0.1)
   --pretty      indent result JSON
@@ -25,7 +30,7 @@ type Command =
    | { kind: 'help' }
    | {
         kind: 'launch';
-        executable: string;
+        executable?: string;
         file: string;
         method: string;
         rawParams: string | undefined;
@@ -107,12 +112,81 @@ function parseCommand(args: readonly string[]): Command {
    }
    return {
       kind: 'launch',
-      executable: executable ?? 'slab',
+      executable,
       file: positional[0],
       method: positional[1],
       rawParams: positional[2],
       pretty,
    };
+}
+
+type Probe = (executable: string) => Promise<boolean>;
+
+function pathSlabs(environment: NodeJS.ProcessEnv): string[] {
+   const candidates: string[] = [];
+   for (const directory of (environment.PATH ?? '').split(delimiter)) {
+      if (directory.length === 0) continue;
+      const candidate = join(directory, process.platform === 'win32' ? 'slab.exe' : 'slab');
+      try {
+         accessSync(candidate, constants.X_OK);
+         candidates.push(candidate);
+      } catch {
+         // Continue to the next PATH entry.
+      }
+   }
+   return candidates;
+}
+
+async function supportsDrive(executable: string): Promise<boolean> {
+   return await new Promise<boolean>((resolve) => {
+      const child = spawn(executable, ['drive', '--help'], {
+         stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      let output = '';
+      const timer = setTimeout(() => child.kill(), 3_000);
+      child.stdout?.on('data', (chunk: Buffer) => {
+         output += chunk.toString('utf8');
+      });
+      child.stderr?.on('data', (chunk: Buffer) => {
+         output += chunk.toString('utf8');
+      });
+      child.once('error', () => {
+         clearTimeout(timer);
+         resolve(false);
+      });
+      child.once('close', (code) => {
+         clearTimeout(timer);
+         resolve(
+            code === 0 &&
+               /usage:\s+slab drive\b/i.test(output) &&
+               !/requires the native slab-cli/i.test(output),
+         );
+      });
+   });
+}
+
+/** Finds a native Slab executable and verifies its `drive` command. */
+export async function discoverSlab(
+   explicit: string | undefined,
+   environment: NodeJS.ProcessEnv = process.env,
+   home: string = homedir(),
+   probe: Probe = supportsDrive,
+): Promise<string> {
+   const candidates = [
+      explicit,
+      environment.SLAB_BIN,
+      ...pathSlabs(environment),
+      join(home, '.cargo', 'bin', process.platform === 'win32' ? 'slab.exe' : 'slab'),
+   ].filter((candidate): candidate is string => candidate !== undefined && candidate.length > 0);
+   const attempted: string[] = [];
+   for (const candidate of candidates) {
+      if (attempted.includes(candidate)) continue;
+      attempted.push(candidate);
+      if (await probe(candidate)) return candidate;
+   }
+   const paths =
+      attempted.length > 0 ? attempted.map((path) => `  - ${path}`).join('\n') : '  - none';
+   throw new Error(`no native slab executable supports drive; attempted paths:\n${paths}`);
 }
 
 function parseParams(raw: string | undefined): object {
@@ -164,8 +238,9 @@ export async function run(
       if (command.kind === 'connect') {
          client = await DriveClient.connect({ host: command.host, port: command.port });
       } else {
+         const executable = await discoverSlab(command.executable);
          client = DriveClient.launch({
-            executable: command.executable,
+            executable,
             args: ['drive', command.file],
          });
       }

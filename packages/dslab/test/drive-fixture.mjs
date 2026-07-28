@@ -1,4 +1,9 @@
 #!/usr/bin/env node
+if (process.argv[2] === 'drive' && process.argv[3] === '--help') {
+   process.stdout.write('usage: slab drive [FILE]\n');
+   process.exit(0);
+}
+
 let buffered = '';
 
 process.stdin.setEncoding('utf8');

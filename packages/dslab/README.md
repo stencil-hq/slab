@@ -4,8 +4,11 @@ Typed client and CLI for the Slab Drive Protocol (SDP) — interrogate and drive
 a live slab kernel session from tests, agents, or scripts. SDP is
 newline-delimited JSON over TCP or a spawned `slab drive` process.
 
-Requires Node ≥ 22 (or any recent Bun). The `slab` CLI comes from
-[`@stencil-hq/slab`](https://www.npmjs.com/package/@stencil-hq/slab).
+Requires Node ≥ 22 (or any recent Bun). Drive requires the native `slab-cli`:
+
+```sh
+cargo install --git https://github.com/stencil-hq/slab slab-cli
+```
 
 ## CLI
 
@@ -25,6 +28,9 @@ dslab --port PORT [--host HOST] [--pretty] METHOD [PARAMS]
 ```
 
 One result JSON value is printed per invocation; `--pretty` indents it.
+Standalone discovery checks `--slab`, then `SLAB_BIN`, then an executable
+`slab` on `PATH`, then `~/.cargo/bin/slab`. Each candidate must support
+`slab drive --help`; failures list every attempted path.
 
 ## Library
 
@@ -40,7 +46,11 @@ const owned = DriveClient.launch({
    args: ['drive', 'doc.slab'],
 });
 
-const tree = await client.call('scene.tree', {});
+const tree = await client.call('scene.tree');
+await client.setFieldText('search', 'Slab');
+const text = await client.fieldText('search');
+const query = await client.param('query');
+const focus = await client.focus();
 await client.call('input.click', { key: 'save' });
 await client.close();
 ```

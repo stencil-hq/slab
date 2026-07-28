@@ -265,9 +265,18 @@ interface DriveApi {
    'clock.get': Endpoint<EmptyParams, Clock>;
    'clock.advance': Endpoint<{ ms: number }, Clock>;
    'param.set': Endpoint<ParameterInput, Ok>;
+   'param.get': Endpoint<{ name: string }, DriveObject & { value: DriveValue }>;
+   'field.set': Endpoint<
+      { key: string; text: string },
+      DriveObject & { ok: true; changed: boolean }
+   >;
+   'field.get': Endpoint<{ key: string }, DriveObject & { text: string }>;
    'state.set': Endpoint<{ name: string; on: boolean }, Ok>;
    'state.node': Endpoint<{ key: string; name: string; on: boolean }, Ok>;
-   'focus.get': Endpoint<EmptyParams, DriveObject & { key: string; visible: boolean }>;
+   'focus.get': Endpoint<
+      EmptyParams,
+      DriveObject & { focus: number; key: string; visible: boolean }
+   >;
    'focus.set': Endpoint<{ key: string; visible?: boolean }, Ok>;
    'img.register': Endpoint<ImageInput, DriveObject & { img: number }>;
    'img.unregister': Endpoint<{ name: string }, Ok>;
@@ -590,6 +599,26 @@ export class DriveClient {
          this.#fail(new DriveClosedError(errorMessage(error)));
       }
       return response.promise;
+   }
+
+   /** Replaces the retained edit text for one field key. */
+   setFieldText(key: string, text: string): Promise<DriveResult<'field.set'>> {
+      return this.call('field.set', { key, text });
+   }
+
+   /** Reads the retained edit text for one field key. */
+   async fieldText(key: string): Promise<string> {
+      return (await this.call('field.get', { key })).text;
+   }
+
+   /** Reads one live scalar or list parameter value. */
+   async param(name: string): Promise<DriveValue> {
+      return (await this.call('param.get', { name })).value;
+   }
+
+   /** Reads the current kernel focus index, key, and visibility. */
+   focus(): Promise<DriveResult<'focus.get'>> {
+      return this.call('focus.get');
    }
 
    /** Sends `protocol.quit`, then closes the local streams and owned process. */

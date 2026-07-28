@@ -14,6 +14,11 @@ bunx @stencil-hq/slab render doc.slab -o out.png
 No Rust toolchain, no bun required at run time — the wasm module is bundled
 inside. Node ≥ 20 (or any recent bun).
 
+Fresh releases: bun's minimum-release-age gate blocks packages younger than
+24h (`… blocked by minimum-release-age: 86400 seconds`). Add `[install]
+minimumReleaseAge = 0` to a project `bunfig.toml`. Note `bunx` ignores a cwd
+bunfig; use `bun add @stencil-hq/slab` and run `./node_modules/.bin/slab`.
+
 ## Commands
 
 ```
@@ -23,10 +28,15 @@ slab dump FILE.slir                          print the canonical slir-dump text
 slab render FILE -o OUT.{svg,png,apng,txt}   static export
 slab gen wc FILE -o DIR [--tag NAME]         emit a web component and its runtime/WASM sidecars
 slab gen rust FILE -o OUT.rs                 emit a typed Rust module
+slab drive                                    requires the native slab-cli
 ```
 
 `render` infers the output kind from the extension; `--client tui` with no
 `-o` writes cells to stdout. See `slab render --help` for the full flag set.
+
+Interactive/drive commands (`slab drive`, the SDP server used by
+`@stencil-hq/dslab`) live in the native CLI only: install with
+`cargo install --git https://github.com/stencil-hq/slab slab-cli`.
 
 ## Use in a page
 
