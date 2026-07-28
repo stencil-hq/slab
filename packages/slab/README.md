@@ -25,7 +25,7 @@ bunfig; use `bun add @stencil-hq/slab` and run `./node_modules/.bin/slab`.
 slab check FILE                              print diagnostics (exit 1 on errors)
 slab build FILE -o OUT.slir                  compile to SLIR
 slab dump FILE.slir                          print the canonical slir-dump text
-slab render FILE -o OUT.{svg,png,apng,txt}   static export
+slab render FILE -o OUT.{svg,png,apng,txt} [--theme NAME]   static export
 slab gen wc FILE -o DIR [--tag NAME]         emit a web component and its runtime/WASM sidecars
 slab gen react FILE -o DIR [--tag NAME]      emit a web component plus a typed React wrapper
 slab dev FILE [-o DIR] [--tag NAME] [--separate-ir] [--host HOST] [--port N]
@@ -36,6 +36,9 @@ slab drive                                    requires the native slab-cli
 
 `render` infers the output kind from the extension; `--client tui` with no
 `-o` writes cells to stdout. See `slab render --help` for the full flag set.
+`slab check` prints both the embedded compiler version and this package
+version before diagnostics, making a stale global install or lockfile visible.
+`--state` previews document-global states only; it does not target one node.
 
 Interactive/drive commands (`slab drive`, the SDP server used by
 `@stencil-hq/dslab`) live in the native CLI only: install with

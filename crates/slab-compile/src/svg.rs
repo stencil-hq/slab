@@ -951,12 +951,27 @@ impl<'a> Emitter<'a> {
                     }
                 }
                 FrameOp::Text(t) => {
-                    let text = self
+                    let source_text = self
                         .frame
                         .strings
                         .get(t.str_ref as usize)
                         .map(String::as_str)
                         .unwrap_or("");
+                    let text: String = source_text
+                        .chars()
+                        .map(|character| {
+                            let covered = t.font >= 0
+                                && self.s.fonts.get(t.font as usize).is_some_and(|font| {
+                                    font.cmap
+                                        .binary_search_by_key(
+                                            &u32::from(character),
+                                            |&(codepoint, _)| codepoint,
+                                        )
+                                        .is_ok()
+                                });
+                            if covered { character } else { '\u{00A0}' }
+                        })
+                        .collect();
                     let fam = match self.s.fonts.get(t.font.max(0) as usize) {
                         Some(f) if t.font >= 0 => {
                             format!("{}, {FALLBACK}", self.s.str_at(f.family))
@@ -1001,7 +1016,7 @@ impl<'a> Emitter<'a> {
                         ));
                     }
                     if let Some(gr) = conic {
-                        let el = format!("<text {}>{}</text>", attrs.join(" "), esc(text));
+                        let el = format!("<text {}>{}</text>", attrs.join(" "), esc(&text));
                         let s = t.size;
                         let (mw, mh) = (t.gw + 2.0 * s, t.gh + 2.0 * s);
                         let mid = self.mask_def(defs, "tm", t.gx - s, t.gy - s, mw, mh, &el);
@@ -1029,7 +1044,7 @@ impl<'a> Emitter<'a> {
                             "{}<text {}>{}</text>",
                             "  ".repeat(depth),
                             attrs.join(" "),
-                            esc(text)
+                            esc(&text)
                         ));
                     }
                 }

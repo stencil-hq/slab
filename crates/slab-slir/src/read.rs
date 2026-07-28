@@ -3,7 +3,7 @@
 
 use crate::{
     AnimE, Aval, BindE, CondE, FontE, GradE, IconE, ImgE, ListE, ListFieldE, ListItemE,
-    ListItemValueE, Nodes, ParamE, PatchE, PathE, ShadowE, Slir, TransE, TupDynE, pb,
+    ListItemValueE, Nodes, ParamE, PatchE, PathE, ShadowE, Slir, TokenE, TransE, TupDynE, pb,
 };
 use prost::Message;
 use std::ops::Range;
@@ -695,6 +695,81 @@ fn from_pb(mut doc: pb::Doc) -> Result<Slir, String> {
     .collect();
 
     slir.themes = std::mem::take(&mut doc.theme_name);
+    let token_name = std::mem::take(&mut doc.token_name);
+    let token_base = std::mem::take(&mut doc.token_base);
+    let token_base_repr = std::mem::take(&mut doc.token_base_repr);
+    let token_theme_off = nonnegative("token_theme_off", std::mem::take(&mut doc.token_theme_off))?;
+    let token_theme_len = nonnegative("token_theme_len", std::mem::take(&mut doc.token_theme_len))?;
+    let token_theme_name = std::mem::take(&mut doc.token_theme_name);
+    let token_theme_val = std::mem::take(&mut doc.token_theme_val);
+    let token_theme_repr = std::mem::take(&mut doc.token_theme_repr);
+    let token_count = same_len(
+        "token",
+        &[
+            token_name.len(),
+            token_base.len(),
+            token_base_repr.len(),
+            token_theme_off.len(),
+            token_theme_len.len(),
+        ],
+    )?;
+    same_len(
+        "token theme",
+        &[
+            token_theme_name.len(),
+            token_theme_val.len(),
+            token_theme_repr.len(),
+        ],
+    )?;
+    let mut tokens = Vec::with_capacity(token_count);
+    for index in 0..token_count {
+        let start = usize::try_from(token_theme_off[index])
+            .map_err(|_| "token theme offset exceeds usize")?;
+        let len = usize::try_from(token_theme_len[index])
+            .map_err(|_| "token theme length exceeds usize")?;
+        let end = start
+            .checked_add(len)
+            .ok_or("token theme range overflows usize")?;
+        if end > token_theme_name.len() {
+            return Err(format!("token theme range {start}..{end} is out of bounds"));
+        }
+        for (field, value, bound) in [
+            ("token_name", token_name[index], slir.strs.len()),
+            ("token_base", token_base[index], slir.avals.len()),
+            ("token_base_repr", token_base_repr[index], slir.strs.len()),
+        ] {
+            if usize::try_from(value).map_or(true, |value| value >= bound) {
+                return Err(format!("{field}: index {value} is out of range"));
+            }
+        }
+        for theme in start..end {
+            for (field, value, bound) in [
+                ("token_theme_name", token_theme_name[theme], slir.strs.len()),
+                ("token_theme_val", token_theme_val[theme], slir.avals.len()),
+                ("token_theme_repr", token_theme_repr[theme], slir.strs.len()),
+            ] {
+                if usize::try_from(value).map_or(true, |value| value >= bound) {
+                    return Err(format!("{field}: index {value} is out of range"));
+                }
+            }
+        }
+        let themes = (start..end)
+            .map(|theme| {
+                (
+                    token_theme_name[theme],
+                    token_theme_val[theme],
+                    token_theme_repr[theme],
+                )
+            })
+            .collect();
+        tokens.push(TokenE {
+            name: token_name[index],
+            base: token_base[index],
+            base_repr: token_base_repr[index],
+            themes,
+        });
+    }
+    slir.tokens = tokens;
     slir.holes = pairs(
         "hole",
         std::mem::take(&mut doc.hole_name),
@@ -800,8 +875,8 @@ mod tests {
     use super::{from_pb, read};
     use crate::{
         AnimE, Aval, BindE, CondE, FontE, GradE, ImgE, ListE, ListFieldE, ListItemE,
-        ListItemValueE, Nodes, ParamE, PatchE, PathE, ShadowE, Slir, TransE, TupDynE, aval, pb,
-        write,
+        ListItemValueE, Nodes, ParamE, PatchE, PathE, ShadowE, Slir, TokenE, TransE, TupDynE, aval,
+        pb, write,
     };
 
     fn list_field_doc(ty: u32, sub: Option<u32>) -> pb::Doc {
@@ -988,6 +1063,12 @@ mod tests {
             }],
             list_item_values: vec![ListItemValueE { field: 0, val: 1 }],
             themes: vec![1],
+            tokens: vec![TokenE {
+                name: 1,
+                base: 0,
+                base_repr: 1,
+                themes: vec![(1, 1, 1)],
+            }],
             holes: vec![(1, 0)],
             signals: vec![(1, 0, 2)],
             images: vec![ImgE {

@@ -5,13 +5,14 @@
 use crate::Options;
 use crate::color::{Paint, rgba_word};
 use crate::expand::{
-    AttrE, CNode, CPatch, Expanded, ListInfo, ListItemInfo, SizeSpec, TVal, TupMember,
+    AttrE, CNode, CPatch, Expanded, ListInfo, ListItemInfo, RVal, SizeSpec, TVal, TokenInfo,
+    TupMember,
 };
 use crate::fonts;
 use slab_fonts::{self as font_assets};
 use slab_slir::{
     AnimE, Aval, BindE, CondE, GradE, IconE, ImgE, ListE, ListFieldE, ListItemE, ListItemValueE,
-    NONE, ParamE, PatchE, PathE, ShadowE, Slir, TransE, TupDynE, attrs as at, aval as av,
+    NONE, ParamE, PatchE, PathE, ShadowE, Slir, TokenE, TransE, TupDynE, attrs as at, aval as av,
     flags as fl, kind as nk,
 };
 use slab_syntax::diag::Diagnostics;
@@ -19,6 +20,34 @@ use std::collections::{BTreeSet, HashMap};
 
 /// Shadow-run dedup key: per shadow `(x, y, blur, rgba, inset)` bit patterns.
 type ShadowKey = Vec<(u64, u64, u64, u32, u8)>;
+
+fn token_repr(value: &RVal) -> Option<String> {
+    match value {
+        RVal::Token { base, .. } => token_repr(base),
+        RVal::Num(value) => Some(crate::expand::fmt_g(*value)),
+        RVal::Pct(value) => Some(format!("{}%", crate::expand::fmt_g(*value))),
+        RVal::Str(value) | RVal::Color(value) | RVal::Kw(value) => Some(value.clone()),
+        RVal::Fill(weight) if *weight == 1.0 => Some("fill".to_string()),
+        RVal::Fill(weight) => Some(format!("fill:{}", crate::expand::fmt_g(*weight))),
+        RVal::Tup(items) => {
+            let parts: Option<Vec<_>> = items.iter().map(token_repr).collect();
+            parts.map(|parts| parts.join(","))
+        }
+        _ => None,
+    }
+}
+
+fn token_tval(value: &RVal) -> Option<TVal> {
+    match value {
+        RVal::Token { base, .. } => token_tval(base),
+        RVal::Num(value) => Some(TVal::Num(*value)),
+        RVal::Pct(value) => Some(TVal::Pct(*value)),
+        RVal::Str(value) | RVal::Kw(value) => Some(TVal::Str(value.clone())),
+        RVal::Color(value) => crate::color::parse_paint(value).map(TVal::Paint),
+        RVal::Fill(_) | RVal::Tup(_) => token_repr(value).map(TVal::Str),
+        _ => None,
+    }
+}
 /// Collects authored family names and snapped weights from an attribute run.
 fn collect_font_attrs(
     attrs: &[AttrE],
@@ -50,27 +79,64 @@ fn collect_node_fonts(node: &CNode, families: &mut BTreeSet<String>, weights: &m
         collect_node_fonts(child, families, weights);
     }
 }
-fn family_from_attrs<'a>(attrs: &'a [AttrE], inherited: Option<&'a str>) -> Option<&'a str> {
+fn resolve_text_value(value: &TVal, ex: &Expanded, schema: Option<&ListInfo>) -> Option<String> {
+    match value {
+        TVal::Token { base, .. } => resolve_text_value(base, ex, schema),
+        TVal::Str(text) => Some(text.clone()),
+        TVal::Param(param) => ex
+            .params
+            .get(*param as usize)
+            .and_then(|info| resolve_text_value(&info.default, ex, schema)),
+        TVal::Prop(field) => schema
+            .and_then(|info| info.fields.get(*field as usize))
+            .and_then(|info| resolve_text_value(&info.default, ex, schema)),
+        _ => None,
+    }
+}
+
+fn resolve_num_value(value: &TVal, ex: &Expanded, schema: Option<&ListInfo>) -> Option<f64> {
+    match value {
+        TVal::Token { base, .. } => resolve_num_value(base, ex, schema),
+        TVal::Num(number) => Some(*number),
+        TVal::Param(param) => ex
+            .params
+            .get(*param as usize)
+            .and_then(|info| resolve_num_value(&info.default, ex, schema)),
+        TVal::Prop(field) => schema
+            .and_then(|info| info.fields.get(*field as usize))
+            .and_then(|info| resolve_num_value(&info.default, ex, schema)),
+        _ => None,
+    }
+}
+
+fn family_from_attrs(
+    attrs: &[AttrE],
+    inherited: Option<&str>,
+    ex: &Expanded,
+    schema: Option<&ListInfo>,
+) -> Option<String> {
     attrs
         .iter()
         .rev()
         .find(|attr| attr.id == at::FAMILY)
-        .map_or(inherited, |attr| match &attr.val {
-            TVal::Str(family) => Some(family.as_str()),
-            TVal::Param(_) | TVal::Prop(_) => None,
-            _ => inherited,
-        })
+        .map_or_else(
+            || inherited.map(str::to_owned),
+            |attr| resolve_text_value(&attr.val, ex, schema),
+        )
 }
 
-fn weight_from_attrs(attrs: &[AttrE], inherited: Option<u16>) -> Option<u16> {
+fn weight_from_attrs(
+    attrs: &[AttrE],
+    inherited: Option<u16>,
+    ex: &Expanded,
+    schema: Option<&ListInfo>,
+) -> Option<u16> {
     attrs
         .iter()
         .rev()
         .find(|attr| attr.id == at::WEIGHT)
-        .map_or(inherited, |attr| match &attr.val {
-            TVal::Num(weight) => Some(font_assets::snap_weight(*weight)),
-            TVal::Param(_) | TVal::Prop(_) => None,
-            _ => inherited,
+        .map_or(inherited, |attr| {
+            resolve_num_value(&attr.val, ex, schema).map(font_assets::snap_weight)
         })
 }
 
@@ -106,45 +172,140 @@ fn warn_missing_text_glyphs(
     }
 }
 
+fn each_schema<'a>(
+    node: &CNode,
+    ex: &'a Expanded,
+    parent_schema: Option<&ListInfo>,
+) -> Option<&'a ListInfo> {
+    if node.kind != nk::EACH {
+        return None;
+    }
+    let target = node.attrs.iter().find(|attr| attr.id == at::EACH)?;
+    let schema = match &target.val {
+        TVal::Num(param) => ex.params.get(*param as usize)?.list?,
+        TVal::Prop(field) => parent_schema?.fields.get(*field as usize)?.sub?,
+        _ => return None,
+    };
+    ex.list_schemas.get(schema as usize)
+}
+
+struct GlyphWarnings<'a> {
+    coverage: &'a HashMap<String, HashMap<u16, BTreeSet<u32>>>,
+    warned: &'a mut BTreeSet<(String, u32, u32)>,
+    diags: &'a mut Diagnostics,
+}
+
+fn warn_value_glyphs(
+    value: &TVal,
+    family: Option<&str>,
+    weight: Option<u16>,
+    line: u32,
+    ex: &Expanded,
+    schema: Option<&ListInfo>,
+    warnings: &mut GlyphWarnings<'_>,
+) {
+    if let Some(content) = resolve_text_value(value, ex, schema) {
+        warn_missing_text_glyphs(
+            &content,
+            family,
+            weight,
+            line,
+            warnings.coverage,
+            warnings.warned,
+            warnings.diags,
+        );
+    }
+}
+
 fn check_node_glyphs(
     node: &CNode,
     inherited_family: Option<&str>,
     inherited_weight: Option<u16>,
-    coverage: &HashMap<String, HashMap<u16, BTreeSet<u32>>>,
-    warned: &mut BTreeSet<(String, u32, u32)>,
-    diags: &mut Diagnostics,
+    ex: &Expanded,
+    schema: Option<&ListInfo>,
+    warnings: &mut GlyphWarnings<'_>,
 ) {
-    let family = family_from_attrs(&node.attrs, inherited_family);
-    let weight = weight_from_attrs(&node.attrs, inherited_weight);
-    if let Some(TVal::Str(text)) = &node.content {
-        warn_missing_text_glyphs(text, family, weight, node.line, coverage, warned, diags);
+    let family = family_from_attrs(&node.attrs, inherited_family, ex, schema);
+    let weight = weight_from_attrs(&node.attrs, inherited_weight, ex, schema);
+    if let Some(content) = &node.content {
+        warn_value_glyphs(
+            content,
+            family.as_deref(),
+            weight,
+            node.line,
+            ex,
+            schema,
+            warnings,
+        );
     }
     for patch in &node.patches {
-        let patch_family = family_from_attrs(&patch.attrs, family);
-        let patch_weight = weight_from_attrs(&patch.attrs, weight);
-        if let Some(TVal::Str(text)) = patch
-            .attrs
-            .iter()
-            .rev()
-            .find(|attr| attr.id == at::CONTENT)
-            .map(|attr| &attr.val)
-        {
-            warn_missing_text_glyphs(
-                text,
-                patch_family,
+        let patch_family = family_from_attrs(&patch.attrs, family.as_deref(), ex, schema);
+        let patch_weight = weight_from_attrs(&patch.attrs, weight, ex, schema);
+        if let Some(content) = patch.attrs.iter().rev().find(|attr| attr.id == at::CONTENT) {
+            warn_value_glyphs(
+                &content.val,
+                patch_family.as_deref(),
                 patch_weight,
                 patch.line,
-                coverage,
-                warned,
-                diags,
+                ex,
+                schema,
+                warnings,
             );
         }
         for child in &patch.children {
-            check_node_glyphs(child, patch_family, patch_weight, coverage, warned, diags);
+            check_node_glyphs(
+                child,
+                patch_family.as_deref(),
+                patch_weight,
+                ex,
+                schema,
+                warnings,
+            );
         }
     }
+    let child_schema = each_schema(node, ex, schema).or(schema);
     for child in &node.children {
-        check_node_glyphs(child, family, weight, coverage, warned, diags);
+        check_node_glyphs(child, family.as_deref(), weight, ex, child_schema, warnings);
+    }
+}
+
+fn collect_resolved_font_attrs(
+    attrs: &[AttrE],
+    ex: &Expanded,
+    schema: Option<&ListInfo>,
+    families: &mut BTreeSet<String>,
+    weights: &mut BTreeSet<u16>,
+) {
+    for attr in attrs {
+        if attr.id == at::FAMILY {
+            if let Some(family) = resolve_text_value(&attr.val, ex, schema) {
+                families.insert(family);
+            }
+        } else if attr.id == at::WEIGHT
+            && let Some(weight) = resolve_num_value(&attr.val, ex, schema)
+        {
+            weights.insert(font_assets::snap_weight(weight));
+        }
+    }
+}
+
+fn collect_resolved_node_fonts(
+    node: &CNode,
+    ex: &Expanded,
+    schema: Option<&ListInfo>,
+    families: &mut BTreeSet<String>,
+    weights: &mut BTreeSet<u16>,
+) {
+    collect_resolved_font_attrs(&node.attrs, ex, schema, families, weights);
+    for patch in &node.patches {
+        collect_resolved_font_attrs(&patch.attrs, ex, schema, families, weights);
+        for child in &patch.children {
+            collect_resolved_node_fonts(child, ex, schema, families, weights);
+        }
+    }
+    let child_schema = each_schema(node, ex, schema).or(schema);
+    for child in &node.children {
+        collect_resolved_node_fonts(child, ex, child_schema, families, weights);
     }
 }
 
@@ -153,7 +314,10 @@ fn warn_missing_glyphs(ex: &Expanded, opts: &Options, diags: &mut Diagnostics) {
     let mut weights = BTreeSet::from([400u16]);
     for root in &ex.roots {
         collect_node_fonts(root, &mut families, &mut weights);
+        collect_resolved_node_fonts(root, ex, None, &mut families, &mut weights);
     }
+    families.extend(ex.font_families.iter().cloned());
+    weights.extend(ex.font_weights.iter().copied());
     let mut coverage: HashMap<String, HashMap<u16, BTreeSet<u32>>> = HashMap::new();
     for family in families {
         let class = font_assets::classify_family(&family);
@@ -172,8 +336,13 @@ fn warn_missing_glyphs(ex: &Expanded, opts: &Options, diags: &mut Diagnostics) {
         }
     }
     let mut warned = BTreeSet::new();
+    let mut warnings = GlyphWarnings {
+        coverage: &coverage,
+        warned: &mut warned,
+        diags,
+    };
     for root in &ex.roots {
-        check_node_glyphs(root, Some(""), Some(400), &coverage, &mut warned, diags);
+        check_node_glyphs(root, Some(""), Some(400), ex, None, &mut warnings);
     }
 }
 
@@ -313,9 +482,54 @@ impl<'a> Emitter<'a> {
         }
     }
 
+    fn token_row(
+        &mut self,
+        path: &str,
+        base: &TVal,
+        themes: &[(String, TVal)],
+        base_repr: u32,
+        theme_reprs: &[u32],
+    ) -> u32 {
+        let name = self.intern(path);
+        let base = self.aval_of(base, NONE, 0);
+        let mut encoded_themes = Vec::with_capacity(themes.len());
+        for (index, (theme, value)) in themes.iter().enumerate() {
+            let theme = self.intern(theme);
+            let value = self.aval_of(value, NONE, 0);
+            encoded_themes.push((theme, value, theme_reprs.get(index).copied().unwrap_or(0)));
+        }
+        let row = self.slir.tokens.len() as u32;
+        self.slir.tokens.push(TokenE {
+            name,
+            base,
+            base_repr,
+            themes: encoded_themes,
+        });
+        row
+    }
+
+    fn public_token(&mut self, token: &TokenInfo) {
+        let (Some(base), Some(base_repr)) = (token_tval(&token.base), token_repr(&token.base))
+        else {
+            return;
+        };
+        let mut themes = Vec::with_capacity(token.themes.len());
+        let mut reprs = Vec::with_capacity(token.themes.len());
+        for (name, value) in &token.themes {
+            let (Some(value), Some(repr)) = (token_tval(value), token_repr(value)) else {
+                continue;
+            };
+            themes.push((name.clone(), value));
+            reprs.push(self.intern(&repr));
+        }
+        let base_repr = self.intern(&base_repr);
+        self.token_row(&token.path, &base, &themes, base_repr, &reprs);
+    }
+
     fn aval_of(&mut self, tv: &TVal, node: u32, attr: u16) -> u32 {
         match tv {
             TVal::Num(x) => self.aval(av::NUM, x.to_bits()),
+            TVal::Pct(x) => self.aval(av::PCT, x.to_bits()),
             TVal::Size(spec) => match spec {
                 SizeSpec::Fixed(x) => self.aval(av::SIZE_FIXED, x.to_bits()),
                 SizeSpec::Hug => self.aval(av::SIZE_HUG, 0),
@@ -335,6 +549,10 @@ impl<'a> Emitter<'a> {
             TVal::Paint(p) => self.paint(p),
             TVal::PaintCurrent => self.aval(av::PAINT_CURRENT, 0),
             TVal::Color(c) => self.aval(av::COLOR, rgba_word(*c) as u64),
+            TVal::Token { path, base, themes } => {
+                let row = self.token_row(path, base, themes, 0, &[]);
+                self.aval(av::TOKEN_REF, u64::from(row))
+            }
             TVal::Shadows(list) => {
                 let key: Vec<_> = list
                     .iter()
@@ -644,6 +862,11 @@ pub fn emit(ex: &Expanded, opts: &Options, diags: &mut Diagnostics) -> Slir {
         diags,
     };
     em.intern(""); // string 0 is always the empty string
+    // Public logical rows must precede typed use-site rows so path lookup finds
+    // the context-independent host value first.
+    for token in &ex.tokens {
+        em.public_token(token);
+    }
 
     // root: a single root is node 0; multiple roots get a synthesized col
     if ex.roots.len() == 1 {
@@ -842,7 +1065,7 @@ pub fn emit(ex: &Expanded, opts: &Options, diags: &mut Diagnostics) -> Slir {
             .map(|(_, bytes)| bytes.as_slice());
         for &weight in &weights {
             let bytes = custom.unwrap_or_else(|| font_assets::asset(class, weight).bytes);
-            let mut table = fonts::build_table(class, weight, bytes, &ex.text_cps);
+            let mut table = fonts::build_table(class, weight, bytes);
             table.family = em.intern(&family);
             em.slir.fonts.push(table);
         }

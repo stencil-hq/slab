@@ -10,7 +10,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const slabWasm = require('../wasm/slab_wasm.js') as typeof import('../wasm/slab_wasm.js');
 
-/** The wasm module surface (check, build, dump, render, gen_wc, gen_react, gen_rust). */
+/** The wasm module surface (compiler_version, check, build, dump, render, gen_*). */
 export function wasm(): typeof slabWasm {
    return slabWasm;
 }

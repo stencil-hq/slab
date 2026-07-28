@@ -14,6 +14,12 @@ use slab_syntax::diag::{Diagnostics, Level};
 use std::collections::HashMap;
 use wasm_bindgen::prelude::*;
 
+/// Compiler version embedded in this WASM package.
+#[wasm_bindgen]
+pub fn compiler_version() -> String {
+    env!("CARGO_PKG_VERSION").to_string()
+}
+
 /// Decode a base64 string into bytes (standard alphabet, with padding).
 fn b64_decode(s: &str) -> Vec<u8> {
     let t: [u8; 256] = {

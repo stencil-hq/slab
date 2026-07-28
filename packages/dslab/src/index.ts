@@ -17,6 +17,22 @@ export type DriveClientKind = 'web' | 'gpu' | 'tui' | 'svg' | 'png';
 /** A keyboard modifier accepted by SDP input methods. */
 export type DriveModifier = 'shift' | 'alt' | 'ctrl' | 'meta';
 
+/**
+ * A canonical SDP scene-node locator.
+ *
+ * Use a full key returned by `scene.tree`, a unique `#id`/`id`, or a unique
+ * authored suffix rooted at an id such as `#panel/#save`.
+ */
+export type DriveSceneKey = string;
+
+/**
+ * A canonical `each` locator accepted by list window, reveal, and focus APIs.
+ *
+ * Use the full `each` key, a unique `#id`/`id`, or an id-rooted suffix such as
+ * `#feed/rows`.
+ */
+export type DriveEachKey = string;
+
 /** A trace event name accepted by `input.event`. */
 export type DriveEventType =
    | 'pointer-move'
@@ -118,7 +134,7 @@ type DocumentParameter = DriveObject & {
 type SceneEntry = DriveObject & {
    i: number;
    node: number;
-   key: string;
+   key: DriveSceneKey;
    parent: number;
    kind: string;
    x: number;
@@ -157,7 +173,7 @@ type InputEffect = DriveObject & {
             button: number;
             clicks: number;
             key: string;
-            src_key: string;
+            src_key: DriveSceneKey;
             src_item: string;
          };
       }
@@ -166,7 +182,7 @@ type InputEffect = DriveObject & {
    ime: Rect | null;
    cursor: number;
    focus: string | null;
-   scrolls: Array<DriveObject & { key: string; axis: Axis; off: number }>;
+   scrolls: Array<DriveObject & { key: DriveSceneKey; axis: Axis; off: number }>;
 };
 type InputResult = DriveObject & { effects: InputEffect; t: number };
 type TraceEvent = {
@@ -202,7 +218,7 @@ type ClickInput = {
    button?: number;
    clicks?: number;
    mods?: DriveModifier[];
-} & ({ x: number; y: number; key?: never } | { key: string; x?: never; y?: never });
+} & ({ x: number; y: number; key?: never } | { key: DriveSceneKey; x?: never; y?: never });
 type HoleSizeInput =
    | { name: string; hole?: never; w: number; h: number }
    | { hole: number; name?: never; w: number; h: number };
@@ -242,11 +258,11 @@ interface DriveApi {
    'protocol.quit': Endpoint<EmptyParams, Ok>;
    'doc.load': Endpoint<
       { file: string },
-      DriveObject & { ok: boolean; diags: Diagnostic[]; theme_reset?: true }
+      DriveObject & { ok: boolean; diags: Diagnostic[]; reloaded?: true; theme_reset?: true }
    >;
    'doc.reload': Endpoint<
       EmptyParams,
-      DriveObject & { ok: boolean; diags: Diagnostic[]; theme_reset?: true }
+      DriveObject & { ok: boolean; diags: Diagnostic[]; reloaded?: true; theme_reset?: true }
    >;
    'doc.info': Endpoint<
       EmptyParams,
@@ -267,17 +283,17 @@ interface DriveApi {
    'param.set': Endpoint<ParameterInput, Ok>;
    'param.get': Endpoint<{ name: string }, DriveObject & { value: DriveValue }>;
    'field.set': Endpoint<
-      { key: string; text: string },
+      { key: DriveSceneKey; text: string },
       DriveObject & { ok: true; changed: boolean }
    >;
-   'field.get': Endpoint<{ key: string }, DriveObject & { text: string }>;
+   'field.get': Endpoint<{ key: DriveSceneKey }, DriveObject & { text: string }>;
    'state.set': Endpoint<{ name: string; on: boolean }, Ok>;
-   'state.node': Endpoint<{ key: string; name: string; on: boolean }, Ok>;
+   'state.node': Endpoint<{ key: DriveSceneKey; name: string; on: boolean }, Ok>;
    'focus.get': Endpoint<
       EmptyParams,
-      DriveObject & { focus: number; key: string; visible: boolean }
+      DriveObject & { focus: number; key: DriveSceneKey; visible: boolean }
    >;
-   'focus.set': Endpoint<{ key: string; visible?: boolean }, Ok>;
+   'focus.set': Endpoint<{ key: DriveSceneKey; visible?: boolean }, Ok>;
    'img.register': Endpoint<ImageInput, DriveObject & { img: number }>;
    'img.unregister': Endpoint<{ name: string }, Ok>;
    'img.info': Endpoint<
@@ -285,20 +301,23 @@ interface DriveApi {
       DriveObject & { w: number; h: number; format: number; generation: number }
    >;
    'img.data': Endpoint<{ img: number }, DriveObject & { data: string; bytes: number }>;
-   'scroll.get': Endpoint<{ key: string; axis: Axis }, DriveObject & { axis: Axis; off: number }>;
-   'scroll.set': Endpoint<
-      { key: string; axis: Axis; off: number },
+   'scroll.get': Endpoint<
+      { key: DriveSceneKey; axis: Axis },
       DriveObject & { axis: Axis; off: number }
    >;
-   'scroll.reveal': Endpoint<{ key: string; margin: number }, Ok>;
+   'scroll.set': Endpoint<
+      { key: DriveSceneKey; axis: Axis; off: number },
+      DriveObject & { axis: Axis; off: number }
+   >;
+   'scroll.reveal': Endpoint<{ key: DriveSceneKey; margin: number }, Ok>;
    'list.get_len': Endpoint<{ param: string; path: string }, DriveObject & { len: number }>;
    'list.set_len': Endpoint<{ param: string; path: string; n: number }, Ok>;
    'list.set_field': Endpoint<ListFieldInput, Ok>;
    'list.set_key': Endpoint<{ param: string; path: string; index: number; key: string }, Ok>;
-   'list.reveal_item': Endpoint<{ each: string; index: number; align: 0 | 1 | 2 | 3 }, Ok>;
-   'list.window': Endpoint<{ each: string }, DriveObject & { start: number; end: number }>;
-   'divider.get': Endpoint<{ key: string }, DriveObject & { extent: number }>;
-   'divider.set': Endpoint<{ key: string; extent: number }, Ok>;
+   'list.reveal_item': Endpoint<{ each: DriveEachKey; index: number; align: 0 | 1 | 2 | 3 }, Ok>;
+   'list.window': Endpoint<{ each: DriveEachKey }, DriveObject & { start: number; end: number }>;
+   'divider.get': Endpoint<{ key: DriveSceneKey }, DriveObject & { extent: number }>;
+   'divider.set': Endpoint<{ key: DriveSceneKey; extent: number }, Ok>;
    'hole.list': Endpoint<
       EmptyParams,
       DriveObject & {
@@ -318,11 +337,11 @@ interface DriveApi {
    'hole.size': Endpoint<HoleSizeInput, Ok>;
    'scene.tree': Endpoint<EmptyParams, DriveObject & { nodes: SceneEntry[] }>;
    'scene.node': Endpoint<
-      { key: string; states?: string[] },
+      { key: DriveSceneKey; states?: string[] },
       SceneEntry & { states: Record<string, boolean> }
    >;
    'scene.text': Endpoint<
-      { key: string },
+      { key: DriveSceneKey },
       DriveObject & {
          text: string;
          runs: Array<DriveObject & { text: string; x: number; y: number }>;
@@ -330,12 +349,14 @@ interface DriveApi {
    >;
    'scene.hit': Endpoint<
       { x: number; y: number },
-      DriveObject & { keys: string[]; nodes: number[]; rects: Rect[] }
+      DriveObject & { keys: DriveSceneKey[]; nodes: number[]; rects: Rect[] }
    >;
    'scene.find': Endpoint<
       { text: string },
       DriveObject & {
-         matches: Array<DriveObject & { key: string; node: number; text: string; rect: Rect }>;
+         matches: Array<
+            DriveObject & { key: DriveSceneKey; node: number; text: string; rect: Rect }
+         >;
       }
    >;
    'frame.dump': Endpoint<EmptyParams, DriveValue>;
@@ -344,10 +365,10 @@ interface DriveApi {
       DriveObject & {
          focus: string | null;
          edits: Array<DriveObject & { name: string; text: string; item: string }>;
-         scroll: Array<DriveObject & { key: string; axis: Axis; off: number }>;
+         scroll: Array<DriveObject & { key: DriveSceneKey; axis: Axis; off: number }>;
       }
    >;
-   'input.event': Endpoint<TraceEvent, InputResult>;
+   'input.event': Endpoint<TraceEvent, InputResult & { host_consumed?: true }>;
    'input.pointer': Endpoint<
       {
          type: 'move' | 'down' | 'up';
@@ -364,9 +385,12 @@ interface DriveApi {
       { x: number; y: number; dy: number; dx?: number; mods?: DriveModifier[] },
       InputResult
    >;
-   'input.key': Endpoint<{ key: string; mods?: DriveModifier[] }, InputResult>;
-   'input.text': Endpoint<{ text: string }, InputResult>;
-   'input.paste': Endpoint<{ text: string }, InputResult>;
+   'input.key': Endpoint<
+      { key: string; mods?: DriveModifier[] },
+      InputResult & { host_consumed?: true }
+   >;
+   'input.text': Endpoint<{ text: string }, InputResult & { host_consumed?: true }>;
+   'input.paste': Endpoint<{ text: string }, InputResult & { host_consumed?: true }>;
    'render.png': Endpoint<
       { scale?: number; path?: string },
       DriveObject & {
@@ -602,12 +626,12 @@ export class DriveClient {
    }
 
    /** Replaces the retained edit text for one field key. */
-   setFieldText(key: string, text: string): Promise<DriveResult<'field.set'>> {
+   setFieldText(key: DriveSceneKey, text: string): Promise<DriveResult<'field.set'>> {
       return this.call('field.set', { key, text });
    }
 
    /** Reads the retained edit text for one field key. */
-   async fieldText(key: string): Promise<string> {
+   async fieldText(key: DriveSceneKey): Promise<string> {
       return (await this.call('field.get', { key })).text;
    }
 

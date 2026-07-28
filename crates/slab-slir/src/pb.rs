@@ -251,4 +251,27 @@ pub struct Doc {
     /// square design-box size, default 24
     #[prost(double, repeated, tag = "123")]
     pub icon_viewbox: ::prost::alloc::vec::Vec<f64>,
+    /// STRS ref, dotted path
+    #[prost(uint32, repeated, tag = "130")]
+    pub token_name: ::prost::alloc::vec::Vec<u32>,
+    /// AVAL ref
+    #[prost(uint32, repeated, tag = "131")]
+    pub token_base: ::prost::alloc::vec::Vec<u32>,
+    /// slice into token_theme_name/val
+    #[prost(int32, repeated, tag = "132")]
+    pub token_theme_off: ::prost::alloc::vec::Vec<i32>,
+    #[prost(int32, repeated, tag = "133")]
+    pub token_theme_len: ::prost::alloc::vec::Vec<i32>,
+    /// STRS ref
+    #[prost(uint32, repeated, tag = "134")]
+    pub token_theme_name: ::prost::alloc::vec::Vec<u32>,
+    /// AVAL ref
+    #[prost(uint32, repeated, tag = "135")]
+    pub token_theme_val: ::prost::alloc::vec::Vec<u32>,
+    /// STRS ref, canonical host text
+    #[prost(uint32, repeated, tag = "136")]
+    pub token_base_repr: ::prost::alloc::vec::Vec<u32>,
+    /// STRS ref parallel to token_theme_val
+    #[prost(uint32, repeated, tag = "137")]
+    pub token_theme_repr: ::prost::alloc::vec::Vec<u32>,
 }

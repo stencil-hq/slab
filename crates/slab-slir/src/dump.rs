@@ -458,6 +458,11 @@ pub fn dump(s: &Slir) -> String {
                 6 => "drag-start",
                 7 => "drop",
                 8 => "resize",
+                9 => "pointer-move",
+                10 => "pointer-up",
+                11 => "drag-update",
+                12 => "drag-end",
+                13 => "activate",
                 _ => "?",
             }
         );
@@ -466,6 +471,26 @@ pub fn dump(s: &Slir) -> String {
     let _ = writeln!(o, "THEM {}", s.themes.len());
     for (i, &name) in s.themes.iter().enumerate() {
         let _ = writeln!(o, "  {i} name={:?}", s.str_at(name));
+    }
+
+    let _ = writeln!(o, "TOKN {}", s.tokens.len());
+    for (index, token) in s.tokens.iter().enumerate() {
+        let _ = writeln!(
+            o,
+            "  {index} name={:?} base=@{} repr={:?}",
+            s.str_at(token.name),
+            token.base,
+            s.str_at(token.base_repr)
+        );
+        for &(theme, value, repr) in &token.themes {
+            let _ = writeln!(
+                o,
+                "    theme={:?} val=@{} repr={:?}",
+                s.str_at(theme),
+                value,
+                s.str_at(repr)
+            );
+        }
     }
 
     let _ = writeln!(o, "IMGS {}", s.images.len());

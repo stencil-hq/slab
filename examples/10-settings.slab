@@ -19,22 +19,23 @@ params {
   status  text = "ready"
   draft   text = ""
   compact bool = false
+  editing bool = true
 }
 
-def Button(label, action) {
+def Button(caption, action) {
   row focusable act=action pad=8,16 radius=8 bg=#222A38 align=center w=hug {
     when hover { bg=#2B3547 }
     when pressed { bg=#1B2230 }
     when focus-visible { stroke=#4FC7E0 stroke-w=2 }
     when disabled { opacity=0.35 }
-    text label size=13 weight=600 color=color.ink nowrap
+    text caption size=13 weight=600 color=color.ink nowrap
   }
 }
 
-def Row(label, tone) export {
+def Row(caption, tone) export {
   row pad=6,12 gap=8 align=center h=28 {
     rect w=8 h=8 radius=4 bg=tone
-    text label size=12 color=color.ink nowrap
+    text caption size=12 color=color.ink nowrap
   }
 }
 
@@ -56,9 +57,20 @@ col w=fill h=fill bg=color.bg pad=24 gap=16 {
     text#status param.status size=12 color=color.accent nowrap
   }
 
-  // kernel-owned editing: caret, selection, and composition render from
-  // EditState; every change emits the `draft` signal with the new text.
-  text#field param.draft field=draft size=13 color=color.ink nowrap w=300 h=32 pad=6,10 radius=8 bg=color.inset stroke=color.line clip {
+  // Preferred conditional editing: one stable text node reads like body text.
+  // The binder, input chrome, and submit action exist only while `editing`;
+  // turning it off removes the focus stop without an h=0/clip wrapper, while
+  // the retained edit buffer survives a later reactivation.
+  text#field param.draft size=13 color=color.ink nowrap w=300 h=32 {
+    when editing {
+      field=draft
+      submit=draft_submit
+      pad=6,10
+      radius=8
+      bg=color.inset
+      stroke=color.line
+      clip
+    }
     when focus-visible { stroke=#4FC7E0 }
   }
 

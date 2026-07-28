@@ -78,6 +78,27 @@ fn unique_signals(slir: &Slir) -> Vec<(String, bool)> {
     out
 }
 
+fn scene_keys(slir: &Slir) -> Vec<(String, String)> {
+    let mut keys = Vec::new();
+    let mut counts = std::collections::HashMap::<String, usize>::new();
+    for (&id_ref, &key_ref) in slir.nodes.id.iter().zip(&slir.nodes.key) {
+        let id = slir.str_at(id_ref);
+        if id.is_empty() {
+            continue;
+        }
+        let base = snake(id);
+        let count = counts.entry(base.clone()).or_default();
+        *count += 1;
+        let name = if *count == 1 {
+            base
+        } else {
+            format!("{base}_{}", *count)
+        };
+        keys.push((name, slir.str_at(key_ref).to_string()));
+    }
+    keys
+}
+
 fn byte_string(bytes: &[u8]) -> String {
     let mut s = String::with_capacity(bytes.len() * 4 + 2);
     s.push_str("b\"");
@@ -251,6 +272,26 @@ fn emit_module(slir: &Slir, bytes: &[u8], src_name: &str) -> String {
     let _ = writeln!(o, "/// The compiled SLIR document ({} bytes).", bytes.len());
     let _ = writeln!(o, "pub static SLIR: &[u8] = {};\n", byte_string(bytes));
 
+    o.push_str(
+        "/// Packed SLIR color word (red in the low byte, then green, blue, alpha).\n\
+         pub type Rgba = u32;\n\n\
+         /// Pack straight-alpha RGBA channels for generated color params and list fields.\n\
+         pub const fn rgba(red: u8, green: u8, blue: u8, alpha: u8) -> Rgba {\n\
+         \x20   u32::from_le_bytes([red, green, blue, alpha])\n\
+         }\n\n\
+         /// Canonical full scene keys for authored `#id` nodes.\n\
+         pub mod keys {\n",
+    );
+    for (name, key) in scene_keys(slir) {
+        let _ = writeln!(
+            o,
+            "    pub const {}: &str = {:?};",
+            snake(&name).to_uppercase(),
+            key
+        );
+    }
+    o.push_str("}\n\n");
+
     for (i, p) in slir.params.iter().enumerate() {
         let _ = writeln!(
             o,
@@ -362,8 +403,26 @@ fn emit_module(slir: &Slir, bytes: &[u8], src_name: &str) -> String {
         }
     }
     let _ = writeln!(o, "}}\n");
+    let _ = writeln!(o, "/// Names accepted by the document's signal surface.");
+    let _ = writeln!(o, "#[derive(Debug, Clone, Copy, Eq, PartialEq)]");
+    let _ = writeln!(o, "pub enum SignalName {{");
+    for (name, _) in &sigs {
+        let _ = writeln!(o, "    {},", pascal(name));
+    }
+    let _ = writeln!(o, "}}\n");
+    let _ = writeln!(o, "impl SignalName {{");
+    let _ = writeln!(o, "    /// Return the authored signal name.");
+    let _ = writeln!(o, "    pub const fn as_str(self) -> &'static str {{");
+    let _ = writeln!(o, "        match self {{");
+    for (name, _) in &sigs {
+        let _ = writeln!(o, "            Self::{} => {:?},", pascal(name), name);
+    }
+    let _ = writeln!(o, "        }}");
+    let _ = writeln!(o, "    }}");
+    let _ = writeln!(o, "}}\n");
     let mut list_cache_fields = String::new();
     let mut list_cache_initializers = String::new();
+    let mut cache_invalidations = String::new();
     for (param_ix, p) in slir.params.iter().enumerate() {
         if p.ty != 6 {
             continue;
@@ -381,6 +440,7 @@ fn emit_module(slir: &Slir, bytes: &[u8], src_name: &str) -> String {
         let cache = format!("{}_cache", snake(param_name));
         let _ = writeln!(list_cache_fields, "    {cache}: Option<Vec<{root_type}>>,");
         let _ = writeln!(list_cache_initializers, "            {cache}: None,");
+        let _ = writeln!(cache_invalidations, "        self.{cache} = None;");
         for row in order {
             let schema = &slir.lists[row];
             let item_ty = list_type_name(&names, slir, row);
@@ -396,7 +456,7 @@ fn emit_module(slir: &Slir, bytes: &[u8], src_name: &str) -> String {
                     "/// One typed nested-list item reachable from list param `{param_name}`."
                 );
             }
-            let _ = writeln!(o, "#[derive(Debug, Clone, PartialEq)]");
+            let _ = writeln!(o, "#[derive(Debug, Clone, PartialEq, Default)]");
             let _ = writeln!(o, "pub struct {item_ty} {{");
             let _ = writeln!(
                 o,
@@ -409,7 +469,7 @@ fn emit_module(slir: &Slir, bytes: &[u8], src_name: &str) -> String {
                     0 => ("String".to_string(), "text".to_string()),
                     1 => ("f64".to_string(), "number".to_string()),
                     2 => ("f64".to_string(), "percentage".to_string()),
-                    3 => ("u32".to_string(), "r-low packed RGBA color".to_string()),
+                    3 => ("Rgba".to_string(), "packed SLIR RGBA color".to_string()),
                     4 => ("bool".to_string(), "boolean".to_string()),
                     5 => {
                         let members: Vec<&str> = (field.enum_off..field.enum_off + field.enum_len)
@@ -436,6 +496,10 @@ fn emit_module(slir: &Slir, bytes: &[u8], src_name: &str) -> String {
                 );
             }
             let _ = writeln!(o, "}}\n");
+            let _ = writeln!(
+                o,
+                "impl {item_ty} {{\n    /// Attach a stable list identity; omit this call to use the positional key.\n    pub fn with_key(mut self, key: impl Into<String>) -> Self {{\n        self.key = Some(key.into());\n        self\n    }}\n}}\n"
+            );
         }
     }
 
@@ -468,10 +532,31 @@ fn emit_module(slir: &Slir, bytes: &[u8], src_name: &str) -> String {
          \x20   pub fn set_theme(&mut self, name: &str) -> bool {{\n\
          \x20       kframe::inst_set_theme(&mut self.inst, name)\n\
          \x20   }}\n\n\
+         \x20   /// Drop generated list reconciliation snapshots after an external document reload.\n\
+         \x20   /// Call this when a host-mounted `RequestPump` reports `reloaded == true`,\n\
+         \x20   /// before re-synchronizing typed list setters. Safe and idempotent.\n\
+         \x20   pub fn invalidate_caches(&mut self) {{\n\
+         {cache_invalidations}    }}\n\n\
+         \x20   /// Read one token resolved through the active theme, with base fallback.\n\
+         \x20   pub fn get_token(&self, path: &str) -> Option<kframe::TokenValue<'_>> {{\n\
+         \x20       kframe::inst_get_token(&self.inst, path)\n\
+         \x20   }}\n\n\
          \x20   /// Move focus to a keyed focusable node; an empty key clears focus.\n\
          \x20   /// `visible` shows the keyboard-grade focus ring.\n\
          \x20   pub fn set_focus(&mut self, key: &str, visible: bool) -> bool {{\n\
          \x20       kframe::inst_set_focus(&mut self.inst, key, visible)\n\
+         \x20   }}\n\n\
+         \x20   /// Clear focus while retaining field edit buffers.\n\
+         \x20   pub fn clear_focus(&mut self) -> bool {{\n\
+         \x20       kframe::inst_clear_focus(&mut self.inst)\n\
+         \x20   }}\n\n\
+         \x20   /// Focus and reveal a concrete item in an `each` list.\n\
+         \x20   pub fn focus_item(&mut self, each_key: &str, index: i32) -> bool {{\n\
+         \x20       kframe::inst_focus_item(&mut self.inst, each_key, index)\n\
+         \x20   }}\n\n\
+         \x20   /// Explain the most recent failed focus operation.\n\
+         \x20   pub fn focus_note(&self) -> &str {{\n\
+         \x20       kframe::inst_focus_note(&self.inst)\n\
          \x20   }}\n\n\
          \x20   /// Replace a keyed field buffer, reset its edit history, and emit Change.\n\
          \x20   pub fn set_field_text(&mut self, key: &str, text: &str) -> bool {{\n\
@@ -595,7 +680,7 @@ fn emit_module(slir: &Slir, bytes: &[u8], src_name: &str) -> String {
             0 => ("v: &str", "pv.s = v.to_string();"),
             1 => ("v: f64", "pv.num = v;"),
             2 => ("v: f64", "pv.num = v;"),
-            3 => ("v: u32", "pv.rgba = v;"),
+            3 => ("v: Rgba", "pv.rgba = v;"),
             4 => ("v: bool", "pv.num = if v { 1.0 } else { 0.0 };"),
             _ => ("v: &str", "pv.sym = v.to_string();"),
         };
@@ -603,7 +688,7 @@ fn emit_module(slir: &Slir, bytes: &[u8], src_name: &str) -> String {
             0 => "text".to_string(),
             1 => "num".to_string(),
             2 => "pct (0..100)".to_string(),
-            3 => "color, r-low packed rgba word".to_string(),
+            3 => "color, packed with rgba(red, green, blue, alpha)".to_string(),
             4 => "bool".to_string(),
             _ => {
                 let members: Vec<&str> = (p.enum_off..p.enum_off + p.enum_len)
@@ -683,6 +768,12 @@ row {
             assert!(module.contains(field), "{field}");
         }
         assert!(module.contains("pub fn take_signals(&mut self)"));
+        assert_eq!(
+            module
+                .matches("pub fn invalidate_caches(&mut self)")
+                .count(),
+            1
+        );
     }
     #[test]
     fn recursive_list_codegen_validates_then_writes_every_path() {
@@ -722,5 +813,37 @@ col { each param.trees }
         assert!(module.contains("trees_cache: Option<Vec<TreesItem>>"));
         assert!(module.contains("if self.trees_cache.as_deref() == Some(items)"));
         assert!(module.contains("if previous == Some(item) { continue; }"));
+    }
+
+    #[test]
+    fn host_ergonomics_include_keys_signals_colors_tokens_and_cache_reset() {
+        let source = r#"
+def Row(tone=color.accent) export { row#item bg=tone press=chosen }
+tokens { color { accent #336699 } }
+params { rows list(Row) = [] }
+col#app { each#items param.rows }
+"#;
+        let (module, diagnostics) = generate(
+            source,
+            &Options {
+                embed_assets: false,
+                ..Options::default()
+            },
+            "host.slab",
+        );
+        assert!(!diagnostics.has_errors(), "{:?}", diagnostics.0);
+        let module = module.expect("host module");
+        assert!(module.contains("pub const APP: &str = \"#app\""));
+        assert!(module.contains("pub enum SignalName"));
+        assert!(module.contains("pub type Rgba = u32"));
+        assert!(module.contains("pub const fn rgba("));
+        assert!(module.contains("pub tone: Rgba"));
+        assert!(module.contains("pub fn with_key(mut self, key: impl Into<String>)"));
+        assert!(module.contains("pub fn get_token(&self, path: &str)"));
+        assert!(module.contains("pub fn clear_focus(&mut self)"));
+        assert!(module.contains("pub fn focus_item(&mut self, each_key: &str, index: i32)"));
+        assert!(module.contains("pub fn focus_note(&self) -> &str"));
+        assert!(module.contains("pub fn invalidate_caches(&mut self)"));
+        assert!(module.contains("self.rows_cache = None"));
     }
 }

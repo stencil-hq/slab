@@ -72,12 +72,23 @@ pub fn compile_with_exports(src: &str, opts: &Options) -> (Option<Slir>, Diagnos
     if slir.is_none() {
         return (None, diags);
     }
+    let mut field_sync_seen = diags
+        .0
+        .iter()
+        .filter(|diagnostic| diagnostic.code == "field-sync")
+        .map(|diagnostic| (diagnostic.line, diagnostic.msg.clone()))
+        .collect::<std::collections::BTreeSet<_>>();
     for def in export::exported_def_names(src) {
-        let (exported, mut export_diags, _) = export::compile_export(src, &def, opts);
-        for diagnostic in &mut export_diags.0 {
+        let (exported, export_diags, _) = export::compile_export(src, &def, opts);
+        for mut diagnostic in export_diags.0 {
+            if diagnostic.code == "field-sync"
+                && !field_sync_seen.insert((diagnostic.line, diagnostic.msg.clone()))
+            {
+                continue;
+            }
             diagnostic.msg = format!("in export {def}: {}", diagnostic.msg);
+            diags.0.push(diagnostic);
         }
-        diags.0.extend(export_diags.0);
         if exported.is_none() {
             return (None, diags);
         }

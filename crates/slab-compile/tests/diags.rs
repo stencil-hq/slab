@@ -1,7 +1,7 @@
 //! Negative-path fixtures: each 1.0 diagnostic code fires with the right
 //! code, level, and line.
 
-use slab_compile::{Options, compile};
+use slab_compile::{Options, compile, compile_with_exports};
 use slab_syntax::diag::Level;
 
 fn diags_of(src: &str) -> Vec<(String, Level, u32)> {
@@ -271,6 +271,41 @@ rect {
 }
 
 #[test]
+fn conditional_field_and_submit_are_first_class() {
+    let source = r#"
+params { editing bool = false; draft text = "seed" }
+text param.draft {
+  when editing { field=draft; submit=save }
+}
+"#;
+    let (slir, diagnostics) = compile(
+        source,
+        &Options {
+            embed_assets: false,
+            ..Default::default()
+        },
+    );
+    assert!(!diagnostics.has_errors(), "{:?}", diagnostics.0);
+    let slir = slir.unwrap();
+    let triggers = slir
+        .signals
+        .iter()
+        .map(|(name, _, trigger)| (slir.str_at(*name), *trigger))
+        .collect::<Vec<_>>();
+    assert_eq!(triggers, [("draft", 1), ("save", 2)]);
+    assert!(
+        slir.patch_attrs
+            .iter()
+            .any(|&(attr, _)| attr == slab_slir::attrs::FIELD)
+    );
+    assert!(
+        slir.patch_attrs
+            .iter()
+            .any(|&(attr, _)| attr == slab_slir::attrs::SUBMIT)
+    );
+}
+
+#[test]
 fn drag_companions_require_drag_binding() {
     let (slir, diagnostics) = compile(
         "box drag-update=updated drag-end=ended drag-ghost\n",
@@ -296,6 +331,58 @@ fn drag_companions_require_drag_binding() {
             diagnostics.0
         );
     }
+}
+
+#[test]
+fn escape_blur_requires_an_editable_text_node() {
+    let (slir, diagnostics) = compile(
+        "col {\n  rect escape-blur\n  text field=draft escape-blur\n}\n",
+        &Options {
+            embed_assets: false,
+            ..Default::default()
+        },
+    );
+    let slir = slir.expect("warnings do not reject the document");
+    let box_node = slir
+        .nodes
+        .kind
+        .iter()
+        .position(|&kind| kind == slab_slir::kind::RECT)
+        .expect("rect node");
+    let text_node = slir
+        .nodes
+        .kind
+        .iter()
+        .position(|&kind| kind == slab_slir::kind::TEXT)
+        .expect("text node");
+    assert_eq!(
+        slir.nodes.flags[box_node] & slab_slir::flags::ESCAPE_BLUR,
+        0
+    );
+    assert_ne!(
+        slir.nodes.flags[text_node] & slab_slir::flags::ESCAPE_BLUR,
+        0
+    );
+    assert!(diagnostics.0.iter().any(|diagnostic| {
+        diagnostic.code == "attr"
+            && diagnostic
+                .msg
+                .contains("`escape-blur` applies only to text nodes with field=")
+    }));
+}
+
+#[test]
+fn explicit_key_segments_escape_structural_bytes() {
+    let (slir, diagnostics) = compile(
+        "col key=\"a/b~%\" {}\n",
+        &Options {
+            embed_assets: false,
+            ..Default::default()
+        },
+    );
+    assert!(!diagnostics.has_errors(), "{:?}", diagnostics.0);
+    let slir = slir.expect("compiled document");
+    assert_eq!(slir.str_at(slir.nodes.key[0]), "a%2Fb%7E%25");
 }
 
 #[test]
@@ -385,6 +472,92 @@ fn activation_keys_imply_focusable() {
         .expect("keys attr");
     assert_eq!(value.tag, slab_slir::aval::STR);
     assert_eq!(slir.str_at(value.lo()), "Escape,F2");
+}
+
+#[test]
+fn mapped_activation_keys_register_distinct_signals() {
+    let (slir, diags) = compile(
+        "col keys=Escape:clear,F2:rename { }\n",
+        &Options {
+            embed_assets: false,
+            ..Default::default()
+        },
+    );
+    assert!(!diags.has_errors(), "{:?}", diags.0);
+    let slir = slir.unwrap();
+    let names = slir
+        .signals
+        .iter()
+        .filter(|(_, _, trigger)| *trigger == 13)
+        .map(|(name, _, _)| slir.str_at(*name))
+        .collect::<Vec<_>>();
+    assert_eq!(names, ["clear", "rename"]);
+    let value = slir
+        .node_attrs(0)
+        .iter()
+        .find(|(id, _)| *id == slab_slir::attrs::KEYS)
+        .map(|(_, value)| slir.avals[*value as usize])
+        .expect("keys attr");
+    assert_eq!(slir.str_at(value.lo()), "Escape:clear,F2:rename");
+}
+
+#[test]
+fn mapped_activation_keys_reject_act_ambiguity() {
+    assert_has(
+        "col keys=Escape:clear act=activate { }\n",
+        "keys",
+        Level::Error,
+        1,
+    );
+}
+
+#[test]
+fn field_param_name_mismatch_has_sync_warning_and_remedy() {
+    let src = "params { draft text = \"\" }\ntext param.draft field=draft_change\n";
+    let (_, diags) = compile(src, &Options::default());
+    let diag = diags
+        .0
+        .iter()
+        .find(|diag| diag.code == "field-sync")
+        .expect("field-sync warning");
+    assert_eq!(diag.level, Level::Warning);
+    assert_eq!(diag.line, 2);
+    let remedy = diag.remedy.as_deref().expect("field-sync remedy");
+    assert!(remedy.contains("field=draft"));
+    assert!(remedy.contains("field-sync=host"));
+}
+
+#[test]
+fn field_sync_warning_is_deduped_across_calls_and_exports() {
+    let src = r#"
+params { draft text = "" }
+def Editor() export {
+  text param.draft field=draft_change
+}
+col { Editor; Editor }
+"#;
+    let (_, diags) = compile_with_exports(src, &Options::default());
+    assert_eq!(
+        diags
+            .0
+            .iter()
+            .filter(|diag| diag.code == "field-sync")
+            .count(),
+        1,
+        "{:#?}",
+        diags.0
+    );
+}
+
+#[test]
+fn field_sync_host_opt_out_suppresses_warning() {
+    let src = "params { draft text = \"\" }\ntext param.draft field=draft_change field-sync=host\n";
+    let (_, diags) = compile(src, &Options::default());
+    assert!(
+        diags.0.iter().all(|diag| diag.code != "field-sync"),
+        "{:#?}",
+        diags.0
+    );
 }
 
 #[test]
@@ -802,15 +975,31 @@ fn missing_static_glyph_names_character_codepoint_and_family() {
 }
 
 #[test]
-fn dynamic_text_skips_glyph_coverage_warning() {
-    let source = "params { value text = \"✕\" }\ntext param.value family=\"sans\"\n";
+fn known_param_and_item_property_defaults_are_checked_at_their_text_sites() {
+    let source = r#"
+def Item(label="◐") export { text label family="sans" }
+params { value text = "✕"; rows list(Item) = [] }
+col {
+  text param.value family="sans"
+  each param.rows
+}
+"#;
     let (_, diagnostics) = compile(source, &Options::default());
+    let missing: Vec<_> = diagnostics
+        .0
+        .iter()
+        .filter(|diagnostic| diagnostic.code == "glyph-missing")
+        .collect();
     assert!(
-        diagnostics
-            .0
+        missing
             .iter()
-            .all(|diagnostic| diagnostic.code != "glyph-missing"),
-        "{:?}",
-        diagnostics.0
+            .any(|diagnostic| diagnostic.msg.contains("'✕'")),
+        "{missing:?}"
+    );
+    assert!(
+        missing
+            .iter()
+            .any(|diagnostic| diagnostic.msg.contains("'◐'")),
+        "{missing:?}"
     );
 }

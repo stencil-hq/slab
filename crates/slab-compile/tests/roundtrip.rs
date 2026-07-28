@@ -145,6 +145,95 @@ rect id=panel w=20 h=20 bg=color.bg
 }
 
 #[test]
+fn active_theme_tokens_survive_deferred_patches_and_component_substitution() {
+    let src = r#"
+tokens {
+  color { direct #110000; state #220000; default #330000; arg #440000 }
+  space { unit 8; ratio 25% }
+}
+theme dusk {
+  color { direct #aa0000; state #bb0000; default #cc0000; arg #dd0000 }
+  space { unit 12; ratio 50% }
+}
+params { on bool = true }
+def Chip(tone=color.default) { rect w=10 h=10 bg=tone }
+col {
+  rect w=10 h=10 bg=color.direct
+  rect w=10 h=10 { when on { bg=color.state } }
+  Chip
+  Chip tone=color.arg
+}
+"#;
+    let opts = Options {
+        embed_assets: false,
+        base_dir: PathBuf::new(),
+        ..Options::default()
+    };
+    let (slir, diagnostics) = compile(src, &opts);
+    assert!(!diagnostics.has_errors(), "{:?}", diagnostics.0);
+    let bytes = slab_slir::write(&slir.unwrap());
+    let (mut instance, _) = slab_slir::instance(&bytes).unwrap();
+    slab_kernel::frame::inst_set_env(&mut instance, 100.0, 100.0, 0, false, false);
+
+    let colors = |frame: &slab_kernel::flatten::Frame| {
+        frame
+            .ops
+            .iter()
+            .filter_map(|op| match op {
+                slab_kernel::flatten::FrameOp::Rect(rect) => Some(rect.bg),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    let word = |red| u32::from_le_bytes([red, 0, 0, 255]);
+
+    let base = slab_kernel::frame::inst_frame(&mut instance, 0.0);
+    assert_eq!(
+        colors(&base),
+        [word(0x11), word(0x22), word(0x33), word(0x44)]
+    );
+    assert_eq!(
+        slab_kernel::frame::inst_get_token(&instance, "space.unit"),
+        Some(slab_kernel::frame::TokenValue::Number(8.0))
+    );
+    assert_eq!(
+        slab_kernel::frame::inst_get_token(&instance, "space.ratio"),
+        Some(slab_kernel::frame::TokenValue::Text("25%"))
+    );
+    assert_eq!(
+        slab_kernel::frame::inst_get_token(&instance, "color.state"),
+        Some(slab_kernel::frame::TokenValue::Color(word(0x22)))
+    );
+
+    assert!(slab_kernel::frame::inst_set_theme(&mut instance, "dusk"));
+    let dusk = slab_kernel::frame::inst_frame(&mut instance, 0.0);
+    assert_eq!(
+        colors(&dusk),
+        [word(0xaa), word(0xbb), word(0xcc), word(0xdd)]
+    );
+    assert_eq!(
+        slab_kernel::frame::inst_get_token(&instance, "space.unit"),
+        Some(slab_kernel::frame::TokenValue::Number(12.0))
+    );
+    assert_eq!(
+        slab_kernel::frame::inst_get_token(&instance, "space.ratio"),
+        Some(slab_kernel::frame::TokenValue::Text("50%"))
+    );
+    assert_eq!(
+        slab_kernel::frame::inst_get_token(&instance, "color.state"),
+        Some(slab_kernel::frame::TokenValue::Color(word(0xbb)))
+    );
+    assert_eq!(
+        slab_kernel::frame::inst_get_token(&instance, "missing"),
+        None
+    );
+
+    assert!(slab_kernel::frame::inst_set_theme(&mut instance, ""));
+    let restored = slab_kernel::frame::inst_frame(&mut instance, 0.0);
+    assert_eq!(colors(&restored), colors(&base));
+}
+
+#[test]
 fn list_each_submit_multiline_roundtrip_contract() {
     let src = r#"
 params {

@@ -16,7 +16,7 @@ use std::fmt::Write as _;
 use crate::Options;
 use crate::export::{ExportProp, compile_export, exported_def_names};
 use slab_slir::Slir;
-use slab_syntax::ast::{Cond, ParamType, TokenEntry, TokenTree, Value};
+use slab_syntax::ast::ParamType;
 use slab_syntax::diag::Diagnostics;
 
 /// `gen wc` options.
@@ -52,14 +52,6 @@ pub(crate) struct ListSpec {
     pub(crate) row: u32,
 }
 
-#[derive(Clone)]
-pub(crate) enum HostToken {
-    Number(f64),
-    String(String),
-}
-
-pub(crate) type TokenTables = Vec<(String, Vec<(String, HostToken)>)>;
-
 pub(crate) struct DocSpec {
     pub(crate) tag: String,
     pub(crate) class: String,
@@ -69,7 +61,7 @@ pub(crate) struct DocSpec {
     pub(crate) lists: Vec<ListSpec>,
     pub(crate) list_rows: Vec<Vec<ListFieldSpec>>,
     pub(crate) signals: Vec<(String, bool)>,
-    pub(crate) token_tables: TokenTables,
+    pub(crate) keys: Vec<(String, String)>,
 }
 
 fn param_type(ty: u8) -> ParamType {
@@ -128,102 +120,6 @@ pub(crate) fn js_string(s: &str) -> String {
     }
     out.push('"');
     out
-}
-
-fn token_lookup<'a>(tree: &'a TokenTree, path: &[String]) -> Option<&'a TokenEntry> {
-    let mut entry = tree.get(path.first()?)?;
-    for segment in &path[1..] {
-        let TokenEntry::Group(group) = entry else {
-            return None;
-        };
-        entry = group.get(segment)?;
-    }
-    Some(entry)
-}
-
-fn resolve_host_token(value: &Value, tree: &TokenTree, depth: usize) -> Option<HostToken> {
-    if depth > 64 {
-        return None;
-    }
-    match value {
-        Value::Num(value) => Some(HostToken::Number(*value)),
-        Value::Pct(value) => Some(HostToken::String(format!("{value}%"))),
-        Value::Str(value) | Value::Color(value) | Value::Kw(value) => {
-            Some(HostToken::String(value.clone()))
-        }
-        Value::Ref(path) => {
-            let TokenEntry::Value(target) = token_lookup(tree, path)? else {
-                return None;
-            };
-            resolve_host_token(target, tree, depth + 1)
-        }
-        Value::Fill(weight) => Some(HostToken::String(if *weight == 1.0 {
-            "fill".to_string()
-        } else {
-            format!("fill:{weight}")
-        })),
-        Value::Tup(items) => {
-            let mut parts = Vec::with_capacity(items.len());
-            for item in items {
-                let part = match resolve_host_token(item, tree, depth + 1)? {
-                    HostToken::Number(value) => value.to_string(),
-                    HostToken::String(value) => value,
-                };
-                parts.push(part);
-            }
-            Some(HostToken::String(parts.join(",")))
-        }
-        Value::List(_) | Value::ListSchema(_) => None,
-    }
-}
-
-fn flatten_host_tokens(
-    tree: &TokenTree,
-    root: &TokenTree,
-    prefix: &str,
-    out: &mut Vec<(String, HostToken)>,
-) {
-    for (name, entry) in &tree.0 {
-        let path = if prefix.is_empty() {
-            name.clone()
-        } else {
-            format!("{prefix}.{name}")
-        };
-        match entry {
-            TokenEntry::Group(group) => flatten_host_tokens(group, root, &path, out),
-            TokenEntry::Value(value) => {
-                if let Some(resolved) = resolve_host_token(value, root, 0) {
-                    out.push((path, resolved));
-                }
-            }
-        }
-    }
-}
-
-fn token_tables_of(src: &str, slir: &Slir) -> TokenTables {
-    let mut diagnostics = Diagnostics::new();
-    let document = slab_syntax::parse(src, &mut diagnostics);
-    debug_assert!(!diagnostics.has_errors());
-    let mut themes = vec![String::new()];
-    themes.extend(
-        slir.themes
-            .iter()
-            .map(|&name| slir.str_at(name).to_string()),
-    );
-    themes
-        .into_iter()
-        .map(|theme| {
-            let mut tree = document.tokens.clone();
-            for (condition, overrides, _) in &document.topwhens {
-                if matches!(condition, Cond::Theme(name) if name == &theme) {
-                    tree.deep_merge(overrides);
-                }
-            }
-            let mut tokens = Vec::new();
-            flatten_host_tokens(&tree, &tree, "", &mut tokens);
-            (theme, tokens)
-        })
-        .collect()
 }
 
 fn list_fields(slir: &Slir, row: usize) -> Vec<ListFieldSpec> {
@@ -400,6 +296,26 @@ pub(crate) fn ts_list_type(names: &[(usize, String)], doc: &DocSpec, row: usize)
         .expect("nested TypeScript list type was not collected")
 }
 
+fn scene_keys(slir: &Slir) -> Vec<(String, String)> {
+    let mut keys = Vec::new();
+    let mut counts = std::collections::HashMap::<String, usize>::new();
+    for (&id_ref, &key_ref) in slir.nodes.id.iter().zip(&slir.nodes.key) {
+        let id = slir.str_at(id_ref);
+        if id.is_empty() {
+            continue;
+        }
+        let count = counts.entry(id.to_string()).or_default();
+        *count += 1;
+        let name = if *count == 1 {
+            id.to_string()
+        } else {
+            format!("{id}_{}", *count)
+        };
+        keys.push((name, slir.str_at(key_ref).to_string()));
+    }
+    keys
+}
+
 /// The component module is plain browser JS (no build step): it imports the
 /// shared minified runtime emitted next to it.
 fn merged_signals(docs: &[DocSpec]) -> Vec<(&str, bool)> {
@@ -439,21 +355,6 @@ fn emit_module(docs: &[DocSpec], separate_ir: bool) -> String {
                 .map(|(n, _)| format!("'{}'", n.replace('_', "-"))),
         );
         let _ = writeln!(m, "   static observedAttributes = [{}];", attrs.join(", "));
-        if !d.token_tables.is_empty() {
-            m.push_str("   static tokenTables = {\n");
-            for (theme, tokens) in &d.token_tables {
-                let _ = writeln!(m, "      {}: {{", js_string(theme));
-                for (path, value) in tokens {
-                    let value = match value {
-                        HostToken::Number(value) => value.to_string(),
-                        HostToken::String(value) => js_string(value),
-                    };
-                    let _ = writeln!(m, "         {}: {value},", js_string(path));
-                }
-                m.push_str("      },\n");
-            }
-            m.push_str("   };\n");
-        }
         if !d.list_rows.is_empty() {
             m.push_str("   static listSchemaRows = [\n");
             for fields in &d.list_rows {
@@ -532,6 +433,17 @@ fn emit_module(docs: &[DocSpec], separate_ir: bool) -> String {
         }
         m.push_str("}\n");
     }
+    for d in docs {
+        let _ = writeln!(
+            m,
+            "\n/** Canonical full scene keys for authored `#id` nodes. */"
+        );
+        let _ = writeln!(m, "export const {}Keys = {{", d.class);
+        for (name, key) in &d.keys {
+            let _ = writeln!(m, "   {}: {},", js_string(name), js_string(key));
+        }
+        m.push_str("};\n");
+    }
     m.push_str("\n/** Signal CustomEvent names → typed detail examples. */\n");
     m.push_str("export const signals = {\n");
     for (name, has_text) in merged_signals(docs) {
@@ -583,6 +495,26 @@ fn emit_dts(docs: &[DocSpec]) -> String {
          /** Detail carried by Change, Submit, and Resize CustomEvents. */\n\
          export interface TextSignalDetail extends SignalDetail {\n\
          \x20  readonly text: string;\n\
+         }\n",
+    );
+    m.push_str(
+        "\n/** One layout or runtime diagnostic from the current frame. */\n\
+         export interface FrameDiagnostic {\n\
+         \x20  readonly code: string;\n\
+         \x20  readonly line: number;\n\
+         \x20  readonly msg: string;\n\
+         }\n\
+         /** Inspectable current-frame data exposed by `lastFrame`. */\n\
+         export interface SlabFrame {\n\
+         \x20  readonly width: number;\n\
+         \x20  readonly height: number;\n\
+         \x20  readonly dirty: boolean;\n\
+         \x20  readonly motionActive: boolean;\n\
+         \x20  readonly diagnostics: readonly FrameDiagnostic[];\n\
+         }\n\
+         /** Detail carried by the `slab-diagnostics` CustomEvent. */\n\
+         export interface SlabDiagnosticsDetail {\n\
+         \x20  readonly diagnostics: readonly FrameDiagnostic[];\n\
          }\n",
     );
     m.push_str(
@@ -661,6 +593,19 @@ fn emit_dts(docs: &[DocSpec]) -> String {
                 m.push_str("}\n");
             }
         }
+        let _ = writeln!(
+            m,
+            "\n/** Canonical full scene keys for authored `#id` nodes. */\nexport declare const {}Keys: {{",
+            d.class
+        );
+        for (name, key) in &d.keys {
+            let _ = writeln!(m, "   readonly {}: {};", js_string(name), js_string(key));
+        }
+        let _ = writeln!(
+            m,
+            "}};\nexport type {}SceneKey = (typeof {}Keys)[keyof typeof {}Keys];",
+            d.class, d.class, d.class
+        );
         let _ = write!(
             m,
             "\nexport declare class {} extends HTMLElement {{\n",
@@ -676,6 +621,19 @@ fn emit_dts(docs: &[DocSpec]) -> String {
         m.push_str("   getToken(path: string): string | number | undefined;\n");
         m.push_str("   /** Move focus to a keyed node; an empty key clears focus. */\n");
         m.push_str("   setFocus(key: string, visible?: boolean): boolean;\n");
+        m.push_str("   /** Clear kernel focus and its visible focus ring. */\n");
+        m.push_str("   clearFocus(): boolean;\n");
+        m.push_str("   /** Reveal, materialize, and focus one virtual-list item. */\n");
+        m.push_str("   focusItem(each: string, index: number): boolean;\n");
+        m.push_str("   /** Explain the most recent failed focus request. */\n");
+        m.push_str("   focusNote(): string;\n");
+        m.push_str("   /** Return the focused scene key, or null when focus is clear. */\n");
+        m.push_str("   focusedKey(): string | null;\n");
+        m.push_str("   /** Report whether the focused node is an editable field. */\n");
+        m.push_str("   inEditField(): boolean;\n");
+        m.push_str("   /** Most recently painted frame, including complete diagnostics. */\n");
+        m.push_str("   readonly lastFrame: SlabFrame | null;\n");
+        m.push_str("   addEventListener(type: 'slab-diagnostics', listener: (event: CustomEvent<SlabDiagnosticsDetail>) => void, options?: boolean | AddEventListenerOptions): void;\n");
         m.push_str("   /** Replace a keyed field buffer and reset its edit history. */\n");
         m.push_str("   setFieldText(key: string, text: string): boolean;\n");
         m.push_str("   /** Read a keyed field's committed text. */\n");
@@ -725,6 +683,8 @@ fn emit_dts(docs: &[DocSpec]) -> String {
         }
         m.push_str("   /** Set one scalar parameter by name. */\n");
         m.push_str("   setParam(name: string, v: unknown): boolean;\n");
+        m.push_str("   /** Resolve after the next retained solve and painted frame. */\n");
+        m.push_str("   whenSettled(): Promise<void>;\n");
         m.push_str("   /** Read the last scalar parameter value accepted by this element. */\n");
         m.push_str("   getParam(name: string): unknown;\n");
         if !d.lists.is_empty() {
@@ -747,7 +707,8 @@ fn emit_dts(docs: &[DocSpec]) -> String {
         };
         let _ = writeln!(m, "   readonly '{name}': {detail};");
     }
-    m.push_str("};\n\ndeclare global {\n   interface HTMLElementTagNameMap {\n");
+    m.push_str("};\nexport type SignalName = keyof typeof signals;\n\n");
+    m.push_str("declare global {\n   interface HTMLElementTagNameMap {\n");
     for d in docs {
         let _ = writeln!(m, "      '{}': {};", d.tag, d.class);
     }
@@ -815,7 +776,6 @@ pub(crate) fn doc_specs(
         .iter()
         .map(|p| (slir.str_at(p.name).to_string(), param_type(p.ty)))
         .collect();
-    let token_tables = token_tables_of(src, &slir);
     docs.push(DocSpec {
         tag: main_tag,
         class: format!("Slab{}Element", pascal(stem)),
@@ -825,7 +785,7 @@ pub(crate) fn doc_specs(
         lists: lists_of(&slir),
         list_rows: list_rows_of(&slir),
         signals: signals_of(&slir),
-        token_tables: token_tables.clone(),
+        keys: scene_keys(&slir),
     });
 
     // Exported defs skip asset embedding: the page shares one registered
@@ -855,7 +815,7 @@ pub(crate) fn doc_specs(
             lists: lists_of(&dslir),
             list_rows: list_rows_of(&dslir),
             signals: signals_of(&dslir),
-            token_tables: token_tables.clone(),
+            keys: scene_keys(&dslir),
         });
     }
     (Some(docs), diags)
@@ -989,6 +949,7 @@ row {
         assert!(declarations.contains("readonly cancelled: boolean"));
         assert!(declarations.contains("readonly dropped: boolean"));
         assert!(declarations.contains("readonly 'resized': TextSignalDetail"));
+        assert!(declarations.contains("export type SignalName = keyof typeof signals"));
     }
 
     #[test]
@@ -1042,18 +1003,10 @@ col { each param.trees }
     }
 
     #[test]
-    fn generated_tokens_are_resolved_per_theme() {
+    fn generated_declarations_expose_kernel_token_lookup() {
         let source = r##"
-tokens {
-  color { page #112233; accent color.page }
-  space { unit 8 }
-  shadow { soft 0,8,24,color.page }
-}
-theme dusk {
-  color { page #334455 }
-  space { unit 10 }
-}
-col bg=color.page { text "tokens" }
+tokens { color { page #112233 } }
+col#canvas bg=color.page { text "tokens" }
 "##;
         let options = WcOptions {
             tag: None,
@@ -1072,13 +1025,19 @@ col bg=color.page { text "tokens" }
             .find(|file| file.name == "tokens.d.ts")
             .and_then(|file| std::str::from_utf8(&file.bytes).ok())
             .expect("generated declarations");
-        assert!(module.contains("\"color.page\": \"#112233\""));
-        assert!(module.contains("\"color.accent\": \"#112233\""));
-        assert!(module.contains("\"shadow.soft\": \"0,8,24,#112233\""));
-        assert!(module.contains("\"space.unit\": 8"));
-        assert!(module.contains("\"dusk\": {"));
-        assert!(module.contains("\"color.page\": \"#334455\""));
-        assert!(module.contains("\"space.unit\": 10"));
+        assert!(module.contains("export const SlabTokensElementKeys"));
+        assert!(module.contains("\"canvas\": \"#canvas\""));
+        assert!(!module.contains("tokenTables"));
         assert!(declarations.contains("getToken(path: string): string | number | undefined"));
+        assert!(declarations.contains("focusedKey(): string | null"));
+        assert!(declarations.contains("inEditField(): boolean"));
+        assert!(declarations.contains("clearFocus(): boolean"));
+        assert!(declarations.contains("focusItem(each: string, index: number): boolean"));
+        assert!(declarations.contains("focusNote(): string"));
+        assert!(declarations.contains("whenSettled(): Promise<void>"));
+        assert!(declarations.contains("setFieldText(key: string, text: string): boolean"));
+        assert!(declarations.contains("readonly diagnostics: readonly FrameDiagnostic[]"));
+        assert!(declarations.contains("type: 'slab-diagnostics'"));
+        assert!(declarations.contains("export type SlabTokensElementSceneKey"));
     }
 }

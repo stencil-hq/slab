@@ -1,8 +1,9 @@
 # @stencil-hq/dslab
 
-Typed client and CLI for the Slab Drive Protocol (SDP) — interrogate and drive
-a live slab kernel session from tests, agents, or scripts. SDP is
-newline-delimited JSON over TCP or a spawned `slab drive` process.
+Typed client and CLI for the
+[Slab Drive Protocol (SDP)](../../spec/SDP.md) — interrogate and drive a live
+Slab kernel session from tests, agents, or scripts. SDP is newline-delimited
+JSON over TCP or a spawned `slab drive` process.
 
 Requires Node ≥ 22 (or any recent Bun). Drive requires the native `slab-cli`:
 
@@ -18,7 +19,7 @@ dslab examples/10-settings.slab scene.find '{"text":"Save"}'
 
 # connected: reuse a long-lived session
 slab drive examples/10-settings.slab --port 4242
-dslab --port 4242 input.click '{"key":"save"}'
+dslab --port 4242 input.click '{"key":"#save"}'
 dslab --port 4242 clock.advance '{"ms":25}'
 ```
 
@@ -47,13 +48,31 @@ const owned = DriveClient.launch({
 });
 
 const tree = await client.call('scene.tree');
-await client.setFieldText('search', 'Slab');
-const text = await client.fieldText('search');
+await client.setFieldText('#search', 'Slab');
+const text = await client.fieldText('#search');
 const query = await client.param('query');
 const focus = await client.focus();
-await client.call('input.click', { key: 'save' });
+await client.call('input.click', { key: '#toolbar/#save' });
+const visible = await client.call('list.window', { each: '#feed/rows' });
 await client.close();
 ```
 
+`DriveSceneKey` and `DriveEachKey` document the canonical locator surface.
+Use an exact full key returned by `scene.tree`, a unique authored `#id`/`id`,
+or a unique authored suffix rooted at an id such as `#toolbar/#save` or
+`#feed/rows`. Component-call ids resolve to the expanded definition root.
+Ambiguous locators fail with canonical candidate paths; unknown locators include
+nearest/suffix suggestions.
+
+In host-mounted `RequestPump` sessions, key/text input can pass through an
+optional host callback and a consumed result has `host_consumed: true`. Host
+reload is denied by default; an opted-in host must invalidate generated setter
+caches before re-syncing. Drive signals and visible inputs rather than
+`param.set` for host-owned values, because the next host sync overwrites those
+params. Keep signal-bound UI affordances for host shortcuts that must remain
+portable across hosts.
+
 `DriveRemoteError` carries the structured SDP error code when the server
-rejects a call. See the package types for the full method/value surface.
+rejects a call. See the [normative SDP specification](../../spec/SDP.md) for
+framing, determinism, every method, key grammar, host mounting, diagnostics,
+and compatibility.

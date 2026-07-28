@@ -151,6 +151,16 @@ fn attr_vote(votes: &mut [Vote], key: &str, value: &Value) {
                 }
             }
         }
+        Value::KeyMap(entries) if key == "keys" => {
+            for (map_key, signal) in entries {
+                if let Value::Kw(prop) = map_key {
+                    cast(votes, prop, ParamType::Text);
+                }
+                if let Value::Kw(prop) = signal {
+                    cast(votes, prop, ParamType::Text);
+                }
+            }
+        }
         _ => {}
     }
 }

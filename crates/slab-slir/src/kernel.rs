@@ -117,6 +117,14 @@ pub fn decode_doc(bytes: &[u8]) -> Result<(slab_kernel::slir::Doc, Vec<Vec<u8>>)
     doc.list_item_value_field = std::mem::take(&mut wire.list_item_value_field);
     doc.list_item_value_val = std::mem::take(&mut wire.list_item_value_val);
     doc.theme_name = std::mem::take(&mut wire.theme_name);
+    doc.token_name = std::mem::take(&mut wire.token_name);
+    doc.token_base = std::mem::take(&mut wire.token_base);
+    doc.token_base_repr = std::mem::take(&mut wire.token_base_repr);
+    doc.token_theme_off = std::mem::take(&mut wire.token_theme_off);
+    doc.token_theme_len = std::mem::take(&mut wire.token_theme_len);
+    doc.token_theme_name = std::mem::take(&mut wire.token_theme_name);
+    doc.token_theme_val = std::mem::take(&mut wire.token_theme_val);
+    doc.token_theme_repr = std::mem::take(&mut wire.token_theme_repr);
     doc.hole_name = std::mem::take(&mut wire.hole_name);
     doc.hole_node = std::mem::take(&mut wire.hole_node);
     doc.sign_name = std::mem::take(&mut wire.sign_name);
@@ -130,6 +138,37 @@ pub fn decode_doc(bytes: &[u8]) -> Result<(slab_kernel::slir::Doc, Vec<Vec<u8>>)
     doc.img_h = std::mem::take(&mut wire.img_h);
     doc.img_format = std::mem::take(&mut wire.img_format);
     doc.img_data = imgs.clone();
+    let token_count = doc.token_name.len();
+    if [
+        doc.token_base.len(),
+        doc.token_base_repr.len(),
+        doc.token_theme_off.len(),
+        doc.token_theme_len.len(),
+    ]
+    .iter()
+    .any(|&length| length != token_count)
+    {
+        return Err("token: parallel arrays have mismatched lengths".into());
+    }
+    if doc.token_theme_name.len() != doc.token_theme_val.len()
+        || doc.token_theme_name.len() != doc.token_theme_repr.len()
+    {
+        return Err("token theme: parallel arrays have mismatched lengths".into());
+    }
+    for index in 0..token_count {
+        let start = usize::try_from(doc.token_theme_off[index])
+            .map_err(|_| "token theme offset must be nonnegative")?;
+        let len = usize::try_from(doc.token_theme_len[index])
+            .map_err(|_| "token theme length must be nonnegative")?;
+        if start
+            .checked_add(len)
+            .is_none_or(|end| end > doc.token_theme_name.len())
+        {
+            return Err(format!(
+                "token theme range for row {index} is out of bounds"
+            ));
+        }
+    }
     if doc.list_field_sub.is_empty() {
         doc.list_field_sub.resize(doc.list_field_name.len(), 0);
     }

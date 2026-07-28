@@ -244,11 +244,12 @@ mod tests {
     }
 
     #[test]
-    fn success_wraps_generated_module() {
+    fn success_wraps_generated_module_and_tracks_document_bytes() {
         let src = expand("tests/fixtures/counter.slab", Some("counter"), &[]).unwrap();
         assert!(src.starts_with("pub mod counter {"), "{src}");
         assert!(src.contains("pub struct Doc"), "{src}");
         assert!(src.contains("include_bytes!"), "{src}");
+        assert!(src.contains("tests/fixtures/counter.slab"), "{src}");
     }
 
     #[test]

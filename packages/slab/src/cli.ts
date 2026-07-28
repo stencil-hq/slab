@@ -23,6 +23,19 @@ import {
 } from './dev.ts';
 import { wasm } from './wasm.ts';
 
+const packageJson: unknown = JSON.parse(
+   readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
+);
+if (
+   packageJson === null ||
+   typeof packageJson !== 'object' ||
+   !('version' in packageJson) ||
+   typeof packageJson.version !== 'string'
+) {
+   throw new Error('package.json has no string version');
+}
+const PACKAGE_VERSION = packageJson.version;
+
 const USAGE = `\
 usage: slab <command> [args]
 
@@ -48,10 +61,11 @@ const CHECK_USAGE = `usage: slab check FILE [--width N] [--height N] [--state a,
 const BUILD_USAGE = 'usage: slab build FILE -o OUT.slir [--no-embed-assets]\n';
 const DUMP_USAGE = 'usage: slab dump FILE.slir\n';
 const RENDER_USAGE = `usage: slab render FILE [-o OUT.{svg,png,apng,txt}]
-                        [--client web|gpu|tui|svg|png] [--width N] [--height N]
-                        [--scale N] [--t MS] [--dur S] [--fps N]
-                        [--state a,b] [--env portrait,dark,coarse]
-                        [--set param=value]... [--plain]
+                        [--client web|gpu|tui|svg|png] [--theme NAME]
+                        [--width N] [--height N] [--scale N] [--t MS]
+                        [--dur S] [--fps N] [--state a,b]
+                        [--env portrait,dark,coarse] [--set param=value]... [--plain]
+  --state previews document-global states only; it cannot target one node.
 `;
 const GEN_USAGE = `usage: slab gen wc FILE -o DIR [--tag NAME] [--separate-ir]
        slab gen react FILE -o DIR [--tag NAME] [--separate-ir]
@@ -185,6 +199,10 @@ function cmdCheck(args: string[]): void {
    if (!p.file) usageErr('check needs a FILE');
    const { src } = readSource(p.file);
    const W = wasm();
+   const compilerVersion = W.compiler_version();
+   process.stderr.write(
+      `slab compiler ${compilerVersion} (package @stencil-hq/slab ${PACKAGE_VERSION})\n`,
+   );
    const json = W.check(src, p.file);
    const diags = printDiags(json);
    if (hasErrors(diags)) process.exit(1);
@@ -259,6 +277,7 @@ function cmdRender(args: string[]): void {
       height: 0,
       scale: 1,
       t: 0,
+      theme: undefined as string | undefined,
       dur: 2,
       fps: 20,
       states: [] as string[],
@@ -279,6 +298,7 @@ function cmdRender(args: string[]): void {
       };
       if (a === '-o' || a === '--out') o.out = val('-o');
       else if (a === '--client') o.client = val('--client');
+      else if (a === '--theme') o.theme = val('--theme');
       else if (a === '--width') o.width = Number(val('--width'));
       else if (a === '--height') o.height = Number(val('--height'));
       else if (a === '--scale') o.scale = Number(val('--scale'));

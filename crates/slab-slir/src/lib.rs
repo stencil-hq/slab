@@ -61,8 +61,9 @@ pub mod flags {
     pub const VIRTUAL: u16 = 1 << 10;
     pub const STICKY: u16 = 1 << 11;
     pub const DRAG_GHOST: u16 = 1 << 12;
+    pub const ESCAPE_BLUR: u16 = 1 << 13;
 
-    pub const NAMES: [(u16, &str); 13] = [
+    pub const NAMES: [(u16, &str); 14] = [
         (CLIP, "clip"),
         (BLEED, "bleed"),
         (SCROLL, "scroll"),
@@ -76,6 +77,7 @@ pub mod flags {
         (VIRTUAL, "virtual"),
         (STICKY, "sticky"),
         (DRAG_GHOST, "drag-ghost"),
+        (ESCAPE_BLUR, "escape-blur"),
     ];
 }
 
@@ -101,8 +103,10 @@ pub mod aval {
     pub const LIST_DEFAULT: u8 = 17;
     pub const TUPLE_DYN: u8 = 18;
     pub const PAINT_CURRENT: u8 = 19;
+    /// Reference to one typed active-theme token row.
+    pub const TOKEN_REF: u8 = 20;
 
-    pub const NAMES: [&str; 20] = [
+    pub const NAMES: [&str; 21] = [
         "Num",
         "Pct",
         "Str",
@@ -123,6 +127,7 @@ pub mod aval {
         "ListDefault",
         "TupleDyn",
         "PaintCurrent",
+        "TokenRef",
     ];
 }
 
@@ -332,6 +337,16 @@ pub struct IconE {
     pub viewbox: f64,
 }
 
+/// One typed token row with a canonical host representation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TokenE {
+    pub name: u32,
+    pub base: u32,
+    pub base_repr: u32,
+    /// `(theme-name STRS ref, AVAL ref, canonical-repr STRS ref)`.
+    pub themes: Vec<(u32, u32, u32)>,
+}
+
 /// SoA node arrays; index = node id, node 0 = root.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Nodes {
@@ -395,6 +410,8 @@ pub struct Slir {
     pub list_item_values: Vec<ListItemValueE>,
     /// STRS refs for every compiler-declared theme, in declaration order.
     pub themes: Vec<u32>,
+    /// Scalar public-token rows first, followed by typed token-use rows.
+    pub tokens: Vec<TokenE>,
     /// `(name strref, node)`.
     pub holes: Vec<(u32, u32)>,
     /// `(name strref, node, trigger: 0 Activate | 1 Change)`.

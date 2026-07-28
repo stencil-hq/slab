@@ -223,6 +223,97 @@ col w=300 h=180 strike=param.crossed {
 }
 
 #[test]
+fn nowrap_paragraph_ellipsizes_once_across_styled_spans() {
+    let mut instance = compile_instance(
+        r#"col w=320 h=80 {
+  para w=90 nowrap ellipsis {
+    span text="Alpha " color=#FF0000
+    span text="Beta Gamma Delta" color=#00FF00
+  }
+  para w=300 nowrap ellipsis {
+    span text="Alpha " color=#FF0000
+    span text="Beta Gamma Delta" color=#00FF00
+  }
+}"#,
+        320.0,
+        80.0,
+    );
+    let frame = frame::inst_frame(&mut instance, 0.0);
+    let runs: Vec<_> = frame
+        .ops
+        .iter()
+        .filter_map(|op| match op {
+            FrameOp::Text(text) => Some((
+                text.node,
+                frame.strings[text.str_ref as usize].clone(),
+                text.y_baseline,
+                text.color,
+            )),
+            _ => None,
+        })
+        .collect();
+    let narrow_node = runs
+        .iter()
+        .find(|(_, text, _, _)| text.ends_with('…'))
+        .map(|(node, _, _, _)| *node)
+        .expect("narrow paragraph emits an ellipsis");
+    let narrow: Vec<_> = runs.iter().filter(|run| run.0 == narrow_node).collect();
+    assert!(
+        narrow.iter().all(|run| run.2 == narrow[0].2),
+        "nowrap paragraph must have one baseline"
+    );
+    assert_eq!(
+        narrow.iter().map(|run| run.1.as_str()).collect::<String>(),
+        "AlphaBeta…"
+    );
+
+    let wide_node = runs
+        .iter()
+        .find(|(_, text, _, _)| text == "Beta Gamma Delta")
+        .map(|(node, _, _, _)| *node)
+        .expect("wide paragraph retains the complete second run");
+    let wide: Vec<_> = runs.iter().filter(|run| run.0 == wide_node).collect();
+    assert!(
+        wide.iter().all(|run| run.2 == wide[0].2),
+        "wide nowrap paragraph must also remain one line"
+    );
+    assert_eq!(
+        wide.iter().map(|run| run.1.as_str()).collect::<String>(),
+        "AlphaBeta Gamma Delta"
+    );
+    assert_eq!(
+        narrow.last().expect("narrow paragraph run").3,
+        wide.last().expect("wide paragraph run").3,
+        "ellipsis inherits the last retained run color"
+    );
+}
+
+#[test]
+fn strike_never_changes_text_measurement() {
+    let mut instance = compile_instance(
+        r#"col w=200 h=60 {
+  text "same"
+  text "same" strike
+}"#,
+        200.0,
+        60.0,
+    );
+    let frame = frame::inst_frame(&mut instance, 0.0);
+    let runs: Vec<_> = frame
+        .ops
+        .iter()
+        .filter_map(|op| match op {
+            FrameOp::Text(text) => Some((text.measured_w, text.strike)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(runs.len(), 2);
+    assert_eq!(runs[0].0, runs[1].0);
+    assert!(!runs[0].1);
+    assert!(runs[1].1);
+}
+
+#[test]
 fn svg_emits_strike_only_for_true_runs() {
     let (slir, diagnostics) = compile(
         r#"col w=200 h=60 {
@@ -245,4 +336,39 @@ fn svg_emits_strike_only_for_true_runs() {
     assert_eq!(svg.matches("text-decoration=\"line-through\"").count(), 1);
     assert!(svg.contains(">done</text>"));
     assert!(svg.contains(">open</text>"));
+}
+
+#[test]
+fn runtime_glyph_diagnostics_are_once_per_family_and_codepoint() {
+    let mut instance = compile_instance(
+        r#"
+params { value text = "✕" }
+col {
+  text param.value family="sans"
+  text param.value family="sans"
+}
+"#,
+        200.0,
+        80.0,
+    );
+    let first = frame::inst_frame(&mut instance, 0.0);
+    let missing: Vec<_> = first
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == "glyph-missing")
+        .collect();
+    assert_eq!(missing.len(), 1, "{missing:?}");
+    assert!(missing[0].msg.contains("'✕'"), "{missing:?}");
+    assert!(missing[0].msg.contains("U+2715"), "{missing:?}");
+    assert!(missing[0].msg.contains("family 'sans'"), "{missing:?}");
+
+    let second = frame::inst_frame(&mut instance, 0.0);
+    assert!(
+        second
+            .diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "glyph-missing"),
+        "{:?}",
+        second.diagnostics
+    );
 }

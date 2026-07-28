@@ -1,8 +1,8 @@
-//! Resolution + expansion: tokens fold, defs expand (recursion cap 32, prop
-//! substitution, prop-truthiness `when` folding, slot splice, multi-node
-//! splice), §15.1 key assignment, runtime `when` conditions become patch
-//! specs with detached children. Ported from the 0.5 reference resolver;
-//! layout/env evaluation is deliberately absent (kernel territory).
+//! Resolution + expansion: scalar tokens retain active-theme identity, defs
+//! expand (recursion cap 32, prop substitution, prop-truthiness `when`
+//! folding, slot splice, multi-node splice), §15.1 keys are assigned, and
+//! runtime `when` conditions become patch specs with detached children.
+//! Layout/environment evaluation remains kernel territory.
 
 use crate::color::{self, Paint, Rgba};
 use slab_fonts;
@@ -94,7 +94,14 @@ pub enum RVal {
     Fill(f64),
     Kw(String),
     Tup(Vec<RVal>),
+    KeyMap(Vec<(RVal, RVal)>),
     Group(TokenTree),
+    /// A scalar/group token reference whose authored-base value is retained
+    /// alongside its path until attribute typing can build active-theme values.
+    Token {
+        path: Vec<String>,
+        base: Box<RVal>,
+    },
     /// PARM index.
     Param(u32),
     /// Field index in the current `each` template schema.
@@ -124,6 +131,8 @@ pub struct Shad {
 #[derive(Debug, Clone, PartialEq)]
 pub enum TVal {
     Num(f64),
+    /// Generic percentage token value (distinct from an attribute-typed size).
+    Pct(f64),
     Size(SizeSpec),
     Tuple(Vec<f64>),
     /// Tuple with at least one num/pct param-ref member (SLIR `TupleDyn`).
@@ -134,6 +143,12 @@ pub enum TVal {
     /// Icon-declaration paint inherited from the icon usage's text color.
     PaintCurrent,
     Color(Rgba),
+    /// One typed token use, resolved by the kernel against the active theme.
+    Token {
+        path: String,
+        base: Box<TVal>,
+        themes: Vec<(String, TVal)>,
+    },
     Shadows(Vec<Shad>),
     Path(Vec<u8>, Vec<f64>),
     Param(u32),
@@ -294,6 +309,14 @@ pub struct CIcon {
     pub root: CNode,
 }
 
+/// One public scalar-token row and its active-theme values.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TokenInfo {
+    pub path: String,
+    pub base: RVal,
+    pub themes: Vec<(String, RVal)>,
+}
+
 /// Expansion output.
 pub struct Expanded {
     pub roots: Vec<CNode>,
@@ -305,10 +328,10 @@ pub struct Expanded {
     pub icons: Vec<CIcon>,
     /// Theme names accepted by the instance API, in source declaration order.
     pub themes: Vec<String>,
+    /// Public scalar token rows in authored declaration order.
+    pub tokens: Vec<TokenInfo>,
     /// (src, line), first-use order, deduped.
     pub images: Vec<(String, u32)>,
-    /// Codepoints reachable from document text (plus printable ASCII).
-    pub text_cps: BTreeSet<u32>,
     /// Statically knowable family names used through list-item property bindings.
     pub font_families: BTreeSet<String>,
     /// Statically knowable snapped weights used through list-item property bindings.
@@ -338,14 +361,16 @@ struct Ctx<'a> {
     tokens: &'a TokenTree,
     /// Top-level `when` token override variants: (cond, merged tree).
     variants: Vec<(CondSpec, TokenTree)>,
+    /// Fully merged token trees for named themes, in declaration order.
+    theme_tokens: Vec<(String, TokenTree)>,
     params: Vec<ParamInfo>,
     anim_names: Vec<String>,
     anim_content: BTreeSet<String>,
     seen_ids: HashMap<String, u32>,
     holes: HashMap<String, u32>,
     signals: Vec<(String, u8, u32)>,
+    field_sync_warnings: BTreeSet<(u32, String, String)>,
     images: Vec<(String, u32)>,
-    text_cps: BTreeSet<u32>,
     /// Effective child-axis stack; empty means the root column context.
     layout_axes: Vec<bool>,
     /// Static fallbacks required by property-bound list-item font families.
@@ -377,12 +402,9 @@ impl<'a> Ctx<'a> {
             self.diags.warn(code, msg, line);
         }
     }
-
-    fn note_text(&mut self, s: &str) {
+    fn warn_with(&mut self, code: &'static str, msg: String, line: u32, remedy: String) {
         if self.quiet == 0 {
-            for ch in s.chars() {
-                self.text_cps.insert(ch as u32);
-            }
+            self.diags.warn_with(code, msg, line, remedy);
         }
     }
 }
@@ -401,7 +423,18 @@ fn lookup<'t>(tree: &'t TokenTree, path: &[String]) -> Option<&'t TokenEntry> {
 }
 
 fn resolve_value(ctx: &mut Ctx, v: &Value, scope: &Scope, line: u32, tree: &TokenTree) -> RVal {
-    resolve_value_d(ctx, v, scope, line, tree, 0)
+    resolve_value_d(ctx, v, scope, line, tree, 0, true)
+}
+
+fn resolve_token_value(ctx: &mut Ctx, path: &[String], line: u32, tree: &TokenTree) -> RVal {
+    match lookup(tree, path) {
+        Some(TokenEntry::Value(value)) => {
+            let value = value.clone();
+            resolve_value_d(ctx, &value, &Scope::new(), line, tree, 1, false)
+        }
+        Some(TokenEntry::Group(group)) => RVal::Group(group.clone()),
+        None => RVal::None,
+    }
 }
 
 fn resolve_value_d(
@@ -411,6 +444,7 @@ fn resolve_value_d(
     line: u32,
     tree: &TokenTree,
     depth: usize,
+    preserve_token: bool,
 ) -> RVal {
     if depth > MAX_DEPTH {
         ctx.error("ref", "token reference cycle".into(), line);
@@ -435,9 +469,28 @@ fn resolve_value_d(
             match lookup(tree, path) {
                 Some(TokenEntry::Value(got)) => {
                     let got = got.clone();
-                    resolve_value_d(ctx, &got, &Scope::new(), line, tree, depth + 1)
+                    let base =
+                        resolve_value_d(ctx, &got, &Scope::new(), line, tree, depth + 1, false);
+                    if preserve_token {
+                        RVal::Token {
+                            path: path.clone(),
+                            base: Box::new(base),
+                        }
+                    } else {
+                        base
+                    }
                 }
-                Some(TokenEntry::Group(g)) => RVal::Group(g.clone()),
+                Some(TokenEntry::Group(g)) => {
+                    let base = RVal::Group(g.clone());
+                    if preserve_token {
+                        RVal::Token {
+                            path: path.clone(),
+                            base: Box::new(base),
+                        }
+                    } else {
+                        base
+                    }
+                }
                 None => {
                     ctx.error("ref", format!("unknown token '{}'", path.join(".")), line);
                     RVal::None
@@ -453,7 +506,18 @@ fn resolve_value_d(
         Value::Tup(items) => RVal::Tup(
             items
                 .iter()
-                .map(|it| resolve_value_d(ctx, it, scope, line, tree, depth + 1))
+                .map(|it| resolve_value_d(ctx, it, scope, line, tree, depth + 1, preserve_token))
+                .collect(),
+        ),
+        Value::KeyMap(entries) => RVal::KeyMap(
+            entries
+                .iter()
+                .map(|(key, signal)| {
+                    (
+                        resolve_value_d(ctx, key, scope, line, tree, depth + 1, preserve_token),
+                        resolve_value_d(ctx, signal, scope, line, tree, depth + 1, preserve_token),
+                    )
+                })
                 .collect(),
         ),
         Value::List(_) | Value::ListSchema(_) => {
@@ -469,6 +533,7 @@ fn resolve_value_d(
 
 fn truthy(v: &RVal) -> bool {
     match v {
+        RVal::Token { base, .. } => truthy(base),
         RVal::None => false,
         RVal::Kw(k) => !matches!(k.as_str(), "false" | "none" | ""),
         RVal::Num(x) => *x != 0.0,
@@ -477,8 +542,65 @@ fn truthy(v: &RVal) -> bool {
     }
 }
 
+fn token_base(rv: &RVal) -> &RVal {
+    if let RVal::Token { base, .. } = rv {
+        token_base(base)
+    } else {
+        rv
+    }
+}
+
+fn first_token_path(rv: &RVal) -> Option<&[String]> {
+    match rv {
+        RVal::Token { path, .. } => Some(path),
+        RVal::Tup(items) => items.iter().find_map(first_token_path),
+        RVal::KeyMap(entries) => entries
+            .iter()
+            .find_map(|(key, value)| first_token_path(key).or_else(|| first_token_path(value))),
+        _ => None,
+    }
+}
+
+fn rval_without_tokens(rv: &RVal) -> RVal {
+    match rv {
+        RVal::Token { base, .. } => rval_without_tokens(base),
+        RVal::Tup(items) => RVal::Tup(items.iter().map(rval_without_tokens).collect()),
+        RVal::KeyMap(entries) => RVal::KeyMap(
+            entries
+                .iter()
+                .map(|(key, value)| (rval_without_tokens(key), rval_without_tokens(value)))
+                .collect(),
+        ),
+        other => other.clone(),
+    }
+}
+
+fn rval_for_theme(ctx: &mut Ctx, rv: &RVal, line: u32, tree: &TokenTree) -> RVal {
+    match rv {
+        RVal::Token { path, .. } => resolve_token_value(ctx, path, line, tree),
+        RVal::Tup(items) => RVal::Tup(
+            items
+                .iter()
+                .map(|item| rval_for_theme(ctx, item, line, tree))
+                .collect(),
+        ),
+        RVal::KeyMap(entries) => RVal::KeyMap(
+            entries
+                .iter()
+                .map(|(key, value)| {
+                    (
+                        rval_for_theme(ctx, key, line, tree),
+                        rval_for_theme(ctx, value, line, tree),
+                    )
+                })
+                .collect(),
+        ),
+        other => other.clone(),
+    }
+}
 fn to_text(ctx: &Ctx, rv: &RVal) -> String {
     match rv {
+        RVal::Token { base, .. } => to_text(ctx, base),
         RVal::Num(x) => fmt_g(*x),
         RVal::Kw(k) => k.clone(),
         RVal::Pct(p) => format!("{}%", fmt_g(round_half_even(*p, 1))),
@@ -503,6 +625,21 @@ fn to_text(ctx: &Ctx, rv: &RVal) -> String {
             format!("{rv:?}")
         }
         other => format!("{other:?}"),
+    }
+}
+
+fn token_text_tval(ctx: &mut Ctx, path: &[String], base: &RVal, line: u32) -> TVal {
+    let base_text = to_text(ctx, base);
+    let mut themes = Vec::with_capacity(ctx.theme_tokens.len());
+    for (theme, tree) in ctx.theme_tokens.clone() {
+        let value = resolve_token_value(ctx, path, line, &tree);
+        let text = to_text(ctx, &value);
+        themes.push((theme, TVal::Str(text)));
+    }
+    TVal::Token {
+        path: path.join("."),
+        base: Box::new(TVal::Str(base_text)),
+        themes,
     }
 }
 
@@ -612,6 +749,10 @@ struct Sink {
     pointer_up: Option<String>,
     drag_update: Option<String>,
     drag_end: Option<String>,
+    key_signals: Vec<String>,
+    key_map: bool,
+    /// `field-sync=host|implicit`; absent inherits across a `when` patch.
+    field_sync_host: Option<bool>,
     /// Extra flag bits set by attrs (`field`, `press`, and `drag` imply focusable).
     flag_mask: u16,
     /// True while applying deferred patch or keyframe attributes.
@@ -1054,38 +1195,97 @@ fn is_activation_key(name: &str) -> bool {
     matches!((chars.next(), chars.next()), (Some(ch), None) if !ch.is_control() && ch != ',')
 }
 
-fn activation_keys(ctx: &mut Ctx, rv: &RVal, line: u32) -> Option<String> {
+struct ActivationKeys {
+    encoded: String,
+    signals: Vec<String>,
+    mapped: bool,
+}
+
+fn activation_name<'a>(ctx: &mut Ctx, value: &'a RVal, what: &str, line: u32) -> Option<&'a str> {
+    match value {
+        RVal::Kw(name) | RVal::Str(name) => Some(name),
+        _ => {
+            ctx.error("ref", format!("{what} expects a name"), line);
+            None
+        }
+    }
+}
+
+fn activation_keys(ctx: &mut Ctx, rv: &RVal, line: u32) -> Option<ActivationKeys> {
+    if let RVal::KeyMap(entries) = rv {
+        let mut encoded = String::new();
+        let mut keys = Vec::<String>::new();
+        let mut signals = Vec::new();
+        for (key, signal) in entries {
+            let key = activation_name(ctx, key, "keys map key", line)?;
+            let signal = activation_name(ctx, signal, "keys map signal", line)?;
+            if !is_activation_key(key) {
+                ctx.warn("attr", format!("unknown activation key '{key}'"), line);
+            }
+            if key.contains(',') {
+                ctx.error(
+                    "keys",
+                    "mapped activation keys cannot contain `,`".into(),
+                    line,
+                );
+                continue;
+            }
+            if signal.contains(',') || signal.contains(':') {
+                ctx.error(
+                    "keys",
+                    "mapped signal names cannot contain `,` or `:`".into(),
+                    line,
+                );
+                continue;
+            }
+            let canonical_key = if key == "Space" { " " } else { key };
+            if keys.iter().any(|prior| prior == canonical_key) {
+                ctx.error("keys", format!("duplicate key mapping for '{key}'"), line);
+                continue;
+            }
+            keys.push(canonical_key.to_owned());
+            if !encoded.is_empty() {
+                encoded.push(',');
+            }
+            encoded.push_str(canonical_key);
+            encoded.push(':');
+            encoded.push_str(signal);
+            if !signals.iter().any(|prior| prior == signal) {
+                signals.push(signal.to_owned());
+            }
+        }
+        return Some(ActivationKeys {
+            encoded,
+            signals,
+            mapped: true,
+        });
+    }
+
     let items = match rv {
         RVal::Tup(items) => items.as_slice(),
         one => std::slice::from_ref(one),
     };
-    let mut out = String::new();
+    let mut encoded = String::new();
     for item in items {
-        let name = match item {
-            RVal::Kw(name) | RVal::Str(name) => name.as_str(),
-            _ => {
-                ctx.error("ref", "keys expects comma-separated key names".into(), line);
-                return None;
-            }
-        };
+        let name = activation_name(ctx, item, "keys", line)?;
         if !is_activation_key(name) {
             ctx.warn("attr", format!("unknown activation key '{name}'"), line);
         }
-        if !out.is_empty() {
-            out.push(',');
+        if !encoded.is_empty() {
+            encoded.push(',');
         }
-        if name == "Space" {
-            out.push(' ');
-        } else {
-            out.push_str(name);
-        }
+        encoded.push_str(if name == "Space" { " " } else { name });
     }
-    Some(out)
+    Some(ActivationKeys {
+        encoded,
+        signals: Vec::new(),
+        mapped: false,
+    })
 }
 
 /// The typed `_apply_attr` port. Applies one resolved attribute value into
 /// the sink, mirroring the 0.5 validation and diagnostics.
-fn apply_attr(ctx: &mut Ctx, sink: &mut Sink, key: &str, rv: &RVal, line: u32) {
+fn apply_attr_concrete(ctx: &mut Ctx, sink: &mut Sink, key: &str, rv: &RVal, line: u32) {
     if let RVal::Prop(field) = rv {
         match key {
             "d" => {
@@ -1147,7 +1347,7 @@ fn apply_attr(ctx: &mut Ctx, sink: &mut Sink, key: &str, rv: &RVal, line: u32) {
             "content" | "text" => sink.content = Some(TVal::Prop(*field)),
             "act" | "field" | "submit" | "press" | "context" | "dblclick" | "drag" | "drop"
             | "resize" | "pointer-move" | "pointer-up" | "drag-update" | "drag-end" | "animate"
-            | "transition" | "keys" => ctx.error(
+            | "transition" | "keys" | "field-sync" => ctx.error(
                 "ref",
                 format!("template prop cannot supply reserved attribute '{key}'"),
                 line,
@@ -1916,14 +2116,28 @@ fn apply_attr(ctx: &mut Ctx, sink: &mut Sink, key: &str, rv: &RVal, line: u32) {
         }
         "content" | "text" => match rv {
             RVal::Str(text) => {
-                ctx.note_text(text);
                 sink.set(at::CONTENT, TVal::Str(text.clone()));
             }
             _ => ctx.error("ref", format!("{key} expects a string"), line),
         },
+        "field-sync" => match rv {
+            RVal::Kw(mode) | RVal::Str(mode) if mode == "host" => {
+                sink.field_sync_host = Some(true);
+            }
+            RVal::Kw(mode) | RVal::Str(mode) if mode == "implicit" => {
+                sink.field_sync_host = Some(false);
+            }
+            _ => ctx.error(
+                "field-sync",
+                "field-sync expects `host` or `implicit`".into(),
+                line,
+            ),
+        },
         "keys" => {
             if let Some(keys) = activation_keys(ctx, rv, line) {
-                sink.set(at::KEYS, TVal::Str(keys));
+                sink.set(at::KEYS, TVal::Str(keys.encoded));
+                sink.key_signals = keys.signals;
+                sink.key_map = keys.mapped;
                 sink.flag_mask |= fl::FOCUSABLE;
             }
         }
@@ -1982,12 +2196,78 @@ fn apply_attr(ctx: &mut Ctx, sink: &mut Sink, key: &str, rv: &RVal, line: u32) {
     }
 }
 
+/// Applies an attribute while retaining scalar token identity as one runtime
+/// value reference. Named-theme variants are typed in the same attribute
+/// context, so direct refs, deferred patches, and component-substituted refs
+/// share exactly one representation.
+fn apply_attr(ctx: &mut Ctx, sink: &mut Sink, key: &str, rv: &RVal, line: u32) {
+    let Some(path) = first_token_path(rv).map(<[String]>::to_vec) else {
+        apply_attr_concrete(ctx, sink, key, rv, line);
+        return;
+    };
+    let base_rval = rval_without_tokens(rv);
+
+    let before = sink.clone();
+    apply_attr_concrete(ctx, sink, key, &base_rval, line);
+    let affected: Vec<u16> = sink
+        .entries
+        .iter()
+        .filter(|entry| before.get(entry.id) != Some(&entry.val))
+        .map(|entry| entry.id)
+        .collect();
+    if affected.is_empty() {
+        return;
+    }
+
+    let theme_tokens = ctx.theme_tokens.clone();
+    let mut variants: Vec<Vec<(String, TVal)>> = vec![Vec::new(); affected.len()];
+    for (theme, tree) in theme_tokens {
+        let themed = rval_for_theme(ctx, rv, line, &tree);
+        let mut themed_sink = before.clone();
+        ctx.quiet = ctx.quiet.wrapping_add(1);
+        apply_attr_concrete(ctx, &mut themed_sink, key, &themed, line);
+        ctx.quiet = ctx.quiet.wrapping_sub(1);
+        for (index, &attr) in affected.iter().enumerate() {
+            if let Some(value) = themed_sink.get(attr) {
+                variants[index].push((theme.clone(), value.clone()));
+            }
+        }
+    }
+    let path = path.join(".");
+    for (index, attr) in affected.into_iter().enumerate() {
+        let Some(base) = sink.get(attr).cloned() else {
+            continue;
+        };
+        sink.set(
+            attr,
+            TVal::Token {
+                path: path.clone(),
+                base: Box::new(base),
+                themes: std::mem::take(&mut variants[index]),
+            },
+        );
+    }
+}
+
 // ---------------------------------------------------------------- keys
+
+fn escape_key_segment(segment: &str) -> String {
+    let mut escaped = String::with_capacity(segment.len());
+    for ch in segment.chars() {
+        match ch {
+            '%' => escaped.push_str("%25"),
+            '/' => escaped.push_str("%2F"),
+            '~' => escaped.push_str("%7E"),
+            _ => escaped.push(ch),
+        }
+    }
+    escaped
+}
 
 fn segment(ctx: &mut Ctx, a: &ANode, scope: &Scope, keys: &KeysRc) -> String {
     let seg = if let Some(kv) = a.attr("key") {
         let rv = resolve_value(ctx, kv, scope, a.line, ctx.tokens);
-        to_text(ctx, &rv)
+        escape_key_segment(&to_text(ctx, &rv))
     } else if let Some(id) = &a.id {
         format!("#{id}")
     } else {
@@ -2046,7 +2326,7 @@ fn synth_key(parent: &str, keys: &KeysRc, kind: &str) -> String {
 fn segment_each(ctx: &mut Ctx, a: &AEach, scope: &Scope, keys: &KeysRc) -> String {
     let seg = if let Some((_, value)) = a.attrs.iter().find(|(name, _)| name == "key") {
         let rv = resolve_value(ctx, value, scope, a.line, ctx.tokens);
-        to_text(ctx, &rv)
+        escape_key_segment(&to_text(ctx, &rv))
     } else if let Some(id) = &a.id {
         format!("#{id}")
     } else {
@@ -2670,6 +2950,9 @@ fn build_sink(
         let rv = resolve_value(ctx, arg, scope, a.line, tree);
         match kind {
             nk::TEXT | nk::SPAN | nk::PARA => match rv {
+                RVal::Token { path, base } => {
+                    sink.content = Some(token_text_tval(ctx, &path, &base, a.line));
+                }
                 RVal::Param(ix) => {
                     if matches!(&ctx.params[ix as usize].ty, ParamType::List(_)) {
                         ctx.error(
@@ -2684,13 +2967,24 @@ fn build_sink(
                 RVal::Prop(field) => sink.content = Some(TVal::Prop(field)),
                 _ => {
                     let t = to_text(ctx, &rv);
-                    ctx.note_text(&t);
                     sink.content = Some(TVal::Str(t));
                 }
             },
             nk::IMG => apply_attr(ctx, &mut sink, "src", &rv, a.line),
             nk::PATH => apply_attr(ctx, &mut sink, "d", &rv, a.line),
             nk::ICON => match rv {
+                RVal::Token { path, base } => {
+                    let base = token_base(&base);
+                    if matches!(base, RVal::Kw(_) | RVal::Str(_)) {
+                        sink.set(at::SRC, token_text_tval(ctx, &path, base, a.line));
+                    } else {
+                        ctx.error(
+                            "ref",
+                            "icon name token must resolve to an identifier or string".into(),
+                            a.line,
+                        );
+                    }
+                }
                 RVal::Kw(name) | RVal::Str(name) => sink.set(at::SRC, TVal::Str(name)),
                 RVal::Param(ix) => {
                     if let Some(value) =
@@ -2724,6 +3018,30 @@ fn build_sink(
     if let Some(sv) = a.attr("style") {
         let got = resolve_value(ctx, sv, scope, a.line, tree);
         match got {
+            RVal::Token { path, base } => {
+                if let RVal::Group(group) = token_base(&base) {
+                    for (key, entry) in &group.0 {
+                        if let TokenEntry::Value(value) = entry {
+                            let concrete =
+                                resolve_value_d(ctx, value, &Scope::new(), a.line, tree, 0, false);
+                            let mut leaf_path = path.clone();
+                            leaf_path.push(key.clone());
+                            apply_attr(
+                                ctx,
+                                &mut sink,
+                                key,
+                                &RVal::Token {
+                                    path: leaf_path,
+                                    base: Box::new(concrete),
+                                },
+                                a.line,
+                            );
+                        }
+                    }
+                } else {
+                    ctx.error("ref", "style= expects a token group".into(), a.line);
+                }
+            }
             RVal::Group(g) => {
                 for (k, v) in &g.0 {
                     if let TokenEntry::Value(val) = v {
@@ -2744,6 +3062,44 @@ fn build_sink(
         apply_attr(ctx, &mut sink, k, &rv, a.line);
     }
     sink
+}
+
+fn warn_field_sync(
+    ctx: &mut Ctx,
+    field: &str,
+    content: Option<&TVal>,
+    host_managed: bool,
+    line: u32,
+) {
+    if host_managed || ctx.quiet != 0 {
+        return;
+    }
+    let Some(TVal::Param(param)) = content else {
+        return;
+    };
+    let Some(info) = ctx.params.get(*param as usize) else {
+        return;
+    };
+    if info.ty != ParamType::Text || info.name == field {
+        return;
+    }
+    let param_name = info.name.clone();
+    if !ctx
+        .field_sync_warnings
+        .insert((line, field.to_owned(), param_name.clone()))
+    {
+        return;
+    }
+    ctx.warn_with(
+        "field-sync",
+        format!(
+            "field signal '{field}' edits content from text param '{param_name}', so implicit synchronization is disabled"
+        ),
+        line,
+        format!(
+            "use `field={param_name}` for implicit synchronization; if the host intentionally handles `{field}` Change signals, add `field-sync=host` on this node"
+        ),
+    );
 }
 
 fn expand_builtin(
@@ -2803,10 +3159,6 @@ fn expand_builtin(
                     id: at::CONTENT,
                     val: c.clone(),
                 });
-                if let TVal::Str(s) = c {
-                    let s = s.clone();
-                    ctx.note_text(&s);
-                }
             }
             if patch_attrs.iter().any(|entry| entry.id == at::ANIMATE)
                 && let Some(binding) = vsink.animate.take()
@@ -2908,7 +3260,6 @@ fn expand_builtin(
         match ch {
             Item::Text(text, line) => {
                 if kind == nk::PARA {
-                    ctx.note_text(text);
                     node.children.push(CNode {
                         kind: nk::SPAN,
                         line: *line,
@@ -2939,7 +3290,6 @@ fn expand_builtin(
                         hole: None,
                     });
                 } else if matches!(kind, nk::TEXT | nk::SPAN) && sink.content.is_none() {
-                    ctx.note_text(text);
                     sink.content = Some(TVal::Str(text.clone()));
                 } else {
                     ctx.warn("attr", "bare string child outside para/text".into(), *line);
@@ -2984,7 +3334,6 @@ fn expand_builtin(
                                 }
                             }
                             Item::Text(text, line) if kind == nk::PARA => {
-                                ctx.note_text(text);
                                 node.children.push(CNode {
                                     kind: nk::SPAN,
                                     line: *line,
@@ -3029,6 +3378,30 @@ fn expand_builtin(
                         let rv = resolve_value(ctx, v, scope, w.line, ctx.tokens);
                         apply_attr(ctx, &mut psink, k, &rv, w.line);
                     }
+                    if (psink.key_map && (psink.act.is_some() || sink.act.is_some()))
+                        || (psink.act.is_some() && sink.key_map)
+                    {
+                        ctx.error(
+                            "keys",
+                            "mapped `keys=Key:signal` owns activation routing; remove `act=`"
+                                .into(),
+                            w.line,
+                        );
+                    }
+                    if (psink.field.is_some() || psink.content.is_some())
+                        && let Some(field) = psink.field.as_deref().or(sink.field.as_deref())
+                    {
+                        warn_field_sync(
+                            ctx,
+                            field,
+                            psink.content.as_ref().or(sink.content.as_ref()),
+                            psink
+                                .field_sync_host
+                                .or(sink.field_sync_host)
+                                .unwrap_or(false),
+                            w.line,
+                        );
+                    }
                     let mut flag_mask = psink.flag_mask;
                     for f in &w.flags {
                         if f == "strike" {
@@ -3067,11 +3440,6 @@ fn expand_builtin(
                         }
                     }
                     if let Some(c) = &psink.content {
-                        // patched content is representable; record chars
-                        if let TVal::Str(s) = c {
-                            let s = s.clone();
-                            ctx.note_text(&s);
-                        }
                         psink.entries.push(AttrE {
                             id: at::CONTENT,
                             val: c.clone(),
@@ -3079,6 +3447,9 @@ fn expand_builtin(
                     }
                     if let Some(binding) = psink.animate.take() {
                         node.conditional_animations.push(binding);
+                    }
+                    for name in psink.key_signals.drain(..) {
+                        node.conditional_signals.push((name, 13));
                     }
                     let conditional_has_field = psink.field.is_some() || sink.field.is_some();
                     for (binding, trigger) in [
@@ -3202,6 +3573,25 @@ fn expand_builtin(
             ),
             bind.line,
         );
+    }
+    if sink.key_map && sink.act.is_some() {
+        ctx.error(
+            "keys",
+            "mapped `keys=Key:signal` owns activation routing; remove `act=`".into(),
+            a.line,
+        );
+    }
+    if let Some(field) = sink.field.as_deref() {
+        warn_field_sync(
+            ctx,
+            field,
+            sink.content.as_ref(),
+            sink.field_sync_host.unwrap_or(false),
+            a.line,
+        );
+    }
+    for name in sink.key_signals.drain(..) {
+        node.conditional_signals.push((name, 13));
     }
     node.content = sink.content.take();
     node.animate = sink.animate.take();
@@ -3345,6 +3735,14 @@ fn expand_builtin(
         );
         node.flags &= !fl::MULTILINE;
     }
+    if node.flags & fl::ESCAPE_BLUR != 0 && (kind != nk::TEXT || node.field.is_none()) {
+        ctx.warn(
+            "attr",
+            "`escape-blur` applies only to text nodes with field=".into(),
+            a.line,
+        );
+        node.flags &= !fl::ESCAPE_BLUR;
+    }
     if node.submit.is_some() && (kind != nk::TEXT || node.field.is_none()) {
         ctx.warn(
             "attr",
@@ -3434,6 +3832,7 @@ fn flag_bit(name: &str) -> u16 {
         "sticky" => fl::STICKY,
         "virtual" => fl::VIRTUAL,
         "drag-ghost" => fl::DRAG_GHOST,
+        "escape-blur" => fl::ESCAPE_BLUR,
         _ => 0,
     }
 }
@@ -3466,10 +3865,7 @@ fn scalar_value(
     let rv = resolve_value(ctx, value, &Scope::new(), line, ctx.tokens);
     match ty {
         ParamType::Text => match &rv {
-            RVal::Str(s) => {
-                ctx.note_text(s);
-                Some(TVal::Str(s.clone()))
-            }
+            RVal::Str(s) => Some(TVal::Str(s.clone())),
             _ => None,
         },
         ParamType::Num => match rv {
@@ -3764,6 +4160,38 @@ fn collect_themes(doc: &Document) -> Vec<String> {
         }
     }
     themes
+}
+
+fn collect_token_paths(tree: &TokenTree, prefix: &mut Vec<String>, out: &mut Vec<Vec<String>>) {
+    for (name, entry) in &tree.0 {
+        prefix.push(name.clone());
+        match entry {
+            TokenEntry::Group(group) => collect_token_paths(group, prefix, out),
+            TokenEntry::Value(_) => out.push(prefix.clone()),
+        }
+        prefix.pop();
+    }
+}
+
+fn collect_token_infos(ctx: &mut Ctx, base: &TokenTree) -> Vec<TokenInfo> {
+    let mut paths = Vec::new();
+    collect_token_paths(base, &mut Vec::new(), &mut paths);
+    let theme_tokens = ctx.theme_tokens.clone();
+    paths
+        .into_iter()
+        .map(|path| {
+            let base = resolve_token_value(ctx, &path, 0, base);
+            let themes = theme_tokens
+                .iter()
+                .map(|(name, tree)| (name.clone(), resolve_token_value(ctx, &path, 0, tree)))
+                .collect();
+            TokenInfo {
+                path: path.join("."),
+                base,
+                themes,
+            }
+        })
+        .collect()
 }
 fn icon_value_is_static(value: &TVal) -> bool {
     !matches!(value, TVal::Param(_) | TVal::Prop(_) | TVal::TupleDyn(_))
@@ -4097,25 +4525,39 @@ fn validate_divider_context(ctx: &mut Ctx, node: &CNode, valid_position: bool) {
 
 /// Expand a parsed document into emission-ready trees and tables.
 pub fn expand(doc: &Document, diags: &mut Diagnostics) -> Expanded {
-    // No top-level `when` condition can fold true at compile time (the
-    // top-level scope is empty and env/client/state are kernel-evaluated),
-    // so the base token tree is exactly the authored one; every top-level
-    // override becomes a rule-10 variant tree.
+    // Named themes are complete token tables: each starts from authored base,
+    // then every declaration for that name merges in document order.
     let base_tokens = &doc.tokens;
     let themes = collect_themes(doc);
+    let mut theme_tokens: Vec<(String, TokenTree)> = themes
+        .iter()
+        .map(|name| (name.clone(), doc.tokens.clone()))
+        .collect();
+    for (condition, overrides, _) in &doc.topwhens {
+        let Cond::Theme(name) = condition else {
+            continue;
+        };
+        if let Some((_, tree)) = theme_tokens
+            .iter_mut()
+            .find(|(candidate, _)| candidate == name)
+        {
+            tree.deep_merge(overrides);
+        }
+    }
     let mut ctx = Ctx {
         doc,
         diags,
         tokens: base_tokens,
         variants: vec![],
+        theme_tokens,
         params: vec![],
         anim_names: doc.anims.iter().map(|a| a.name.clone()).collect(),
         anim_content: BTreeSet::new(),
         seen_ids: HashMap::new(),
         holes: HashMap::new(),
         signals: vec![],
+        field_sync_warnings: BTreeSet::new(),
         images: vec![],
-        text_cps: BTreeSet::new(),
         layout_axes: vec![],
         font_families: BTreeSet::new(),
         font_weights: BTreeSet::new(),
@@ -4127,7 +4569,7 @@ pub fn expand(doc: &Document, diags: &mut Diagnostics) -> Expanded {
         quiet: 0,
     };
 
-    // params first: `when` conds and `param.` refs need them
+    // Params first: `when` conditions and `param.` refs need them.
     for decl in &doc.params {
         if let Some(first) = ctx.params.iter().find(|p| p.name == decl.name) {
             let msg = format!(
@@ -4167,30 +4609,28 @@ pub fn expand(doc: &Document, diags: &mut Diagnostics) -> Expanded {
         }
     }
 
-    // top-level `when` token overrides -> variant trees (rule 10)
+    // Non-theme top-level token conditions retain rule-10 site expansion.
+    // Named themes use the runtime token table instead.
     let mut variants: Vec<(CondSpec, TokenTree)> = Vec::new();
     for (cond, overrides, line) in &doc.topwhens {
+        if matches!(cond, Cond::Theme(_)) {
+            continue;
+        }
         match eval_cond(&mut ctx, cond, &Scope::new(), *line) {
             CondEval::Defer(spec) => {
                 let mut merged = doc.tokens.clone();
                 merged.deep_merge(overrides);
                 variants.push((spec, merged));
             }
-            CondEval::Bool(_) => {} // only the param-type error path
+            CondEval::Bool(_) => {}
         }
     }
     ctx.variants = variants;
 
     let icons = compile_icons(&mut ctx);
-
     shadow_warns(&mut ctx, doc);
 
-    // printable ASCII is always reachable (params, counters, host text)
-    for cp in 0x20u32..=0x7e {
-        ctx.text_cps.insert(cp);
-    }
-
-    // anims: values resolve in the empty scope against base tokens
+    // Animation values retain token identity just like ordinary attributes.
     let mut anims = Vec::new();
     for anim in &doc.anims {
         let mut stops = Vec::new();
@@ -4200,9 +4640,10 @@ pub fn expand(doc: &Document, diags: &mut Diagnostics) -> Expanded {
                 keyframe_ctx: true,
                 ..Default::default()
             };
-            for (k, v) in attrs {
-                let rv = resolve_value(&mut ctx, v, &Scope::new(), anim.line, base_tokens);
-                apply_attr(&mut ctx, &mut sink, k, &rv, anim.line);
+            for (key, value) in attrs {
+                let resolved =
+                    resolve_value(&mut ctx, value, &Scope::new(), anim.line, base_tokens);
+                apply_attr(&mut ctx, &mut sink, key, &resolved, anim.line);
             }
             if sink.get(at::CONTENT).is_some() {
                 ctx.anim_content.insert(anim.name.clone());
@@ -4217,10 +4658,10 @@ pub fn expand(doc: &Document, diags: &mut Diagnostics) -> Expanded {
 
     let root_keys: KeysRc = Rc::new(RefCell::new(Keys::default()));
     let mut roots = Vec::new();
-    for a in &doc.roots {
+    for node in &doc.roots {
         roots.extend(expand_node(
             &mut ctx,
-            a,
+            node,
             &Scope::new(),
             0,
             "",
@@ -4231,11 +4672,7 @@ pub fn expand(doc: &Document, diags: &mut Diagnostics) -> Expanded {
 
     for root in &roots {
         validate_attach_context(&mut ctx, root, None);
-    }
-    for root in &roots {
         validate_divider_context(&mut ctx, root, false);
-    }
-    for root in &roots {
         validate_sticky_context(&mut ctx, root, None);
     }
     let mut static_scene_keys = BTreeSet::new();
@@ -4246,6 +4683,7 @@ pub fn expand(doc: &Document, diags: &mut Diagnostics) -> Expanded {
         validate_semantic_tree(&mut ctx, root, &static_scene_keys);
     }
 
+    let tokens = collect_token_infos(&mut ctx, base_tokens);
     Expanded {
         roots,
         params: ctx.params,
@@ -4253,8 +4691,8 @@ pub fn expand(doc: &Document, diags: &mut Diagnostics) -> Expanded {
         list_schemas: ctx.list_schemas,
         icons,
         themes,
+        tokens,
         images: ctx.images,
-        text_cps: ctx.text_cps,
         font_families: ctx.font_families,
         font_weights: ctx.font_weights,
     }

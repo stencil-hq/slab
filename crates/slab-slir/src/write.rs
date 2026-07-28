@@ -276,6 +276,22 @@ pub(crate) fn to_pb(s: &Slir) -> pb::Doc {
     }
 
     doc.theme_name.clone_from(&s.themes);
+    for token in &s.tokens {
+        doc.token_name.push(token.name);
+        doc.token_base.push(token.base);
+        doc.token_base_repr.push(token.base_repr);
+        push_run(
+            &mut doc.token_theme_off,
+            &mut doc.token_theme_len,
+            doc.token_theme_name.len(),
+            token.themes.len(),
+        );
+        for &(theme, value, repr) in &token.themes {
+            doc.token_theme_name.push(theme);
+            doc.token_theme_val.push(value);
+            doc.token_theme_repr.push(repr);
+        }
+    }
     for &(name, node) in &s.holes {
         doc.hole_name.push(name);
         doc.hole_node.push(node);
