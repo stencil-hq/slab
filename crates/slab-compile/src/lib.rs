@@ -10,6 +10,7 @@ pub mod export;
 pub mod fonts;
 pub mod input;
 pub mod raster;
+pub mod react;
 pub mod render;
 pub mod rustgen;
 pub mod svg;
