@@ -76,6 +76,7 @@ pub fn cmd_gen_wc(args: &[String]) -> ExitCode {
         embed_assets: true,
         base_dir: file.parent().unwrap_or(Path::new(".")).to_path_buf(),
         assets: None,
+        sources: None,
         fonts: std::collections::HashMap::new(),
     };
     let name = file.display().to_string();

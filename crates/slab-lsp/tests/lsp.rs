@@ -5,6 +5,10 @@
 
 use serde_json::{Value, json};
 use slab_lsp::Server;
+use std::{
+    fs,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 const URI: &str = "file:///t.slab";
 
@@ -66,6 +70,18 @@ fn diags(notes: &[Value]) -> Vec<Value> {
         .as_array()
         .expect("diagnostics array")
         .clone()
+}
+
+fn diagnostics_for(notes: &[Value], uri: &str) -> Vec<Value> {
+    notes
+        .iter()
+        .rev()
+        .find(|note| {
+            note["method"] == "textDocument/publishDiagnostics" && note["params"]["uri"] == uri
+        })
+        .and_then(|note| note["params"]["diagnostics"].as_array())
+        .cloned()
+        .unwrap_or_default()
 }
 
 fn labels(items: &Value) -> Vec<String> {
@@ -572,4 +588,151 @@ fn test_formatting_canonical_document_no_edits() {
         json!({"textDocument": {"uri": URI}, "options": {}}),
     );
     assert_eq!(res, json!([]));
+}
+
+#[test]
+fn test_imports_share_symbols_groups_buffers_and_diagnostics() {
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock")
+        .as_nanos();
+    let directory = std::env::temp_dir().join(format!("slab-lsp-{nonce}"));
+    let ui = directory.join("ui");
+    fs::create_dir_all(&ui).expect("temporary module directory");
+    let root_path = directory.join("app.slab");
+    let module_path = ui.join("card.slab");
+    let root_uri = format!("file://{}", root_path.display());
+    let module_uri = format!("file://{}", module_path.display());
+    let module = r#"params panel {
+  open bool = true
+  width num = 100
+}
+def Card() { text "card" }
+"#;
+    let root = r#"import "ui/card.slab"
+col {
+  Card
+  when panel.open { text "shown" }
+  rect w=param.panel.width
+}
+"#;
+    fs::write(&module_path, module).expect("module fixture");
+    fs::write(&root_path, root).expect("root fixture");
+
+    let mut server = Server::new();
+    server.handle(&json!({"jsonrpc": "2.0", "id": 0, "method": "initialize", "params": {}}));
+    let notes = server.handle(
+        &json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
+            "textDocument": {
+                "uri": root_uri,
+                "languageId": "slab",
+                "version": 1,
+                "text": root,
+            }
+        }}),
+    );
+    assert!(diagnostics_for(&notes, &root_uri).is_empty(), "{notes:?}");
+
+    let card_definition = req(
+        &mut server,
+        "textDocument/definition",
+        json!({"textDocument": {"uri": root_uri}, "position": {"line": 2, "character": 3}}),
+    );
+    assert_eq!(card_definition["uri"], module_uri);
+    assert_eq!(card_definition["range"]["start"]["line"], 4);
+
+    let condition_definition = req(
+        &mut server,
+        "textDocument/definition",
+        json!({"textDocument": {"uri": root_uri}, "position": {"line": 3, "character": 10}}),
+    );
+    assert_eq!(condition_definition["uri"], module_uri);
+    assert_eq!(condition_definition["range"]["start"]["line"], 1);
+
+    let param_definition = req(
+        &mut server,
+        "textDocument/definition",
+        json!({"textDocument": {"uri": root_uri}, "position": {"line": 4, "character": 22}}),
+    );
+    assert_eq!(param_definition["uri"], module_uri);
+    assert_eq!(param_definition["range"]["start"]["line"], 2);
+
+    let card_hover = req(
+        &mut server,
+        "textDocument/hover",
+        json!({"textDocument": {"uri": root_uri}, "position": {"line": 2, "character": 3}}),
+    );
+    assert!(
+        card_hover["contents"]["value"]
+            .as_str()
+            .is_some_and(|value| value.contains("def Card()")),
+        "{card_hover:?}"
+    );
+
+    let param_items = req(
+        &mut server,
+        "textDocument/completion",
+        json!({"textDocument": {"uri": root_uri}, "position": {"line": 4, "character": 22}}),
+    );
+    assert!(labels(&param_items).contains(&"width".to_string()));
+    let condition_items = req(
+        &mut server,
+        "textDocument/completion",
+        json!({"textDocument": {"uri": root_uri}, "position": {"line": 3, "character": 13}}),
+    );
+    assert_eq!(labels(&condition_items), vec!["open"]);
+
+    let import_definition = req(
+        &mut server,
+        "textDocument/definition",
+        json!({"textDocument": {"uri": root_uri}, "position": {"line": 0, "character": 10}}),
+    );
+    assert_eq!(import_definition["uri"], module_uri);
+    let import_items = req(
+        &mut server,
+        "textDocument/completion",
+        json!({"textDocument": {"uri": root_uri}, "position": {"line": 0, "character": 13}}),
+    );
+    assert!(labels(&import_items).contains(&"ui/card.slab".to_string()));
+
+    let symbols = req(
+        &mut server,
+        "textDocument/documentSymbol",
+        json!({"textDocument": {"uri": module_uri}}),
+    );
+    assert!(
+        symbols.as_array().is_some_and(|symbols| symbols
+            .iter()
+            .any(|symbol| symbol["name"] == "params panel")),
+        "{symbols:?}"
+    );
+
+    let broken = "params panel { open bool = true }\ndef Card() {\n  glyph\n}\n";
+    let notes = server.handle(
+        &json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
+            "textDocument": {
+                "uri": module_uri,
+                "languageId": "slab",
+                "version": 1,
+                "text": broken,
+            }
+        }}),
+    );
+    let diagnostics = diagnostics_for(&notes, &module_uri);
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic["code"] == "ref"),
+        "{notes:?}"
+    );
+
+    let notes = server.handle(
+        &json!({"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {
+            "textDocument": {"uri": module_uri, "version": 2},
+            "contentChanges": [{"text": module}],
+        }}),
+    );
+    assert!(diagnostics_for(&notes, &module_uri).is_empty(), "{notes:?}");
+
+    fs::remove_dir_all(directory).expect("remove temporary LSP fixtures");
 }

@@ -5,6 +5,7 @@
 
 mod conformance;
 mod drive;
+mod gen_go;
 mod gen_react;
 mod gen_rust;
 mod gen_wc;
@@ -33,6 +34,7 @@ commands:
   gen wc FILE -o DIR [--tag NAME] [--separate-ir]   emit a web-component module
   gen react FILE -o DIR [--tag NAME]       emit a web component + typed React wrapper
   gen rust FILE -o OUT.rs                  emit a typed Rust module (native client)
+  gen go FILE -o OUT.go [--package NAME]   emit a typed Go module (slab-go runtime)
 ";
 const CHECK_USAGE: &str = "\
 usage: slab check FILE [--width N] [--height N] [--state a,b]
@@ -44,6 +46,7 @@ const GEN_USAGE: &str = "\
 usage: slab gen wc FILE -o DIR [--tag NAME] [--separate-ir]
        slab gen react FILE -o DIR [--tag NAME] [--separate-ir]
        slab gen rust FILE -o OUT.rs
+       slab gen go FILE -o OUT.go [--package NAME]
 ";
 
 fn main() -> ExitCode {
@@ -84,12 +87,13 @@ fn main() -> ExitCode {
             Some("wc") => gen_wc::cmd_gen_wc(&args[2..]),
             Some("react") => gen_react::cmd_gen_react(&args[2..]),
             Some("rust") => gen_rust::cmd_gen_rust(&args[2..]),
+            Some("go") => gen_go::cmd_gen_go(&args[2..]),
             Some(other) => {
                 eprintln!("error: unknown gen target '{other}'");
                 ExitCode::from(2)
             }
             None => {
-                eprintln!("error: gen needs a target (wc, react, rust)");
+                eprintln!("error: gen needs a target (wc, react, rust, go)");
                 ExitCode::from(2)
             }
         },
@@ -168,6 +172,7 @@ pub(crate) fn compile_file(
         embed_assets,
         base_dir: path.parent().unwrap_or(Path::new(".")).to_path_buf(),
         assets: None,
+        sources: None,
         fonts: std::collections::HashMap::new(),
     };
     if standalone_exports {

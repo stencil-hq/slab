@@ -86,7 +86,7 @@ pub type DefSite = (usize, usize, usize, String);
 /// Value site: (value string, line, col, end).
 pub type ValSite = (String, usize, usize, usize);
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct Index {
     pub lines: Vec<String>,
     pub toks: Vec<LTok>,
@@ -373,6 +373,11 @@ impl Indexer {
         let Some(t) = self.peek(0).cloned() else {
             return;
         };
+        if top && t.kind == TokKind::Id && t.text == "import" && self.at_k(TokKind::Str, 1) {
+            self.next();
+            self.next();
+            return;
+        }
         if t.kind == TokKind::Id && t.text == "tokens" && self.at_k(TokKind::Lb, 1) {
             self.next();
             let mut sym = Sym::new("tokens", 3, t.line, t.col, t.end);
@@ -389,12 +394,27 @@ impl Indexer {
             syms.push(sym);
             return;
         }
-        if t.kind == TokKind::Id && t.text == "params" && self.at_k(TokKind::Lb, 1) {
+        if t.kind == TokKind::Id
+            && t.text == "params"
+            && (self.at_k(TokKind::Lb, 1)
+                || (self.at_k(TokKind::Id, 1) && self.at_k(TokKind::Lb, 2)))
+        {
             self.next();
-            let mut sym = Sym::new("params", 3, t.line, t.col, t.end);
+            let group = self
+                .at(TokKind::Id)
+                .then(|| self.next().expect("param group"));
+            let symbol_name = group.as_ref().map_or_else(
+                || "params".to_string(),
+                |group| format!("params {}", group.text),
+            );
+            let symbol_end = group.as_ref().map_or(t.end, |group| group.end);
+            let mut sym = Sym::new(symbol_name, 3, t.line, t.col, symbol_end);
             let lb = self.next().expect("params LB");
             let rec = self.open_block("params", &lb);
-            self.params_block(&mut sym.children);
+            self.params_block(
+                group.as_ref().map(|group| group.text.as_str()),
+                &mut sym.children,
+            );
             let rb = self
                 .prev_tok()
                 .filter(|p| p.kind == TokKind::Rb)
@@ -654,7 +674,7 @@ impl Indexer {
     ///
     /// Recursive list defaults may span lines. Keep balanced parens/brackets
     /// inside the declaration so nested items never become document statements.
-    fn params_block(&mut self, syms: &mut Vec<Sym>) {
+    fn params_block(&mut self, group: Option<&str>, syms: &mut Vec<Sym>) {
         while self.peek(0).is_some() {
             if self.at(TokKind::Nl) {
                 self.next();
@@ -695,10 +715,16 @@ impl Indexer {
                 }
             }
             let value = fmt_toks(&vals.iter().collect::<Vec<_>>());
-            self.ix
-                .param_paths
-                .entry(format!("param.{}", name.text))
-                .or_insert((value.clone(), name.line, name.col, name.end));
+            let path = group.map_or_else(
+                || format!("param.{}", name.text),
+                |group| format!("param.{group}.{}", name.text),
+            );
+            self.ix.param_paths.entry(path).or_insert((
+                value.clone(),
+                name.line,
+                name.col,
+                name.end,
+            ));
             let mut sym = Sym::new(name.text.clone(), 13, name.line, name.col, name.end);
             sym.detail = value;
             syms.push(sym);

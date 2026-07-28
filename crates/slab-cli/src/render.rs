@@ -190,6 +190,7 @@ fn run(a: &Args) -> Result<(), String> {
         embed_assets: true,
         base_dir: base_dir.clone(),
         assets: None,
+        sources: None,
         fonts: std::collections::HashMap::new(),
     };
     let (slir, diags) = compile(&src, &opts);

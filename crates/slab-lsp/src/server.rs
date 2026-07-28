@@ -4,13 +4,13 @@
 //! `char` indices.
 
 use serde_json::{Value, json};
-use std::collections::HashMap;
-use std::path::PathBuf;
+use std::collections::{HashMap, HashSet};
+use std::path::{Component, Path, PathBuf};
 
-use crate::index::{Index, LTok, Sym, build_index};
+use crate::index::{Index, LTok, Sym, TNode, build_index};
 use crate::vocab;
 use slab_compile::color::{Rgba, parse_rgba};
-use slab_syntax::diag::Level;
+use slab_syntax::diag::{Diagnostics, Level};
 use slab_syntax::lex::TokKind;
 use slab_syntax::parse::FLAGS;
 
@@ -55,16 +55,54 @@ fn rgba_hex(c: Rgba) -> String {
     }
 }
 
-/// Directory of a `file://` uri (percent-decoded); `.` otherwise.
-fn uri_dir(uri: &str) -> PathBuf {
-    if let Some(path) = uri.strip_prefix("file://") {
-        let decoded = percent_decode(path);
-        let p = PathBuf::from(decoded);
-        if let Some(parent) = p.parent() {
-            return parent.to_path_buf();
+fn uri_path(uri: &str) -> Option<PathBuf> {
+    uri.strip_prefix("file://")
+        .map(percent_decode)
+        .map(PathBuf::from)
+}
+
+fn lexical_path(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if normalized.file_name().is_some() {
+                    normalized.pop();
+                } else if !path.is_absolute() {
+                    normalized.push("..");
+                }
+            }
+            _ => normalized.push(component.as_os_str()),
         }
     }
-    PathBuf::from(".")
+    normalized
+}
+
+fn path_uri(path: &Path) -> String {
+    let absolute = if path.is_absolute() {
+        lexical_path(path)
+    } else {
+        std::env::current_dir()
+            .map(|directory| lexical_path(&directory.join(path)))
+            .unwrap_or_else(|_| lexical_path(path))
+    };
+    let mut encoded = String::new();
+    for byte in absolute.to_string_lossy().bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'/' | b':' | b'-' | b'_' | b'.' | b'~') {
+            encoded.push(char::from(byte));
+        } else {
+            encoded.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    format!("file://{encoded}")
+}
+
+/// Directory of a `file://` uri (percent-decoded); `.` otherwise.
+fn uri_dir(uri: &str) -> PathBuf {
+    uri_path(uri)
+        .and_then(|path| path.parent().map(Path::to_path_buf))
+        .unwrap_or_else(|| PathBuf::from("."))
 }
 
 fn percent_decode(s: &str) -> String {
@@ -85,6 +123,19 @@ fn percent_decode(s: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
+#[derive(Default)]
+struct LoadedSources {
+    sources: HashMap<String, String>,
+    uris: HashMap<String, String>,
+}
+
+struct Compilation {
+    loaded: LoadedSources,
+    units: Vec<slab_compile::import::Unit>,
+    slir: Option<slab_slir::Slir>,
+    diagnostics: Diagnostics,
+}
+
 // --------------------------------------------------------------------- server
 
 /// Single-threaded LSP server over in-memory messages.
@@ -93,6 +144,8 @@ pub struct Server {
     pub index: HashMap<String, Index>,
     pub running: bool,
     pub exit_code: i32,
+    closures: HashMap<String, Vec<String>>,
+    diagnostics: HashMap<String, HashMap<String, Vec<Value>>>,
     shutdown: bool,
 }
 
@@ -110,6 +163,8 @@ impl Server {
             running: true,
             exit_code: 1,
             shutdown: false,
+            closures: HashMap::new(),
+            diagnostics: HashMap::new(),
         }
     }
 
@@ -230,7 +285,7 @@ impl Server {
         let uri = doc["uri"].as_str().unwrap_or_default().to_string();
         let text = doc["text"].as_str().unwrap_or_default().to_string();
         self.docs.insert(uri.clone(), text);
-        self.refresh(&uri)
+        self.refresh_related(&uri)
     }
 
     fn did_change(&mut self, p: &Value) -> Vec<Value> {
@@ -250,46 +305,195 @@ impl Server {
             }
         }
         self.docs.insert(uri.clone(), text);
-        self.refresh(&uri)
+        self.refresh_related(&uri)
     }
 
     fn did_close(&mut self, p: &Value) -> Vec<Value> {
-        let uri = p["textDocument"]["uri"].as_str().unwrap_or_default();
-        self.docs.remove(uri);
-        self.index.remove(uri);
-        vec![notify(
-            "textDocument/publishDiagnostics",
-            json!({"uri": uri, "diagnostics": []}),
-        )]
+        let uri = p["textDocument"]["uri"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
+        let roots = self
+            .closures
+            .iter()
+            .filter(|(root, closure)| *root != &uri && closure.contains(&uri))
+            .map(|(root, _)| root.clone())
+            .collect::<Vec<_>>();
+        let mut affected = HashSet::from([uri.clone()]);
+        if let Some(previous) = self.diagnostics.remove(&uri) {
+            affected.extend(previous.into_keys());
+        }
+        self.docs.remove(&uri);
+        self.index.remove(&uri);
+        self.closures.remove(&uri);
+        let mut notifications = Vec::new();
+        for root in roots {
+            if self.docs.contains_key(&root) {
+                notifications.extend(self.refresh(&root));
+            }
+        }
+        notifications.extend(self.diagnostic_notifications(&uri, affected));
+        notifications
     }
 
-    /// Re-index + re-compile the document, emitting publishDiagnostics.
+    /// Re-index and compile a root plus its import closure.
     fn refresh(&mut self, uri: &str) -> Vec<Value> {
-        let src = self.docs.get(uri).cloned().unwrap_or_default();
-        let ix = build_index(&src);
-        let opts = slab_compile::Options {
+        let source = self.docs.get(uri).cloned().unwrap_or_default();
+        let compilation = self.compile_source(uri, &source);
+
+        self.index.insert(uri.to_string(), build_index(&source));
+        for (key, imported) in &compilation.loaded.sources {
+            if let Some(owner) = compilation.loaded.uris.get(key) {
+                self.index.insert(owner.clone(), build_index(imported));
+            }
+        }
+
+        let order = compilation
+            .units
+            .iter()
+            .filter_map(|unit| {
+                unit.file
+                    .as_ref()
+                    .and_then(|key| compilation.loaded.uris.get(key))
+                    .cloned()
+                    .or_else(|| unit.file.is_none().then(|| uri.to_string()))
+            })
+            .collect::<Vec<_>>();
+        self.closures.insert(uri.to_string(), order);
+
+        let mut grouped = HashMap::<String, Vec<Value>>::new();
+        grouped.entry(uri.to_string()).or_default();
+        for diagnostic in &compilation.diagnostics.0 {
+            let owner = diagnostic
+                .file
+                .as_ref()
+                .and_then(|key| compilation.loaded.uris.get(key))
+                .map_or_else(|| uri.to_string(), Clone::clone);
+            let lines = self
+                .index
+                .get(&owner)
+                .map(|index| index.lines.as_slice())
+                .unwrap_or(&[]);
+            grouped.entry(owner).or_default().push(json!({
+                "range": diag_range(lines, diagnostic.line),
+                "severity": severity(diagnostic.level),
+                "code": diagnostic.code,
+                "source": "slab",
+                "message": diagnostic.msg,
+            }));
+        }
+
+        let mut affected = grouped.keys().cloned().collect::<HashSet<_>>();
+        if let Some(previous) = self.diagnostics.insert(uri.to_string(), grouped) {
+            affected.extend(previous.into_keys());
+        }
+        self.diagnostic_notifications(uri, affected)
+    }
+
+    fn refresh_related(&mut self, uri: &str) -> Vec<Value> {
+        let roots = self
+            .closures
+            .iter()
+            .filter(|(root, closure)| *root != uri && closure.iter().any(|owner| owner == uri))
+            .map(|(root, _)| root.clone())
+            .collect::<Vec<_>>();
+        let mut notifications = self.refresh(uri);
+        for root in roots {
+            if self.docs.contains_key(&root) {
+                notifications.extend(self.refresh(&root));
+            }
+        }
+        notifications
+    }
+
+    fn source_at_path(&self, path: &Path) -> Option<(String, String)> {
+        let normalized = lexical_path(path);
+        if let Some((uri, source)) = self.docs.iter().find(|(uri, _)| {
+            uri_path(uri)
+                .as_deref()
+                .map(lexical_path)
+                .is_some_and(|candidate| candidate == normalized)
+        }) {
+            return Some((uri.clone(), source.clone()));
+        }
+        std::fs::read_to_string(&normalized)
+            .ok()
+            .map(|source| (path_uri(&normalized), source))
+    }
+
+    fn load_sources(&self, root_uri: &str, root_source: &str) -> LoadedSources {
+        let base_dir = uri_dir(root_uri);
+        let mut loaded = LoadedSources::default();
+        let mut seen = HashSet::new();
+        let mut pending = vec![(None::<String>, root_source.to_string(), 0_usize)];
+        let mut index = 0;
+        while index < pending.len() {
+            let (importer, source, depth) = pending[index].clone();
+            index += 1;
+            if depth >= slab_compile::expand::MAX_DEPTH {
+                continue;
+            }
+            let mut diagnostics = Diagnostics::new();
+            let document = slab_syntax::parse(&source, &mut diagnostics);
+            for import in document.imports {
+                let key = slab_compile::import::normalize(importer.as_deref(), &import.path);
+                if !seen.insert(key.clone()) {
+                    continue;
+                }
+                let Some((uri, imported)) = self.source_at_path(&base_dir.join(&key)) else {
+                    continue;
+                };
+                loaded.sources.insert(key.clone(), imported.clone());
+                loaded.uris.insert(key.clone(), uri);
+                pending.push((Some(key), imported, depth + 1));
+            }
+        }
+        loaded
+    }
+
+    fn compile_source(&self, uri: &str, source: &str) -> Compilation {
+        let loaded = self.load_sources(uri, source);
+        let options = slab_compile::Options {
             base_dir: uri_dir(uri),
+            sources: Some(loaded.sources.clone()),
             ..Default::default()
         };
-        let (_slir, reported) = slab_compile::compile(&src, &opts);
-        let diags: Vec<Value> = reported
-            .0
-            .iter()
-            .map(|d| {
-                json!({
-                    "range": diag_range(&ix.lines, d.line),
-                    "severity": severity(d.level),
-                    "code": d.code,
-                    "source": "slab",
-                    "message": d.msg,
-                })
+        let mut diagnostics = Diagnostics::new();
+        let units = slab_compile::import::closure(source, &options, &mut diagnostics);
+        let slir = slab_compile::compile_units(&units, &options, &mut diagnostics);
+        Compilation {
+            loaded,
+            units,
+            slir,
+            diagnostics,
+        }
+    }
+
+    fn diagnostic_notifications(&self, primary: &str, affected: HashSet<String>) -> Vec<Value> {
+        let mut uris = affected.into_iter().collect::<Vec<_>>();
+        uris.sort();
+        if let Some(index) = uris.iter().position(|uri| uri == primary) {
+            let primary = uris.remove(index);
+            uris.insert(0, primary);
+        }
+        uris.into_iter()
+            .map(|uri| {
+                let mut diagnostics = Vec::new();
+                for by_uri in self.diagnostics.values() {
+                    if let Some(entries) = by_uri.get(&uri) {
+                        for entry in entries {
+                            if !diagnostics.contains(entry) {
+                                diagnostics.push(entry.clone());
+                            }
+                        }
+                    }
+                }
+                notify(
+                    "textDocument/publishDiagnostics",
+                    json!({"uri": uri, "diagnostics": diagnostics}),
+                )
             })
-            .collect();
-        self.index.insert(uri.to_string(), ix);
-        vec![notify(
-            "textDocument/publishDiagnostics",
-            json!({"uri": uri, "diagnostics": diags}),
-        )]
+            .collect()
     }
 
     // -- position plumbing
@@ -309,15 +513,125 @@ impl Server {
         Some((ix, line, col))
     }
 
+    fn owner_uris(&self, uri: &str) -> Vec<String> {
+        self.closures
+            .get(uri)
+            .cloned()
+            .unwrap_or_else(|| vec![uri.to_string()])
+    }
+
+    fn combined_index(&self, uri: &str) -> Option<Index> {
+        let mut combined = self.index.get(uri)?.clone();
+        combined.defs.clear();
+        combined.anims.clear();
+        combined.icons.clear();
+        combined.list_fields.clear();
+        combined.token_paths.clear();
+        combined.token_tree.clear();
+        combined.group_paths.clear();
+        combined.param_paths.clear();
+
+        for owner in self.owner_uris(uri) {
+            let Some(index) = self.index.get(&owner) else {
+                continue;
+            };
+            combined.defs.extend(index.defs.clone());
+            combined.anims.extend(index.anims.clone());
+            combined.icons.extend(index.icons.clone());
+            combined.list_fields.extend(index.list_fields.clone());
+            combined.token_paths.extend(index.token_paths.clone());
+            merge_token_trees(&mut combined.token_tree, &index.token_tree);
+            combined.group_paths.extend(index.group_paths.clone());
+            for (path, site) in &index.param_paths {
+                combined
+                    .param_paths
+                    .entry(path.clone())
+                    .or_insert_with(|| site.clone());
+            }
+        }
+        combined.group_paths.sort();
+        combined.group_paths.dedup();
+        Some(combined)
+    }
+
+    fn import_uri(&self, uri: &str, authored: &str) -> Option<String> {
+        let path = lexical_path(&uri_dir(uri).join(authored));
+        if let Some((open_uri, _)) = self.docs.iter().find(|(candidate, _)| {
+            uri_path(candidate)
+                .as_deref()
+                .map(lexical_path)
+                .is_some_and(|candidate| candidate == path)
+        }) {
+            return Some(open_uri.clone());
+        }
+        path.is_file().then(|| path_uri(&path))
+    }
+
+    fn import_path_items(&self, uri: &str, prefix: &str) -> Option<Vec<Value>> {
+        let trimmed = prefix.trim_start();
+        let after_keyword = trimmed.strip_prefix("import")?;
+        if !after_keyword.starts_with(char::is_whitespace) {
+            return None;
+        }
+        let partial = after_keyword.trim_start().strip_prefix('"')?;
+        if partial.contains('"') {
+            return None;
+        }
+        let (directory, fragment) = partial
+            .rsplit_once('/')
+            .map_or(("", partial), |(directory, fragment)| (directory, fragment));
+        let search_dir = uri_dir(uri).join(directory);
+        let mut items = std::fs::read_dir(search_dir)
+            .ok()
+            .into_iter()
+            .flatten()
+            .filter_map(Result::ok)
+            .filter_map(|entry| {
+                let name = entry.file_name().into_string().ok()?;
+                if !name.starts_with(fragment) {
+                    return None;
+                }
+                let file_type = entry.file_type().ok()?;
+                if !file_type.is_dir()
+                    && entry.path().extension().and_then(|ext| ext.to_str()) != Some("slab")
+                {
+                    return None;
+                }
+                let prefix = if directory.is_empty() {
+                    String::new()
+                } else {
+                    format!("{directory}/")
+                };
+                let suffix = if file_type.is_dir() { "/" } else { "" };
+                let label = format!("{prefix}{name}{suffix}");
+                let kind = if file_type.is_dir() { 19 } else { 17 };
+                Some(item(&label, kind, "Slab module path", "", None))
+            })
+            .collect::<Vec<_>>();
+        items.sort_by(|left, right| {
+            left["label"]
+                .as_str()
+                .unwrap_or_default()
+                .cmp(right["label"].as_str().unwrap_or_default())
+        });
+        Some(items)
+    }
+
     // -- completion
     fn completion(&self, p: &Value) -> Value {
-        let Some((ix, line, col)) = self.at(p) else {
+        let Some((index, line, col)) = self.at(p) else {
             return json!([]);
         };
-        let text = &ix.lines[line];
+        let uri = p["textDocument"]["uri"].as_str().unwrap_or_default();
+        let text = &index.lines[line];
         let prefix_raw: String = text.chars().take(col).collect();
+        if let Some(items) = self.import_path_items(uri, &prefix_raw) {
+            return Value::Array(items);
+        }
         let prefix = mask_strings(&prefix_raw);
-        let items = complete(ix, &prefix, &context(ix, line, col));
+        let context = context(index, line, col);
+        let semantic = self.combined_index(uri).unwrap_or_else(|| index.clone());
+        let items = complete(&semantic, &prefix, &context);
         let mut seen: Vec<String> = Vec::new();
         let mut out: Vec<Value> = Vec::new();
         for it in items {
@@ -332,53 +646,141 @@ impl Server {
 
     // -- hover
     fn hover(&self, p: &Value) -> Value {
-        let Some((ix, line, col)) = self.at(p) else {
+        let Some((index, line, col)) = self.at(p) else {
             return Value::Null;
         };
-        let Some((tok, prev, nxt)) = tok_at(ix, line, col) else {
+        let Some((tok, prev, nxt)) = tok_at(index, line, col) else {
             return Value::Null;
         };
-        let Some(md) = hover_md(ix, tok, prev, nxt) else {
+        let tok = tok.clone();
+        let prev = prev.cloned();
+        let nxt = nxt.cloned();
+        let uri = p["textDocument"]["uri"].as_str().unwrap_or_default();
+        let markdown = if tok.kind == TokKind::Str
+            && prev
+                .as_ref()
+                .is_some_and(|token| token.kind == TokKind::Id && token.text == "import")
+        {
+            self.import_uri(uri, &tok.text)
+                .map(|target| format!("Imported Slab module [`{}`]({target}).", tok.text))
+        } else {
+            self.combined_index(uri)
+                .as_ref()
+                .and_then(|semantic| hover_md(semantic, &tok, prev.as_ref(), nxt.as_ref()))
+        };
+        let Some(markdown) = markdown else {
             return Value::Null;
         };
         json!({
-            "contents": {"kind": "markdown", "value": md},
-            "range": rng(&ix.lines, tok.line, tok.col, tok.end),
+            "contents": {"kind": "markdown", "value": markdown},
+            "range": rng(&index.lines, tok.line, tok.col, tok.end),
         })
     }
 
     // -- definition
     fn definition(&self, p: &Value) -> Value {
-        let Some((ix, line, col)) = self.at(p) else {
+        let Some((index, line, col)) = self.at(p) else {
             return Value::Null;
         };
-        let Some((tok, prev, _)) = tok_at(ix, line, col) else {
+        let Some((tok, prev, _)) = tok_at(index, line, col) else {
             return Value::Null;
         };
         let uri = p["textDocument"]["uri"].as_str().unwrap_or_default();
+        if tok.kind == TokKind::Str
+            && prev.is_some_and(|token| token.kind == TokKind::Id && token.text == "import")
+        {
+            let Some(owner) = self.import_uri(uri, &tok.text) else {
+                return Value::Null;
+            };
+            let lines = self
+                .index
+                .get(&owner)
+                .map(|index| index.lines.as_slice())
+                .unwrap_or(&[]);
+            return json!({"uri": owner, "range": rng(lines, 0, 0, 0)});
+        }
+
+        let owners = self.owner_uris(uri);
         if tok.kind == TokKind::Ref {
-            if let Some((_, ln, c0, c1)) = ix.token_paths.get(&tok.text) {
-                return json!({"uri": uri, "range": rng(&ix.lines, *ln, *c0, *c1)});
+            let condition = prev.is_some_and(|token| {
+                (token.kind == TokKind::Id && token.text == "when") || token.kind == TokKind::Bang
+            });
+            let condition_path = format!("param.{}", tok.text);
+            if condition {
+                for owner in &owners {
+                    let Some(index) = self.index.get(owner) else {
+                        continue;
+                    };
+                    if let Some((_, line, start, end)) = index.param_paths.get(&condition_path) {
+                        return json!({
+                            "uri": owner,
+                            "range": rng(&index.lines, *line, *start, *end),
+                        });
+                    }
+                }
             }
-            if let Some((_, ln, c0, c1)) = ix.param_paths.get(&tok.text) {
-                return json!({"uri": uri, "range": rng(&ix.lines, *ln, *c0, *c1)});
+            for owner in owners.iter().rev() {
+                let Some(index) = self.index.get(owner) else {
+                    continue;
+                };
+                if let Some((_, line, start, end)) = index.token_paths.get(&tok.text) {
+                    return json!({
+                        "uri": owner,
+                        "range": rng(&index.lines, *line, *start, *end),
+                    });
+                }
+            }
+            for owner in &owners {
+                let Some(index) = self.index.get(owner) else {
+                    continue;
+                };
+                if let Some((_, line, start, end)) = index.param_paths.get(&tok.text) {
+                    return json!({
+                        "uri": owner,
+                        "range": rng(&index.lines, *line, *start, *end),
+                    });
+                }
             }
             return Value::Null;
         }
         if tok.kind == TokKind::Id {
-            if prev.is_some_and(|token| token.kind == TokKind::Id && token.text == "icon")
-                && let Some((ln, c0, c1, _)) = ix.icons.get(&tok.text)
-            {
-                return json!({"uri": uri, "range": rng(&ix.lines, *ln, *c0, *c1)});
+            let follows_icon =
+                prev.is_some_and(|token| token.kind == TokKind::Id && token.text == "icon");
+            if follows_icon {
+                for owner in owners.iter().rev() {
+                    let Some(index) = self.index.get(owner) else {
+                        continue;
+                    };
+                    if let Some((line, start, end, _)) = index.icons.get(&tok.text) {
+                        return json!({
+                            "uri": owner,
+                            "range": rng(&index.lines, *line, *start, *end),
+                        });
+                    }
+                }
             }
-            if let Some((ln, c0, c1, _)) = ix.defs.get(&tok.text) {
-                return json!({"uri": uri, "range": rng(&ix.lines, *ln, *c0, *c1)});
-            }
-            if let Some((ln, c0, c1, _)) = ix.icons.get(&tok.text) {
-                return json!({"uri": uri, "range": rng(&ix.lines, *ln, *c0, *c1)});
-            }
-            if let Some((ln, c0, c1)) = ix.anims.get(&tok.text) {
-                return json!({"uri": uri, "range": rng(&ix.lines, *ln, *c0, *c1)});
+            for owner in owners.iter().rev() {
+                let Some(index) = self.index.get(owner) else {
+                    continue;
+                };
+                if let Some((line, start, end, _)) = index.defs.get(&tok.text) {
+                    return json!({
+                        "uri": owner,
+                        "range": rng(&index.lines, *line, *start, *end),
+                    });
+                }
+                if let Some((line, start, end, _)) = index.icons.get(&tok.text) {
+                    return json!({
+                        "uri": owner,
+                        "range": rng(&index.lines, *line, *start, *end),
+                    });
+                }
+                if let Some((line, start, end)) = index.anims.get(&tok.text) {
+                    return json!({
+                        "uri": owner,
+                        "range": rng(&index.lines, *line, *start, *end),
+                    });
+                }
             }
         }
         Value::Null
@@ -472,17 +874,16 @@ impl Server {
         let t = p.get("t").and_then(Value::as_f64);
 
         let base_dir = uri_dir(uri);
-        let opts = slab_compile::Options {
-            base_dir: base_dir.clone(),
-            ..Default::default()
-        };
-        let (slir, reported) = slab_compile::compile(&src, &opts);
-        let mut diags: Vec<Value> = reported
+        let Compilation {
+            slir, diagnostics, ..
+        } = self.compile_source(uri, &src);
+        let mut diags: Vec<Value> = diagnostics
             .0
             .iter()
-            .map(|d| {
-                json!({"level": d.level.to_string(), "code": d.code,
-                       "msg": d.msg, "line": d.line})
+            .map(|diagnostic| {
+                json!({"level": diagnostic.level.to_string(), "code": diagnostic.code,
+                       "msg": diagnostic.msg, "line": diagnostic.line,
+                       "file": diagnostic.file})
             })
             .collect();
         let empty =
@@ -490,9 +891,6 @@ impl Server {
         let Some(slir) = slir else {
             return empty(diags);
         };
-        if reported.has_errors() {
-            return empty(diags);
-        }
         let bytes = slab_slir::write(&slir);
         let (mut inst, images) = match slab_slir::instance(&bytes) {
             Ok(decoded) => decoded,
@@ -534,6 +932,21 @@ fn panic_msg(e: &(dyn std::any::Any + Send)) -> String {
 
 fn notify(method: &str, params: Value) -> Value {
     json!({"jsonrpc": "2.0", "method": method, "params": params})
+}
+
+fn merge_token_trees(
+    target: &mut std::collections::BTreeMap<String, TNode>,
+    source: &std::collections::BTreeMap<String, TNode>,
+) {
+    for (name, node) in source {
+        if let Some(TNode::Group(target_group)) = target.get_mut(name)
+            && let TNode::Group(source_group) = node
+        {
+            merge_token_trees(target_group, source_group);
+            continue;
+        }
+        target.insert(name.clone(), node.clone());
+    }
 }
 
 /// LSP range on one line, converting char columns to UTF-16 units.
@@ -1018,6 +1431,38 @@ fn complete(ix: &Index, prefix: &str, ctx: &[&'static str]) -> Vec<Value> {
 
     // After `.`: next token-path segments. `each param.` only offers lists.
     if let Some(base) = dotted_suffix(prefix) {
+        if head == "when" && base != "param" {
+            let prefix = format!("param.{base}.");
+            let items = ix
+                .param_paths
+                .iter()
+                .filter(|(path, (value, _, _, _))| {
+                    path.starts_with(&prefix) && indexed_param_type(value) == Some("bool")
+                })
+                .map(|(path, (value, _, _, _))| {
+                    let name = path.strip_prefix(&prefix).unwrap_or(path);
+                    item(name, 6, value, "Boolean parameter condition.", None)
+                })
+                .collect::<Vec<_>>();
+            if !items.is_empty() {
+                return items;
+            }
+        }
+        if let Some(group) = base.strip_prefix("param.") {
+            let prefix = format!("param.{group}.");
+            let items = ix
+                .param_paths
+                .iter()
+                .filter(|(path, _)| path.starts_with(&prefix))
+                .map(|(path, (value, _, _, _))| {
+                    let name = path.strip_prefix(&prefix).unwrap_or(path);
+                    item(name, 6, value, &format!("param `{name}` — `{value}`"), None)
+                })
+                .collect::<Vec<_>>();
+            if !items.is_empty() {
+                return items;
+            }
+        }
         if base == "param" && !ix.param_paths.is_empty() {
             return ix
                 .param_paths
@@ -1193,7 +1638,8 @@ fn complete(ix: &Index, prefix: &str, ctx: &[&'static str]) -> Vec<Value> {
                     .iter()
                     .filter(|(_, (value, _, _, _))| indexed_param_type(value) == Some("bool"))
                     .map(|(path, (value, _, _, _))| {
-                        item(path, 6, value, "Boolean parameter condition.", None)
+                        let name = path.strip_prefix("param.").unwrap_or(path);
+                        item(name, 6, value, "Boolean parameter condition.", None)
                     }),
             );
             items.push(item(
@@ -1294,7 +1740,7 @@ fn complete(ix: &Index, prefix: &str, ctx: &[&'static str]) -> Vec<Value> {
             ));
         }
         if ctx.is_empty() {
-            for keyword in ["def", "tokens", "theme", "anim", "params", "icon"] {
+            for keyword in ["def", "import", "tokens", "theme", "anim", "params", "icon"] {
                 items.push(item(
                     keyword,
                     14,
@@ -1385,6 +1831,12 @@ fn hover_md(ix: &Index, tok: &LTok, prev: Option<&LTok>, nxt: Option<&LTok>) -> 
             return Some(format!("`{} = {}`", tok.text, value));
         }
         if let Some((value, _, _, _)) = ix.param_paths.get(&tok.text) {
+            return Some(format!("`{}` — param `{}`", tok.text, value));
+        }
+        if prev.is_some_and(|token| {
+            (token.kind == TokKind::Id && token.text == "when") || token.kind == TokKind::Bang
+        }) && let Some((value, _, _, _)) = ix.param_paths.get(&format!("param.{}", tok.text))
+        {
             return Some(format!("`{}` — param `{}`", tok.text, value));
         }
         return Some(format!("`{}` — unresolved token reference", tok.text));
