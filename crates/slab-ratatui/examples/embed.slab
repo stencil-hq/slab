@@ -1,0 +1,15 @@
+// Tiny fixture for the slab-ratatui embedding example and render test:
+// a heading, one clickable button emitting `ping`, and a status line.
+params {
+  status text = "ready"
+}
+
+col w=fill h=fill bg=#10141B pad=16 gap=12 {
+  text "Embedded Slab" size=14 weight=600 color=#E8EEF6 nowrap
+  row#ping focusable act="ping" pad=8,16 radius=8 bg=#222A38 align=center w=hug {
+    when hover { bg=#2B3547 }
+    when pressed { bg=#1B2230 }
+    text "Ping" size=13 weight=600 color=#E8EEF6 nowrap
+  }
+  text param.status size=12 color=#4FC7E0 nowrap
+}

@@ -1,0 +1,12 @@
+[package]
+name = "slab-ratatui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+ratatui.workspace = true
+slab-tui = { path = "../slab-tui" }
+slab-compile = { path = "../slab-compile" }
+slab-slir = { path = "../slab-slir" }
+slab-kernel = { path = "../slab-kernel" }
