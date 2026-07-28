@@ -69,31 +69,107 @@ export function fontRulesCss(fonts: (FontCss | null)[]): string {
    return rules;
 }
 
-/** Replace codepoints outside the selected SLIR font cmap with non-inking
- * placeholders. Browser fallback must never exceed the shared coverage contract. */
-function coveredText(doc: Statics, font: number, text: string): string {
+interface CoveredTextRun {
+   text: string;
+}
+
+interface MissingGlyphRun {
+   advance: number;
+   codepoint: number;
+}
+
+type CoveredRun = CoveredTextRun | MissingGlyphRun;
+
+interface CoveredTextState {
+   font: number;
+   size: number;
+   text: string;
+}
+
+const coveredTextState = Symbol('slab.coveredTextState');
+
+interface CoveredTextElement extends HTMLElement {
+   [coveredTextState]?: CoveredTextState;
+}
+
+function isGlyphModifier(codepoint: number): boolean {
+   const variationSelector =
+      (codepoint >= 0xfe00 && codepoint <= 0xfe0f) ||
+      (codepoint >= 0xe0100 && codepoint <= 0xe01ef);
+   return codepoint === 0x200d || variationSelector;
+}
+
+/** Split unsupported codepoints into non-inking runs with kernel advances. */
+function coveredText(
+   doc: Statics,
+   font: number,
+   size: number,
+   text: string,
+): string | CoveredRun[] {
    if (font < 0) return text;
    const start = doc.font_cmap_off[font] ?? 0;
    const end = start + (doc.font_cmap_len[font] ?? 0);
-   let output = '';
+   const upem = doc.font_upem[font] ?? 0;
+   const defaultAdvance = upem > 0 ? ((doc.font_default_adv[font] ?? 0) * size) / upem : 0;
+   const runs: CoveredRun[] = [];
    let retainedFrom = 0;
    let offset = 0;
    for (const character of text) {
       const codepoint = character.codePointAt(0) ?? 0;
-      let low = start;
-      let high = end;
-      while (low < high) {
-         const middle = (low + high) >>> 1;
-         if (doc.font_cmap_cp[middle] < codepoint) low = middle + 1;
-         else high = middle;
-      }
-      if (low >= end || doc.font_cmap_cp[low] !== codepoint || doc.font_cmap_gid[low] === 0) {
-         output += `${text.slice(retainedFrom, offset)}\u200b`;
-         retainedFrom = offset + character.length;
+      if (!isGlyphModifier(codepoint)) {
+         let low = start;
+         let high = end;
+         while (low < high) {
+            const middle = (low + high) >>> 1;
+            if (doc.font_cmap_cp[middle] < codepoint) low = middle + 1;
+            else high = middle;
+         }
+         if (low >= end || doc.font_cmap_cp[low] !== codepoint || doc.font_cmap_gid[low] === 0) {
+            if (retainedFrom < offset) runs.push({ text: text.slice(retainedFrom, offset) });
+            runs.push({ advance: defaultAdvance, codepoint });
+            retainedFrom = offset + character.length;
+         }
       }
       offset += character.length;
    }
-   return retainedFrom === 0 ? text : output + text.slice(retainedFrom);
+   if (runs.length === 0) return text;
+   if (retainedFrom < text.length) runs.push({ text: text.slice(retainedFrom) });
+   return runs;
+}
+
+/** Update one text op without rebuilding retained missing-glyph spacers. */
+function setCoveredText(
+   el: CoveredTextElement,
+   doc: Statics,
+   font: number,
+   size: number,
+   text: string,
+): void {
+   const previous = el[coveredTextState];
+   if (previous?.font === font && previous.size === size && previous.text === text) return;
+
+   const covered = coveredText(doc, font, size, text);
+   if (typeof covered === 'string') {
+      el.textContent = covered;
+   } else {
+      const children: HTMLElement[] = [];
+      for (const run of covered) {
+         const child = document.createElement('span');
+         if ('text' in run) {
+            child.dataset.slabCoveredRun = '';
+            child.textContent = run.text;
+            child.style.cssText =
+               'position:static;font:inherit;letter-spacing:inherit;white-space:inherit;';
+         } else {
+            child.dataset.slabMissing = `U+${run.codepoint.toString(16).toUpperCase()}`;
+            child.setAttribute('aria-hidden', 'true');
+            child.style.cssText = `position:static;display:inline-block;width:${run.advance}px;height:0;overflow:hidden;vertical-align:baseline;font:inherit;letter-spacing:inherit;`;
+         }
+         children.push(child);
+      }
+      el.replaceChildren(...children);
+   }
+   el[coveredTextState] = { font, size, text };
 }
 
 /** Converts the kernel's little-endian packed RGBA word into a CSS color. */
@@ -1059,8 +1135,7 @@ export class Painter {
                if (o.opacity !== 1) css += `opacity:${o.opacity};`;
                css += this.animations.get(o.node) ?? '';
                setCss(el, css);
-               const text = coveredText(doc, o.font, fr.strings[o.str_ref]);
-               if (el.textContent !== text) el.textContent = text;
+               setCoveredText(el, doc, o.font, o.size, fr.strings[o.str_ref]);
                break;
             }
             case 'Image': {
