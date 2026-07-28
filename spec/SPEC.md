@@ -2062,6 +2062,18 @@ exporters print to stderr). Machine-readable source:
 
 ## 18. Changelog
 
+- **1.1.x** — wave 3 (dogfood-driven kernel fixes). `transition=` tweens
+  host-driven scalar value changes (param writes, theme flips) under
+  per-attribute kernel value clocks (§14.3); `collide=auto` prefers flipping
+  the alignment between start and end before sliding, and the placement
+  resolution order is normative (§6.10); reveals are sticky-aware and the
+  `inst_reveal_item` alignment enum is normative in §15.5; controls without
+  `label=` derive their accessible name from descendant text and scene
+  entries gain an `editable` bit for active `field=` binders (§15.2,
+  FRAME.md); on tui, strike decoration clips with its glyphs, stroke
+  outlines stay within fully covered cells (`stroke-band` note otherwise,
+  §11.5), and anchored overlay origins snap to the 8×16 cell grid (§6.10).
+
 - **1.1.x** — wave 2 (component-parity fixes). The focused field paints
   its selection kernel-side (§15.6); hosts move focus with
   `inst_set_focus` (§15.3); `num`/`pct` params are legal in tuple member

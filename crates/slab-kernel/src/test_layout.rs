@@ -742,9 +742,15 @@ mod wave0_api {
             slir::F_SCROLL,
             400.0,
         ));
-        solved
-            .scene
-            .push(scene_node(1, 0, slir::K_RECT, 0.0, 20.0, slir::F_STICKY, 0.0));
+        solved.scene.push(scene_node(
+            1,
+            0,
+            slir::K_RECT,
+            0.0,
+            20.0,
+            slir::F_STICKY,
+            0.0,
+        ));
         solved
             .scene
             .push(scene_node(2, 0, slir::K_RECT, 10.0, 20.0, 0, 0.0));

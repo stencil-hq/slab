@@ -744,7 +744,11 @@ pub fn test_strike_decoration_clips_with_glyphs() {
             0,
             "clipped-out run leaves no strike flags on blank cells"
         );
-        assert_eq!(ch_at(&grid, column, 0), 32, "clipped-out run paints nothing");
+        assert_eq!(
+            ch_at(&grid, column, 0),
+            32,
+            "clipped-out run paints nothing"
+        );
     }
     for (column, expected) in "KEPT".chars().enumerate() {
         let column = i32::try_from(column).expect("test column fits i32");
@@ -780,11 +784,7 @@ pub fn test_stroke_outline_stays_within_cell_band() {
     assert_eq!(ch_at(&grid, 0, 0), 0x250C, "top-left corner in band");
     assert_eq!(ch_at(&grid, 7, 1), 0x2518, "bottom-right corner in band");
     for column in 0..grid.cols {
-        assert_eq!(
-            ch_at(&grid, column, 2),
-            32,
-            "no border ink below the band"
-        );
+        assert_eq!(ch_at(&grid, column, 2), 32, "no border ink below the band");
     }
 
     // Mid-cell band (y=24, h=32) fully covers only one row: the outline is

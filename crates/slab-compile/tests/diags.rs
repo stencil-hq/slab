@@ -938,7 +938,10 @@ col w=400 h=300 pad=100,50 {
             _ => None,
         })
         .expect("source rectangle");
-    assert!(base_rect.x >= 50.0, "nested base rect must include parent offset");
+    assert!(
+        base_rect.x >= 50.0,
+        "nested base rect must include parent offset"
+    );
 
     let event = |etype, x, y, dx, dy| slab_kernel::dispatch::Event {
         etype,
@@ -956,11 +959,23 @@ col w=400 h=300 pad=100,50 {
     let down_y = base_rect.y + 10.0;
     slab_kernel::frame::inst_dispatch(
         &mut instance,
-        &event(slab_kernel::dispatch::E_POINTER_DOWN, down_x, down_y, 0.0, 0.0),
+        &event(
+            slab_kernel::dispatch::E_POINTER_DOWN,
+            down_x,
+            down_y,
+            0.0,
+            0.0,
+        ),
     );
     slab_kernel::frame::inst_dispatch(
         &mut instance,
-        &event(slab_kernel::dispatch::E_POINTER_MOVE, down_x + 35.0, down_y + 25.0, 35.0, 25.0),
+        &event(
+            slab_kernel::dispatch::E_POINTER_MOVE,
+            down_x + 35.0,
+            down_y + 25.0,
+            35.0,
+            25.0,
+        ),
     );
     let ghost = slab_kernel::frame::inst_frame(&mut instance, 1.0);
     let ghost_rect = ghost

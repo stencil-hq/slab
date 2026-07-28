@@ -652,7 +652,12 @@ fn draw_rect_outline(
     if right.wrapping_sub(left) < 2 || bottom.wrapping_sub(top) < 2 {
         // The band cannot hold a closed box without corrupting neighbours;
         // report the degradation once instead of painting a broken frame.
-        if claim == OutlineClaim::Any && !grid.diag_code.iter().any(|code| code == "stroke-band") {
+        if claim == OutlineClaim::Any
+            && !grid
+                .diag_code
+                .iter()
+                .any(|code| code.as_str() == "stroke-band")
+        {
             note(
                 grid,
                 "stroke-band",

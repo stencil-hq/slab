@@ -158,8 +158,8 @@ fn update_frame(
         &value(PARAM_TEXT, 0.0, subject.to_owned()),
     )?;
 
-    if step % 40 == 0 {
-        let width = if step % 80 == 0 { 1_920.0 } else { 1_440.0 };
+    if step.is_multiple_of(40) {
+        let width = if step.is_multiple_of(80) { 1_920.0 } else { 1_440.0 };
         inst_set_env(instance, width, 1_080.0, 1, true, false);
     }
 

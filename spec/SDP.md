@@ -208,9 +208,11 @@ List data paths such as `0.children` address values inside a typed list
 parameter; they are not scene keys. `each` locators use the grammar in §4.
 
 `list.reveal_item` alignment values are the kernel's `inst_reveal_item` enum
-(`0 start | 1 center | 2 end | 3 nearest`); `skill/references/hosts.md`
-documents the same mapping for embedded hosts. A keyed `scroll.reveal` on a
-virtual item uses nearest alignment.
+(`0 start | 1 center | 2 end | 3 nearest`), stated normatively in SPEC.md
+§15.5; `skill/references/hosts.md` documents the same mapping for embedded
+hosts. A keyed `scroll.reveal` on a virtual item uses nearest alignment.
+Reveals are sticky-aware: a target parks below a pinned sticky header and
+centering happens in the uncovered region (SPEC.md §15.5 is normative).
 
 ### 5.3 Scene, frame, input, and rendering
 

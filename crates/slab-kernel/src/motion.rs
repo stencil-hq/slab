@@ -679,7 +679,7 @@ fn value_transitions(d: &Doc, st: &mut St, ms: &mut MSt, t: f64) -> bool {
         let lo = d.attr_index[node_index];
         let hi = d.attr_index[node_index.wrapping_add(1)];
         for entry in lo..hi {
-            let entry = index(i32::try_from(entry).expect("attribute index exceeds i32"));
+            let entry = index(entry);
             let attr = d.attr_id[entry];
             if attr == slir::A_FLAGS {
                 continue;

@@ -1258,7 +1258,8 @@ semantics arrive automatically, without host or author boilerplate:
   containers aggregate descendant text through DOM nesting. Custom drivers
   mirror painted text the same way (SDP exposes it as `scene.text`).
 - **Names.** Controls (focusable or `act=`) without an authored `label=` get
-  a kernel-computed name from their descendant painted text; every adapter
+  a kernel-computed name from attached descendant `text`/`para` content in
+  document order, space-joined (`each` subtrees skipped); every adapter
   inherits it through the ordinary `label` slot.
 - **Fields.** Nodes with an ACTIVE `field=` binder are `editable` in the
   scene; the web adapter exposes them as `role=textbox` (an authored role
