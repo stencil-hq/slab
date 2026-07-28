@@ -49,6 +49,27 @@ fn json_u32(value: &serde_json::Value) -> Option<u32> {
 	(number >= 0.0 && number <= f64::from(u32::MAX)).then_some(number as u32)
 }
 
+fn json_i32(value: &serde_json::Value) -> Option<i32> {
+	let number = integral_number(value)?;
+	(number >= f64::from(i32::MIN) && number <= f64::from(i32::MAX)).then_some(number as i32)
+}
+
+/// Decodes optional clause pairs. Any malformed payload degrades atomically
+/// to no metadata so the kernel applies its whole-preedit fallback.
+fn clauses_of(value: &serde_json::Value) -> Vec<(i32, i32)> {
+	let Some(entries) = value.as_array() else {
+		return Vec::new();
+	};
+	entries
+		.iter()
+		.map(|entry| {
+			let pair = entry.as_array()?;
+			(pair.len() == 2).then_some((json_i32(&pair[0])?, json_i32(&pair[1])?))
+		})
+		.collect::<Option<Vec<_>>>()
+		.unwrap_or_default()
+}
+
 fn json_u8(value: &serde_json::Value) -> Option<u8> {
 	let number = integral_number(value)?;
 	(number >= 0.0 && number <= f64::from(u8::MAX)).then_some(number as u8)
@@ -72,6 +93,11 @@ pub fn build_event(v: &serde_json::Value) -> Result<slab_kernel::dispatch::Event
 		clicks: u32_field("clicks")?,
 		key: v["key"].as_str().unwrap_or("").to_string(),
 		text: v["text"].as_str().unwrap_or("").to_string(),
+		clauses: if etype == 10 {
+			clauses_of(&v["clauses"])
+		} else {
+			Vec::new()
+		},
 		mods: mods_of(&v["mods"]),
 	})
 }
@@ -227,4 +253,43 @@ pub fn runtime_image_input(
 		(None, None) => return Err("image needs exactly one of 'rgba' or 'png_b64'".into()),
 	};
 	Ok(RuntimeImageInput { name, w, h, format, data })
+}
+
+#[cfg(test)]
+mod tests {
+	use super::build_event;
+
+	#[test]
+	fn composition_clauses_reach_edit_state() {
+		let source = serde_json::json!({
+			"type": "composition-update",
+			"text": "にほんご",
+			"clauses": [[0, 2], [2, 4]]
+		});
+		let event = build_event(&source).expect("valid composition event");
+		let mut state = slab_kernel::edit::es_new(0, "");
+		slab_kernel::edit::composition_update_clauses(&mut state, &event.text, &event.clauses);
+		assert_eq!(state.compose_clauses, [(0, 2), (2, 4)]);
+	}
+
+	#[test]
+	fn malformed_composition_clauses_degrade_atomically() {
+		for clauses in [
+			serde_json::json!([[0, 2], ["bad", 4]]),
+			serde_json::json!([[0, 2, 4]]),
+			serde_json::json!({"start": 0, "end": 4}),
+		] {
+			let source = serde_json::json!({
+				"type": "composition-update",
+				"text": "にほんご",
+				"clauses": clauses
+			});
+			assert!(
+				build_event(&source)
+					.expect("malformed clauses do not reject event")
+					.clauses
+					.is_empty()
+			);
+		}
+	}
 }

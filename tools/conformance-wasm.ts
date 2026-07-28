@@ -1136,7 +1136,7 @@ function runManifestCase(bytes: Uint8Array, testCase: ManifestCase): GoldenOutpu
 
 function eventArgs(
    event: object,
-): [number, number, number, number, number, number, string, string, number, number] {
+): [number, number, number, number, number, number, string, string, number, number, string?] {
    const type = String(field(event, 'type') ?? '');
    const eventType = EVENT_CODE[type];
    if (eventType === undefined) throw new Error(`unknown event type '${type}'`);
@@ -1150,6 +1150,7 @@ function eventArgs(
    const rawClicks = field(event, 'clicks');
    const button = u32(rawButton === undefined ? 0 : rawButton, "event 'button' must be a u32");
    const clicks = u32(rawClicks === undefined ? 0 : rawClicks, "event 'clicks' must be a u32");
+   const clauses = field(event, 'clauses');
    return [
       eventType,
       Number(field(event, 'x') ?? 0),
@@ -1161,6 +1162,7 @@ function eventArgs(
       String(field(event, 'text') ?? ''),
       modifiers,
       clicks,
+      clauses === undefined ? undefined : JSON.stringify(clauses),
    ];
 }
 

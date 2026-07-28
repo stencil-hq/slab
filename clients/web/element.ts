@@ -11,12 +11,14 @@ import { decodeFrame } from './frame-decode.ts';
 import type {
    EachWindow,
    Effects,
+   FieldRuns,
    Frame,
    FrameDiagnostic,
    HoleRect,
    ImageInfo,
    LiftedAnimation,
    ParamValue,
+   RangeEdit,
    SceneNode,
    SigMeta,
    Statics,
@@ -35,7 +37,12 @@ export interface SlabSignalDetail {
    readonly meta: SignalMeta;
    /** Change/Submit text or a Divider's final resize extent. */
    readonly text?: string;
+   /** Canonical rich runs for a Change signal. */
+   readonly runs?: FieldRuns;
 }
+
+/** Detail carried by the `slab-range-edit` structural-edit request. */
+export type SlabRangeEditDetail = RangeEdit;
 
 /** One current-frame layout or runtime diagnostic. */
 export type SlabDiagnostic = FrameDiagnostic;
@@ -49,6 +56,7 @@ export interface SlabDiagnosticsDetail {
 declare global {
    interface HTMLElementEventMap {
       'slab-diagnostics': CustomEvent<SlabDiagnosticsDetail>;
+      'slab-range-edit': CustomEvent<SlabRangeEditDetail>;
    }
 }
 
@@ -375,6 +383,7 @@ function emptyEffects(): Effects {
       sig_name: [],
       sig_text: [],
       sig_item: [],
+      sig_runs: [],
       sig_meta: [],
       scrolls: [],
       has_caret: false,
@@ -1341,6 +1350,15 @@ export class SlabElement extends HTMLElement {
          }
          axes.set(scroll.axis, scroll.off);
       }
+      if (effects.range_edit) {
+         this.dispatchEvent(
+            new CustomEvent<SlabRangeEditDetail>('slab-range-edit', {
+               detail: effects.range_edit,
+               bubbles: true,
+               composed: true,
+            }),
+         );
+      }
       this.#emitSignals(effects, statics);
       const cursor = CURSORS[effects.cursor] ?? '';
       if (this.style.cursor !== cursor) this.style.cursor = cursor;
@@ -1358,9 +1376,11 @@ export class SlabElement extends HTMLElement {
                signal.name === name &&
                (signal.trigger === 1 || signal.trigger === 2 || signal.trigger === 8),
          );
-         const detail: SlabSignalDetail = textBearing
+         let detail: SlabSignalDetail = textBearing
             ? { text: effects.sig_text[index], item, meta }
             : { item, meta };
+         const runs = effects.sig_runs[index];
+         if (runs) detail = { ...detail, runs: JSON.parse(runs) as FieldRuns };
          this.dispatchEvent(
             new CustomEvent<SlabSignalDetail>(name, { detail, bubbles: true, composed: true }),
          );

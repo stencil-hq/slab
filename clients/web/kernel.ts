@@ -140,14 +140,44 @@ export interface ScrollChange {
    off: number;
 }
 
+/** One normalized inline-style run in a rich field. */
+export interface FieldRun {
+   /** `0` bold, `1` italic, `2` underline, `3` strike, or `4` code. */
+   style: number;
+   start: number;
+   end: number;
+}
+
+/** Canonical rich-field payload parallel to a Change signal. */
+export interface FieldRuns {
+   rev: number;
+   runs: FieldRun[];
+}
+
+/** One canonical endpoint in a host-owned cross-field edit. */
+export interface RangeEndpoint {
+   key: string;
+   offset: number;
+}
+
+/** A host-owned edit deferred by the kernel for an active cross-field range. */
+export interface RangeEdit {
+   /** `0` text, `1` paste, `2` cut, `3` backspace, `4` delete, `5` IME, `6` copy. */
+   kind: 0 | 1 | 2 | 3 | 4 | 5 | 6;
+   anchor: RangeEndpoint;
+   head: RangeEndpoint;
+   text: string;
+}
+
 /** Event effects returned by the kernel dispatch snapshot API. */
 export interface Effects {
    repaint: boolean;
    sig_name: number[];
    sig_text: string[];
+   sig_runs: string[];
    sig_item: string[];
    sig_meta: SigMeta[];
-   scrolls: ScrollChange[];
+   range_edit?: RangeEdit;
    has_caret: boolean;
    caret_x: number;
    caret_y: number;

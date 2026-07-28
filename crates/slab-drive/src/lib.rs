@@ -72,6 +72,13 @@
 //! | `param.get` | `{"name":str}` | `{"value":any}` from the live kernel value |
 //! | `field.set` | `{"key":str,"text":str}` | `{"ok":true,"changed":bool}`; a non-field key is an error |
 //! | `field.get` | `{"key":str}` | `{"text":str}` |
+//! | `field.caret.get` | `{"key":str}` | `{"caret":i32,"anchor":i32,"goal_x":f64|null,"composing":bool}` |
+//! | `field.caret.set` | `{"key":str,"caret":i32,"anchor":i32,"goal_x":f64|null?}` | `{"ok":true,"changed":bool}` |
+//! | `field.runs.get` | `{"key":str}` | `{"rev":u64,"runs":[{"style":u32,"start":i32,"end":i32}]}` |
+//! | `field.runs.set` | `{"key":str,"rev":u64,"runs":[...]}` | `{"ok":true,"changed":bool}` |
+//! | `field.style.toggle` | `{"key":str,"style":u32}` | `{"ok":true,"changed":bool}` |
+//! | `field.range.get` | none | `{"range":{"anchor":{"key","offset"},"head":{"key","offset"}}|null}` |
+//! | `field.range.clear` | none | `{"ok":true,"changed":bool}` |
 //! | `state.set` | `{"name":str,"on":bool}` | toggles a global state |
 //! | `state.node` | `{"key":str,"name":str,"on":bool}` | toggles a keyed node state |
 //! | `focus.get` | none | `{"focus":u32,"key":str,"visible":bool}`; `slir::NONE` means none |
@@ -185,6 +192,13 @@ const METHODS: &[&str] = &[
 	"param.get",
 	"field.set",
 	"field.get",
+	"field.caret.get",
+	"field.caret.set",
+	"field.runs.get",
+	"field.runs.set",
+	"field.style.toggle",
+	"field.range.get",
+	"field.range.clear",
 	"state.set",
 	"state.node",
 	"focus.get",
@@ -1131,6 +1145,13 @@ fn handle(
 		"param.get" => param_get(session, params(value)),
 		"field.set" => field_set(session, params(value)),
 		"field.get" => field_get(session, params(value)),
+		"field.caret.get" => field_caret_get(session, params(value)),
+		"field.caret.set" => field_caret_set(session, params(value)),
+		"field.runs.get" => field_runs_get(session, params(value)),
+		"field.runs.set" => field_runs_set(session, params(value)),
+		"field.style.toggle" => field_style_toggle(session, params(value)),
+		"field.range.get" => field_range_get(session),
+		"field.range.clear" => field_range_clear(session),
 		"state.set" => state_set(session, params(value)),
 		"state.node" => state_node(session, params(value)),
 		"focus.get" => focus_get(session),
@@ -1442,6 +1463,151 @@ fn field_get(session: &mut Session, object: &Map<String, Value>) -> ProtocolResu
 	let text = frame::inst_field_text(&doc.inst, &key)
 		.ok_or_else(|| domain(format!("key '{key}' is not a field")))?;
 	Ok(json!({"text": text}))
+}
+
+fn resolved_field_key(session: &mut Session, query: &str) -> ProtocolResult<String> {
+	let doc = ensure_frame(session)?;
+	let (_, key) = resolve_node_key(doc, query)?;
+	if frame::inst_field_text(&doc.inst, &key).is_none() {
+		return Err(domain(format!("key '{key}' is not a field")));
+	}
+	Ok(key)
+}
+
+fn field_caret_get(session: &mut Session, object: &Map<String, Value>) -> ProtocolResult {
+	let query = required_str(object, "key")?.to_string();
+	let key = resolved_field_key(session, &query)?;
+	let doc = ensure_frame(session)?;
+	let caret = frame::inst_get_caret(&doc.inst, &key)
+		.ok_or_else(|| domain(format!("field '{key}' has no caret state")))?;
+	Ok(json!({
+		"caret": caret.caret,
+		"anchor": caret.anchor,
+		"goal_x": (caret.goal_x >= 0.0).then_some(caret.goal_x),
+		"composing": caret.composing,
+	}))
+}
+
+fn field_caret_set(session: &mut Session, object: &Map<String, Value>) -> ProtocolResult {
+	let query = required_str(object, "key")?.to_string();
+	let caret = required_i32(object, "caret")?;
+	let anchor = required_i32(object, "anchor")?;
+	let goal_x = match object.get("goal_x") {
+		None | Some(Value::Null) => None,
+		Some(value) => {
+			let goal = value
+				.as_f64()
+				.filter(|goal| goal.is_finite() && *goal >= 0.0)
+				.ok_or_else(|| invalid("'goal_x' must be null or a finite nonnegative number"))?;
+			Some(goal)
+		},
+	};
+	let key = resolved_field_key(session, &query)?;
+	let doc = ensure_frame(session)?;
+	let changed = match goal_x {
+		Some(goal) => frame::inst_set_caret_goal(&mut doc.inst, &key, caret, anchor, goal),
+		None => frame::inst_set_caret(&mut doc.inst, &key, caret, anchor),
+	};
+	if !changed {
+		return Err(domain(format!("cannot set caret for field '{key}'")));
+	}
+	Ok(json!({"ok": true, "changed": true}))
+}
+
+fn field_runs_value(runs: &frame::FieldRuns) -> Value {
+	json!({
+		"rev": runs.revision,
+		"runs": runs.runs.iter().map(|run| json!({
+			"style": run.style,
+			"start": run.start,
+			"end": run.end,
+		})).collect::<Vec<_>>(),
+	})
+}
+
+fn decode_field_runs(object: &Map<String, Value>) -> ProtocolResult<frame::FieldRuns> {
+	let revision = object
+		.get("rev")
+		.and_then(Value::as_u64)
+		.ok_or_else(|| invalid("'rev' must be a u64"))?;
+	let values = object
+		.get("runs")
+		.and_then(Value::as_array)
+		.ok_or_else(|| invalid("'runs' must be an array"))?;
+	let mut runs = Vec::with_capacity(values.len());
+	for value in values {
+		let run = value
+			.as_object()
+			.ok_or_else(|| invalid("'runs' entries must be objects"))?;
+		runs.push(frame::FieldRun {
+			style: required_u32(run, "style")?,
+			start: required_i32(run, "start")?,
+			end:   required_i32(run, "end")?,
+		});
+	}
+	Ok(frame::FieldRuns { revision, runs })
+}
+
+fn field_runs_get(session: &mut Session, object: &Map<String, Value>) -> ProtocolResult {
+	let query = required_str(object, "key")?.to_string();
+	let key = resolved_field_key(session, &query)?;
+	let doc = ensure_frame(session)?;
+	let runs = frame::inst_field_runs(&doc.inst, &key)
+		.ok_or_else(|| domain(format!("key '{key}' is not a field")))?;
+	Ok(field_runs_value(&runs))
+}
+
+fn field_runs_set(session: &mut Session, object: &Map<String, Value>) -> ProtocolResult {
+	let query = required_str(object, "key")?.to_string();
+	let runs = decode_field_runs(object)?;
+	if runs
+		.runs
+		.iter()
+		.any(|run| run.start > run.end || run.style > 4)
+	{
+		return Err(invalid("'runs' contains an invalid style or reversed range"));
+	}
+	let key = resolved_field_key(session, &query)?;
+	let doc = ensure_frame(session)?;
+	let before = frame::inst_field_runs(&doc.inst, &key)
+		.expect("validated field has runs")
+		.revision;
+	if !frame::inst_set_field_runs(&mut doc.inst, &key, &runs) {
+		return Err(domain(format!("cannot set runs for field '{key}'")));
+	}
+	let after = frame::inst_field_runs(&doc.inst, &key)
+		.expect("validated field remains available after setting runs")
+		.revision;
+	Ok(json!({"ok": true, "changed": after != before}))
+}
+
+fn field_style_toggle(session: &mut Session, object: &Map<String, Value>) -> ProtocolResult {
+	let query = required_str(object, "key")?.to_string();
+	let style = required_u32(object, "style")?;
+	if style > 4 {
+		return Err(invalid("'style' must be between 0 and 4"));
+	}
+	let key = resolved_field_key(session, &query)?;
+	let doc = ensure_frame(session)?;
+	let changed = frame::inst_toggle_style(&mut doc.inst, &key, style);
+	Ok(json!({"ok": true, "changed": changed}))
+}
+
+fn field_range_get(session: &mut Session) -> ProtocolResult {
+	let doc = ensure_frame(session)?;
+	let range = frame::inst_get_range(&doc.inst).map(|(anchor, head)| {
+		json!({
+			"anchor": {"key": anchor.key, "offset": anchor.offset},
+			"head": {"key": head.key, "offset": head.offset},
+		})
+	});
+	Ok(json!({"range": range}))
+}
+
+fn field_range_clear(session: &mut Session) -> ProtocolResult {
+	let doc = ensure_frame(session)?;
+	let changed = frame::inst_clear_range(&mut doc.inst);
+	Ok(json!({"ok": true, "changed": changed}))
 }
 
 fn state_set(session: &mut Session, object: &Map<String, Value>) -> ProtocolResult {
@@ -2183,6 +2349,7 @@ const fn base_event(etype: u32) -> Event {
 		clicks: 0,
 		key: String::new(),
 		text: String::new(),
+		clauses: Vec::new(),
 		mods: 0,
 	}
 }
@@ -2346,21 +2513,38 @@ fn dispatch_one(session: &mut Session, event: &Event) -> ProtocolResult {
 }
 
 fn effects_result(doc: &LoadedDoc, effects: &Effects, t_ms: f64) -> ProtocolResult {
-	let effects = parse_kernel_json(&slab_kernel::dumpjson::dump_effects(
+	let mut effects_value = parse_kernel_json(&slab_kernel::dumpjson::dump_effects(
 		doc.inst.doc(),
 		&doc.inst.st,
 		effects,
 	))?;
-	Ok(json!({"effects": effects, "t": t_ms}))
+	let signals = effects_value
+		.get_mut("signals")
+		.and_then(Value::as_array_mut)
+		.expect("kernel effects JSON has a signals array");
+	for (signal, runs) in signals.iter_mut().zip(&effects.sig_runs) {
+		if !runs.is_empty() {
+			let runs = parse_kernel_json(runs)?;
+			signal
+				.as_object_mut()
+				.expect("kernel signal JSON is an object")
+				.insert("runs".into(), runs);
+		}
+	}
+	Ok(json!({"effects": effects_value, "t": t_ms}))
 }
 
 fn merge_effects(combined: &mut Effects, next: Effects) {
 	combined.repaint |= next.repaint;
 	combined.sig_name.extend(next.sig_name);
 	combined.sig_text.extend(next.sig_text);
+	combined.sig_runs.extend(next.sig_runs);
 	combined.sig_item.extend(next.sig_item);
 	combined.sig_meta.extend(next.sig_meta);
 	combined.scrolls.extend(next.scrolls);
+	if next.range_edit.is_some() {
+		combined.range_edit = next.range_edit;
+	}
 	combined.has_caret = next.has_caret;
 	combined.caret_x = next.caret_x;
 	combined.caret_y = next.caret_y;
@@ -2697,7 +2881,6 @@ text#field param.draft field=draft size=14 w=200 nowrap
 	fn pumps_field_param_and_focus_methods_on_caller_instance() {
 		let (slir, mut instance, images) = live_document();
 		let mut pump = RequestPump::new("test.slab", slir, images);
-
 		let parameter =
 			pump.request(&mut instance, r#"{"id":1,"method":"param.get","params":{"name":"draft"}}"#);
 		assert_eq!(result(&parameter), &json!({"value": "start"}));
@@ -2716,6 +2899,153 @@ text#field param.draft field=draft size=14 w=200 nowrap
 		let focus = pump.request(&mut instance, r#"{"id":5,"method":"focus.get","params":{}}"#);
 		assert_eq!(result(&focus)["key"], "#field");
 		assert_ne!(result(&focus)["focus"], json!(slir::NONE));
+	}
+
+	#[test]
+	fn field_caret_round_trips_direction_and_goal() {
+		let (slir, mut instance, images) = live_document();
+		let mut pump = RequestPump::new("test.slab", slir, images);
+		let initial = pump.request(
+			&mut instance,
+			r#"{"method":"field.caret.set","params":{"key":"field","caret":4,"anchor":1,"goal_x":30}}"#,
+		);
+		assert_eq!(result(&initial), &json!({"ok": true, "changed": true}));
+		let moved =
+			pump.request(&mut instance, r#"{"method":"field.caret.get","params":{"key":"field"}}"#);
+		let state = result(&moved).clone();
+		assert_eq!(state["anchor"], 1);
+		assert_eq!(state["goal_x"], json!(30.0));
+		let set = pump.request(
+			&mut instance,
+			&json!({
+				"method": "field.caret.set",
+				"params": {
+					"key": "field",
+					"caret": state["caret"],
+					"anchor": state["anchor"],
+					"goal_x": state["goal_x"],
+				}
+			})
+			.to_string(),
+		);
+		assert!(set.response.get("error").is_none(), "{:?}", set.response);
+		let round_trip =
+			pump.request(&mut instance, r#"{"method":"field.caret.get","params":{"key":"field"}}"#);
+		assert_eq!(result(&round_trip), &state);
+	}
+
+	#[test]
+	fn field_runs_round_trip_through_signal_and_query() {
+		let (slir, mut instance, images) = live_document();
+		let mut pump = RequestPump::new("test.slab", slir, images);
+		let before =
+			pump.request(&mut instance, r#"{"method":"field.runs.get","params":{"key":"field"}}"#);
+		let revision = result(&before)["rev"].as_u64().expect("revision");
+		let set = pump.request(
+			&mut instance,
+			r#"{"method":"field.runs.set","params":{"key":"field","rev":0,"runs":[{"style":0,"start":1,"end":4}]}}"#,
+		);
+		assert_eq!(result(&set), &json!({"ok": true, "changed": true}));
+		let effects = frame::inst_take_signals(&mut instance);
+		assert_eq!(effects.sig_runs.len(), 1, "{effects:?}");
+		let signalled_runs: Value =
+			serde_json::from_str(&effects.sig_runs[0]).expect("sig_runs is valid JSON");
+		let get =
+			pump.request(&mut instance, r#"{"method":"field.runs.get","params":{"key":"field"}}"#);
+		assert!(result(&get)["rev"].as_u64().expect("revision") > revision);
+		assert_eq!(result(&get)["runs"], json!([{"style": 0, "start": 1, "end": 4}]));
+		assert_eq!(signalled_runs, *result(&get));
+	}
+
+	#[test]
+	fn malformed_field_runs_reject_atomically() {
+		let (slir, mut instance, images) = live_document();
+		let mut pump = RequestPump::new("test.slab", slir, images);
+		let before =
+			pump.request(&mut instance, r#"{"method":"field.runs.get","params":{"key":"field"}}"#);
+		let malformed = pump.request(
+			&mut instance,
+			r#"{"method":"field.runs.set","params":{"key":"field","rev":0,"runs":[{"style":0,"start":0,"end":4},{"style":"bold","start":1,"end":2}]}}"#,
+		);
+		assert_eq!(malformed.response["error"]["code"], ERR_PARAMS);
+		let after =
+			pump.request(&mut instance, r#"{"method":"field.runs.get","params":{"key":"field"}}"#);
+		assert_eq!(result(&after), result(&before));
+	}
+
+	#[test]
+	fn field_style_toggle_changes_runs_query() {
+		let (slir, mut instance, images) = live_document();
+		let mut pump = RequestPump::new("test.slab", slir, images);
+		let _ = pump.request(
+			&mut instance,
+			r#"{"method":"field.caret.set","params":{"key":"field","caret":4,"anchor":1}}"#,
+		);
+		let toggled = pump.request(
+			&mut instance,
+			r#"{"method":"field.style.toggle","params":{"key":"field","style":4}}"#,
+		);
+		assert_eq!(result(&toggled), &json!({"ok": true, "changed": true}));
+		let get =
+			pump.request(&mut instance, r#"{"method":"field.runs.get","params":{"key":"field"}}"#);
+		assert_eq!(result(&get)["runs"], json!([{"style": 4, "start": 1, "end": 4}]));
+	}
+
+	#[test]
+	fn field_range_get_and_clear_round_trip() {
+		let (slir, mut instance, images) = compile_live(
+			r#"
+params {
+  a text = "alpha"
+  b text = "bravo"
+}
+col {
+  text#a param.a field=a size=14 w=200 nowrap
+  text#b param.b field=b size=14 w=200 nowrap
+}
+"#,
+		);
+		let mut pump = RequestPump::new("test.slab", slir, images);
+		let first = pump.request(
+			&mut instance,
+			r#"{"method":"field.caret.set","params":{"key":"a","caret":5,"anchor":2}}"#,
+		);
+		assert!(first.response.get("error").is_none(), "{:?}", first.response);
+		let boundary = pump.request(
+			&mut instance,
+			r#"{"method":"input.key","params":{"key":"ArrowRight","mods":["shift"]}}"#,
+		);
+		assert!(boundary.response.get("error").is_none(), "{:?}", boundary.response);
+		let second = pump.request(
+			&mut instance,
+			r#"{"method":"field.caret.set","params":{"key":"b","caret":3,"anchor":0}}"#,
+		);
+		assert!(second.response.get("error").is_none(), "{:?}", second.response);
+		let get = pump.request(&mut instance, r#"{"method":"field.range.get","params":{}}"#);
+		assert_eq!(
+			result(&get),
+			&json!({
+				"range": {
+					"anchor": {"key": "col@0/#a", "offset": 2},
+					"head": {"key": "col@0/#b", "offset": 3},
+				}
+			})
+		);
+		let edit =
+			pump.request(&mut instance, r#"{"method":"input.text","params":{"text":"joined"}}"#);
+		assert_eq!(
+			result(&edit)["effects"]["range_edit"],
+			json!({
+				"kind": dispatch::RANGE_EDIT_TEXT,
+				"anchor": {"key": "col@0/#a", "offset": 2},
+				"head": {"key": "col@0/#b", "offset": 3},
+				"text": "joined",
+			})
+		);
+		let clear = pump.request(&mut instance, r#"{"method":"field.range.clear","params":{}}"#);
+		assert_eq!(result(&clear), &json!({"ok": true, "changed": true}));
+		let empty = pump.request(&mut instance, r#"{"method":"field.range.get","params":{}}"#);
+		assert_eq!(result(&empty), &json!({"range": null}));
 	}
 
 	#[test]
