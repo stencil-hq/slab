@@ -116,6 +116,23 @@ pub struct ParamValue {
 	pub sym:  String,
 }
 
+/// Host-facing caret and selection state for one bound field.
+///
+/// Offsets are codepoint indices into committed text. `caret` is the active
+/// selection end and `anchor` is the fixed end. `goal_x` is negative when no
+/// vertical-movement target is active.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+pub struct CaretState {
+	/// Active selection end, as a grapheme-boundary codepoint offset.
+	pub caret:     i32,
+	/// Fixed selection end, as a grapheme-boundary codepoint offset.
+	pub anchor:    i32,
+	/// Whether an input-method composition is active.
+	pub composing: bool,
+	/// Desired visual caret x, or a negative sentinel when none is active.
+	pub goal_x:    f64,
+}
+
 /// One resolved public token value.
 ///
 /// Colors use Slab's packed RGBA word (`u32::from_le_bytes([r, g, b, a])`).
@@ -801,6 +818,133 @@ pub fn inst_field_text(i: &Instance, key: &str) -> Option<String> {
 		let index = usize::try_from(edit_index).expect("negative edit index");
 		Some(edit::text_str(&i.ds.ed[index]))
 	}
+}
+
+fn clamp_caret_offset(boundaries: &[i32], offset: i32) -> i32 {
+	let end = boundaries.last().copied().unwrap_or(0);
+	let offset = offset.clamp(0, end);
+	match boundaries.binary_search(&offset) {
+		Ok(index) => boundaries[index],
+		Err(next) => {
+			let before = boundaries[next - 1];
+			let after = boundaries[next];
+			if offset - before <= after - offset {
+				before
+			} else {
+				after
+			}
+		},
+	}
+}
+
+/// Focuses a keyed field and sets its selection.
+///
+/// `caret` is the active end and `anchor` the fixed end, both expressed as
+/// codepoint offsets. Each offset clamps to the text bounds and then to the
+/// nearest grapheme-cluster boundary (ties choose the preceding boundary).
+/// Active composition is canceled before the selection is applied. Unknown,
+/// non-field, or currently non-focusable keys return `false`.
+pub fn inst_set_caret(i: &mut Instance, key: &str, caret: i32, anchor: i32) -> bool {
+	inst_set_caret_inner(i, key, caret, anchor, None)
+}
+
+/// Focuses a keyed field and resolves the active selection end at `goal_x`.
+///
+/// The clamped `caret` chooses a visual line in the field's retained text
+/// layout; the active end is then placed at the nearest shaped caret on that
+/// line. A collapsed selection remains collapsed at the resolved position.
+/// The non-negative finite goal is retained for subsequent vertical movement.
+/// Invalid goals or fields without retained text layout return `false`.
+pub fn inst_set_caret_goal(
+	i: &mut Instance,
+	key: &str,
+	caret: i32,
+	anchor: i32,
+	goal_x: f64,
+) -> bool {
+	if !goal_x.is_finite() || goal_x < 0.0 {
+		return false;
+	}
+	inst_set_caret_inner(i, key, caret, anchor, Some(goal_x))
+}
+
+fn inst_set_caret_inner(
+	i: &mut Instance,
+	key: &str,
+	caret: i32,
+	anchor: i32,
+	goal_x: Option<f64>,
+) -> bool {
+	let node = scene::node_by_key(&i.doc, &i.st.lists, key);
+	if node == slir::NONE || dispatch::sig_of(&i.doc, &i.st, node, dispatch::TR_CHANGE) < 0 {
+		return false;
+	}
+	let text_layout_index = if goal_x.is_some() {
+		let index = layout::text_layout_ix(&i.lay, node);
+		if index < 0 {
+			return false;
+		}
+		Some(usize::try_from(index).expect("negative text layout index"))
+	} else {
+		None
+	};
+	if !inst_set_focus(i, key, false) {
+		return false;
+	}
+
+	let edit_index = dispatch::ed_ix(&i.ds, node);
+	if edit_index < 0 {
+		return false;
+	}
+	let index = usize::try_from(edit_index).expect("negative edit index");
+	let mut boundaries = Vec::new();
+	graphemes::boundaries(&i.ds.ed[index].text, &mut boundaries);
+	let mut caret = clamp_caret_offset(&boundaries, caret);
+	let mut anchor = clamp_caret_offset(&boundaries, anchor);
+	if let (Some(goal_x), Some(text_layout_index)) = (goal_x, text_layout_index) {
+		let collapsed = caret == anchor;
+		let text_layout = &i.lay.tls[text_layout_index];
+		let line = edit::visual_line(text_layout, caret);
+		caret = edit::caret_for_x(&i.doc, &i.ds.ed[index], text_layout, line, 0, 0.0, 0.0, goal_x);
+		if collapsed {
+			anchor = caret;
+		}
+	}
+	let was_composing = i.ds.ed[index].composing;
+	if was_composing {
+		edit::composition_end(&mut i.ds.ed[index], "");
+		style::set_node_state(&i.doc, &mut i.st, node, "composing", false);
+		style::field_set(&mut i.st, node, &i.ds.ed[index].text);
+	}
+	i.ds.ed[index].caret = caret;
+	i.ds.ed[index].anchor = anchor;
+	i.ds.ed[index].goal_x = goal_x.unwrap_or(-1.0);
+	i.dirty = true;
+	true
+}
+
+/// Returns a keyed field's bound caret, selection direction, composition
+/// state, and vertical-movement goal.
+///
+/// Returns `None` for an unknown or non-field key, and before the field has an
+/// [`edit::EditState`] (normally created by first focus or a host text write).
+pub fn inst_get_caret(i: &Instance, key: &str) -> Option<CaretState> {
+	let node = scene::node_by_key(&i.doc, &i.st.lists, key);
+	if node == slir::NONE || dispatch::sig_of(&i.doc, &i.st, node, dispatch::TR_CHANGE) < 0 {
+		return None;
+	}
+	let edit_index = dispatch::ed_ix(&i.ds, node);
+	if edit_index < 0 {
+		return None;
+	}
+	let index = usize::try_from(edit_index).expect("negative edit index");
+	let state = &i.ds.ed[index];
+	Some(CaretState {
+		caret:     state.caret,
+		anchor:    state.anchor,
+		composing: state.composing,
+		goal_x:    state.goal_x,
+	})
 }
 
 /// Returns the focused node, or [`slir::NONE`] when focus is clear.

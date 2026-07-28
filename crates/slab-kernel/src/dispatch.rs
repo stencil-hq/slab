@@ -1365,6 +1365,44 @@ pub fn key_map_signal<'a>(keys: &'a str, key: &str) -> Option<&'a str> {
 	})
 }
 
+/// Delivers `key` through one node's own `keys=` map: the typed
+/// `Key:signal` form wins over a concise `Key` entry activating the node.
+/// The emitted signal records the key and the event's modifier bitset.
+pub fn deliver_key_map(
+	d: &Doc,
+	st: &St,
+	node: u32,
+	key: &str,
+	mods: u32,
+	eff: &mut Effects,
+) -> bool {
+	if disabled(d, st, node) {
+		return false;
+	}
+	let keys = style::attr_str_ref(d, st, node, slir::A_KEYS);
+	if let Some(signal) = key_map_signal(&keys, key) {
+		let base = list::base(&st.lists, d, node);
+		if let Some(signal_index) = d.sign_name.iter().enumerate().find_map(|(index, name)| {
+			(d.sign_node[index] == base
+				&& d.sign_trigger[index] == TR_KEY_ACTIVATE
+				&& slir::str_at(d, *name) == signal)
+				.then_some(index)
+		}) {
+			emit_signal(d, st, eff, signal_index, node, "");
+			let meta = eff.sig_meta.last_mut().expect("activation has metadata");
+			key.clone_into(&mut meta.pressed_key);
+			meta.mods = mods;
+			return true;
+		}
+	} else if key_list_has(&keys, key) && deliver_activate(d, st, eff, node) {
+		let meta = eff.sig_meta.last_mut().expect("activation has metadata");
+		key.clone_into(&mut meta.pressed_key);
+		meta.mods = mods;
+		return true;
+	}
+	false
+}
+
 /// Delivers to the nearest enabled `keys=` node on the focused scene path.
 pub fn activate_key_path(
 	d: &Doc,
@@ -1372,46 +1410,37 @@ pub fn activate_key_path(
 	sc: &Scene,
 	focused: u32,
 	key: &str,
+	mods: u32,
 	eff: &mut Effects,
 ) -> bool {
 	let mut scene_index = scene::index_of(sc, focused);
 	while scene_index >= 0 {
 		let index = usize::try_from(scene_index).expect("negative scene index");
-		let node = sc.entries[index].node;
-		let keys = style::attr_str_ref(d, st, node, slir::A_KEYS);
-		if !disabled(d, st, node) {
-			if let Some(signal) = key_map_signal(&keys, key) {
-				let base = list::base(&st.lists, d, node);
-				if let Some(signal_index) = d.sign_name.iter().enumerate().find_map(|(index, name)| {
-					(d.sign_node[index] == base
-						&& d.sign_trigger[index] == TR_KEY_ACTIVATE
-						&& slir::str_at(d, *name) == signal)
-						.then_some(index)
-				}) {
-					emit_signal(d, st, eff, signal_index, node, "");
-					key.clone_into(
-						&mut eff
-							.sig_meta
-							.last_mut()
-							.expect("activation has metadata")
-							.pressed_key,
-					);
-					return true;
-				}
-			} else if key_list_has(&keys, key) && deliver_activate(d, st, eff, node) {
-				key.clone_into(
-					&mut eff
-						.sig_meta
-						.last_mut()
-						.expect("activation has metadata")
-						.pressed_key,
-				);
-				return true;
-			}
+		if deliver_key_map(d, st, sc.entries[index].node, key, mods, eff) {
+			return true;
 		}
 		scene_index = sc.entries[index].parent_ix;
 	}
 	false
+}
+
+/// Delivers to the focused node's own `keys=` map, skipping ancestors: a
+/// field-authored binding preempts kernel editing for the bound key.
+pub fn activate_key_own(
+	d: &Doc,
+	st: &St,
+	sc: &Scene,
+	focused: u32,
+	key: &str,
+	mods: u32,
+	eff: &mut Effects,
+) -> bool {
+	let scene_index = scene::index_of(sc, focused);
+	if scene_index < 0 {
+		return false;
+	}
+	let index = usize::try_from(scene_index).expect("negative scene index");
+	deliver_key_map(d, st, sc.entries[index].node, key, mods, eff)
 }
 
 /// Reports whether an editable node accepts multiple lines.
@@ -1672,7 +1701,13 @@ pub fn follow_caret_fresh(d: &Doc, st: &mut St, lay: &Lay, sc: &Scene, ds: &mut 
 	effects.repaint
 }
 
-/// Consumes the focused field's editing keys before activation-key bubbling.
+/// Routes the focused field's editing keys, running before activation-key
+/// bubbling.
+///
+/// Returns `false` for unrecognized keys and for boundary commands that
+/// changed nothing (Backspace at the start, an arrow clamped at an edge) so
+/// the key still reaches `keys=` maps; commands that mutate text, move the
+/// caret, or emit an effect (submit) stay consumed.
 pub fn route_edit_key(
 	d: &Doc,
 	st: &mut St,
@@ -1689,6 +1724,7 @@ pub fn route_edit_key(
 		return false;
 	}
 	let index = usize::try_from(edit_index).expect("negative edit index");
+	let before = (ds.ed[index].caret, ds.ed[index].anchor);
 	let selecting = mods & M_SHIFT != 0;
 	let alt = mods & M_ALT != 0;
 	let control = mods & M_CTRL != 0;
@@ -1698,6 +1734,7 @@ pub fn route_edit_key(
 	let text_layout = (text_layout_index >= 0)
 		.then(|| &lay.tls[usize::try_from(text_layout_index).expect("negative text layout index")]);
 	let mut text_changed = false;
+	let mut effect_emitted = false;
 	let mut refresh = true;
 
 	match key {
@@ -1707,6 +1744,7 @@ pub fn route_edit_key(
 				text_changed = edit::insert(&mut ds.ed[index], "\n");
 			} else if submits && (!is_multiline || mods == 0) {
 				emit_submit(d, st, ds, eff, edit_index);
+				effect_emitted = true;
 			} else {
 				refresh = false;
 			}
@@ -1813,10 +1851,19 @@ pub fn route_edit_key(
 		_ => return false,
 	}
 
-	if refresh {
-		sync_field(d, st, ds, eff, edit_index, text_changed);
-		follow_caret(d, st, lay, sc, ds, edit_index, eff);
+	if !refresh {
+		return false;
 	}
+	// A boundary command that changed nothing — Backspace at the start,
+	// Delete at the end, an arrow clamped at an edge — bubbles through
+	// `keys=` so hosts can bind block-level behaviors (merge, split,
+	// cross-field navigation). Submit already emitted its effect and must
+	// not double-dispatch.
+	if !effect_emitted && !text_changed && before == (ds.ed[index].caret, ds.ed[index].anchor) {
+		return false;
+	}
+	sync_field(d, st, ds, eff, edit_index, text_changed);
+	follow_caret(d, st, lay, sc, ds, edit_index, eff);
 	true
 }
 
@@ -2201,8 +2248,19 @@ pub fn dispatch(
 				deliver_trigger(d, st, &mut effects, focused, TR_CANCEL, &retained);
 				effects.repaint |= clear_focus(d, st, ds);
 			}
-			// Editing has precedence, followed by divider adjustment, scrolling,
-			// activation-key bubbling, and focus-ring navigation.
+			// A plain non-printable `keys=` binding authored on the focused field
+			// itself preempts kernel editing (plain Enter splits; Shift+Enter and
+			// ordinary typing still reach the editor). Boundary no-op edit
+			// commands fall through to `keys=` bubbling, followed by divider
+			// adjustment, scrolling, and focus-ring navigation.
+			if !handled
+				&& ev.mods == 0
+				&& ev.key.chars().count() != 1
+				&& focused != slir::NONE
+				&& ed_ix(ds, focused) >= 0
+			{
+				handled = activate_key_own(d, st, sc, focused, &ev.key, ev.mods, &mut effects);
+			}
 			if !handled && focused != slir::NONE {
 				handled = route_edit_key(d, st, lay, sc, ds, focused, &ev.key, ev.mods, &mut effects);
 			}
@@ -2215,19 +2273,22 @@ pub fn dispatch(
 			if !handled && (focused == slir::NONE || ed_ix(ds, focused) < 0) {
 				handled = page_scroll_key(d, st, sc, focused, &ev.key, &mut effects);
 			}
-			// Printable keys stay with a focused editor; everything else may
-			// bubble through `keys=` maps.
-			let editor_printable =
-				focused != slir::NONE && ed_ix(ds, focused) >= 0 && ev.key.chars().count() == 1;
+			// Unmodified printable keys stay with a focused editor; everything
+			// else — including modified shortcuts such as Cmd+B — may bubble
+			// through `keys=` maps.
+			let editor_printable = focused != slir::NONE
+				&& ed_ix(ds, focused) >= 0
+				&& ev.mods == 0
+				&& ev.key.chars().count() == 1;
 			if !handled && focused != slir::NONE && !editor_printable {
-				handled = activate_key_path(d, st, sc, focused, &ev.key, &mut effects);
+				handled = activate_key_path(d, st, sc, focused, &ev.key, ev.mods, &mut effects);
 			}
 			// With no focus, or when the focused walk leaves the key
 			// unhandled, dispatch falls back to the document root `keys=` map.
 			if !handled && !editor_printable {
 				let root = sc.entries.first().map_or(slir::NONE, |e| e.node);
 				if root != slir::NONE && root != focused {
-					handled = activate_key_path(d, st, sc, root, &ev.key, &mut effects);
+					handled = activate_key_path(d, st, sc, root, &ev.key, ev.mods, &mut effects);
 				}
 			}
 

@@ -309,3 +309,161 @@ pub fn test_fresh_wrapped_layout_scroll_follow_settles() {
 	);
 	assert!(style::scroll_get(&f.st, 1) > 0.0, "fresh wrapped caret scrolls ancestor");
 }
+
+/// Appends one string to the doc pool, returning its index.
+fn push_str(f: &mut Fix, text: &str) -> u32 {
+	let index = u32::try_from(f.d.strs.len()).expect("str index fits u32");
+	f.d.strs.push(text.to_string());
+	index
+}
+
+/// Appends a doc node with one string attr and returns its id.
+fn push_node(f: &mut Fix, kind: u32, attr: u32, value: u32) -> u32 {
+	let node = u32::try_from(f.d.node_kind.len()).expect("node id fits u32");
+	f.d.node_kind.push(kind);
+	f.d.node_flags.push(0);
+	f.d.node_parent.push(slir::NONE);
+	f.d.node_first.push(slir::NONE);
+	f.d.node_next.push(slir::NONE);
+	f.d.node_key.push(0);
+	f.d.node_id.push(node);
+	f.d.node_line.push(1);
+	let attr_start = *f.d.attr_index.last().expect("attr_index terminator");
+	f.d.attr_index.push(attr_start + 1);
+	f.d.attr_id.push(attr);
+	let aval = push_aval_str(f, value);
+	f.d.attr_val.push(aval);
+	node
+}
+
+/// Appends one string AVAL entry, returning its pool index.
+fn push_aval_str(f: &mut Fix, value: u32) -> u32 {
+	let aval = u32::try_from(f.d.aval_tag.len()).expect("aval index fits u32");
+	f.d.aval_tag.push(slir::T_STR);
+	f.d.aval_lo.push(value);
+	f.d.aval_hi.push(0);
+	f.d.aval_num.push(0.0);
+	aval
+}
+
+/// Binds a typed `keys=` string attr directly on the fixture's field node.
+fn set_field_keys(f: &mut Fix, keys: u32) {
+	f.d.attr_index[1] = 1;
+	f.d.attr_id.push(slir::A_KEYS);
+	let aval = push_aval_str(f, keys);
+	f.d.attr_val.push(aval);
+}
+
+/// Declares a typed `keys=` signal on `node`, returning its str index.
+fn push_key_signal(f: &mut Fix, node: u32, signal: &str) -> u32 {
+	let sig = push_str(f, signal);
+	f.d.sign_name.push(sig);
+	f.d.sign_node.push(node);
+	f.d.sign_trigger.push(dispatch::TR_KEY_ACTIVATE);
+	sig
+}
+
+/// Verifies that a field's own `keys=` map preempts kernel editing for plain
+/// keys while modified keys still reach the editor.
+pub fn test_field_keys_preempt_plain_only() {
+	let mut f = fix_new();
+	fill(&mut f, "a", true, false, 100.0);
+	let keys = push_str(&mut f, "Enter:split");
+	set_field_keys(&mut f, keys);
+	let split = push_key_signal(&mut f, 0, "split");
+
+	let plain = send(&mut f, &event(dispatch::E_KEY_DOWN, "Enter", "", 0));
+	assert!(plain.sig_name.contains(&split), "plain Enter fires the field binding");
+	assert_eq!(edit::text_str(&f.ds.ed[0]), "a", "preempted Enter inserts nothing");
+
+	let shifted = send(&mut f, &event(dispatch::E_KEY_DOWN, "Enter", "", dispatch::M_SHIFT));
+	assert!(!shifted.sig_name.contains(&split), "Shift+Enter bypasses the binding");
+	assert_eq!(edit::text_str(&f.ds.ed[0]), "a\n", "Shift+Enter inserts the soft break");
+}
+
+/// Verifies that boundary no-op edit commands bubble to an ancestor's `keys=`
+/// map while effective edits stay with the editor.
+pub fn test_boundary_noop_bubbles_to_ancestor_keys() {
+	let mut f = fix_new();
+	fill(&mut f, "ab", true, false, 100.0);
+	let keys = push_str(&mut f, "Backspace:merge,ArrowLeft:prev");
+	let parent = push_node(&mut f, slir::K_COL, slir::A_KEYS, keys);
+	let merge = push_key_signal(&mut f, parent, "merge");
+	let prev = push_key_signal(&mut f, parent, "prev");
+	f.d.node_parent[0] = parent;
+	f.sc.entries[0].parent_ix = 1;
+	add_scene(&mut f.sc, parent, -1, 0.0, 0.0, 100.0, 100.0, 0);
+
+	send(&mut f, &event(dispatch::E_KEY_DOWN, "Home", "", 0));
+	let at_start = send(&mut f, &event(dispatch::E_KEY_DOWN, "Backspace", "", 0));
+	assert!(at_start.sig_name.contains(&merge), "Backspace at the start bubbles");
+	assert_eq!(
+		at_start
+			.sig_meta
+			.last()
+			.expect("bubble carries metadata")
+			.pressed_key,
+		"Backspace",
+		"bubble reports the pressed key"
+	);
+	assert_eq!(edit::text_str(&f.ds.ed[0]), "ab", "boundary Backspace deletes nothing");
+
+	let left_edge = send(&mut f, &event(dispatch::E_KEY_DOWN, "ArrowLeft", "", 0));
+	assert!(left_edge.sig_name.contains(&prev), "ArrowLeft at the edge bubbles");
+	assert_eq!(f.ds.ed[0].caret, 0, "edge arrow leaves the caret");
+
+	send(&mut f, &event(dispatch::E_TEXT, "", "x", 0));
+	let mid = send(&mut f, &event(dispatch::E_KEY_DOWN, "Backspace", "", 0));
+	assert!(!mid.sig_name.contains(&merge), "mid-text Backspace stays in the editor");
+	assert_eq!(edit::text_str(&f.ds.ed[0]), "ab", "mid-text Backspace deletes");
+
+	let moved = send(&mut f, &event(dispatch::E_KEY_DOWN, "ArrowRight", "", 0));
+	assert!(!moved.sig_name.contains(&prev), "interior arrow stays in the editor");
+	assert_eq!(f.ds.ed[0].caret, 1, "interior arrow moves the caret");
+}
+
+/// Verifies that Enter-submit emits exactly its own signal and does not fall
+/// through to ancestor `keys=` maps.
+pub fn test_enter_submit_does_not_bubble() {
+	let mut f = fix_new();
+	fill(&mut f, "one", false, true, 100.0);
+	let keys = push_str(&mut f, "Enter:save");
+	let parent = push_node(&mut f, slir::K_COL, slir::A_KEYS, keys);
+	let save = push_key_signal(&mut f, parent, "save");
+	f.d.node_parent[0] = parent;
+	f.sc.entries[0].parent_ix = 1;
+	add_scene(&mut f.sc, parent, -1, 0.0, 0.0, 100.0, 100.0, 0);
+
+	let submit = u32::try_from(
+		f.d.strs
+			.iter()
+			.position(|s| s == "submit")
+			.expect("submit string declared"),
+	)
+	.expect("submit str index fits u32");
+	let eff = send(&mut f, &event(dispatch::E_KEY_DOWN, "Enter", "", 0));
+	assert!(eff.sig_name.contains(&submit), "submit fires");
+	assert!(!eff.sig_name.contains(&save), "submit does not bubble into keys=");
+}
+
+/// Verifies that modified printable shortcuts bubble with their modifier
+/// bitset while unmodified typing stays with the editor.
+pub fn test_modified_printable_bubbles_with_mods() {
+	let mut f = fix_new();
+	fill(&mut f, "a", true, false, 100.0);
+	let keys = push_str(&mut f, "b:bold");
+	set_field_keys(&mut f, keys);
+	let bold = push_key_signal(&mut f, 0, "bold");
+
+	let typed = send(&mut f, &event(dispatch::E_KEY_DOWN, "b", "", 0));
+	assert!(!typed.sig_name.contains(&bold), "plain b is not a shortcut");
+	send(&mut f, &event(dispatch::E_TEXT, "", "b", 0));
+	assert_eq!(edit::text_str(&f.ds.ed[0]), "ab", "plain b inserts text");
+
+	let chord = send(&mut f, &event(dispatch::E_KEY_DOWN, "b", "", dispatch::M_META));
+	assert!(chord.sig_name.contains(&bold), "Cmd+B fires the field binding");
+	let meta = chord.sig_meta.last().expect("shortcut carries metadata");
+	assert_eq!(meta.mods, dispatch::M_META, "shortcut reports its modifiers");
+	assert_eq!(meta.pressed_key, "b", "shortcut reports its key");
+	assert_eq!(edit::text_str(&f.ds.ed[0]), "ab", "Cmd+B changes no text");
+}
