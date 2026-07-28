@@ -78,27 +78,6 @@ fn unique_signals(slir: &Slir) -> Vec<(String, bool)> {
     out
 }
 
-fn scene_keys(slir: &Slir) -> Vec<(String, String)> {
-    let mut keys = Vec::new();
-    let mut counts = std::collections::HashMap::<String, usize>::new();
-    for (&id_ref, &key_ref) in slir.nodes.id.iter().zip(&slir.nodes.key) {
-        let id = slir.str_at(id_ref);
-        if id.is_empty() {
-            continue;
-        }
-        let base = snake(id);
-        let count = counts.entry(base.clone()).or_default();
-        *count += 1;
-        let name = if *count == 1 {
-            base
-        } else {
-            format!("{base}_{}", *count)
-        };
-        keys.push((name, slir.str_at(key_ref).to_string()));
-    }
-    keys
-}
-
 fn byte_string(bytes: &[u8]) -> String {
     let mut s = String::with_capacity(bytes.len() * 4 + 2);
     s.push_str("b\"");
@@ -282,7 +261,7 @@ fn emit_module(slir: &Slir, bytes: &[u8], src_name: &str) -> String {
          /// Canonical full scene keys for authored `#id` nodes.\n\
          pub mod keys {\n",
     );
-    for (name, key) in scene_keys(slir) {
+    for (name, key) in crate::wc::static_scene_keys(slir) {
         let _ = writeln!(
             o,
             "    pub const {}: &str = {:?};",
@@ -821,7 +800,7 @@ col { each param.trees }
 def Row(tone=color.accent) export { row#item bg=tone press=chosen }
 tokens { color { accent #336699 } }
 params { rows list(Row) = [] }
-col#app { each#items param.rows }
+col#app { col#items { each param.rows } }
 "#;
         let (module, diagnostics) = generate(
             source,
@@ -834,6 +813,8 @@ col#app { each#items param.rows }
         assert!(!diagnostics.has_errors(), "{:?}", diagnostics.0);
         let module = module.expect("host module");
         assert!(module.contains("pub const APP: &str = \"#app\""));
+        assert!(module.contains("pub const ITEMS: &str = \"#app/#items\""));
+        assert!(!module.contains("pub const ITEM:"));
         assert!(module.contains("pub enum SignalName"));
         assert!(module.contains("pub type Rgba = u32"));
         assert!(module.contains("pub const fn rgba("));

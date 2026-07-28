@@ -10,6 +10,7 @@ use crate::expand::{
 };
 use crate::fonts;
 use slab_fonts::{self as font_assets};
+use slab_kernel::graphemes;
 use slab_slir::{
     AnimE, Aval, BindE, CondE, GradE, IconE, ImgE, ListE, ListFieldE, ListItemE, ListItemValueE,
     NONE, ParamE, PatchE, PathE, ShadowE, Slir, TokenE, TransE, TupDynE, attrs as at, aval as av,
@@ -156,9 +157,11 @@ fn warn_missing_text_glyphs(
     let Some(codepoints) = coverage.get(family).and_then(|faces| faces.get(&weight)) else {
         return;
     };
-    for character in text.chars().filter(|character| !character.is_control()) {
-        let codepoint = character as u32;
-        if codepoints.contains(&codepoint) || !warned.insert((family.to_string(), codepoint, line))
+    for character in text.chars() {
+        let codepoint = u32::from(character);
+        if !graphemes::requires_glyph(codepoint)
+            || codepoints.contains(&codepoint)
+            || !warned.insert((family.to_string(), codepoint, line))
         {
             continue;
         }

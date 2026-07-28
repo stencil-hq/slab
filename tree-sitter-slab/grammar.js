@@ -27,6 +27,8 @@ const FLAGS = [
   'sticky',
   'virtual',
   'drag-ghost',
+  'escape-blur',
+  'strike',
 ];
 
 module.exports = grammar({

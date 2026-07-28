@@ -52,16 +52,17 @@ fn list_identity_is_preserved_on_activation() {
     assert_eq!(signals_line(&dump), "signals: pick[item=\"0\"]");
 }
 
-/// The caret follows terminal-cell widths rather than codepoint offsets.
+/// An unsupported wide glyph paints no fallback but preserves terminal-cell
+/// advance, so the following combining cluster and caret remain aligned.
 #[test]
-fn wide_caret_uses_terminal_columns() {
+fn missing_wide_glyph_preserves_caret_columns() {
     let dump = run(
         "crates/slab-tui/tests/fixtures/edit-wide.slab",
         &["--script", "TAB"],
     );
     assert!(
-        dump.lines().any(|line| line.contains("中é▏")),
-        "wide/combining text caret is misplaced:\n{dump}"
+        dump.lines().any(|line| line.contains("  é▏")),
+        "wide missing-glyph advance or combining caret is misplaced:\n{dump}"
     );
 }
 

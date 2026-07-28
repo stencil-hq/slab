@@ -11,7 +11,7 @@ use crate::{
     dispatch::{self, DState, Effects, Event},
     dumpjson, edit,
     flatten::{self, Frame, FrameDiagnostic, FrameOp},
-    focus, hit, layout,
+    focus, graphemes, hit, layout,
     layout::Lay,
     list, motion,
     motion::MSt,
@@ -195,9 +195,10 @@ fn finish_frame_diagnostics(i: &mut Instance, frame: &mut Frame) {
         let Some(content) = frame.strings.get(text.str_ref as usize) else {
             continue;
         };
-        for character in content.chars().filter(|character| !character.is_control()) {
+        for character in content.chars() {
             let codepoint = u32::from(character);
-            if slir::font_gid(&i.doc, text.font, codepoint) != 0
+            if !graphemes::requires_glyph(codepoint)
+                || slir::font_gid(&i.doc, text.font, codepoint) != 0
                 || !i.glyph_warned.insert((family.to_owned(), codepoint))
             {
                 continue;
@@ -1425,8 +1426,8 @@ pub fn inst_frame_update(i: &mut Instance, t_ms: f64, frame: &mut Frame) -> bool
 
 /// Solves if needed and lowers the result to a frame at the supplied motion clock.
 ///
-/// Fresh virtual-list viewport geometry marks the instance dirty for one
-/// settling frame, without pruning identities outside the materialized window.
+/// Fresh virtual-list viewport geometry is applied and solved before returning,
+/// without pruning identities outside the materialized window.
 pub fn inst_frame(i: &mut Instance, t_ms: f64) -> Frame {
     let mut frame = flatten::frame_new();
     write_frame(i, t_ms, &mut frame, false);
@@ -1462,6 +1463,10 @@ fn write_frame(i: &mut Instance, t_ms: f64, frame: &mut Frame, retain_clean: boo
     if refresh_virtual_windows(i) {
         i.dirty |= solve_frame_settled(i, t_ms, true, frame);
         scene::load(&mut i.sc, frame);
+    }
+    if clamp_retained_scrolls(i) {
+        i.dirty = true;
+        refresh_virtual_windows(i);
     }
 
     // Editing dispatch used the previous layout. Follow once more against the

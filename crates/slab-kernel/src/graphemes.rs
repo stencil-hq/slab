@@ -18,6 +18,29 @@ pub const VS15: u32 = 0xFE0Eu32;
 
 /// Variation selector 16, requesting emoji presentation.
 pub const VS16: u32 = 0xFE0Fu32;
+const SUPPLEMENTARY_VS_LO: u32 = 0xE0100u32;
+const SUPPLEMENTARY_VS_HI: u32 = 0xE01EFu32;
+
+/// Reports whether `cp` selects a standardized or ideographic glyph variant.
+pub fn is_variation_selector(cp: u32) -> bool {
+    (0xFE00u32..=0xFE0Fu32).contains(&cp)
+        || (SUPPLEMENTARY_VS_LO..=SUPPLEMENTARY_VS_HI).contains(&cp)
+}
+
+/// Reports whether `cp` modifies neighboring glyphs without painting its own.
+pub fn is_glyph_modifier(cp: u32) -> bool {
+    cp == ZWJ || is_variation_selector(cp)
+}
+
+/// Reports whether `cp` requires an independently covered font glyph.
+///
+/// Diagnostics ignore controls and non-painting glyph modifiers. Painters use
+/// [`is_glyph_modifier`] separately because ordinary controls retain the
+/// document's fallback-advance policy even though they do not emit warnings.
+pub fn requires_glyph(cp: u32) -> bool {
+    !is_glyph_modifier(cp)
+        && char::from_u32(cp).is_some_and(|character| !character.is_control())
+}
 
 /// First regional-indicator codepoint.
 pub const RI_LO: u32 = 0x1F1E6u32;

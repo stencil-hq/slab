@@ -3,6 +3,7 @@
 //! default advance of 600. At size 10, these become 5, 2.5, 8, and 6 units.
 
 use crate::{
+    graphemes,
     slir::{self, Doc},
     textm::{self, TextLayout},
 };
@@ -150,6 +151,26 @@ pub fn test_default_advance() {
         textm::char_w(&doc, 0, 10.0, 0.0, 122),
         6.0,
         "default advance"
+    );
+    assert_eq!(
+        textm::char_w(&doc, 0, 10.0, 1.5, graphemes::ZWJ),
+        0.0,
+        "joiners do not consume a fallback advance or tracking"
+    );
+    assert_eq!(
+        textm::char_w(&doc, 0, 10.0, 1.5, graphemes::VS15),
+        0.0,
+        "variation selectors do not consume a fallback advance or tracking"
+    );
+    assert_eq!(
+        textm::char_w(&doc, 0, 10.0, 1.5, 0x0301),
+        7.5,
+        "missing spacing marks retain the fallback advance and tracking"
+    );
+    assert_eq!(
+        textm::char_w(&doc, 0, 10.0, 1.5, 0x0001),
+        7.5,
+        "ordinary controls retain the fallback advance and tracking"
     );
     assert_eq!(
         textm::char_w(&doc, 0, 10.0, 1.5, 97),

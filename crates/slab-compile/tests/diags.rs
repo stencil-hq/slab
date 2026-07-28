@@ -975,6 +975,19 @@ fn missing_static_glyph_names_character_codepoint_and_family() {
 }
 
 #[test]
+fn variation_selectors_do_not_require_independent_glyphs() {
+    let source = format!("text \"{}\" family=\"sans\"\n", '\u{FE0E}');
+    let (_, diagnostics) = compile(&source, &Options::default());
+    assert!(
+        diagnostics
+            .0
+            .iter()
+            .all(|diagnostic| diagnostic.code != "glyph-missing"),
+        "{diagnostics:?}"
+    );
+}
+
+#[test]
 fn known_param_and_item_property_defaults_are_checked_at_their_text_sites() {
     let source = r#"
 def Item(label="◐") export { text label family="sans" }

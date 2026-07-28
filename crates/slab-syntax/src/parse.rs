@@ -18,6 +18,7 @@ pub const FLAGS: &[&str] = &[
     "sticky",
     "virtual",
     "drag-ghost",
+    "escape-blur",
     "strike",
 ];
 

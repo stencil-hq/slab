@@ -1466,6 +1466,14 @@
           {
             "type": "STRING",
             "value": "drag-ghost"
+          },
+          {
+            "type": "STRING",
+            "value": "escape-blur"
+          },
+          {
+            "type": "STRING",
+            "value": "strike"
           }
         ]
       },

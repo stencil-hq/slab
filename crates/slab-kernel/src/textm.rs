@@ -6,14 +6,18 @@
 //!
 //! Advances come from the selected font table as
 //! `advance(glyph) * size / units_per_em + tracking`, with the default advance
-//! used for codepoints missing from the cmap. Font weight is represented by a
-//! real table rather than an artificial width multiplier.
+//! used for painting codepoints missing from the cmap. Joiners and variation
+//! selectors consume neither advance nor tracking. Font weight is represented
+//! by a real table rather than an artificial width multiplier.
 //!
 //! Ascent uses CSS half-leading over the hhea box:
 //! `ascent * size / units_per_em + (line_height - (ascent - descent) * size / units_per_em) / 2`.
 //! This keeps kernel baselines aligned with browser-painted glyphs.
 
-use crate::slir::{self, Doc};
+use crate::{
+    graphemes,
+    slir::{self, Doc},
+};
 
 /// Unicode codepoint inserted when a line is ellipsized.
 pub const ELLIPSIS: u32 = 0x2026;
@@ -98,6 +102,9 @@ pub fn line_count(tl: &TextLayout) -> i32 {
 /// Returns one codepoint's advance, including letter spacing after the glyph,
 /// matching CSS letter-spacing semantics.
 pub fn char_w(d: &Doc, f: i32, size: f64, tracking: f64, cp: u32) -> f64 {
+    if graphemes::is_glyph_modifier(cp) {
+        return 0.0;
+    }
     if f < 0 {
         return 0.6 * size + tracking;
     }

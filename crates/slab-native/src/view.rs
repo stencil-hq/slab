@@ -35,7 +35,9 @@ use winit::window::{Window, WindowId};
 /// User-event envelope used by [`NativeShell`]. Hosts can send application
 /// events through the same winit loop AccessKit uses.
 pub enum ShellEvent<U> {
+    /// Accessibility event delivered by AccessKit through the shared loop.
     Accessibility(a11y::Event),
+    /// Application event supplied by the host, such as an SDP wake-up.
     User(U),
 }
 
@@ -48,12 +50,19 @@ impl<U> From<a11y::Event> for ShellEvent<U> {
 /// Window and scheduler policy supplied to [`NativeShell`].
 #[derive(Clone)]
 pub struct ShellOptions {
+    /// Window title.
     pub title: String,
+    /// Initial logical viewport width.
     pub width: f64,
+    /// Initial logical viewport height.
     pub height: f64,
+    /// Initial dark-environment preference.
     pub dark: bool,
+    /// Whether the OS window decorations are disabled.
     pub undecorated: bool,
+    /// Optional rendered-frame limit used by deterministic hosts and demos.
     pub max_frames: Option<u64>,
+    /// Optional wall-clock lifetime after which the shell exits.
     pub exit_after_ms: Option<u64>,
 }
 
@@ -78,6 +87,9 @@ impl Default for ShellOptions {
 /// a redraw. Input, IME, accessibility, presentation and motion scheduling
 /// remain shell-owned.
 pub trait ShellHost<U> {
+    /// Handles one decoded Slab signal and may synchronize application state.
+    ///
+    /// `text` is empty for non-text signals. The default prints the signal.
     fn signal(&mut self, _document: &mut NativeDocument, name: &str, text: &str) {
         if text.is_empty() {
             println!("signal: {name}");
@@ -97,6 +109,9 @@ pub trait ShellHost<U> {
         }
     }
 
+    /// Handles one application event, returning `true` when redraw is required.
+    ///
+    /// SDP hosts use this hook to drain queued requests against `document`.
     fn user_event(
         &mut self,
         _document: &mut NativeDocument,
@@ -299,6 +314,7 @@ pub struct NativeShell<U: 'static, H> {
     context_actions: bool,
     occluded: bool,
     start: Instant,
+    /// Number of frames successfully presented by this shell.
     pub frames: u64,
     exit_deadline: Option<Instant>,
 }
@@ -308,6 +324,7 @@ where
     U: Send + 'static,
     H: ShellHost<U>,
 {
+    /// Creates a shell around one document, host policy, and shared event proxy.
     pub fn new(
         doc: NativeDocument,
         opts: ShellOptions,
@@ -341,14 +358,17 @@ where
         }
     }
 
+    /// Returns the mounted document and its live kernel instance.
     pub fn document(&self) -> &NativeDocument {
         &self.doc
     }
 
+    /// Returns mutable access for host-side model and parameter synchronization.
     pub fn document_mut(&mut self) -> &mut NativeDocument {
         &mut self.doc
     }
 
+    /// Returns the live window after the application has resumed.
     pub fn window(&self) -> Option<&Window> {
         self.window.as_deref()
     }

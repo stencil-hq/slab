@@ -915,9 +915,9 @@ pub fn deliver_trigger(
     true
 }
 
-/// Delivers an activation signal for `node`, when one is declared.
-pub fn deliver_activate(d: &Doc, st: &St, eff: &mut Effects, node: u32) {
-    deliver_trigger(d, st, eff, node, TR_ACTIVATE, String::new());
+/// Delivers an activation signal for `node`, reporting whether one is declared.
+pub fn deliver_activate(d: &Doc, st: &St, eff: &mut Effects, node: u32) -> bool {
+    deliver_trigger(d, st, eff, node, TR_ACTIVATE, String::new())
 }
 
 /// Reports whether `node` is disabled.
@@ -1287,8 +1287,7 @@ pub fn activate_key_path(
                         .key = key.to_owned();
                     return true;
                 }
-            } else if key_list_has(&keys, key) {
-                deliver_activate(d, st, eff, node);
+            } else if key_list_has(&keys, key) && deliver_activate(d, st, eff, node) {
                 eff.sig_meta
                     .last_mut()
                     .expect("activation has metadata")
@@ -2155,8 +2154,8 @@ pub fn dispatch(
                     && sc.flags[usize::try_from(scene_index).expect("negative scene index")]
                         & slir::F_FOCUSABLE
                         != 0
+                    && deliver_activate(d, st, &mut effects, focused)
                 {
-                    deliver_activate(d, st, &mut effects, focused);
                     effects
                         .sig_meta
                         .last_mut()

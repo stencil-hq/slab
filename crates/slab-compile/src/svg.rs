@@ -17,8 +17,8 @@
 //!   re-emits the backdrop in 3 alpha bands; tilt is an affine 3-corner fit.
 
 use crate::render::RegisteredFont;
-use slab_kernel::cells::rgba_lerp;
 use slab_kernel::flatten::{Frame, FrameOp};
+use slab_kernel::{cells::rgba_lerp, graphemes};
 use slab_slir::{GradE, Slir};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -969,7 +969,11 @@ impl<'a> Emitter<'a> {
                                         )
                                         .is_ok()
                                 });
-                            if covered { character } else { '\u{00A0}' }
+                            if covered || graphemes::is_glyph_modifier(u32::from(character)) {
+                                character
+                            } else {
+                                '\u{00A0}'
+                            }
                         })
                         .collect();
                     let fam = match self.s.fonts.get(t.font.max(0) as usize) {

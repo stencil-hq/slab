@@ -17,7 +17,10 @@
 
 use crate::render::RegisteredFont;
 use slab_fonts;
-use slab_kernel::flatten::{Frame, FrameOp, OpRect, OpText};
+use slab_kernel::{
+    flatten::{Frame, FrameOp, OpRect, OpText},
+    graphemes,
+};
 use slab_slir::Slir;
 use tiny_skia::{
     Color, FillRule, GradientStop, IntSize, LinearGradient, Mask, Paint, Path, PathBuilder, Pixmap,
@@ -1453,6 +1456,9 @@ impl<'a> Raster<'a> {
             if gid != 0 && ch != ' ' {
                 sink.dx = pen as f32;
                 face.outline_glyph(ttf_parser::GlyphId(gid), &mut sink);
+            }
+            if graphemes::is_glyph_modifier(cp) {
+                continue;
             }
             let adv_units = ix.map(|i| advances[i] as f64).unwrap_or(default_adv);
             pen += adv_units * size_px / upem + tracking * s;

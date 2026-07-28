@@ -53,6 +53,7 @@
 //! | `protocol.info` | none | `{"name":"sdp","version":1,"doc":path-or-null,"methods":[...]}` |
 //! | `protocol.quit` | none | `{"ok":true}`, then the server exits |
 //! | `doc.load` | `{"file":str}` | `{"ok":bool,"diags":[...],"reloaded"?:true,"theme_reset"?}` |
+//! | `doc.open` | `{"source":str,"name":str?}` | compiles inline source with `doc.load` semantics; never reads the filesystem |
 //! | `doc.reload` | none | reloads the current path with `doc.load` semantics |
 //! | `doc.info` | none | file, parameter declarations, themes, holes, signals, env, and clock |
 //! | `env.get` | none | `{"width","height","client","dark","coarse","theme"}` |
@@ -100,7 +101,7 @@
 //! | `input.paste` | `{"text":str}` | one paste dispatch |
 //! | `render.png` | `{"scale":f64?,"path":str?}` | base64 PNG or path, bytes, pixel dimensions, notes |
 //! | `render.svg` | `{"path":str?}` | live UTF-8 SVG or path, bytes, notes |
-//! | `render.cells` | `{"plain":bool?,"path":str?}` | UTF-8 text or path, columns, rows, notes |
+//! | `render.cells` | `{"plain":bool?,"caret":bool?,"path":str?}` | UTF-8 text or path, columns, rows, notes |
 //! | `render.apng` | `{"dur","fps","scale":f64?,"path":str?}` | base64 APNG or path, bytes, frames, new clock |
 //!
 //! Every input result is `{"effects":{...},"t":f64}`. Effects contain repaint,
@@ -153,6 +154,7 @@ const METHODS: &[&str] = &[
     "protocol.info",
     "protocol.quit",
     "doc.load",
+    "doc.open",
     "doc.reload",
     "doc.info",
     "env.get",
@@ -263,6 +265,27 @@ impl Session {
 
     fn load(&mut self, path: &Path) -> Value {
         let (slir, diags) = compile_file(path, true);
+        self.install(path, slir, diags)
+    }
+
+    /// Compiles inline source and installs it as the live document.
+    ///
+    /// `name` labels diagnostics and `doc.info`; it is never read from disk.
+    /// Image `src` paths resolve against an empty in-memory asset map, so a
+    /// filesystem-less embedder (WASM) never touches host storage.
+    fn load_source(&mut self, name: &Path, src: &str) -> Value {
+        let options = slab_compile::Options {
+            embed_assets: true,
+            base_dir: PathBuf::from("."),
+            assets: Some(std::collections::HashMap::new()),
+            fonts: std::collections::HashMap::new(),
+        };
+        let (slir, diags) = slab_compile::compile(src, &options);
+        self.install(name, slir, diags)
+    }
+
+    /// Shared tail of every load: decode, register fonts, reapply environment.
+    fn install(&mut self, path: &Path, slir: Option<Slir>, diags: Diagnostics) -> Value {
         let mut diag_values = diagnostics_json(&diags);
         let Some(slir) = slir else {
             return json!({"ok": false, "diags": diag_values});
@@ -502,6 +525,65 @@ pub fn serve(
         }
     }
     Ok(())
+}
+
+/// A self-contained SDP session that owns its document and kernel instance.
+///
+/// This is the embedding entry point for hosts that speak the protocol
+/// in-process instead of over stdio or TCP — notably the `slab-abi` WASM
+/// module that backs the Go and Python clients. Use [`RequestPump`] instead
+/// when the host already owns the live [`Instance`].
+///
+/// ```
+/// let mut server = slab_drive::Server::new();
+/// let open = server.request(r#"{"method":"doc.open","params":{"source":"col { text \"hi\" }"}}"#);
+/// assert!(open.contains("\"ok\":true"));
+/// server.request(r#"{"method":"env.set","params":{"width":320,"height":96,"client":"tui"}}"#);
+/// let cells = server.request(r#"{"method":"render.cells","params":{"plain":true}}"#);
+/// assert!(cells.contains("hi"));
+/// ```
+pub struct Server {
+    session: Session,
+}
+
+impl Default for Server {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Server {
+    /// Creates an empty session with the default 800x600 gpu environment.
+    ///
+    /// Load a document with `doc.load` (filesystem) or `doc.open` (inline
+    /// source), then set the real environment with `env.set`.
+    pub fn new() -> Self {
+        Self {
+            session: Session::new(
+                EnvSpec {
+                    width: 800.0,
+                    height: 600.0,
+                    client: "gpu".into(),
+                    dark: false,
+                    coarse: false,
+                    theme: String::new(),
+                },
+                Vec::new(),
+            ),
+        }
+    }
+
+    /// Applies one NDJSON request line and returns its single response line
+    /// without the trailing newline.
+    pub fn request(&mut self, line: &str) -> String {
+        let response = handle_line(&mut self.session, line);
+        serde_json::to_string(&response).expect("SDP responses serialize")
+    }
+
+    /// Whether `protocol.quit` has ended the session.
+    pub fn quit(&self) -> bool {
+        self.session.quit
+    }
 }
 
 fn compile_file(path: &Path, embed_assets: bool) -> (Option<Slir>, Diagnostics) {
@@ -807,6 +889,19 @@ fn required_str<'a>(object: &'a Map<String, Value>, name: &str) -> ProtocolResul
         .ok_or_else(|| invalid(format!("'{name}' must be a string")))
 }
 
+fn optional_str<'a>(
+    object: &'a Map<String, Value>,
+    name: &str,
+) -> ProtocolResult<Option<&'a str>> {
+    match object.get(name) {
+        Some(value) => value
+            .as_str()
+            .map(Some)
+            .ok_or_else(|| invalid(format!("'{name}' must be a string"))),
+        None => Ok(None),
+    }
+}
+
 fn required_f64(object: &Map<String, Value>, name: &str) -> ProtocolResult<f64> {
     object
         .get(name)
@@ -909,6 +1004,13 @@ fn handle(
             require_reload_allowed(session, "doc.load")?;
             let file = required_str(params(value), "file")?;
             Ok(session.load(Path::new(file)))
+        }
+        "doc.open" => {
+            require_reload_allowed(session, "doc.open")?;
+            let object = params(value);
+            let source = required_str(object, "source")?;
+            let name = optional_str(object, "name")?.unwrap_or("<source>");
+            Ok(session.load_source(Path::new(name), source))
         }
         "doc.reload" => {
             require_reload_allowed(session, "doc.reload")?;
@@ -2274,9 +2376,14 @@ fn render_svg(session: &mut Session, object: &Map<String, Value>) -> ProtocolRes
 
 fn render_cells(session: &mut Session, object: &Map<String, Value>) -> ProtocolResult {
     let plain = optional_bool(object, "plain", true)?;
+    let caret = optional_bool(object, "caret", false)?;
     let path = optional_path(object)?;
     let doc = ensure_frame(session)?;
-    let grid = cells::cells_from_frame(&doc.inst.doc, &doc.fr, doc.fr.width, doc.fr.height);
+    let grid = if caret {
+        cells::cells_with_caret(&doc.inst, &doc.fr)
+    } else {
+        cells::cells_from_frame(&doc.inst.doc, &doc.fr, doc.fr.width, doc.fr.height)
+    };
     let text = cells::cells_to_text(&grid, plain);
     let mut notes = frame_diagnostic_notes(&doc.fr);
     notes.extend(

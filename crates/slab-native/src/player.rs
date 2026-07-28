@@ -305,9 +305,6 @@ impl PlayerCore {
             kframe::inst_set_hole_size(&mut self.doc.inst, 0, natural.0, natural.1);
             self.reported_queue = Some(idx);
         }
-        if let Some(key) = self.pending_queue_focus.take() {
-            let _ = kframe::inst_set_focus(&mut self.queues[idx].inst, &key, true);
-        }
         let fr = self.doc.frame(t_ms);
         let pending = kframe::inst_take_signals(&mut self.doc.inst);
         let signals = self.doc.decode_signals(&pending);
@@ -325,8 +322,14 @@ impl PlayerCore {
     /// Frame of the mounted queue instance (call after `frame()` so the
     /// hole viewport is applied).
     pub fn queue_frame(&mut self, t_ms: f64) -> Frame {
+        let pending_focus = self.pending_queue_focus.take();
         let queue = &mut self.queues[self.state.idx];
-        let frame = queue.frame(t_ms);
+        let mut frame = queue.frame(t_ms);
+        if let Some(key) = pending_focus
+            && kframe::inst_set_focus(&mut queue.inst, &key, true)
+        {
+            frame = queue.frame(t_ms);
+        }
         let pending = kframe::inst_take_signals(&mut queue.inst);
         for name in pending.sig_name {
             println!("signal: {}", kslir::str_at(&queue.inst.doc, name));

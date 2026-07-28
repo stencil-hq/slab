@@ -296,12 +296,37 @@ pub(crate) fn ts_list_type(names: &[(usize, String)], doc: &DocSpec, row: usize)
         .expect("nested TypeScript list type was not collected")
 }
 
-fn scene_keys(slir: &Slir) -> Vec<(String, String)> {
+fn is_each_template_descendant(slir: &Slir, node: usize) -> bool {
+    let mut parent = slir
+        .nodes
+        .parent
+        .get(node)
+        .copied()
+        .unwrap_or(slab_slir::NONE);
+    while parent != slab_slir::NONE {
+        let Ok(parent_index) = usize::try_from(parent) else {
+            return false;
+        };
+        if slir.nodes.kind.get(parent_index) == Some(&slab_slir::kind::EACH) {
+            return true;
+        }
+        parent = slir
+            .nodes
+            .parent
+            .get(parent_index)
+            .copied()
+            .unwrap_or(slab_slir::NONE);
+    }
+    false
+}
+
+/// Authored IDs whose canonical keys exist without a runtime list item key.
+pub(crate) fn static_scene_keys(slir: &Slir) -> Vec<(String, String)> {
     let mut keys = Vec::new();
     let mut counts = std::collections::HashMap::<String, usize>::new();
-    for (&id_ref, &key_ref) in slir.nodes.id.iter().zip(&slir.nodes.key) {
+    for (node, (&id_ref, &key_ref)) in slir.nodes.id.iter().zip(&slir.nodes.key).enumerate() {
         let id = slir.str_at(id_ref);
-        if id.is_empty() {
+        if id.is_empty() || is_each_template_descendant(slir, node) {
             continue;
         }
         let count = counts.entry(id.to_string()).or_default();
@@ -785,7 +810,7 @@ pub(crate) fn doc_specs(
         lists: lists_of(&slir),
         list_rows: list_rows_of(&slir),
         signals: signals_of(&slir),
-        keys: scene_keys(&slir),
+        keys: static_scene_keys(&slir),
     });
 
     // Exported defs skip asset embedding: the page shares one registered
@@ -815,7 +840,7 @@ pub(crate) fn doc_specs(
             lists: lists_of(&dslir),
             list_rows: list_rows_of(&dslir),
             signals: signals_of(&dslir),
-            keys: scene_keys(&dslir),
+            keys: static_scene_keys(&dslir),
         });
     }
     (Some(docs), diags)
@@ -880,7 +905,7 @@ pub fn generate(
 
 #[cfg(test)]
 mod tests {
-    use super::{KERNEL_WASM, WcOptions, generate};
+    use super::{KERNEL_WASM, WcOptions, generate, static_scene_keys};
     use crate::Options;
 
     #[test]
@@ -1000,6 +1025,42 @@ col { each param.trees }
             1
         );
         assert!(declarations.contains("\"children\"?: TreesItem[]"));
+    }
+
+    #[test]
+    fn generated_static_keys_resolve_and_exclude_each_templates() {
+        let source = r#"
+def Row(label="") export {
+  row#item w=100 h=20 focusable { text label }
+}
+params { rows list(Row) = [Row(label="one")] }
+col#app { col#list { each param.rows } }
+"#;
+        let (slir, diagnostics) = crate::compile(
+            source,
+            &Options {
+                embed_assets: false,
+                ..Options::default()
+            },
+        );
+        assert!(!diagnostics.has_errors(), "{:?}", diagnostics.0);
+        let slir = slir.expect("key fixture");
+        let keys = static_scene_keys(&slir);
+        assert!(keys.iter().any(|(name, _)| name == "app"));
+        assert!(keys.iter().any(|(name, _)| name == "list"));
+        assert!(!keys.iter().any(|(name, _)| name == "item"));
+
+        let bytes = slab_slir::write(&slir);
+        let (mut instance, _) = slab_slir::instance(&bytes).expect("decoded key fixture");
+        slab_kernel::frame::inst_set_env(&mut instance, 240.0, 120.0, 0, false, false);
+        let _ = slab_kernel::frame::inst_frame(&mut instance, 0.0);
+        for (_, key) in keys {
+            let node = slab_kernel::scene::node_by_key(&instance.doc, &instance.st.lists, &key);
+            assert_ne!(node, slab_kernel::slir::NONE, "generated key {key}");
+            assert!(slab_kernel::scene::index_of(&instance.sc, node) >= 0);
+        }
+        let item = slab_kernel::scene::node_by_key(&instance.doc, &instance.st.lists, "#item");
+        assert_ne!(item, slab_kernel::slir::NONE, "materialized item locator");
     }
 
     #[test]

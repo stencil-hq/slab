@@ -605,6 +605,7 @@ pub fn virtual_list_doc() -> slir::Doc {
     let each = aval(&mut d, slir::T_NUM, 0, 0, 0.0);
     let extent = aval(&mut d, slir::T_NUM, 0, 0, 20.0);
     let overscan = aval(&mut d, slir::T_NUM, 0, 0, 4.0);
+    let row_w = aval(&mut d, slir::T_SIZE_FIXED, 0, 0, 100.0);
     let row_h = aval(&mut d, slir::T_SIZE_FIXED, 0, 0, 20.0);
     let prop_label = aval(&mut d, slir::T_PROP_REF, 0, 0, 0.0);
     d.parm_name.push(1);
@@ -638,16 +639,17 @@ pub fn virtual_list_doc() -> slir::Doc {
     d.node_key.extend([3, 4, 5, 6]);
     d.node_id.extend([0, 0, 0, 0]);
     d.node_line.extend([1, 2, 3, 4]);
-    d.attr_index.extend([0, 0, 3, 4, 5]);
+    d.attr_index.extend([0, 0, 3, 5, 6]);
     d.attr_id.extend([
         slir::A_EACH,
         slir::A_ITEM_EXTENT,
         slir::A_OVERSCAN,
+        slir::A_W,
         slir::A_H,
         slir::A_CONTENT,
     ]);
     d.attr_val
-        .extend([each, extent, overscan, row_h, prop_label]);
+        .extend([each, extent, overscan, row_w, row_h, prop_label]);
     d
 }
 
@@ -887,9 +889,10 @@ pub fn test_virtual_list_frame_settle_reveal_and_op_bound() {
 
     let first = frame::inst_frame(&mut inst, 0.0);
     let settled = frame::inst_frame(&mut inst, 0.0);
-    assert!(
-        settled.scene.len() < first.scene.len(),
-        "the retained origin trims items hidden behind padding and the preceding sibling"
+    assert_eq!(
+        settled.scene.len(),
+        first.scene.len(),
+        "the first frame settles the retained virtual origin"
     );
     let scroll = settled
         .scene
@@ -918,10 +921,27 @@ pub fn test_virtual_list_frame_settle_reveal_and_op_bound() {
 
     assert!(frame::inst_focus_item(&mut inst, "virtual", 20));
     frame::inst_frame(&mut inst, 14.0);
+    let focused_item = scene::node_by_key(&inst.doc, &inst.st.lists, "virtual~20/row");
+    let focused_scene = scene::index_of(&inst.sc, focused_item);
+    let focused_scene_index = usize::try_from(focused_scene).expect("materialized scene node");
+    assert!(
+        scene::is_focusable(&inst.sc, focused_item),
+        "materialized focus target is ineligible: node={focused_item} scene={focused_scene} flags={} disabled={} painted={} rect=({},{},{},{})",
+        inst.sc.flags[focused_scene_index],
+        inst.sc.disabled[focused_scene_index],
+        scene::focus_painted(&inst.sc, focused_scene_index),
+        inst.sc.x[focused_scene_index],
+        inst.sc.y[focused_scene_index],
+        inst.sc.w[focused_scene_index],
+        inst.sc.h[focused_scene_index]
+    );
     assert_eq!(
         scene::key_of(&inst.doc, &inst.st.lists, frame::inst_focus(&inst)),
         "virtual~20/row",
-        "focus_item materializes and focuses the first interactive descendant"
+        "focus_item materializes and focuses the first interactive descendant: note={} window={:?} scroll={}",
+        frame::inst_focus_note(&inst),
+        frame::inst_each_window(&inst, "virtual"),
+        frame::inst_get_scroll(&inst, "scroll", 0)
     );
 
     assert!(frame::inst_set_scroll(&mut inst, "scroll", 0, 0.0));
@@ -990,7 +1010,6 @@ pub fn test_retained_frame_update_reuses_output_and_reports_clean_frames() {
     assert!(frame::inst_set_list_len(&mut inst, 0, "", 10_000));
 
     let mut output = crate::flatten::frame_new();
-    assert!(frame::inst_frame_update(&mut inst, 0.0, &mut output));
     assert!(frame::inst_frame_update(&mut inst, 0.0, &mut output));
     let scene_len = output.scene.len();
     let ops_len = output.ops.len();
