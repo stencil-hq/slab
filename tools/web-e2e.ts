@@ -10,6 +10,7 @@
 //   `slab gen wc conformance/cases/16-list.slab -o examples/web-demo/dist --tag slab-list`
 //   `slab gen wc conformance/cases/x1-showcase.slab -o examples/web-demo/dist --tag slab-showcase`
 //   `slab gen wc conformance/cases/a11y-dynamic.slab -o examples/web-demo/dist --tag slab-a11y-dynamic`
+//   `slab gen wc tools/fixtures/web-interactions.slab -o examples/web-demo/dist --tag slab-web-interactions`
 // and a chromium from `bun x playwright install chromium`.
 // Serves examples/web-demo over Bun.serve on a random port, then asserts:
 //   (a) component upgraded, shadow box count > 10
@@ -25,6 +26,8 @@
 //   (j) atomic list assignment renders/reflows and signals carry item identity
 //   (k) retained semantic DOM values, key identity, rotation, roving focus, click
 //   (l) omitted nested list fields atomically clear their child lists
+//   (m) CDP IME, right-click context, keyboard clipboard, drag ghost, and token read-back
+//   (n) missing kernel WASM reports its URL, bundler remedy, and a visible alert
 
 import { dirname, extname, join } from 'node:path';
 import { chromium } from 'playwright';
@@ -43,6 +46,7 @@ interface DebugGlobal {
    __sig?: Record<string, unknown[]>;
    __hugFrames?: { w: number; h: number }[];
 }
+const consoleErrors: string[] = [];
 
 const root = dirname(import.meta.dir);
 const demoDir = join(root, 'examples/web-demo');
@@ -67,6 +71,12 @@ const server = Bun.serve({
    port: 0,
    async fetch(req) {
       const path = new URL(req.url).pathname;
+      if (path === '/broken/slab-runtime.js') {
+         const runtime = Bun.file(join(demoDir, 'dist/slab-runtime.js'));
+         return new Response(runtime, {
+            headers: { 'content-type': 'text/javascript; charset=utf-8' },
+         });
+      }
       if (path === '/') {
          return new Response(demoHtml, {
             headers: { 'content-type': 'text/html; charset=utf-8' },
@@ -93,6 +103,13 @@ const browser = await chromium.launch();
 const page = await browser.newPage({
    viewport: { width: 1100, height: 800 },
    colorScheme: 'light',
+   deviceScaleFactor: 1.25,
+});
+page.on('console', (message) => {
+   if (message.type() === 'error') consoleErrors.push(message.text());
+});
+await page.context().grantPermissions(['clipboard-read', 'clipboard-write'], {
+   origin: `http://127.0.0.1:${server.port}`,
 });
 page.on('pageerror', (e) => console.error('pageerror:', e.message));
 await page.addInitScript(() => {
@@ -528,6 +545,306 @@ check(
    '(i) semantic field click never synthesizes Enter submit',
    semanticEditResult.sendsAfter === semanticEditResult.sendsBefore,
    JSON.stringify(semanticEditResult),
+);
+
+// ------------------------------------------------------------------- (m)
+await page.evaluate(async () => {
+   await import('/dist/web-interactions.js');
+   const host = document.createElement('slab-web-interactions') as HTMLElement & {
+      setFieldText(key: string, text: string): boolean;
+      fieldText(key: string): string | undefined;
+      getToken(path: string): string | number | undefined;
+      setTheme(name: string): boolean;
+   };
+   host.id = 'web-interactions-host';
+   host.style.cssText = 'display:block;width:320px;height:180px';
+   const g = globalThis as DebugGlobal;
+   g.__sig ??= {};
+   g.__sig.menu = [];
+   g.__sig.changed = [];
+   host.addEventListener('menu', (event) => {
+      g.__sig?.menu?.push((event as CustomEvent).detail);
+   });
+   host.addEventListener('changed', (event) => {
+      g.__sig?.changed?.push((event as CustomEvent).detail);
+   });
+   document.body.appendChild(host);
+});
+await page.waitForFunction(() => {
+   const host = document.getElementById('web-interactions-host');
+   return ((globalThis as DebugGlobal).__slabDebug?.get(host as Element)?.geom().length ?? 0) > 0;
+});
+await revealHost('web-interactions-host');
+const interactionField = await nodeCenter('/field', 'web-interactions-host');
+check('(m) interaction field located', interactionField !== null, JSON.stringify(interactionField));
+const tokenResult = await page.evaluate(() => {
+   const host = document.getElementById('web-interactions-host') as HTMLElement & {
+      getToken(path: string): string | number | undefined;
+      setTheme(name: string): boolean;
+   };
+   const base = [host.getToken('color.page'), host.getToken('space.unit')];
+   const unknown = host.getToken('missing');
+   const selected = host.setTheme('dusk');
+   const dusk = [host.getToken('color.page'), host.getToken('space.unit')];
+   return { base, unknown, selected, dusk };
+});
+check(
+   '(m) getToken follows the selected generated theme',
+   tokenResult.base[0] === '#112233' &&
+      tokenResult.base[1] === 8 &&
+      tokenResult.unknown === undefined &&
+      tokenResult.selected &&
+      tokenResult.dusk[0] === '#334455' &&
+      tokenResult.dusk[1] === 10,
+   JSON.stringify(tokenResult),
+);
+
+let interactionKey = '';
+if (interactionField) {
+   interactionKey = await page.evaluate(() => {
+      const host = document.getElementById('web-interactions-host') as HTMLElement & {
+         setFieldText(key: string, text: string): boolean;
+      };
+      const geom = (globalThis as DebugGlobal).__slabDebug?.get(host)?.geom() ?? [];
+      const key = geom.find((node) => node.key.includes('/field'))?.key ?? '';
+      return host.setFieldText(key, 'seed') ? key : '';
+   });
+   await page.mouse.click(interactionField.cx, interactionField.cy);
+}
+await page.waitForTimeout(100);
+const focusBeforeIme = await page.evaluate(() => {
+   const host = document.getElementById('web-interactions-host');
+   const active = host?.shadowRoot?.activeElement;
+   return {
+      documentActive: document.activeElement?.id ?? '',
+      tag: active?.tagName ?? '',
+      className: active?.className ?? '',
+      key: active instanceof HTMLElement ? (active.dataset.slabKey ?? '') : '',
+   };
+});
+check(
+   '(m) field click transfers browser focus to the IME surface',
+   focusBeforeIme.tag === 'TEXTAREA' && focusBeforeIme.className === 'slab-ime',
+   JSON.stringify(focusBeforeIme),
+);
+await page.evaluate(() => {
+   document
+      .getElementById('web-interactions-host')
+      ?.shadowRoot?.querySelector<HTMLTextAreaElement>('.slab-ime')
+      ?.focus();
+});
+const cdp = await page.context().newCDPSession(page);
+await cdp.send('Input.imeSetComposition', {
+   text: '漢',
+   selectionStart: 1,
+   selectionEnd: 1,
+   replacementStart: 0,
+   replacementEnd: 0,
+});
+await cdp.send('Input.insertText', { text: '漢' });
+await page.waitForTimeout(100);
+const imeResult = await page.evaluate((key) => {
+   const host = document.getElementById('web-interactions-host') as HTMLElement & {
+      fieldText(key: string): string | undefined;
+   };
+   const ime = host.shadowRoot?.querySelector<HTMLTextAreaElement>('.slab-ime');
+   return {
+      text: host.fieldText(key),
+      left: Number.parseFloat(ime?.style.left ?? ''),
+      top: Number.parseFloat(ime?.style.top ?? ''),
+      width: Number.parseFloat(ime?.style.width ?? ''),
+      height: Number.parseFloat(ime?.style.height ?? ''),
+   };
+}, interactionKey);
+check(
+   '(m) CDP composition commits once and positions the IME surface',
+   imeResult.text === 'seed漢' &&
+      Number.isFinite(imeResult.left) &&
+      Number.isFinite(imeResult.top) &&
+      imeResult.width >= 1 &&
+      imeResult.height >= 1,
+   JSON.stringify(imeResult),
+);
+await page.keyboard.press('ControlOrMeta+A');
+const beforeContextSelection = await page.evaluate(() => {
+   const active = document.getElementById('web-interactions-host')?.shadowRoot?.activeElement;
+   return active instanceof HTMLTextAreaElement
+      ? [active.selectionStart, active.selectionEnd, active.value.length]
+      : null;
+});
+check(
+   '(m) browser selection mirrors kernel selection before context click',
+   beforeContextSelection?.[0] === 0 &&
+      beforeContextSelection[1] === beforeContextSelection[2] &&
+      beforeContextSelection[2] > 0,
+   JSON.stringify(beforeContextSelection),
+);
+
+await page.evaluate(() => {
+   const host = document.getElementById('web-interactions-host');
+   host?.addEventListener('contextmenu', (event) => {
+      (globalThis as DebugGlobal).__sig?.contextmenu?.push({
+         prevented: event.defaultPrevented,
+      });
+   });
+   const g = globalThis as DebugGlobal;
+   g.__sig ??= {};
+   g.__sig.contextmenu = [];
+});
+if (interactionField) {
+   await page.mouse.click(interactionField.cx, interactionField.cy, { button: 'right' });
+}
+await page.waitForFunction(() => ((globalThis as DebugGlobal).__sig?.menu?.length ?? 0) > 0);
+await page.waitForFunction(() => {
+   const active = document.getElementById('web-interactions-host')?.shadowRoot?.activeElement;
+   return (
+      active instanceof HTMLTextAreaElement &&
+      active.selectionStart === 0 &&
+      active.selectionEnd === active.value.length
+   );
+});
+const contextResult = await page.evaluate((key) => {
+   const host = document.getElementById('web-interactions-host') as HTMLElement & {
+      fieldText(key: string): string | undefined;
+   };
+   const active = host.shadowRoot?.activeElement;
+   const sig = (globalThis as DebugGlobal).__sig ?? {};
+   return {
+      text: host.fieldText(key),
+      menu: sig.menu.at(-1),
+      contextmenu: sig.contextmenu.at(-1),
+      editorFocused: active instanceof HTMLTextAreaElement && active.classList.contains('slab-ime'),
+      selectedText:
+         active instanceof HTMLTextAreaElement
+            ? active.value.slice(active.selectionStart, active.selectionEnd)
+            : '',
+   };
+}, interactionKey);
+check(
+   '(m) secondary click preserves editing and exposes Context',
+   contextResult.text === 'seed漢' &&
+      (contextResult.menu as { meta?: { button?: number } } | undefined)?.meta?.button === 2 &&
+      (contextResult.contextmenu as { prevented?: boolean } | undefined)?.prevented === false &&
+      contextResult.editorFocused &&
+      contextResult.selectedText === 'seed漢',
+   JSON.stringify(contextResult),
+);
+
+await page.keyboard.press('ControlOrMeta+C');
+const copied = await page.evaluate(() => navigator.clipboard.readText());
+await page.keyboard.press('ControlOrMeta+X');
+await page.waitForFunction((key) => {
+   const host = document.getElementById('web-interactions-host') as HTMLElement & {
+      fieldText(key: string): string | undefined;
+   };
+   return host.fieldText(key) === '';
+}, interactionKey);
+const cut = await page.evaluate(() => navigator.clipboard.readText());
+await page.evaluate(() => navigator.clipboard.writeText('pasted'));
+await page.keyboard.press('ControlOrMeta+V');
+await page.waitForFunction((key) => {
+   const host = document.getElementById('web-interactions-host') as HTMLElement & {
+      fieldText(key: string): string | undefined;
+   };
+   return host.fieldText(key) === 'pasted';
+}, interactionKey);
+const pasted = await page.evaluate(
+   (key) =>
+      (
+         document.getElementById('web-interactions-host') as HTMLElement & {
+            fieldText(key: string): string | undefined;
+         }
+      ).fieldText(key),
+   interactionKey,
+);
+check(
+   '(m) Cmd/Ctrl copy, cut, and paste synchronize the kernel field',
+   copied === 'seed漢' && cut === 'seed漢' && pasted === 'pasted',
+   JSON.stringify({ copied, cut, pasted }),
+);
+
+const dragSource = await nodeCenter('/source', 'web-interactions-host');
+check('(m) drag source located', dragSource !== null, JSON.stringify(dragSource));
+let ghostResult: { dx: number; dy: number; dpr: number; count: number } | null = null;
+if (dragSource) {
+   await page.mouse.move(dragSource.cx, dragSource.cy);
+   await page.mouse.down();
+   await page.mouse.move(dragSource.cx + 72, dragSource.cy + 24, { steps: 4 });
+   await page.waitForFunction(() => {
+      const root = document
+         .getElementById('web-interactions-host')
+         ?.shadowRoot?.querySelector('.slab-ops');
+      return (
+         [...(root?.querySelectorAll<HTMLElement>('div') ?? [])].filter(
+            (element) => getComputedStyle(element).backgroundColor === 'rgb(255, 0, 255)',
+         ).length >= 2
+      );
+   });
+   ghostResult = await page.evaluate(
+      ({ sourceX, sourceY }) => {
+         const root = document
+            .getElementById('web-interactions-host')
+            ?.shadowRoot?.querySelector('.slab-ops');
+         const boxes = [...(root?.querySelectorAll<HTMLElement>('div') ?? [])]
+            .filter((element) => getComputedStyle(element).backgroundColor === 'rgb(255, 0, 255)')
+            .map((element) => element.getBoundingClientRect())
+            .map((rect) => ({ x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }));
+         boxes.sort(
+            (left, right) =>
+               Math.hypot(left.x - sourceX, left.y - sourceY) -
+               Math.hypot(right.x - sourceX, right.y - sourceY),
+         );
+         const source = boxes[0];
+         const ghost = boxes[1];
+         return {
+            dx: source && ghost ? ghost.x - source.x : Number.NaN,
+            dy: source && ghost ? ghost.y - source.y : Number.NaN,
+            dpr: devicePixelRatio,
+            count: boxes.length,
+         };
+      },
+      { sourceX: dragSource.cx, sourceY: dragSource.cy },
+   );
+   await page.mouse.up();
+}
+check(
+   '(m) drag ghost follows both pointer axes in CSS pixels at DPR 1.25',
+   ghostResult !== null &&
+      ghostResult.count >= 2 &&
+      ghostResult.dpr === 1.25 &&
+      Math.abs(ghostResult.dx - 72) <= 3 &&
+      Math.abs(ghostResult.dy - 24) <= 3,
+   JSON.stringify(ghostResult),
+);
+
+// ------------------------------------------------------------------- (n)
+// This import intentionally uses a second runtime URL to exercise its WASM-load boundary.
+await page.evaluate(async () => {
+   const { SlabElement } = await import('/broken/slab-runtime.js');
+   class BrokenSlabElement extends SlabElement {}
+   customElements.define('slab-broken-wasm', BrokenSlabElement);
+   const host = document.createElement('slab-broken-wasm');
+   host.id = 'broken-wasm-host';
+   document.body.appendChild(host);
+});
+await page.waitForFunction(() =>
+   document.getElementById('broken-wasm-host')?.shadowRoot?.querySelector('[role=alert]'),
+);
+const wasmFailure = await page.evaluate(
+   () =>
+      document.getElementById('broken-wasm-host')?.shadowRoot?.querySelector('[role=alert]')
+         ?.textContent ?? '',
+);
+check(
+   '(n) missing WASM is loud in the element and console',
+   wasmFailure.includes('/broken/wasm/slab_kernel_bg.wasm') &&
+      wasmFailure.includes('copy the wasm dir or map /wasm/*') &&
+      consoleErrors.some(
+         (message) =>
+            message.includes('/broken/wasm/slab_kernel_bg.wasm') &&
+            message.includes('copy the wasm dir or map /wasm/*'),
+      ),
+   JSON.stringify({ wasmFailure, consoleErrors }),
 );
 
 // ------------------------------------------------------------------- (j)
