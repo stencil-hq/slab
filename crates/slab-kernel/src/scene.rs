@@ -5,7 +5,6 @@
 //! painter-order pre-order; `authored_order` preserves semantic traversal when
 //! paint promotion moves sticky children after normal siblings.
 
-use rustc_hash::FxHashMap;
 use serde::Serialize;
 
 use crate::{
@@ -25,9 +24,13 @@ pub struct Scene {
 	/// Scene indices in materialized authored pre-order, independent of paint
 	/// order.
 	pub authored_order: Vec<usize>,
-	/// Node-id → scene-index lookup map, rebuilt in [`load`].
+	/// Dense node-id → scene-index lookup, validated by `index_generation`.
 	#[serde(skip)]
-	index:              FxHashMap<u32, i32>,
+	index:              Vec<i32>,
+	#[serde(skip)]
+	index_generation:   Vec<u32>,
+	#[serde(skip)]
+	generation:         u32,
 }
 
 /// Creates an empty retained scene.
@@ -44,17 +47,49 @@ pub fn count(sc: &Scene) -> i32 {
 pub fn load(sc: &mut Scene, fr: &Frame) {
 	sc.entries.clone_from(&fr.scene);
 
+	let len = fr.scene.len();
 	sc.authored_order.clear();
-	sc.authored_order.extend(0..fr.scene.len());
-	sc.authored_order
-		.sort_unstable_by_key(|&index| (fr.scene[index].authored_order, index));
+	sc.authored_order.resize(len, usize::MAX);
+	let mut valid_order = true;
+	for (index, entry) in fr.scene.iter().enumerate() {
+		let Ok(rank) = usize::try_from(entry.authored_order) else {
+			valid_order = false;
+			break;
+		};
+		if rank >= len || sc.authored_order[rank] != usize::MAX {
+			valid_order = false;
+			break;
+		}
+		sc.authored_order[rank] = index;
+	}
+	if !valid_order {
+		sc.authored_order.clear();
+		sc.authored_order.extend(0..len);
+		sc.authored_order
+			.sort_unstable_by_key(|&index| (fr.scene[index].authored_order, index));
+	}
 
-	sc.index.clear();
-	sc.index.reserve(sc.entries.len());
+	let index_len = sc
+		.entries
+		.iter()
+		.map(|entry| usize::try_from(entry.node).expect("node index exceeds usize"))
+		.max()
+		.map_or(0, |node| node.saturating_add(1));
+	sc.generation = sc.generation.wrapping_add(1);
+	if sc.generation == 0 {
+		sc.index_generation.fill(0);
+		sc.generation = 1;
+	}
+	if sc.index.len() < index_len {
+		sc.index.resize(index_len, -1);
+		sc.index_generation.resize(index_len, 0);
+	}
 	for (scene_index, entry) in sc.entries.iter().enumerate() {
-		sc.index
-			.entry(entry.node)
-			.or_insert_with(|| i32::try_from(scene_index).expect("scene index exceeds i32"));
+		let node = usize::try_from(entry.node).expect("node index exceeds usize");
+		if sc.index_generation[node] != sc.generation {
+			sc.index[node] = i32::try_from(scene_index).expect("scene index exceeds i32");
+			sc.index_generation[node] = sc.generation;
+		}
 	}
 }
 
@@ -63,14 +98,21 @@ pub fn load(sc: &mut Scene, fr: &Frame) {
 /// Returns `-1` when the node is absent from this frame, including a detached
 /// patch child whose condition is off or an unknown node identifier.
 pub fn index_of(sc: &Scene, node: u32) -> i32 {
-	if sc.index.is_empty() {
+	if sc.generation == 0 {
 		return sc
 			.entries
 			.iter()
 			.position(|candidate| candidate.node == node)
 			.map_or(-1, |index| i32::try_from(index).expect("scene index exceeds i32::MAX"));
 	}
-	sc.index.get(&node).copied().unwrap_or(-1)
+	let Ok(node) = usize::try_from(node) else {
+		return -1;
+	};
+	if sc.index_generation.get(node) == Some(&sc.generation) {
+		sc.index[node]
+	} else {
+		-1
+	}
 }
 
 /// Writes the chain from the root through `ix` as scene indices.

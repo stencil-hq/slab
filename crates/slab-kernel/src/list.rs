@@ -6,7 +6,7 @@
 
 use std::hash::Hasher;
 
-use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet, FxHasher};
+use rustc_hash::{FxHashMap as HashMap, FxHasher};
 
 use crate::{slir, value};
 
@@ -123,7 +123,8 @@ pub struct State {
 	sy_slot:                    Vec<usize>,
 	sy_identity:                HashMap<(u32, u32, u64), IdentityNodes>,
 	sy_materialized:            Vec<u32>,
-	sy_materialized_set:        HashSet<u32>,
+	sy_materialized_mark:       Vec<u64>,
+	materialized_generation:    u64,
 	sy_deleted:                 Vec<u32>,
 	prune_pending:              bool,
 	pub(crate) patches_by_node: Vec<Vec<usize>>,
@@ -266,9 +267,10 @@ pub fn state_new() -> State {
 		sy_next:             0,
 		sy_slot:             Vec::new(),
 		sy_identity:         HashMap::default(),
-		sy_materialized:     Vec::new(),
-		sy_materialized_set: HashSet::default(),
-		sy_deleted:          Vec::new(),
+		sy_materialized:         Vec::new(),
+		sy_materialized_mark:    Vec::new(),
+		materialized_generation: 1,
+		sy_deleted:              Vec::new(),
 		prune_pending:       false,
 		patches_by_node:     Vec::new(),
 		key_index:           HashMap::default(),
@@ -923,6 +925,7 @@ pub fn remove_sy(s: &mut State, k: i32) {
 	s.sy_item.swap_remove(slot);
 	s.sy_list.swap_remove(slot);
 	s.sy_generation.swap_remove(slot);
+	s.sy_materialized_mark.swap_remove(slot);
 	if slot < s.sy_id.len() {
 		s.sy_slot[usize::try_from(s.sy_id[slot]).expect("synthetic node index exceeds usize")] = slot;
 	}
@@ -1405,6 +1408,7 @@ fn synthetic_identity(
 	s.sy_item.push(-1);
 	s.sy_list.push(NONE);
 	s.sy_generation.push(s.location_generation.wrapping_sub(1));
+	s.sy_materialized_mark.push(0);
 	(id, slot)
 }
 
@@ -1448,16 +1452,17 @@ fn synthetic_at(
 	key_hash: u64,
 	list: u32,
 	item: i32,
-) -> u32 {
+) -> (u32, usize) {
 	let (node, slot) = synthetic_identity(s, each, tpl, key, key_hash);
 	s.sy_item[slot] = item;
 	s.sy_list[slot] = list;
 	s.sy_generation[slot] = s.location_generation;
-	node
+	(node, slot)
 }
 
-fn mark_materialized(s: &mut State, node: u32) {
-	if s.sy_materialized_set.insert(node) {
+fn mark_materialized(s: &mut State, node: u32, slot: usize) {
+	if s.sy_materialized_mark[slot] != s.materialized_generation {
+		s.sy_materialized_mark[slot] = s.materialized_generation;
 		s.sy_materialized.push(node);
 	}
 }
@@ -1472,8 +1477,8 @@ fn sync_template(
 	list: u32,
 	item: i32,
 ) {
-	let node = synthetic_at(s, each, tpl, key, key_hash, list, item);
-	mark_materialized(s, node);
+	let (node, slot) = synthetic_at(s, each, tpl, key, key_hash, list, item);
+	mark_materialized(s, node, slot);
 	if d.node_kind[tpl as usize] == slir::K_EACH {
 		sync_each(d, s, node);
 		return;
@@ -1540,8 +1545,14 @@ fn sync_each(d: &slir::Doc, s: &mut State, each: u32) {
 /// Materializes recursive identities needed before motion sampling without
 /// pruning de-windowed items.
 pub fn sync(d: &slir::Doc, s: &mut State) {
+	let next_generation = s.materialized_generation.wrapping_add(1);
+	if next_generation == 0 {
+		s.sy_materialized_mark.fill(0);
+		s.materialized_generation = 1;
+	} else {
+		s.materialized_generation = next_generation;
+	}
 	s.sy_materialized.clear();
-	s.sy_materialized_set.clear();
 	for each_ix in 0..d.node_kind.len() {
 		if d.node_kind[each_ix] == slir::K_EACH
 			&& d.node_parent[each_ix] != slir::NONE

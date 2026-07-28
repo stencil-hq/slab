@@ -239,6 +239,13 @@ pub fn restore(d: &Doc, st: &mut St, sc: &Scene, fs: &mut FSt) -> bool {
 /// overlay's anchor so a removed overlay can hand focus back to its anchor.
 pub fn refresh(d: &Doc, st: &St, sc: &Scene, fs: &mut FSt) {
 	traversal_order(d, st, sc, &mut fs.last_focusables);
+	if !st.rs.iter().any(|rule| rule.has_attach) {
+		fs.last_overlays.clear();
+		fs.last_overlays.resize(fs.last_focusables.len(), NONE);
+		fs.last_anchors.clear();
+		fs.last_anchors.resize(fs.last_focusables.len(), NONE);
+		return;
+	}
 	fs.last_overlays.clear();
 	fs.last_anchors.clear();
 	for &node in &fs.last_focusables {

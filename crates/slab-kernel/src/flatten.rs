@@ -247,7 +247,7 @@ pub enum FrameOp {
 ///
 /// `flags` contains the node's effective flags: `F_CLIP` means this frame
 /// clips, while `F_INERT` is inherited from ancestors as well as the node.
-#[derive(Clone, Debug, Default, Serialize)]
+#[derive(Clone, Copy, Debug, Default, Serialize)]
 pub struct SceneNode {
 	pub node:           u32,
 	#[serde(rename = "parent")]

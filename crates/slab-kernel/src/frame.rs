@@ -56,9 +56,9 @@ pub struct Instance {
 	pub root_pi:    i32,
 	/// Actionable result of the most recent failed focus request.
 	focus_note:     String,
-	/// Runtime glyph notes already surfaced, keyed by authored family and
-	/// codepoint.
-	glyph_warned:   BTreeSet<(String, u32)>,
+	/// Runtime glyph notes already surfaced, keyed by interned family reference
+	/// and codepoint.
+	glyph_warned:   BTreeSet<(u32, u32)>,
 	/// Every distinct diagnostic observed since the document was assigned, in
 	/// first-occurrence order. Solves append; only [`inst_init`] clears.
 	diags_cum:      Vec<FrameDiagnostic>,
@@ -270,12 +270,14 @@ fn scan_glyph_coverage(i: &mut Instance, frame: &mut Frame) {
 				continue;
 			}
 			let codepoint = u32::from(character);
+			let warning = (family_ref, codepoint);
 			if !graphemes::requires_glyph(codepoint)
+				|| i.glyph_warned.contains(&warning)
 				|| slir::font_gid(&i.doc, text.font, codepoint) != 0
-				|| !i.glyph_warned.insert((family.to_owned(), codepoint))
 			{
 				continue;
 			}
+			i.glyph_warned.insert(warning);
 			let line = i
 				.doc
 				.node_line
@@ -1489,7 +1491,7 @@ fn refresh_virtual_window(i: &mut Instance, each: u32) -> bool {
 	list::set_virtual_viewport(&i.doc, &mut i.st.lists, each, viewport, off, origin)
 }
 
-fn refresh_virtual_windows(i: &mut Instance) -> bool {
+fn refresh_authored_virtual_windows(i: &mut Instance) -> bool {
 	let mut changed = false;
 	for each_index in 0..i.doc.node_kind.len() {
 		if i.doc.node_kind[each_index] != slir::K_EACH
@@ -1500,6 +1502,11 @@ fn refresh_virtual_windows(i: &mut Instance) -> bool {
 		let each = u32::try_from(each_index).expect("node index exceeds u32");
 		changed |= refresh_virtual_window(i, each);
 	}
+	changed
+}
+
+fn refresh_virtual_windows(i: &mut Instance) -> bool {
+	let mut changed = refresh_authored_virtual_windows(i);
 	let materialized_len = list::materialized(&i.st.lists).len();
 	for index in 0..materialized_len {
 		let each = list::materialized(&i.st.lists)[index];

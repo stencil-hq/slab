@@ -1788,6 +1788,20 @@ pub fn scrollbar_code(s: &str) -> u32 {
 	0u32
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Collision {
+	None,
+	Auto,
+}
+
+fn collision_of(value: &str) -> Collision {
+	if value == "none" {
+		Collision::None
+	} else {
+		Collision::Auto
+	}
+}
+
 /// Precomputed keyword codes for one string-pool entry.
 ///
 /// Built once per document by [`init_params`] from the keyword parsers above;
@@ -1795,26 +1809,27 @@ pub fn scrollbar_code(s: &str) -> u32 {
 /// strings per node per solve.
 #[derive(Clone, Copy, Debug)]
 struct KwCodes {
-	pack:         u8,
-	align:        i8,
-	stroke_align: u8,
-	fit:          u8,
-	talign:       u8,
-	scrollbar:    u8,
-	gravity:      Gravity,
+	pack:      u8,
+	align:     i8,
+	stroke:    u8,
+	fit:       u8,
+	talign:    u8,
+	scrollbar: u8,
+	gravity:   Gravity,
+	collision: Collision,
 }
 
 fn kw_codes_of(s: &str) -> KwCodes {
 	KwCodes {
-		pack:         u8::try_from(crate::style::pack_code(s)).expect("pack code exceeds u8"),
-		align:        i8::try_from(crate::style::align_code(s)).expect("align code exceeds i8"),
-		stroke_align: u8::try_from(crate::style::stroke_align_code(s))
+		pack:      u8::try_from(crate::style::pack_code(s)).expect("pack code exceeds u8"),
+		align:     i8::try_from(crate::style::align_code(s)).expect("align code exceeds i8"),
+		stroke:    u8::try_from(crate::style::stroke_align_code(s))
 			.expect("stroke-align code exceeds u8"),
-		fit:          u8::try_from(crate::style::fit_code(s)).expect("fit code exceeds u8"),
-		talign:       u8::try_from(crate::style::talign_code(s)).expect("talign code exceeds u8"),
-		scrollbar:    u8::try_from(crate::style::scrollbar_code(s))
-			.expect("scrollbar code exceeds u8"),
-		gravity:      gravity_of(s),
+		fit:       u8::try_from(crate::style::fit_code(s)).expect("fit code exceeds u8"),
+		talign:    u8::try_from(crate::style::talign_code(s)).expect("talign code exceeds u8"),
+		scrollbar: u8::try_from(crate::style::scrollbar_code(s)).expect("scrollbar code exceeds u8"),
+		gravity:   gravity_of(s),
+		collision: collision_of(s),
 	}
 }
 
@@ -2345,11 +2360,14 @@ pub fn build_rstyle(
 		Ok(kw) => kw.gravity,
 		Err(s) => gravity_of(s),
 	};
-	let collide = crate::style::attr_enum_ref(d, st, node, crate::slir::A_COLLIDE) != "none";
+	let collision = match kw_at(d, st, node, crate::slir::A_COLLIDE) {
+		Ok(kw) => kw.collision,
+		Err(s) => collision_of(s),
+	};
 	st.rs[ri].has_attach = has_attach;
 	st.rs[ri].attach = attach;
 	st.rs[ri].gravity = gravity;
-	st.rs[ri].collide_auto = collide;
+	st.rs[ri].collide_auto = collision == Collision::Auto;
 	st.rs[ri].rotate = crate::style::attr_num(d, st, node, crate::slir::A_ROTATE, 0.0f64);
 	// Ink-only transforms: scale is a factor or an (sx, sy) tuple; tilt is
 	// rx or (rx, ry[, depth]) in degrees with depth in u (default 800).
@@ -2395,7 +2413,7 @@ pub fn build_rstyle(
 	}
 	st.rs[ri].stroke_w = crate::style::attr_num(d, st, node, crate::slir::A_STROKE_W, 1.0f64);
 	st.rs[ri].stroke_align = match kw_at(d, st, node, crate::slir::A_STROKE_ALIGN) {
-		Ok(kw) => u32::from(kw.stroke_align),
+		Ok(kw) => u32::from(kw.stroke),
 		Err(s) => crate::style::stroke_align_code(s),
 	};
 	st.rs[ri].stroke_sides =

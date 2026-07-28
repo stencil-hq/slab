@@ -55,12 +55,50 @@ struct CachedShapedLine {
 	line:  Rc<ShapedLine>,
 }
 
-/// Retains expensive OpenType plans and immutable shaped lines across frames.
-#[derive(Clone, Default)]
+struct CachedFace {
+	face:  rustybuzz::Face<'static>,
+	_data: Box<[u8]>,
+}
+
+impl CachedFace {
+	fn new(data: &[u8], weight: Option<u32>) -> Option<Self> {
+		let data = Box::<[u8]>::from(data);
+		let mut face = rustybuzz::Face::from_slice(&data, 0)?;
+		if let Some(weight) = weight {
+			face.set_variations(&[rustybuzz::Variation {
+				tag:   rustybuzz::ttf_parser::Tag::from_bytes(b"wght"),
+				value: f32::from(u16::try_from(weight).expect("font weight exceeds u16")),
+			}]);
+		}
+		// SAFETY: the face borrows the boxed allocation stored beside it. Moving
+		// the box preserves that allocation, and `face` is dropped before `_data`.
+		let face =
+			unsafe { std::mem::transmute::<rustybuzz::Face<'_>, rustybuzz::Face<'static>>(face) };
+		Some(Self { face, _data: data })
+	}
+}
+
+/// Retains parsed font faces, expensive OpenType plans, and immutable shaped
+/// lines across frames.
+#[derive(Default)]
 pub(crate) struct ShapeCache {
 	plans:      FxHashMap<ShapePlanKey, Arc<rustybuzz::ShapePlan>>,
+	faces:      Vec<Option<CachedFace>>,
 	lines:      FxHashMap<ShapedLineKey, CachedShapedLine>,
 	lines_cold: FxHashMap<ShapedLineKey, CachedShapedLine>,
+	buffer:     Option<rustybuzz::UnicodeBuffer>,
+}
+
+impl Clone for ShapeCache {
+	fn clone(&self) -> Self {
+		Self {
+			plans:      self.plans.clone(),
+			faces:      Vec::new(),
+			lines:      self.lines.clone(),
+			lines_cold: self.lines_cold.clone(),
+			buffer:     None,
+		}
+	}
 }
 
 impl fmt::Debug for ShapeCache {
@@ -69,22 +107,32 @@ impl fmt::Debug for ShapeCache {
 			.debug_struct("ShapeCache")
 			.field("plans", &self.plans.len())
 			.field("lines", &self.lines.len())
+			.field("faces", &self.faces.iter().flatten().count())
 			.field("lines_cold", &self.lines_cold.len())
 			.finish()
 	}
 }
 
 impl ShapeCache {
-	fn plan(
+	fn face_and_plan(
 		&mut self,
 		font: i32,
+		weight: Option<u32>,
+		data: &[u8],
 		rtl: bool,
 		script: rustybuzz::Script,
-		face: &rustybuzz::Face<'_>,
-	) -> Arc<rustybuzz::ShapePlan> {
+	) -> Option<(&rustybuzz::Face<'static>, Arc<rustybuzz::ShapePlan>)> {
+		let index = usize::try_from(font).ok()?;
+		if self.faces.len() <= index {
+			self.faces.resize_with(index + 1, || None);
+		}
+		if self.faces[index].is_none() {
+			self.faces[index] = CachedFace::new(data, weight);
+		}
+		let Self { plans, faces, .. } = self;
+		let face = &faces[index].as_ref()?.face;
 		let key = ShapePlanKey { font, script: script.tag().0, rtl };
-		self
-			.plans
+		let plan = plans
 			.entry(key)
 			.or_insert_with(|| {
 				Arc::new(rustybuzz::ShapePlan::new(
@@ -99,7 +147,16 @@ impl ShapeCache {
 					&[],
 				))
 			})
-			.clone()
+			.clone();
+		Some((face, plan))
+	}
+
+	fn take_buffer(&mut self) -> rustybuzz::UnicodeBuffer {
+		self.buffer.take().unwrap_or_default()
+	}
+
+	fn recycle_buffer(&mut self, buffer: rustybuzz::UnicodeBuffer) {
+		self.buffer = Some(buffer);
 	}
 
 	fn line_key(font: i32, size: f64, tracking: f64, chars: &[u32]) -> ShapedLineKey {
@@ -147,6 +204,7 @@ impl ShapeCache {
 	/// Drops retained data tied to the previously initialized document.
 	pub(crate) fn clear(&mut self) {
 		self.plans.clear();
+		self.faces.clear();
 		self.lines.clear();
 		self.lines_cold.clear();
 	}
@@ -215,7 +273,7 @@ pub struct TextLayout {
 	/// Measured advance for each line.
 	pub line_w:    Vec<f64>,
 	/// OpenType-shaped runs and visual caret clusters, parallel to `line_w`.
-	pub shaped:    Vec<ShapedLine>,
+	pub shaped:    Vec<Rc<ShapedLine>>,
 	/// Maximum measured line width.
 	pub w:         f64,
 	/// Total layout height.
@@ -327,6 +385,9 @@ fn fallback_font(d: &Doc, primary: i32, chars: &[u32]) -> i32 {
 
 fn font_assignments(d: &Doc, primary: i32, text: &str, chars: &[u32]) -> Vec<i32> {
 	let mut assigned = vec![primary; chars.len()];
+	if font_covers(d, primary, chars) {
+		return assigned;
+	}
 	let mut boundaries = Vec::new();
 	graphemes::boundaries(text, &mut boundaries);
 	for pair in boundaries.windows(2) {
@@ -388,21 +449,12 @@ fn shape_font_run(
 		.and_then(|index| d.font_upem.get(index))
 		.copied()
 		.unwrap_or(0);
-	if upem > 0
-		&& let Some(mut face) = rustybuzz::Face::from_slice(data, 0)
-	{
-		if let Some(weight) = usize::try_from(font)
+	if upem > 0 {
+		let weight = usize::try_from(font)
 			.ok()
 			.and_then(|index| d.font_weight.get(index))
-			.copied()
-		{
-			let weight = u16::try_from(weight).expect("font weight exceeds u16");
-			face.set_variations(&[rustybuzz::Variation {
-				tag:   rustybuzz::ttf_parser::Tag::from_bytes(b"wght"),
-				value: f32::from(weight),
-			}]);
-		}
-		let mut buffer = rustybuzz::UnicodeBuffer::new();
+			.copied();
+		let mut buffer = cache.take_buffer();
 		for (local, &codepoint) in chars[start..end].iter().enumerate() {
 			buffer.add(
 				char::from_u32(codepoint).unwrap_or(char::REPLACEMENT_CHARACTER),
@@ -417,48 +469,49 @@ fn shape_font_run(
 			rustybuzz::Direction::LeftToRight
 		});
 		buffer.guess_segment_properties();
-		let plan = cache.plan(font, rtl, buffer.script(), &face);
-		let shaped = rustybuzz::shape_with_plan(&face, plan.as_ref(), buffer);
-		let infos = shaped.glyph_infos();
-		let positions = shaped.glyph_positions();
-		let scale = size / f64::from(upem);
-		let mut cursor = line_x;
-		let mut group_cluster = None;
-		let mut group_x = cursor;
-		let mut groups = Vec::new();
-		for (index, (info, position)) in infos.iter().zip(positions).enumerate() {
-			let cluster = i32::try_from(info.cluster).expect("shape cluster exceeds i32");
-			if group_cluster.is_some_and(|current| current != cluster) {
-				cursor += tracking;
-				groups.push((group_cluster.expect("shape cluster"), group_x, cursor));
-				group_x = cursor;
+		if let Some((face, plan)) = cache.face_and_plan(font, weight, data, rtl, buffer.script()) {
+			let shaped = rustybuzz::shape_with_plan(face, plan.as_ref(), buffer);
+			let infos = shaped.glyph_infos();
+			let positions = shaped.glyph_positions();
+			glyphs.reserve(infos.len());
+			clusters.reserve(infos.len());
+			let scale = size / f64::from(upem);
+			let mut cursor = line_x;
+			let mut group_cluster = None;
+			let mut group_x = cursor;
+			let mut groups = Vec::with_capacity(infos.len());
+			for (index, (info, position)) in infos.iter().zip(positions).enumerate() {
+				let cluster = i32::try_from(info.cluster).expect("shape cluster exceeds i32");
+				if group_cluster.is_some_and(|current| current != cluster) {
+					cursor += tracking;
+					groups.push((group_cluster.expect("shape cluster"), group_x, cursor));
+					group_x = cursor;
+				}
+				group_cluster = Some(cluster);
+				glyphs.push(ShapedGlyph {
+					font,
+					gid: info.glyph_id,
+					cluster: cluster.wrapping_add(source_delta),
+					x: f64::from(position.x_offset).mul_add(scale, cursor),
+					y: -f64::from(position.y_offset) * scale,
+				});
+				cursor = f64::from(position.x_advance).mul_add(scale, cursor);
+				if index + 1 == infos.len() {
+					cursor += tracking;
+					groups.push((cluster, group_x, cursor));
+				}
 			}
-			group_cluster = Some(cluster);
-			glyphs.push(ShapedGlyph {
-				font,
-				gid: info.glyph_id,
-				cluster: cluster.wrapping_add(source_delta),
-				x: f64::from(position.x_offset).mul_add(scale, cursor),
-				y: -f64::from(position.y_offset) * scale,
-			});
-			cursor = f64::from(position.x_advance).mul_add(scale, cursor);
-			if index + 1 == infos.len() {
-				cursor += tracking;
-				groups.push((cluster, group_x, cursor));
+			let mut logical_starts: Vec<i32> = groups.iter().map(|group| group.0).collect();
+			logical_starts.sort_unstable();
+			logical_starts.dedup();
+			for (cluster, x0, x1) in groups {
+				let logical = logical_starts
+					.binary_search(&cluster)
+					.expect("shape cluster is in logical starts");
+				let end = logical_starts.get(logical + 1).copied().unwrap_or(run_end);
+				push_cluster(&mut clusters, cluster, end, x0, x1, rtl, source_delta, source_end);
 			}
-		}
-		let mut logical_starts: Vec<i32> = groups.iter().map(|group| group.0).collect();
-		logical_starts.sort_unstable();
-		logical_starts.dedup();
-		for (cluster, x0, x1) in groups {
-			let logical = logical_starts
-				.binary_search(&cluster)
-				.expect("shape cluster is in logical starts");
-			let end = logical_starts.get(logical + 1).copied().unwrap_or(run_end);
-			push_cluster(&mut clusters, cluster, end, x0, x1, rtl, source_delta, source_end);
-		}
-		return (
-			ShapedRun {
+			let run = ShapedRun {
 				start: run_start,
 				end: run_end,
 				font,
@@ -466,9 +519,12 @@ fn shape_font_run(
 				x: line_x,
 				width: cursor - line_x,
 				glyphs,
-			},
-			clusters,
-		);
+			};
+			cache.recycle_buffer(shaped.clear());
+			return (run, clusters);
+		}
+		buffer.clear();
+		cache.recycle_buffer(buffer);
 	}
 
 	let text: String = chars[start..end]
@@ -567,6 +623,25 @@ fn shape_line_uncached(
 	if chars.is_empty() {
 		return ShapedLine::default();
 	}
+	if chars.iter().all(|&codepoint| codepoint <= 0x7f) && font_covers(d, primary_font, chars) {
+		let (run, clusters) = shape_font_run(
+			d,
+			chars,
+			0,
+			chars.len(),
+			primary_font,
+			size,
+			tracking,
+			false,
+			0.0,
+			output_start,
+			source_start.wrapping_sub(output_start),
+			source_end,
+			cache,
+		);
+		let width = run.width;
+		return ShapedLine { runs: vec![run], clusters, width };
+	}
 	let text: String = chars
 		.iter()
 		.map(|&codepoint| char::from_u32(codepoint).unwrap_or(char::REPLACEMENT_CHARACTER))
@@ -661,8 +736,14 @@ pub(crate) fn shape_line_cached(
 	source_start: i32,
 	source_end: i32,
 	cache: &mut ShapeCache,
-) -> ShapedLine {
+) -> Rc<ShapedLine> {
 	let shared = shape_line_shared_cached(d, primary_font, size, tracking, chars, cache);
+	if output_start == 0
+		&& source_start == 0
+		&& source_end == i32::try_from(chars.len()).expect("text exceeds i32")
+	{
+		return shared;
+	}
 	let mut line = shared.as_ref().clone();
 	for run in &mut line.runs {
 		run.start = run.start.wrapping_add(output_start);
@@ -675,7 +756,7 @@ pub(crate) fn shape_line_cached(
 		cluster.start = cluster.start.wrapping_add(source_start).min(source_end);
 		cluster.end = cluster.end.wrapping_add(source_start).min(source_end);
 	}
-	line
+	Rc::new(line)
 }
 
 /// Returns the visual caret coordinate for a source position on one line.
@@ -906,6 +987,23 @@ pub fn cut_line(
 	src_b: i32,
 	max_w: f64,
 ) {
+	let mut cache = ShapeCache::default();
+	cut_line_cached(d, f, size, tracking, tl, a, b, src_a, src_b, max_w, &mut cache);
+}
+
+fn cut_line_cached(
+	d: &Doc,
+	f: i32,
+	size: f64,
+	tracking: f64,
+	tl: &mut TextLayout,
+	a: i32,
+	b: i32,
+	src_a: i32,
+	src_b: i32,
+	max_w: f64,
+	cache: &mut ShapeCache,
+) {
 	let start = usize::try_from(a).expect("nonnegative character index");
 	let end = usize::try_from(b).expect("nonnegative character index");
 	let text: String = tl.chars[start..end]
@@ -923,7 +1021,7 @@ pub fn cut_line(
 			&tl.chars[start..usize::try_from(candidate_end).expect("nonnegative boundary")],
 		);
 		candidate.push(ELLIPSIS);
-		let width = slice_w(
+		let width = slice_w_cached(
 			d,
 			f,
 			size,
@@ -931,6 +1029,7 @@ pub fn cut_line(
 			&candidate,
 			0,
 			i32::try_from(candidate.len()).expect("candidate exceeds i32"),
+			cache,
 		);
 		if width > max_w + WIDTH_EPSILON {
 			break;
@@ -959,7 +1058,7 @@ pub fn cut_line(
 	tl.src_le
 		.push(src_a.wrapping_add(retained_end.wrapping_sub(a)).min(src_b));
 	tl.line_w
-		.push(slice_w(d, f, size, tracking, &tl.chars, output_start, output_end));
+		.push(slice_w_cached(d, f, size, tracking, &tl.chars, output_start, output_end, cache));
 }
 
 /// Greedily wraps one hard line at spaces and hard-breaks oversized words at
@@ -977,6 +1076,22 @@ pub fn wrap_hard(
 	b: i32,
 	max_w: f64,
 ) {
+	let mut cache = ShapeCache::default();
+	wrap_hard_cached(d, f, size, tracking, tl, src, a, b, max_w, &mut cache);
+}
+
+fn wrap_hard_cached(
+	d: &Doc,
+	f: i32,
+	size: f64,
+	tracking: f64,
+	tl: &mut TextLayout,
+	src: &[u32],
+	a: i32,
+	b: i32,
+	max_w: f64,
+	cache: &mut ShapeCache,
+) {
 	let mut line_start = i32::try_from(tl.chars.len()).expect("text exceeds i32");
 	let mut source_start = a;
 	let mut line_width = 0.0;
@@ -990,9 +1105,10 @@ pub fn wrap_hard(
 			word_end = word_end.wrapping_add(1);
 		}
 
-		let word_width = slice_w(d, f, size, tracking, src, word_start, word_end);
+		let word_width = slice_w_cached(d, f, size, tracking, src, word_start, word_end, cache);
 		let line_nonempty = i32::try_from(tl.chars.len()).expect("text exceeds i32") > line_start;
-		let candidate_width = slice_w(d, f, size, tracking, src, source_start, word_end);
+		let candidate_width =
+			slice_w_cached(d, f, size, tracking, src, source_start, word_end, cache);
 		if line_nonempty && candidate_width > max_w + WIDTH_EPSILON {
 			finish_line(tl, line_start, source_start, word_start.wrapping_sub(1), line_width);
 			line_start = i32::try_from(tl.chars.len()).expect("text exceeds i32");
@@ -1011,7 +1127,8 @@ pub fn wrap_hard(
 			for pair in boundaries.windows(2) {
 				let cluster_start = word_start.wrapping_add(pair[0]);
 				let cluster_end = word_start.wrapping_add(pair[1]);
-				let candidate_width = slice_w(d, f, size, tracking, src, source_start, cluster_end);
+				let candidate_width =
+					slice_w_cached(d, f, size, tracking, src, source_start, cluster_end, cache);
 				let line_nonempty =
 					i32::try_from(tl.chars.len()).expect("text exceeds i32") > line_start;
 				if line_nonempty && candidate_width > max_w + WIDTH_EPSILON {
@@ -1023,7 +1140,8 @@ pub fn wrap_hard(
 					tl.chars
 						.push(src[usize::try_from(k).expect("nonnegative character index")]);
 				}
-				line_width = slice_w(d, f, size, tracking, src, source_start, cluster_end);
+				line_width =
+					slice_w_cached(d, f, size, tracking, src, source_start, cluster_end, cache);
 			}
 		} else {
 			if i32::try_from(tl.chars.len()).expect("text exceeds i32") > line_start {
@@ -1034,7 +1152,8 @@ pub fn wrap_hard(
 					.push(src[usize::try_from(k).expect("nonnegative character index")]);
 			}
 			let output_end = i32::try_from(tl.chars.len()).expect("text exceeds i32");
-			line_width = slice_w(d, f, size, tracking, &tl.chars, line_start, output_end);
+			line_width =
+				slice_w_cached(d, f, size, tracking, &tl.chars, line_start, output_end, cache);
 		}
 
 		if word_end >= b {
@@ -1129,7 +1248,18 @@ pub(crate) fn measure_text_cached(
 		}
 
 		if wrap {
-			wrap_hard(d, f, size, tracking, &mut layout, &src, hard_start, hard_end, max_w);
+			wrap_hard_cached(
+				d,
+				f,
+				size,
+				tracking,
+				&mut layout,
+				&src,
+				hard_start,
+				hard_end,
+				max_w,
+				cache,
+			);
 		} else {
 			let output_start = i32::try_from(layout.chars.len()).expect("text exceeds i32");
 			for k in hard_start..hard_end {
@@ -1142,7 +1272,7 @@ pub(crate) fn measure_text_cached(
 				output_start,
 				hard_start,
 				hard_end,
-				slice_w(d, f, size, tracking, &src, hard_start, hard_end),
+				slice_w_cached(d, f, size, tracking, &src, hard_start, hard_end, cache),
 			);
 		}
 
@@ -1178,7 +1308,7 @@ pub(crate) fn measure_text_cached(
 				let end = layout.le[line_index];
 				let source_start = layout.src_ls[line_index];
 				let source_end = layout.src_le[line_index];
-				cut_line(
+				cut_line_cached(
 					d,
 					f,
 					size,
@@ -1189,6 +1319,7 @@ pub(crate) fn measure_text_cached(
 					source_start,
 					source_end,
 					max_w,
+					cache,
 				);
 				replace_line_with_appended(&mut layout, line_index);
 			}
@@ -1210,7 +1341,7 @@ pub(crate) fn measure_text_cached(
 				..usize::try_from(end).expect("nonnegative line end")]
 				.to_vec();
 			candidate.push(ELLIPSIS);
-			let candidate_width = slice_w(
+			let candidate_width = slice_w_cached(
 				d,
 				f,
 				size,
@@ -1218,6 +1349,7 @@ pub(crate) fn measure_text_cached(
 				&candidate,
 				0,
 				i32::try_from(candidate.len()).expect("candidate exceeds i32"),
+				cache,
 			);
 			if candidate_width <= max_w + WIDTH_EPSILON {
 				let output_start = i32::try_from(layout.chars.len()).expect("text exceeds i32");
@@ -1228,7 +1360,7 @@ pub(crate) fn measure_text_cached(
 			} else {
 				let source_start = layout.src_ls[last];
 				let source_end = layout.src_le[last];
-				cut_line(
+				cut_line_cached(
 					d,
 					f,
 					size,
@@ -1239,6 +1371,7 @@ pub(crate) fn measure_text_cached(
 					source_start,
 					source_end,
 					max_w,
+					cache,
 				);
 				replace_line_with_appended(&mut layout, last);
 			}
