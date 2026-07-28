@@ -731,7 +731,7 @@ export class SlabElement extends HTMLElement {
 
    /** Replace this class's cached SLIR with `bytes` so every future mount decodes them (HMR hook; pair with `loadSlir()` on live elements). */
    static hotReplaceSlir(bytes: Uint8Array): void {
-      const cls = this as CachedSlabConstructor;
+      const cls = SlabElement as CachedSlabConstructor;
       cls[kBytes] = Promise.resolve(bytes);
       cls.slir = bytes;
       cls.slirIsUrl = false;

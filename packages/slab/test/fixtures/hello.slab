@@ -1,0 +1,7 @@
+// slab-plugin test fixture — one param, static layout.
+params { title text = "Hello" }
+
+col w=fill bg=#10141B pad=16 gap=8 {
+  text param.title size=16 color=#E8EEF6
+  text "from slab-plugin" size=12 color=#8A97A8
+}
