@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -55,6 +55,27 @@ describe('compileSlab', () => {
       writeFileSync(file, source);
       const mod = compileSlab(file, source);
       expect(mod.assets).toEqual([join(root, 'dot.png')]);
+   });
+
+   test('loads transitive imports and reports source dependencies', () => {
+      const root = tempDir();
+      const ui = join(root, 'ui');
+      mkdirSync(ui, { recursive: true });
+      writeFileSync(
+         join(root, 'theme.slab'),
+         'tokens { color { card #112233 } }\nparams card { visible bool = true }\n',
+      );
+      writeFileSync(
+         join(ui, 'card.slab'),
+         'import "../theme.slab"\ndef Card() { col bg=color.card { when card.visible { text "ready" } } }\n',
+      );
+      const file = join(root, 'app.slab');
+      const source = 'import "ui/card.slab"\nCard\n';
+      writeFileSync(file, source);
+
+      const mod = compileSlab(file, source);
+      expect(mod.imports).toEqual([join(ui, 'card.slab'), join(root, 'theme.slab')]);
+      expect(mod.code).toContain('export class SlabAppElement extends SlabElement');
    });
 
    test('leaves missing assets to the compiler warning path', () => {

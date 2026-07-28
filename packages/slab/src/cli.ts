@@ -13,6 +13,7 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, extname, join, resolve } from 'node:path';
+import { loadImports } from './core.ts';
 import {
    DEV_USAGE,
    type DevBuildResult,
@@ -84,20 +85,28 @@ function b64(buf: Buffer): string {
 /** Read image assets relative to the `.slab` file into a JSON map.
  *  `$slabSourceName` carries generator attribution when supplied. Missing
  *  files stay absent, so the compiler emits its normal warning. */
-function assetsJsonFor(src: string, baseDir: string, sourceName?: string): string {
+function assetsJsonFor(
+   src: string,
+   baseDir: string,
+   sourcesJson: string,
+   sourceName?: string,
+): string {
    const W = wasm();
    let srcs: string[] = [];
    try {
-      srcs = JSON.parse(W.image_srcs(src)) as string[];
+      const value: unknown = JSON.parse(W.image_srcs_with_sources(src, sourcesJson));
+      if (Array.isArray(value)) {
+         srcs = value.filter((entry): entry is string => typeof entry === 'string');
+      }
    } catch {
       srcs = [];
    }
    const map: Record<string, string> = {};
    if (sourceName !== undefined) map.$slabSourceName = sourceName;
-   for (const s of srcs) {
-      const p = join(baseDir, s);
-      if (existsSync(p)) {
-         map[s] = b64(readFileSync(p));
+   for (const source of srcs) {
+      const path = join(baseDir, source);
+      if (existsSync(path)) {
+         map[source] = b64(readFileSync(path));
       }
    }
    return JSON.stringify(map);
@@ -198,12 +207,13 @@ function cmdCheck(args: string[]): void {
    const p = parseArgs(args, ['width', 'height', 'state', 'env', 'client', 'renderer']);
    if (!p.file) usageErr('check needs a FILE');
    const { src } = readSource(p.file);
+   const sourcesJson = loadImports(resolve(p.file), src).sourcesJson;
    const W = wasm();
    const compilerVersion = W.compiler_version();
    process.stderr.write(
       `slab compiler ${compilerVersion} (package @stencil-hq/slab ${PACKAGE_VERSION})\n`,
    );
-   const json = W.check(src, p.file);
+   const json = W.check_with_sources(src, p.file, sourcesJson);
    const diags = printDiags(json);
    if (hasErrors(diags)) process.exit(1);
    if (diags.length === 0) {
@@ -217,11 +227,12 @@ function cmdBuild(args: string[]): void {
    const p = parseArgs(args, []);
    if (!p.file || !p.out) usageErr('build needs FILE and -o OUT.slir');
    const { src, baseDir } = readSource(p.file);
+   const sourcesJson = loadImports(resolve(p.file), src).sourcesJson;
    const W = wasm();
-   const assetsJson = assetsJsonFor(src, baseDir);
+   const assetsJson = assetsJsonFor(src, baseDir, sourcesJson);
    let bytes: Uint8Array;
    try {
-      bytes = W.build(src, assetsJson);
+      bytes = W.build_with_sources(src, assetsJson, sourcesJson);
    } catch (e) {
       printDiags(String(e));
       process.exit(1);
@@ -319,13 +330,14 @@ function cmdRender(args: string[]): void {
    }
    if (!file) usageErr('render needs a FILE');
    const { src, baseDir } = readSource(file);
+   const sourcesJson = loadImports(resolve(file), src).sourcesJson;
    const kind = kindOf(o.out as string | undefined, o.client as string | undefined);
    const W = wasm();
-   const assetsJson = assetsJsonFor(src, baseDir);
+   const assetsJson = assetsJsonFor(src, baseDir, sourcesJson);
    const optsJson = JSON.stringify({ ...o, kind });
    let resultJson: string;
    try {
-      resultJson = W.render(src, optsJson, assetsJson);
+      resultJson = W.render_with_sources(src, optsJson, assetsJson, sourcesJson);
    } catch (e) {
       printDiags(String(e));
       process.exit(1);
@@ -374,17 +386,18 @@ function cmdGenWc(args: string[]): void {
    }
    if (!file || !out) usageErr('gen wc needs FILE and -o DIR');
    const { src, baseDir } = readSource(file);
+   const sourcesJson = loadImports(resolve(file), src).sourcesJson;
    const stem =
       file
          .replace(/\.[^.]+$/, '')
          .split('/')
          .pop() ?? 'slab';
    const W = wasm();
-   const assetsJson = assetsJsonFor(src, baseDir);
+   const assetsJson = assetsJsonFor(src, baseDir, sourcesJson);
    const optsJson = JSON.stringify({ tag, separateIr, stem, sourceName: file });
    let resultJson: string;
    try {
-      resultJson = W.gen_wc(src, optsJson, assetsJson);
+      resultJson = W.gen_wc_with_sources(src, optsJson, assetsJson, sourcesJson);
    } catch (e) {
       printDiags(String(e));
       process.exit(1);
@@ -435,17 +448,18 @@ function cmdGenReact(args: string[]): void {
    }
    if (!file || !out) usageErr('gen react needs FILE and -o DIR');
    const { src, baseDir } = readSource(file);
+   const sourcesJson = loadImports(resolve(file), src).sourcesJson;
    const stem =
       file
          .replace(/\.[^.]+$/, '')
          .split('/')
          .pop() ?? 'slab';
    const W = wasm();
-   const assetsJson = assetsJsonFor(src, baseDir);
+   const assetsJson = assetsJsonFor(src, baseDir, sourcesJson);
    const optsJson = JSON.stringify({ tag, separateIr, stem, sourceName: file });
    let resultJson: string;
    try {
-      resultJson = W.gen_react(src, optsJson, assetsJson);
+      resultJson = W.gen_react_with_sources(src, optsJson, assetsJson, sourcesJson);
    } catch (e) {
       printDiags(String(e));
       process.exit(1);
@@ -488,7 +502,8 @@ async function cmdDev(args: string[]): Promise<void> {
    const generate = (): DevBuildResult => {
       const src = readFileSync(options.file, 'utf8');
       const baseDir = dirname(options.file);
-      const assetsJson = assetsJsonFor(src, baseDir);
+      const sourcesJson = loadImports(resolve(options.file), src).sourcesJson;
+      const assetsJson = assetsJsonFor(src, baseDir, sourcesJson);
       const optsJson = JSON.stringify({
          tag: options.tag,
          separateIr: options.separateIr,
@@ -497,7 +512,7 @@ async function cmdDev(args: string[]): Promise<void> {
       });
       let resultJson: string;
       try {
-         resultJson = wasm().gen_wc(src, optsJson, assetsJson);
+         resultJson = wasm().gen_wc_with_sources(src, optsJson, assetsJson, sourcesJson);
       } catch (error) {
          let message = String(error);
          try {
@@ -563,11 +578,12 @@ function cmdGenRust(args: string[]): void {
    }
    if (!file || !out) usageErr('gen rust needs FILE and -o OUT.rs');
    const { src, baseDir } = readSource(file);
+   const sourcesJson = loadImports(resolve(file), src).sourcesJson;
    const W = wasm();
-   const assetsJson = assetsJsonFor(src, baseDir, file);
+   const assetsJson = assetsJsonFor(src, baseDir, sourcesJson, file);
    let resultJson: string;
    try {
-      resultJson = W.gen_rust(src, assetsJson);
+      resultJson = W.gen_rust_with_sources(src, assetsJson, sourcesJson);
    } catch (e) {
       printDiags(String(e));
       process.exit(1);

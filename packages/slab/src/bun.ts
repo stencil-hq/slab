@@ -17,7 +17,11 @@ export default function slab(options: SlabPluginOptions = {}): BunPlugin {
             const source = readFileSync(args.path, 'utf8');
             const mod = compileSlab(args.path, source);
             if (declarations) writeDeclaration(args.path, mod.declaration);
-            return { contents: mod.code, loader: 'js' };
+            return {
+               contents: mod.code,
+               loader: 'js',
+               watchFiles: [args.path, ...mod.imports, ...mod.assets],
+            };
          });
       },
    };

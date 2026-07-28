@@ -178,6 +178,22 @@ export class DriveClient {
         }
         return response.promise;
     }
+    /** Replaces the retained edit text for one field key. */
+    setFieldText(key, text) {
+        return this.call('field.set', { key, text });
+    }
+    /** Reads the retained edit text for one field key. */
+    async fieldText(key) {
+        return (await this.call('field.get', { key })).text;
+    }
+    /** Reads one live scalar or list parameter value. */
+    async param(name) {
+        return (await this.call('param.get', { name })).value;
+    }
+    /** Reads the current kernel focus index, key, and visibility. */
+    focus() {
+        return this.call('focus.get');
+    }
     /** Sends `protocol.quit`, then closes the local streams and owned process. */
     async quit() {
         try {

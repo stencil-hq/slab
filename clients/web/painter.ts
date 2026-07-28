@@ -88,7 +88,7 @@ interface CoveredTextState {
 
 const coveredTextState = Symbol('slab.coveredTextState');
 
-interface CoveredTextElement extends HTMLElement {
+interface CoveredTextElement extends Element {
    [coveredTextState]?: CoveredTextState;
 }
 

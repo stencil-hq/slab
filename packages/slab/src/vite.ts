@@ -23,6 +23,7 @@ export default function slab(options: SlabPluginOptions = {}): Plugin {
          const mod = compileSlab(file, source);
          this.addWatchFile(file);
          for (const asset of mod.assets) this.addWatchFile(asset);
+         for (const imported of mod.imports) this.addWatchFile(imported);
          for (const warning of mod.warnings) this.warn(warning.formatted);
          if (declarations) writeDeclaration(file, mod.declaration);
          const code = serve ? mod.code + hmrFooter(mod.tags) : mod.code;

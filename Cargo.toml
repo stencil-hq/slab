@@ -5,6 +5,7 @@ members = [
    "crates/slab-slir",
    "crates/slab-fonts",
    "crates/slab-compile",
+   "crates/slab-abi",
    "crates/slab-cli",
    "crates/slab-drive",
    "crates/slab-wasm",

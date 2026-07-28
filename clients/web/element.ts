@@ -1390,7 +1390,7 @@ export class SlabElement extends HTMLElement {
       const schemas = slabConstructor(this).listSchemas;
       let listName: string | undefined;
       for (const name in schemas) {
-         if (name.replace(/_/g, '-') === attr) {
+         if (name.replace(/[_.]/g, '-') === attr) {
             listName = name;
             break;
          }
@@ -1405,7 +1405,7 @@ export class SlabElement extends HTMLElement {
          return;
       }
       for (const param of statics.params) {
-         if (param.name.replace(/_/g, '-') !== attr) continue;
+         if (param.name.replace(/[_.]/g, '-') !== attr) continue;
          if (param.ty === 4) {
             this.setParam(param.name, value !== null && value !== 'false');
          } else if (value !== null) {

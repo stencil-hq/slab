@@ -13,6 +13,72 @@ const RUNTIME_IMPORT = "import { SlabElement } from './slab-runtime.js';";
 /** Replacement import resolving the same runtime through the published package. */
 const WSLAB_IMPORT = "import { SlabElement } from '@stencil-hq/wslab';";
 
+/** Imported source text and file dependencies for one root document. */
+export interface SlabImports {
+   /** Normalized import-key to source-text JSON map for the WASM compiler. */
+   sourcesJson: string;
+   /** Absolute imported source paths for file watchers. */
+   paths: string[];
+}
+
+function jsonStrings(json: string): string[] {
+   try {
+      const value: unknown = JSON.parse(json);
+      return Array.isArray(value)
+         ? value.filter((entry): entry is string => typeof entry === 'string')
+         : [];
+   } catch {
+      return [];
+   }
+}
+
+function importKey(importer: string | undefined, path: string): string {
+   const parts =
+      importer
+         ?.split('/')
+         .slice(0, -1)
+         .filter((part) => part.length > 0) ?? [];
+   for (const part of path.split('/')) {
+      if (part === '' || part === '.') continue;
+      if (part === '..' && parts.at(-1) !== undefined && parts.at(-1) !== '..') {
+         parts.pop();
+      } else {
+         parts.push(part);
+      }
+   }
+   return parts.join('/');
+}
+
+/** Load every reachable import from disk, with keys matching the Slab compiler. */
+export function loadImports(file: string, source: string): SlabImports {
+   const W = wasm();
+   const baseDir = dirname(resolve(file));
+   const sources: Record<string, string> = {};
+   const paths: string[] = [];
+   const seen = new Set<string>();
+   const pending: { key: string | undefined; source: string }[] = [{ key: undefined, source }];
+   for (let index = 0; index < pending.length; index++) {
+      const current = pending[index];
+      if (current === undefined) continue;
+      for (const path of jsonStrings(W.import_paths(current.source))) {
+         const key = importKey(current.key, path);
+         if (seen.has(key)) continue;
+         seen.add(key);
+         const absolute = resolve(baseDir, key);
+         let imported: string;
+         try {
+            imported = readFileSync(absolute, 'utf8');
+         } catch {
+            continue;
+         }
+         sources[key] = imported;
+         paths.push(absolute);
+         pending.push({ key, source: imported });
+      }
+   }
+   return { sourcesJson: JSON.stringify(sources), paths };
+}
+
 /** One compiler diagnostic as surfaced by the WASM compiler. */
 export interface SlabDiagnostic {
    level: 'error' | 'warning' | 'note';
@@ -41,6 +107,8 @@ export interface SlabModule {
    declaration: string;
    /** Absolute paths of the image assets read into the compile (watch these). */
    assets: string[];
+   /** Absolute paths of imported Slab modules read into the compile. */
+   imports: string[];
    /** Custom elements the module defines, in definition order. */
    tags: SlabElementTag[];
    /** Non-error diagnostics from the compile. */
@@ -79,14 +147,13 @@ function parseDiagnostics(raw: string): SlabDiagnostic[] {
 
 /** Collect referenced image assets relative to the `.slab` file. Missing files
  * stay absent so the compiler emits its own warning. */
-function collectAssets(source: string, baseDir: string): { assetsJson: string; paths: string[] } {
+function collectAssets(
+   source: string,
+   baseDir: string,
+   sourcesJson: string,
+): { assetsJson: string; paths: string[] } {
    const W = wasm();
-   let srcs: string[] = [];
-   try {
-      srcs = JSON.parse(W.image_srcs(source)) as string[];
-   } catch {
-      srcs = [];
-   }
+   const srcs = jsonStrings(W.image_srcs_with_sources(source, sourcesJson));
    const map: Record<string, string> = {};
    const paths: string[] = [];
    for (const src of srcs) {
@@ -148,11 +215,13 @@ if (import.meta.hot) {
 export function compileSlab(file: string, source: string): SlabModule {
    const W = wasm();
    const stem = basename(file).replace(/\.[^.]+$/, '') || 'slab';
-   const { assetsJson, paths } = collectAssets(source, dirname(file));
+   const baseDir = dirname(resolve(file));
+   const imports = loadImports(file, source);
+   const { assetsJson, paths } = collectAssets(source, baseDir, imports.sourcesJson);
    const optsJson = JSON.stringify({ separateIr: false, stem, sourceName: file });
    let resultJson: string;
    try {
-      resultJson = W.gen_wc(source, optsJson, assetsJson);
+      resultJson = W.gen_wc_with_sources(source, optsJson, assetsJson, imports.sourcesJson);
    } catch (error) {
       throw new SlabCompileError(file, parseDiagnostics(String(error)));
    }
@@ -181,6 +250,7 @@ export function compileSlab(file: string, source: string): SlabModule {
       dts,
       declaration: toDeclaration(dts),
       assets: paths,
+      imports: imports.paths,
       tags,
       warnings: result.diagnostics,
    };
