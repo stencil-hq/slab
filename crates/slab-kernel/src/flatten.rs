@@ -337,8 +337,9 @@ pub struct Frame {
     string_pool: Vec<String>,
     /// Recycled runtime-path allocations drained from `paths_rt` on [`Frame::clear`].
     path_pool: Vec<RtPath>,
-    /// Retained authored-order scratch reused across flattening traversals.
     order_scratch: Vec<u32>,
+    p_ox: Vec<f64>,
+    p_oy: Vec<f64>,
 }
 
 impl Frame {
@@ -352,6 +353,8 @@ impl Frame {
         self.uncovered.clear();
         self.path_pool.append(&mut self.paths_rt);
         self.diagnostics.clear();
+        self.p_ox.clear();
+        self.p_oy.clear();
     }
 }
 
@@ -369,6 +372,8 @@ pub fn frame_new() -> Frame {
         string_pool: Vec::new(),
         path_pool: Vec::new(),
         order_scratch: Vec::new(),
+        p_ox: Vec::new(),
+        p_oy: Vec::new(),
     }
 }
 
@@ -874,6 +879,12 @@ fn walk_node(
         return;
     }
     let ri = index(l.p_ri[pi]);
+    if fr.p_ox.len() <= pi {
+        fr.p_ox.resize(pi + 1, 0.0);
+        fr.p_oy.resize(pi + 1, 0.0);
+    }
+    fr.p_ox[pi] = ox;
+    fr.p_oy[pi] = oy;
     let rule = &st.rs[ri];
     let node = l.p_node[pi];
     let x = ox + l.p_x[pi];
@@ -1495,6 +1506,8 @@ fn append_drag_ghost(d: &slir::Doc, st: &St, l: &Lay, ds: &DState, ms: &MSt, fra
         mw: source_w,
         mh: source_h,
     }));
+    let ox_normal = frame.p_ox.get(placement).copied().unwrap_or(0.0);
+    let oy_normal = frame.p_oy.get(placement).copied().unwrap_or(0.0);
     walk(
         d,
         st,
@@ -1503,8 +1516,8 @@ fn append_drag_ghost(d: &slir::Doc, st: &St, l: &Lay, ds: &DState, ms: &MSt, fra
         ms,
         frame,
         i32::try_from(placement).expect("placed node index exceeds i32"),
-        move_x,
-        move_y,
+        ox_normal + move_x,
+        oy_normal + move_y,
         -1,
         false,
         false,
