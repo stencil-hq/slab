@@ -53,8 +53,31 @@ export type DriveEventType =
    | 'inspect'
    | 'activate';
 
+/** Direction of one NDJSON line observed by a DriveClient wire tap. */
+export type DriveLineDirection = 'send' | 'recv';
+
+/** Transport options accepted by every DriveClient entry point. */
+export interface DriveClientOptions {
+   /**
+    * Observes every NDJSON line on the wire, without the trailing newline:
+    * `send` lines as written, `recv` lines as parsed. Intended for
+    * evidence-grade transcripts and debugging; throwing here is not caught.
+    */
+   onLine?: (direction: DriveLineDirection, line: string) => void;
+}
+
+/** One cumulative runtime diagnostic returned by `doc.diags`. */
+export interface RuntimeDiagnostic {
+   /** Stable diagnostic code, such as `glyph-missing`. */
+   code: string;
+   /** Source line, or 0 when the diagnostic has no authored anchor. */
+   line: number;
+   /** Human-readable message. */
+   msg: string;
+}
+
 /** Connection details for an existing `slab drive --port` server. */
-export interface DriveConnectOptions {
+export interface DriveConnectOptions extends DriveClientOptions {
    /** TCP port printed by `slab drive --port`. */
    port: number;
    /** SDP host; defaults to the loopback address used by `slab drive`. */
@@ -62,7 +85,7 @@ export interface DriveConnectOptions {
 }
 
 /** Process details for a `slab drive` stdio session owned by the client. */
-export interface DriveLaunchOptions {
+export interface DriveLaunchOptions extends DriveClientOptions {
    /** Executable that starts the SDP server, usually `slab`. */
    executable: string;
    /** Arguments passed to the executable, usually `['drive', file]`. */
@@ -173,6 +196,8 @@ type InputEffect = DriveObject & {
             button: number;
             clicks: number;
             key: string;
+            hit_key?: DriveSceneKey;
+            pressed_key?: string;
             src_key: DriveSceneKey;
             src_item: string;
          };
@@ -276,6 +301,7 @@ interface DriveApi {
          t: number;
       }
    >;
+   'doc.diags': Endpoint<EmptyParams, DriveObject & { diags: RuntimeDiagnostic[] }>;
    'env.get': Endpoint<EmptyParams, Environment>;
    'env.set': Endpoint<Partial<Environment>, Environment>;
    'clock.get': Endpoint<EmptyParams, Clock>;
@@ -437,6 +463,7 @@ type OptionalParamsMethod =
    | 'protocol.quit'
    | 'doc.reload'
    | 'doc.info'
+   | 'doc.diags'
    | 'env.get'
    | 'env.set'
    | 'clock.get'
@@ -523,16 +550,23 @@ export class DriveClient {
    readonly #input: Readable;
    readonly #output: Writable;
    readonly #stop?: () => Promise<void>;
+   readonly #onLine?: (direction: DriveLineDirection, line: string) => void;
    readonly #pending = new Map<number, Pending>();
    #buffer = '';
    #nextId = 1;
    #failure: Error | undefined;
    #closed = false;
 
-   private constructor(input: Readable, output: Writable, stop?: () => Promise<void>) {
+   private constructor(
+      input: Readable,
+      output: Writable,
+      options?: DriveClientOptions,
+      stop?: () => Promise<void>,
+   ) {
       this.#input = input;
       this.#output = output;
       this.#stop = stop;
+      this.#onLine = options?.onLine;
       this.#input.setEncoding('utf8');
       this.#input.on('data', this.#onData);
       this.#input.once('end', this.#onEnd);
@@ -552,7 +586,7 @@ export class DriveClient {
       socket.once('error', fail);
       socket.once('connect', () => {
          socket.off('error', fail);
-         connection.resolve(new DriveClient(socket, socket));
+         connection.resolve(new DriveClient(socket, socket, options));
       });
       return connection.promise;
    }
@@ -568,14 +602,14 @@ export class DriveClient {
          child.kill();
          throw new DriveProtocolError('failed to open SDP process streams');
       }
-      const client = new DriveClient(child.stdout, child.stdin, () => stopChild(child));
+      const client = new DriveClient(child.stdout, child.stdin, options, () => stopChild(child));
       child.once('error', (error) => client.#fail(error));
       return client;
    }
 
    /** Binds the client to custom newline-delimited SDP streams. */
-   static fromStreams(input: Readable, output: Writable): DriveClient {
-      return new DriveClient(input, output);
+   static fromStreams(input: Readable, output: Writable, options?: DriveClientOptions): DriveClient {
+      return new DriveClient(input, output, options);
    }
 
    /** Invokes an SDP method whose parameters are optional. */
@@ -613,6 +647,7 @@ export class DriveClient {
       }
       if (line === undefined)
          return Promise.reject(new DriveProtocolError('cannot encode SDP request'));
+      this.#onLine?.('send', line);
       const response = Promise.withResolvers<DriveValue>();
       this.#pending.set(id, { method, resolve: response.resolve, reject: response.reject });
       try {
@@ -643,6 +678,11 @@ export class DriveClient {
    /** Reads the current kernel focus index, key, and visibility. */
    focus(): Promise<DriveResult<'focus.get'>> {
       return this.call('focus.get');
+   }
+
+   /** Reads the cumulative runtime diagnostics for the loaded document. */
+   async diags(): Promise<RuntimeDiagnostic[]> {
+      return (await this.call('doc.diags')).diags;
    }
 
    /** Sends `protocol.quit`, then closes the local streams and owned process. */
@@ -684,6 +724,7 @@ export class DriveClient {
    };
 
    #handleLine(line: string): void {
+      this.#onLine?.('recv', line);
       let response: WireResponse;
       try {
          response = parseResponse(line);

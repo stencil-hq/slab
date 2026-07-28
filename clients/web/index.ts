@@ -12,4 +12,5 @@ export {
    type SlabSignalDetail,
 } from './element.ts';
 export type { Frame, FrameDiagnostic, SceneNode, SignalDef, Statics } from './kernel.ts';
+export { itemKey } from './keys.ts';
 export { type FontCss, gradientCss, Painter, rgbaCss } from './painter.ts';

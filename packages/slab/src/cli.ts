@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // `@stencil-hq/slab` — the npm CLI. Mirrors `crates/slab-cli/src/main.rs`
-// for check | build | dump | render | gen wc | gen react | gen rust | dev,
-// backed by slab-wasm (zero Rust on the host). conformance/selftest/lsp
+// for check | build | dump | fmt | render | gen wc | gen react | gen rust | dev,
+// backed by slab-wasm (zero Rust on the host). conformance/selftest/lsp/drive
 // stay Rust-only.
 //
 // Flow per compile command: read the .slab (or .slir) file; for compile
@@ -45,6 +45,8 @@ commands:
              [--client gpu]                print diagnostics (exit 1 on errors)
   build FILE -o OUT.slir [--no-embed-assets]   compile to SLIR
   dump FILE.slir                           print the canonical slir-dump text
+  fmt FILE... [--check]                    reformat sources in place ('-' filters
+                                           stdin to stdout; --check: diff exit 1)
   render FILE -o OUT.{svg,png,apng,txt}    static export (see \`slab render --help\`)
   gen wc FILE -o DIR [--tag NAME] [--separate-ir]   emit a web-component module
   gen react FILE -o DIR [--tag NAME] [--separate-ir]   emit a web component + typed React wrapper
@@ -52,6 +54,7 @@ commands:
                                             serve a live web-component preview
   gen rust FILE -o OUT.rs                  emit a typed Rust module (native client)
   drive                                    requires native slab-cli (see below)
+  --version                                print the version and git commit hash
 
 drive requires the native slab-cli:
   cargo install --git https://github.com/stencil-hq/slab slab-cli
@@ -61,11 +64,12 @@ const CHECK_USAGE = `usage: slab check FILE [--width N] [--height N] [--state a,
 `;
 const BUILD_USAGE = 'usage: slab build FILE -o OUT.slir [--no-embed-assets]\n';
 const DUMP_USAGE = 'usage: slab dump FILE.slir\n';
+const FMT_USAGE = "usage: slab fmt FILE... [--check]  ('-' filters stdin to stdout)\n";
 const RENDER_USAGE = `usage: slab render FILE [-o OUT.{svg,png,apng,txt}]
                         [--client web|gpu|tui|svg|png] [--theme NAME]
                         [--width N] [--height N] [--scale N] [--t MS]
                         [--dur S] [--fps N] [--state a,b]
-                        [--env portrait,dark,coarse] [--set param=value]... [--plain]
+                        [--env portrait,dark,coarse] [--set param=value]... [--plain] [-v]
   --state previews document-global states only; it cannot target one node.
 `;
 const GEN_USAGE = `usage: slab gen wc FILE -o DIR [--tag NAME] [--separate-ir]
@@ -296,6 +300,7 @@ function cmdRender(args: string[]): void {
       sets: [] as [string, string][],
       plain: false,
    };
+   let verbose = false;
    const it = args[Symbol.iterator]();
    let file: string | undefined;
    while (true) {
@@ -324,6 +329,7 @@ function cmdRender(args: string[]): void {
          if (eq < 0) usageErr('--set needs param=value');
          (o.sets as [string, string][]).push([v.slice(0, eq), v.slice(eq + 1)]);
       } else if (a === '--plain') o.plain = true;
+      else if (a === '-v' || a === '--verbose') verbose = true;
       else if (a.startsWith('-')) usageErr(`unknown flag ${a}`);
       else if (!file) file = a;
       else usageErr(`unexpected argument '${a}'`);
@@ -347,7 +353,7 @@ function cmdRender(args: string[]): void {
       notes: string[];
       summary: string;
    };
-   for (const n of result.notes) process.stderr.write(`${n}\n`);
+   printNotes(result.notes, verbose);
    if (o.out) {
       const out = o.out as string;
       const bytes = result.file.b64
@@ -591,8 +597,76 @@ function cmdGenRust(args: string[]): void {
    const result = JSON.parse(resultJson) as { module: string; diagnostics: Diag[] };
    for (const d of result.diagnostics) process.stderr.write(`${d.formatted}\n`);
    if (result.diagnostics.some((d) => d.level === 'error')) process.exit(1);
+   mkdirSync(dirname(resolve(out)), { recursive: true });
    writeFileSync(out, result.module);
    process.stderr.write(`wrote ${out} (${result.module.length} bytes)\n`);
+}
+
+/** Prints renderer capability notes: everything under `-v`, otherwise one
+ *  summary line naming the distinct note codes (parity with the Rust CLI). */
+function printNotes(notes: string[], verbose: boolean): void {
+   if (verbose || notes.length <= 1) {
+      for (const n of notes) process.stderr.write(`${n}\n`);
+      return;
+   }
+   const codes: string[] = [];
+   for (const n of notes) {
+      const code = n.startsWith('note ') ? (n.slice(5).split(':')[0] ?? n) : n;
+      if (!codes.includes(code)) codes.push(code);
+   }
+   process.stderr.write(
+      `note: ${notes.length} capability notes (${codes.join(', ')}); rerun with -v for details\n`,
+   );
+}
+
+/** `slab fmt FILE... [--check]` — canonical formatting via the WASM `fmt`
+ *  export; byte-parity with native `slab fmt`. `-` reads stdin and writes the
+ *  result to stdout. `--check` writes nothing and exits 1 on any diff. */
+function cmdFmt(args: string[]): void {
+   let check = false;
+   const files: string[] = [];
+   for (const a of args) {
+      if (a === '--check') check = true;
+      else if (a.startsWith('--')) usageErr(`unknown flag ${a}`);
+      else files.push(a);
+   }
+   if (files.length === 0) usageErr("fmt needs FILE(s), or '-' for stdin");
+   const W = wasm();
+   let dirty = false;
+   let failed = false;
+   for (const f of files) {
+      if (f === '-') {
+         const src = readFileSync(0, 'utf8');
+         const out = W.fmt(src);
+         dirty ||= out !== src;
+         if (!check) process.stdout.write(out);
+         continue;
+      }
+      let src: string;
+      try {
+         src = readFileSync(f, 'utf8');
+      } catch (e) {
+         process.stderr.write(`error: cannot read ${f}: ${e}\n`);
+         failed = true;
+         continue;
+      }
+      const out = W.fmt(src);
+      if (out === src) continue;
+      dirty = true;
+      if (check) {
+         process.stdout.write(`would reformat ${f}\n`);
+      } else {
+         try {
+            writeFileSync(f, out);
+            process.stderr.write(`formatted ${f}\n`);
+         } catch (e) {
+            process.stderr.write(`error: cannot write ${f}: ${e}\n`);
+            failed = true;
+         }
+      }
+   }
+   if (failed) process.exit(2);
+   if (check && dirty) process.exit(1);
 }
 
 // --- dispatch ----------------------------------------------------------------
@@ -625,6 +699,7 @@ if (help) {
       check: CHECK_USAGE,
       build: BUILD_USAGE,
       dump: DUMP_USAGE,
+      fmt: FMT_USAGE,
       render: RENDER_USAGE,
       gen: GEN_USAGE,
       dev: DEV_USAGE,
@@ -645,6 +720,9 @@ switch (cmd) {
    case 'dump':
       cmdDump(rest);
       break;
+   case 'fmt':
+      cmdFmt(rest);
+      break;
    case 'render':
       cmdRender(rest);
       break;
@@ -661,6 +739,11 @@ switch (cmd) {
    case 'drive':
       process.stderr.write(DRIVE_USAGE);
       process.exit(2);
+      break;
+   case '--version':
+   case '-V':
+   case 'version':
+      process.stdout.write(`slab ${PACKAGE_VERSION} (compiler ${wasm().compiler_version()})\n`);
       break;
    case '--help':
    case '-h':

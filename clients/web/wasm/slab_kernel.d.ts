@@ -6,7 +6,8 @@
  *
  * The f64 stream starts with frame width and height. Each u32 operation tag
  * then selects fixed u32 and f64 payload arities, avoiding per-frame JSON
- * allocation for paint operations.
+ * allocation for paint operations. Text ops reference uncovered-glyph runs
+ * in the flat pool returned by [`FrameBuf::uncovered_u32s`].
  */
 export class FrameBuf {
     private constructor();
@@ -40,6 +41,11 @@ export class FrameBuf {
      * Returns operation tags and integer payloads.
      */
     u32s(): Uint32Array;
+    /**
+     * Returns the flat uncovered-glyph run pool: `[start, end)` codepoint
+     * pairs addressed by each Text op's `uncov_off`/`uncov_len` words.
+     */
+    uncovered_u32s(): Uint32Array;
 }
 
 /**
@@ -65,6 +71,12 @@ export class KInst {
      */
     cells_ansi(time_ms: number): string;
     /**
+     * Solves once and emits the TUI attribute plane (`attrs.txt` golden):
+     * per-row runs of explicit fg/bg/strike cell state. Catches SGR-only
+     * regressions the plain cells golden cannot see.
+     */
+    cells_attrs(time_ms: number): string;
+    /**
      * Solves once and emits plain TUI cells for conformance comparison.
      */
     cells_text(time_ms: number): string;
@@ -76,6 +88,13 @@ export class KInst {
      * Clears kernel focus and any visible focus ring.
      */
     clear_focus(): boolean;
+    /**
+     * Returns every distinct diagnostic observed since document assignment as
+     * JSON `{code, line, msg}` objects, in first-occurrence order. Unlike the
+     * per-solve [`FrameBuf::diagnostics_json`] stream, runtime notes here are
+     * never consumed by intermediate solves.
+     */
+    diags_json(): string;
     /**
      * Dispatches one platform event and emits canonical conformance effects JSON.
      */
@@ -273,9 +292,11 @@ export interface InitOutput {
     readonly kinst_caps_report: (a: number, b: number, c: number) => [number, number, number, number];
     readonly kinst_caret_effects_json: (a: number) => [number, number];
     readonly kinst_cells_ansi: (a: number, b: number) => [number, number];
+    readonly kinst_cells_attrs: (a: number, b: number) => [number, number];
     readonly kinst_cells_text: (a: number, b: number) => [number, number];
     readonly kinst_chain_json: (a: number, b: number) => [number, number];
     readonly kinst_clear_focus: (a: number) => number;
+    readonly kinst_diags_json: (a: number) => [number, number];
     readonly kinst_dispatch_dump_json: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number) => [number, number];
     readonly kinst_dispatch_json: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number) => [number, number];
     readonly kinst_each_window_json: (a: number, b: number, c: number) => [number, number];
@@ -330,6 +351,7 @@ export interface InitOutput {
     readonly framebuf_rt_paths_json: (a: number) => [number, number];
     readonly framebuf_strs_json: (a: number) => [number, number];
     readonly framebuf_u32s: (a: number) => [number, number];
+    readonly framebuf_uncovered_u32s: (a: number) => [number, number];
     readonly __wbindgen_externrefs: WebAssembly.Table;
     readonly __wbindgen_free: (a: number, b: number, c: number) => void;
     readonly __externref_table_dealloc: (a: number) => void;

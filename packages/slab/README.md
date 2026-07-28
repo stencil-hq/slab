@@ -25,6 +25,7 @@ bunfig; use `bun add @stencil-hq/slab` and run `./node_modules/.bin/slab`.
 slab check FILE                              print diagnostics (exit 1 on errors)
 slab build FILE -o OUT.slir                  compile to SLIR
 slab dump FILE.slir                          print the canonical slir-dump text
+slab fmt FILE... [--check]                   canonical formatting ('-' filters stdin to stdout)
 slab render FILE -o OUT.{svg,png,apng,txt} [--theme NAME]   static export
 slab gen wc FILE -o DIR [--tag NAME]         emit a web component and its runtime/WASM sidecars
 slab gen react FILE -o DIR [--tag NAME]      emit a web component plus a typed React wrapper
@@ -32,6 +33,7 @@ slab dev FILE [-o DIR] [--tag NAME] [--separate-ir] [--host HOST] [--port N]
                                                 serve a live web-component preview
 slab gen rust FILE -o OUT.rs                 emit a typed Rust module
 slab drive                                    requires the native slab-cli
+slab --version                                package + compiler version and git hash
 ```
 
 `render` infers the output kind from the extension; `--client tui` with no

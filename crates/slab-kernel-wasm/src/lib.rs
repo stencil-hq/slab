@@ -276,6 +276,30 @@ impl KInst {
         snapshot::effects_json(&kframe::inst_take_signals(&mut self.inner))
     }
 
+    /// Returns every distinct diagnostic observed since document assignment as
+    /// JSON `{code, line, msg}` objects, in first-occurrence order. Unlike the
+    /// per-solve [`FrameBuf::diagnostics_json`] stream, runtime notes here are
+    /// never consumed by intermediate solves.
+    pub fn diags_json(&self) -> String {
+        #[derive(serde::Serialize)]
+        struct DiagnosticJson<'a> {
+            code: &'a str,
+            line: u32,
+            msg: &'a str,
+        }
+        serde_json::to_string(
+            &kframe::inst_diags(&self.inner)
+                .iter()
+                .map(|diagnostic| DiagnosticJson {
+                    code: &diagnostic.code,
+                    line: diagnostic.line,
+                    msg: &diagnostic.msg,
+                })
+                .collect::<Vec<_>>(),
+        )
+        .expect("cumulative diagnostics serialize")
+    }
+
     /// Drains settled-frame signals in the canonical conformance dump shape.
     pub fn take_signals_dump_json(&mut self) -> String {
         let effects = kframe::inst_take_signals(&mut self.inner);
@@ -424,6 +448,13 @@ impl KInst {
     /// Solves once and emits plain TUI cells for conformance comparison.
     pub fn cells_text(&mut self, time_ms: f64) -> String {
         conformance::cells_text(&mut self.inner, time_ms)
+    }
+
+    /// Solves once and emits the TUI attribute plane (`attrs.txt` golden):
+    /// per-row runs of explicit fg/bg/strike cell state. Catches SGR-only
+    /// regressions the plain cells golden cannot see.
+    pub fn cells_attrs(&mut self, time_ms: f64) -> String {
+        conformance::cells_attrs(&mut self.inner, time_ms)
     }
 
     /// Solves once and emits the truecolor ANSI grid a terminal client paints,

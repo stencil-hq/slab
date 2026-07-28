@@ -6,6 +6,7 @@ import pytest
 
 from slab.tui import (
     WHEEL_STEP,
+    ClickTracker,
     Decoder,
     Key,
     Paste,
@@ -14,6 +15,7 @@ from slab.tui import (
     Terminal,
     Text,
     Wheel,
+    paint,
     pointer_units,
 )
 
@@ -146,3 +148,69 @@ def test_terminal_sequences_are_balanced() -> None:
         assert f"[?{mode}l" in Terminal.LEAVE
     assert "[?25l" in Terminal.ENTER
     assert "[?25h" in Terminal.LEAVE
+
+
+def test_click_tracker_counts_consecutive_presses() -> None:
+    """Same button, same spot, within the interval: the count climbs."""
+    tracker = ClickTracker()
+    assert tracker.pointer_down(0, 44.0, 56.0, now=0.0) == 1
+    assert tracker.pointer_down(0, 44.0, 56.0, now=0.3) == 2
+    assert tracker.pointer_down(0, 44.0, 56.0, now=0.6) == 3
+
+
+def test_click_tracker_resets_after_the_interval() -> None:
+    """More than half a second between presses starts a new single click."""
+    tracker = ClickTracker()
+    assert tracker.pointer_down(0, 44.0, 56.0, now=0.0) == 1
+    assert tracker.pointer_down(0, 44.0, 56.0, now=0.51) == 1
+
+
+def test_click_tracker_resets_on_button_change() -> None:
+    """A different button never extends the previous click."""
+    tracker = ClickTracker()
+    assert tracker.pointer_down(0, 44.0, 56.0, now=0.0) == 1
+    assert tracker.pointer_down(2, 44.0, 56.0, now=0.1) == 1
+
+
+def test_click_tracker_resets_on_movement() -> None:
+    """A press outside the four-unit radius starts a new single click."""
+    tracker = ClickTracker()
+    assert tracker.pointer_down(0, 44.0, 56.0, now=0.0) == 1
+    # The neighbouring cell centre is eight units away, past the radius.
+    assert tracker.pointer_down(0, 52.0, 56.0, now=0.1) == 1
+
+
+def test_decoder_counts_double_clicks() -> None:
+    """Two rapid presses on one cell make `dblclick=` reachable (clicks=2)."""
+    decoder = Decoder()
+    events = decoder.feed(b"\x1b[<0;10;5M\x1b[<0;10;5m\x1b[<0;10;5M\x1b[<0;10;5m")
+    downs = [event for event in events if isinstance(event, Pointer) and event.kind == "down"]
+    assert [event.clicks for event in downs] == [1, 2]
+
+
+def test_decoder_click_count_resets_on_another_cell() -> None:
+    """Presses on different cells stay single clicks."""
+    decoder = Decoder()
+    events = decoder.feed(b"\x1b[<0;10;5M\x1b[<0;20;5M")
+    assert [event.clicks for event in events] == [1, 1]
+
+
+def test_paint_homes_erases_and_clears_below() -> None:
+    """The public repaint homes the cursor and erases stale content."""
+
+    class Sink:
+        def __init__(self) -> None:
+            self.written: list[str] = []
+
+        def write(self, text: str) -> None:
+            self.written.append(text)
+
+        def flush(self) -> None:
+            pass
+
+    sink = Sink()
+    paint(Terminal(fd=0, out=sink), "one\ntwo\n")
+    written = "".join(sink.written)
+    assert written.startswith("\x1b[H")
+    assert "one\x1b[K\r\ntwo\x1b[K" in written
+    assert written.endswith("\x1b[J")

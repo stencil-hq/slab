@@ -218,7 +218,7 @@ impl Host for () {}
 pub fn collect_signals(inst: &kframe::Instance, eff: &dispatch::Effects, out: &mut Vec<Signal>) {
     for k in 0..eff.sig_name.len() {
         out.push(Signal {
-            name: slab_kernel::slir::str_at(&inst.doc, eff.sig_name[k]),
+            name: slab_kernel::slir::str_at(&inst.doc, eff.sig_name[k]).to_owned(),
             text: eff.sig_text[k].clone(),
             item: eff.sig_item[k].clone(),
             meta: eff.sig_meta[k].clone(),

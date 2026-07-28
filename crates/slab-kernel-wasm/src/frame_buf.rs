@@ -23,12 +23,14 @@ const TILT_POP: u32 = 14;
 ///
 /// The f64 stream starts with frame width and height. Each u32 operation tag
 /// then selects fixed u32 and f64 payload arities, avoiding per-frame JSON
-/// allocation for paint operations.
+/// allocation for paint operations. Text ops reference uncovered-glyph runs
+/// in the flat pool returned by [`FrameBuf::uncovered_u32s`].
 #[wasm_bindgen]
 pub struct FrameBuf {
     u32s: Vec<u32>,
     f64s: Vec<f64>,
     strings: Vec<String>,
+    uncovered: Vec<u32>,
     rt_paths: String,
     dirty: bool,
     motion_active: bool,
@@ -82,6 +84,8 @@ impl FrameBuf {
                         text.color,
                         text.color_kind,
                         u32::from(text.strike),
+                        signed_word(text.uncov_off),
+                        signed_word(text.uncov_len),
                     ]);
                     f64s.extend([
                         text.x,
@@ -209,6 +213,7 @@ impl FrameBuf {
             u32s,
             f64s,
             strings: frame.strings,
+            uncovered: frame.uncovered,
             dirty,
             motion_active,
             rt_paths,
@@ -232,6 +237,12 @@ impl FrameBuf {
     /// Returns the frame-local string pool as JSON.
     pub fn strs_json(&self) -> String {
         serde_json::to_string(&self.strings).expect("frame strings serialize")
+    }
+
+    /// Returns the flat uncovered-glyph run pool: `[start, end)` codepoint
+    /// pairs addressed by each Text op's `uncov_off`/`uncov_len` words.
+    pub fn uncovered_u32s(&self) -> Vec<u32> {
+        self.uncovered.clone()
     }
 
     /// Returns frame-local runtime paths as `[verbs, coords]` JSON pairs.
@@ -264,67 +275,68 @@ mod tests {
     use super::{
         CLIP_POP, FrameBuf, GROUP_POP, GROUP_PUSH, ROTATE_POP, SCALE_POP, SCALE_PUSH, TEXT,
     };
-    use slab_kernel::flatten::{Frame, FrameDiagnostic, FrameOp, OpGroup, OpScale, OpText, RtPath};
+    use slab_kernel::flatten::{FrameDiagnostic, FrameOp, OpGroup, OpScale, OpText, RtPath};
 
     #[test]
     fn encodes_dimensions_signed_indices_and_operation_tags() {
-        let frame = Frame {
-            width: 320.0,
-            height: 180.0,
-            ops: vec![
-                FrameOp::Text(OpText {
-                    node: 7,
-                    x: 10.0,
-                    y_baseline: 20.0,
-                    str_ref: -1,
-                    measured_w: 30.0,
-                    font: -1,
-                    size: 16.0,
-                    weight: 400,
-                    tracking: 0.5,
-                    color: 0x1122_3344,
-                    opacity: 0.75,
-                    strike: true,
-                    color_kind: 1,
-                    gx: 0.0,
-                    gy: 0.0,
-                    gw: 0.0,
-                    gh: 0.0,
-                }),
-                FrameOp::ClipPop,
-                FrameOp::GroupPush(OpGroup {
-                    node: 9,
-                    opacity: 0.5,
-                    blur: 2.0,
-                    mask_kind: 0,
-                    mask: 0,
-                    mx: 1.0,
-                    my: 2.0,
-                    mw: 30.0,
-                    mh: 40.0,
-                }),
-                FrameOp::GroupPop,
-                FrameOp::RotatePop,
-                FrameOp::ScalePush(OpScale {
-                    cx: 4.0,
-                    cy: 5.0,
-                    sx: 2.0,
-                    sy: 3.0,
-                }),
-                FrameOp::ScalePop,
-            ],
-            scene: Vec::new(),
-            strings: vec!["hello".to_owned()],
-            paths_rt: vec![RtPath {
-                verbs: vec![0, 1],
-                coords: vec![1.0, 2.0, 3.0, 4.0],
-            }],
-            diagnostics: vec![FrameDiagnostic {
-                code: "glyph-missing".to_owned(),
-                line: 7,
-                msg: "missing U+2715".to_owned(),
-            }],
-        };
+        let mut frame = slab_kernel::flatten::frame_new();
+        frame.width = 320.0;
+        frame.height = 180.0;
+        frame.ops = vec![
+            FrameOp::Text(OpText {
+                node: 7,
+                x: 10.0,
+                y_baseline: 20.0,
+                str_ref: -1,
+                measured_w: 30.0,
+                font: -1,
+                size: 16.0,
+                weight: 400,
+                tracking: 0.5,
+                color: 0x1122_3344,
+                opacity: 0.75,
+                strike: true,
+                color_kind: 1,
+                gx: 0.0,
+                gy: 0.0,
+                gw: 0.0,
+                gh: 0.0,
+                uncov_off: 0,
+                uncov_len: 1,
+            }),
+            FrameOp::ClipPop,
+            FrameOp::GroupPush(OpGroup {
+                node: 9,
+                opacity: 0.5,
+                blur: 2.0,
+                mask_kind: 0,
+                mask: 0,
+                mx: 1.0,
+                my: 2.0,
+                mw: 30.0,
+                mh: 40.0,
+            }),
+            FrameOp::GroupPop,
+            FrameOp::RotatePop,
+            FrameOp::ScalePush(OpScale {
+                cx: 4.0,
+                cy: 5.0,
+                sx: 2.0,
+                sy: 3.0,
+            }),
+            FrameOp::ScalePop,
+        ];
+        frame.strings = vec!["hello".to_owned()];
+        frame.uncovered = vec![0, 5];
+        frame.paths_rt = vec![RtPath {
+            verbs: vec![0, 1],
+            coords: vec![1.0, 2.0, 3.0, 4.0],
+        }];
+        frame.diagnostics = vec![FrameDiagnostic {
+            code: "glyph-missing".to_owned(),
+            line: 7,
+            msg: "missing U+2715".to_owned(),
+        }];
 
         let encoded = FrameBuf::encode(frame, true, false);
         assert_eq!(
@@ -337,6 +349,8 @@ mod tests {
                 400,
                 0x1122_3344,
                 1,
+                1,
+                0,
                 1,
                 CLIP_POP,
                 GROUP_PUSH,
@@ -357,6 +371,7 @@ mod tests {
             ]
         );
         assert_eq!(encoded.strings, [String::from("hello")]);
+        assert_eq!(encoded.uncovered, [0, 5]);
         assert_eq!(encoded.rt_paths, "[[[0,1],[1.0,2.0,3.0,4.0]]]");
         assert_eq!(
             encoded.diagnostics,

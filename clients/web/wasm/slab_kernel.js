@@ -5,7 +5,8 @@
  *
  * The f64 stream starts with frame width and height. Each u32 operation tag
  * then selects fixed u32 and f64 payload arities, avoiding per-frame JSON
- * allocation for paint operations.
+ * allocation for paint operations. Text ops reference uncovered-glyph runs
+ * in the flat pool returned by [`FrameBuf::uncovered_u32s`].
  */
 export class FrameBuf {
     static __wrap(ptr) {
@@ -108,6 +109,17 @@ export class FrameBuf {
         wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
         return v1;
     }
+    /**
+     * Returns the flat uncovered-glyph run pool: `[start, end)` codepoint
+     * pairs addressed by each Text op's `uncov_off`/`uncov_len` words.
+     * @returns {Uint32Array}
+     */
+    uncovered_u32s() {
+        const ret = wasm.framebuf_uncovered_u32s(this.__wbg_ptr);
+        var v1 = getArrayU32FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+        return v1;
+    }
 }
 if (Symbol.dispose) FrameBuf.prototype[Symbol.dispose] = FrameBuf.prototype.free;
 
@@ -187,6 +199,25 @@ export class KInst {
         }
     }
     /**
+     * Solves once and emits the TUI attribute plane (`attrs.txt` golden):
+     * per-row runs of explicit fg/bg/strike cell state. Catches SGR-only
+     * regressions the plain cells golden cannot see.
+     * @param {number} time_ms
+     * @returns {string}
+     */
+    cells_attrs(time_ms) {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.kinst_cells_attrs(this.__wbg_ptr, time_ms);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
      * Solves once and emits plain TUI cells for conformance comparison.
      * @param {number} time_ms
      * @returns {string}
@@ -227,6 +258,25 @@ export class KInst {
     clear_focus() {
         const ret = wasm.kinst_clear_focus(this.__wbg_ptr);
         return ret !== 0;
+    }
+    /**
+     * Returns every distinct diagnostic observed since document assignment as
+     * JSON `{code, line, msg}` objects, in first-occurrence order. Unlike the
+     * per-solve [`FrameBuf::diagnostics_json`] stream, runtime notes here are
+     * never consumed by intermediate solves.
+     * @returns {string}
+     */
+    diags_json() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.kinst_diags_json(this.__wbg_ptr);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
     }
     /**
      * Dispatches one platform event and emits canonical conformance effects JSON.

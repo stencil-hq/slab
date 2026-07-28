@@ -134,6 +134,24 @@ test('matches chunked TCP responses and exposes remote errors', async () => {
    }
 });
 
+test('onLine observes every wire line in both directions', async () => {
+   const fromServer = new PassThrough();
+   const toServer = new PassThrough();
+   const lines: Array<[string, string]> = [];
+   const client = DriveClient.fromStreams(fromServer, toServer, {
+      onLine: (direction, line) => lines.push([direction, line]),
+   });
+   const pending = client.call('clock.get');
+   fromServer.write('{"id":1,"result":{"t":0}}\n');
+   const clock = await pending;
+   equal(clock.t, 0);
+   deepEqual(lines, [
+      ['send', '{"id":1,"method":"clock.get","params":{}}'],
+      ['recv', '{"id":1,"result":{"t":0}}'],
+   ]);
+   await client.close();
+});
+
 test('drives a spawned stdio session through protocol.quit', async () => {
    const client = DriveClient.launch({
       executable: DRIVE_FIXTURE,

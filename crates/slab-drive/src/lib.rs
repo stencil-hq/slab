@@ -9,8 +9,11 @@
 //! and echo an optional request `id`. Failures contain `error.code` and
 //! `error.message`; parse failures use a null id.
 //!
-//! The default transport is stdio. `--port N` listens on `127.0.0.1:N`, accepts
-//! one connection at a time, and keeps the session alive across connections.
+//! The default transport is stdio. `--port N` listens on `127.0.0.1:N`, serves
+//! one connection at a time, and keeps the session alive across sequential
+//! connections. While a connection is being served, an additional connection
+//! is rejected immediately with a single `session busy` error line, then
+//! closed.
 //! `protocol.quit` ends either transport. The virtual motion clock starts at
 //! zero, advances only through `clock.advance` and `render.apng`, and resets on
 //! each successful load. Document-dependent methods solve a fresh retained
@@ -57,13 +60,14 @@
 //! | `doc.open_slir` | `{"slir":base64,"name":str?}` | installs precompiled SLIR with `doc.load` semantics; skips the compiler |
 //! | `doc.reload` | none | reloads the current path with `doc.load` semantics |
 //! | `doc.info` | none | file, parameter declarations, themes, holes, signals, env, and clock |
+//! | `doc.diags` | none | cumulative `{"diags":[{"code","line","msg"}...]}` since the current document loaded |
 //! | `env.get` | none | `{"width","height","client","dark","coarse","theme"}` |
 //! | `env.set` | any `env.get` fields | merged environment; theme validation runs last |
 //! | `clock.get` | none | `{"t":f64}` |
 //! | `clock.advance` | `{"ms":f64}` with `ms >= 0` | new `{"t":f64}` |
 //! | `param.set` | `{"name":str,"value":any}` or `{"sets":{...}}` | `{"ok":true}` after atomic validation |
 //! | `param.get` | `{"name":str}` | `{"value":any}` from the live kernel value |
-//! | `field.set` | `{"key":str,"text":str}` | `{"ok":true,"changed":bool}` |
+//! | `field.set` | `{"key":str,"text":str}` | `{"ok":true,"changed":bool}`; a non-field key is an error |
 //! | `field.get` | `{"key":str}` | `{"text":str}` |
 //! | `state.set` | `{"name":str,"on":bool}` | toggles a global state |
 //! | `state.node` | `{"key":str,"name":str,"on":bool}` | toggles a keyed node state |
@@ -75,7 +79,7 @@
 //! | `img.data` | `{"img":i32}` | base64 `data` and byte count |
 //! | `scroll.get` | `{"key":str,"axis":0|1}` | `{"axis":u32,"off":f64}` |
 //! | `scroll.set` | `{"key":str,"axis":0|1,"off":f64}` | the clamped axis-qualified offset |
-//! | `scroll.reveal` | `{"key":str,"margin":f64}` | minimally reveals a keyed node |
+//! | `scroll.reveal` | `{"key":str,"margin":f64}` | minimally reveals a keyed node; `each~key` locators resolve through list data even when unmaterialized |
 //! | `list.get_len` | `{"param":str,"path":str}` | `{"len":i32}` |
 //! | `list.set_len` | `{"param":str,"path":str,"n":i32}` | resizes a list |
 //! | `list.set_field` | `{"param":str,"path":str,"index":i32,"field":str,"kind":str,"value":any}` | sets one typed field |
@@ -107,8 +111,10 @@
 //!
 //! Every input result is `{"effects":{...},"t":f64}`. Effects contain repaint,
 //! ordered signals with metadata, changed scroll offsets, caret and IME
-//! rectangles, cursor, and focus. Binary inline payloads use padded RFC 4648
-//! base64; SVG and cell output remain UTF-8 text.
+//! rectangles, cursor, and focus. Signal metadata `key` is always the emitter
+//! node path; pointer-derived signals additionally carry `hit_key` and
+//! keyboard-driven activations carry `pressed_key`. Binary inline payloads use
+//! padded RFC 4648 base64; SVG and cell output remain UTF-8 text.
 //! A render `path` writes the payload and returns its path and byte count.
 //!
 //! # Example
@@ -134,9 +140,15 @@ use slab_slir::Slir;
 use slab_syntax::diag::Diagnostics;
 use std::{
     io::{self, BufRead, BufReader, Write},
-    net::TcpListener,
+    net::{Shutdown, TcpListener, TcpStream},
     path::{Path, PathBuf},
     process::ExitCode,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+        mpsc,
+    },
+    thread,
 };
 
 /// Native `slab drive` command usage.
@@ -159,6 +171,7 @@ const METHODS: &[&str] = &[
     "doc.open_slir",
     "doc.reload",
     "doc.info",
+    "doc.diags",
     "env.get",
     "env.set",
     "clock.get",
@@ -807,15 +820,55 @@ pub fn cmd_drive(args: &[String]) -> ExitCode {
 fn serve_tcp(session: &mut Session, port: u16) -> io::Result<()> {
     let listener = TcpListener::bind(("127.0.0.1", port))?;
     eprintln!("sdp: listening on {}", listener.local_addr()?);
-    for stream in listener.incoming() {
-        let stream = stream?;
+    serve_listener(session, listener)
+}
+
+/// Serves one connection at a time; concurrent connectors are rejected with a
+/// single `session busy` error line instead of queueing silently.
+fn serve_listener(session: &mut Session, listener: TcpListener) -> io::Result<()> {
+    let busy = Arc::new(AtomicBool::new(false));
+    let acceptor_busy = Arc::clone(&busy);
+    let (sender, receiver) = mpsc::channel();
+    thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(stream) = stream else { continue };
+            if acceptor_busy.swap(true, Ordering::SeqCst) {
+                reject_busy(stream);
+                continue;
+            }
+            if sender.send(stream).is_err() {
+                break;
+            }
+        }
+    });
+    while let Ok(stream) = receiver.recv() {
         let input = BufReader::new(&stream);
         serve_session(session, input, &stream)?;
+        busy.store(false, Ordering::SeqCst);
         if session.quit {
             break;
         }
     }
     Ok(())
+}
+
+/// Answers a connection attempt on a busy session with one error line, then
+/// closes, so a second client fails fast instead of starving silently.
+///
+/// Public so every SDP TCP front end (`slab drive --port`, the
+/// `slab-native --port` window mount) emits the byte-identical normative
+/// `session busy` line from SDP §1.
+pub fn reject_busy(stream: TcpStream) {
+    let response = error_response(
+        None,
+        ERR_DOMAIN,
+        "session busy: another client holds this SDP session",
+    );
+    let mut stream = &stream;
+    let _ = serde_json::to_writer(&mut stream, &response);
+    let _ = stream.write_all(b"\n");
+    let _ = stream.flush();
+    let _ = stream.shutdown(Shutdown::Both);
 }
 
 fn serve_session(
@@ -1043,6 +1096,7 @@ fn handle(
             Ok(session.load(&path))
         }
         "doc.info" => doc_info(session),
+        "doc.diags" => doc_diags(session),
         "env.get" => Ok(env_value(session)),
         "env.set" => env_set(session, params(value)),
         "clock.get" => Ok(json!({"t": session.t_ms})),
@@ -1122,7 +1176,10 @@ fn doc_info(session: &mut Session) -> ProtocolResult {
     for (index, name_ref) in kernel.parm_name.iter().copied().enumerate() {
         let kind = kernel.parm_type[index];
         let mut parameter = Map::new();
-        parameter.insert("name".into(), Value::String(slir::str_at(kernel, name_ref)));
+        parameter.insert(
+            "name".into(),
+            Value::String(slir::str_at(kernel, name_ref).to_owned()),
+        );
         parameter.insert("type".into(), Value::String(param_type_name(kind).into()));
         if kind == 5 {
             let offset = usize::try_from(kernel.parm_enum_off[index])
@@ -1131,7 +1188,7 @@ fn doc_info(session: &mut Session) -> ProtocolResult {
                 .expect("parameter enum length must be nonnegative");
             let members = kernel.parm_enum_syms[offset..offset + length]
                 .iter()
-                .map(|member| Value::String(slir::str_at(kernel, *member)))
+                .map(|member| Value::String(slir::str_at(kernel, *member).to_owned()))
                 .collect();
             parameter.insert("enum".into(), Value::Array(members));
         }
@@ -1139,18 +1196,39 @@ fn doc_info(session: &mut Session) -> ProtocolResult {
     }
     let strings = |refs: &[u32]| {
         refs.iter()
-            .map(|value| Value::String(slir::str_at(kernel, *value)))
+            .map(|value| Value::String(slir::str_at(kernel, *value).to_owned()))
             .collect::<Vec<_>>()
     };
+    let mut signals: Vec<Value> = Vec::new();
+    for name_ref in kernel.sign_name.iter().copied() {
+        let name = Value::String(slir::str_at(kernel, name_ref).to_owned());
+        if !signals.contains(&name) {
+            signals.push(name);
+        }
+    }
     Ok(json!({
         "file": doc.path.display().to_string(),
         "params": parameters,
         "themes": strings(&kernel.theme_name),
         "holes": strings(&kernel.hole_name),
-        "signals": strings(&kernel.sign_name),
+        "signals": signals,
         "env": env_from_instance(&doc.inst),
         "t": t_ms,
     }))
+}
+
+/// Returns the cumulative per-instance runtime diagnostic set.
+///
+/// Unlike the one-shot per-solve stream embedded in renders and `frame.dump`,
+/// this set is deduplicated, ordered by first occurrence, and cleared only by
+/// a successful document load.
+fn doc_diags(session: &mut Session) -> ProtocolResult {
+    let doc = ensure_frame(session)?;
+    let diags = frame::inst_diags(&doc.inst)
+        .iter()
+        .map(|diag| json!({"code": diag.code, "line": diag.line, "msg": diag.msg}))
+        .collect::<Vec<_>>();
+    Ok(json!({"diags": diags}))
 }
 
 fn param_type_name(kind: u32) -> &'static str {
@@ -1331,6 +1409,9 @@ fn field_set(session: &mut Session, object: &Map<String, Value>) -> ProtocolResu
     let text = required_str(object, "text")?.to_string();
     let doc = ensure_frame(session)?;
     let (_, key) = resolve_node_key(doc, &query)?;
+    if frame::inst_field_text(&doc.inst, &key).is_none() {
+        return Err(domain(format!("key '{key}' is not a field")));
+    }
     let changed = frame::inst_set_field_text(&mut doc.inst, &key, &text);
     Ok(json!({"ok": true, "changed": changed}))
 }
@@ -1469,12 +1550,48 @@ fn scroll_reveal(session: &mut Session, object: &Map<String, Value>) -> Protocol
     let margin = required_f64(object, "margin")?;
     let t_ms = session.t_ms;
     let doc = ensure_frame(session)?;
-    let (_, key) = resolve_node_key(doc, &query)?;
-    if !frame::inst_reveal(&mut doc.inst, &key, margin) {
-        return Err(domain(format!("cannot reveal key '{key}'")));
+    match resolve_node_key(doc, &query) {
+        Ok((_, key)) => {
+            if !frame::inst_reveal(&mut doc.inst, &key, margin) {
+                return Err(domain(format!("cannot reveal key '{key}'")));
+            }
+        }
+        Err(missing) => {
+            if !reveal_virtual_item(doc, &query) {
+                return Err(missing);
+            }
+        }
     }
     doc.fr = frame::inst_frame(&mut doc.inst, t_ms);
     Ok(json!({"ok": true}))
+}
+
+/// Reveals a keyed virtual item that is not in the retained scene.
+///
+/// The locator's rightmost `~` splits a virtual `each` prefix from the escaped
+/// stable item key; any template-relative suffix reveals the item band that
+/// contains it. The item key resolves through list data, so the item need not
+/// be materialized. Returns `false` when the locator has no `~`, the prefix is
+/// not an `each` backed by a list, or the key is absent from the list data.
+fn reveal_virtual_item(doc: &mut LoadedDoc, query: &str) -> bool {
+    let Some(tilde) = query.rfind('~') else {
+        return false;
+    };
+    let Ok((each, each_key)) = resolve_node_key(doc, &query[..tilde]) else {
+        return false;
+    };
+    let item_key = query[tilde + 1..].split('/').next().unwrap_or_default();
+    let item_key = item_key
+        .replace("%2F", "/")
+        .replace("%7E", "~")
+        .replace("%25", "%");
+    let list_id = slab_kernel::list::each_list(&doc.inst.doc, &doc.inst.st.lists, each);
+    let Ok(list) = u32::try_from(list_id) else {
+        return false;
+    };
+    let index =
+        slab_kernel::list::item_index_for_key(&doc.inst.doc, &doc.inst.st.lists, list, &item_key);
+    index >= 0 && frame::inst_reveal_item(&mut doc.inst, &each_key, index, 3)
 }
 
 fn list_param(inst: &Instance, name: &str) -> ProtocolResult<u32> {
@@ -2805,5 +2922,244 @@ col {
                 "note runtime: second"
             ]
         );
+    }
+
+    #[test]
+    fn rejects_a_second_tcp_connection_with_a_busy_error_line() {
+        use std::net::TcpStream;
+
+        let mut server = Server::new();
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind test listener");
+        let addr = listener.local_addr().expect("listener address");
+        let clients = thread::spawn(move || {
+            let mut first = TcpStream::connect(addr).expect("first client connects");
+            first
+                .write_all(b"{\"id\":1,\"method\":\"clock.get\"}\n")
+                .expect("first client request");
+            let mut responses = BufReader::new(first.try_clone().expect("clone first stream"));
+            let mut line = String::new();
+            responses
+                .read_line(&mut line)
+                .expect("first client response");
+            assert!(line.contains("\"t\""), "{line}");
+
+            // The first client is now provably being served, so this
+            // connection must be turned away instead of starving.
+            let second = TcpStream::connect(addr).expect("second client connects");
+            let mut rejection = BufReader::new(&second);
+            let mut busy = String::new();
+            rejection.read_line(&mut busy).expect("busy error line");
+            let mut eof = String::new();
+            let closed = rejection.read_line(&mut eof).expect("closed after busy");
+            assert_eq!(closed, 0, "second connection closes after the error");
+
+            first
+                .write_all(b"{\"id\":2,\"method\":\"protocol.quit\"}\n")
+                .expect("first client quit");
+            let mut quit = String::new();
+            responses.read_line(&mut quit).expect("quit response");
+            busy
+        });
+        serve_listener(&mut server.session, listener).expect("serve listener");
+        let busy = clients.join().expect("client thread");
+        assert!(busy.contains("session busy"), "{busy}");
+        assert!(busy.contains("-32000"), "{busy}");
+        assert!(busy.contains("\"id\":null"), "{busy}");
+    }
+
+    #[test]
+    fn field_set_on_a_non_field_key_is_an_error() {
+        let (slir, mut instance, images) = compile_live(
+            r#"
+col#app {
+  text#title "hi" size=14
+}
+"#,
+        );
+        let mut pump = RequestPump::new("test.slab", slir, images);
+        let response = pump.request(
+            &mut instance,
+            r##"{"method":"field.set","params":{"key":"#title","text":"x"}}"##,
+        );
+        assert!(
+            response.response["error"]["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("is not a field")),
+            "{:?}",
+            response.response
+        );
+    }
+
+    #[test]
+    fn pct_params_round_trip_as_unclamped_bare_numbers() {
+        let (slir, mut instance, images) = compile_live(
+            r#"
+params {
+  progress pct = 40%
+}
+row w=200 h=10 { rect w=param.progress h=10 bg=#334455FF }
+"#,
+        );
+        let mut pump = RequestPump::new("test.slab", slir, images);
+        // The "60%" string spelling is write-side convenience; param.get
+        // returns the canonical bare number.
+        let accepted = pump.request(
+            &mut instance,
+            r#"{"method":"param.set","params":{"name":"progress","value":"60%"}}"#,
+        );
+        assert_eq!(result(&accepted), &json!({"ok": true}));
+        let read_back = pump.request(
+            &mut instance,
+            r#"{"method":"param.get","params":{"name":"progress"}}"#,
+        );
+        assert_eq!(result(&read_back)["value"].as_f64(), Some(60.0));
+
+        // pct is the generic parent-relative percentage type: values above
+        // 100% are legitimate sizing values and stay unclamped end to end.
+        let oversize = pump.request(
+            &mut instance,
+            r#"{"method":"param.set","params":{"name":"progress","value":"150%"}}"#,
+        );
+        assert_eq!(result(&oversize), &json!({"ok": true}));
+        let unclamped = pump.request(
+            &mut instance,
+            r#"{"method":"param.get","params":{"name":"progress"}}"#,
+        );
+        assert_eq!(result(&unclamped)["value"].as_f64(), Some(150.0));
+
+        let malformed = pump.request(
+            &mut instance,
+            r#"{"method":"param.set","params":{"name":"progress","value":"banana"}}"#,
+        );
+        assert!(
+            malformed.response["error"]["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("is not a percentage")),
+            "{:?}",
+            malformed.response
+        );
+    }
+
+    #[test]
+    fn param_set_errors_carry_protocol_wording_without_cli_framing() {
+        let (slir, mut instance, images) = live_document();
+        let mut pump = RequestPump::new("test.slab", slir, images);
+        let response = pump.request(
+            &mut instance,
+            r#"{"method":"param.set","params":{"name":"nonexistent","value":1}}"#,
+        );
+        let message = response.response["error"]["message"]
+            .as_str()
+            .expect("unknown param error");
+        assert!(!message.contains("--set"), "{message}");
+        assert!(message.contains("param 'nonexistent'"), "{message}");
+    }
+
+    #[test]
+    fn keyed_scroll_reveal_resolves_unmaterialized_virtual_items() {
+        let (slir, mut instance, images) = compile_live(
+            r#"
+def Row(label="") export { row h=20 { text label } }
+params {
+  rows list(Row) = [
+    Row(label="r0"), Row(label="r1"), Row(label="r2"), Row(label="r3"),
+    Row(label="r4"), Row(label="r5"), Row(label="r6"), Row(label="r7")
+  ]
+}
+col#viewport w=120 h=40 scroll {
+  each param.rows key=rows virtual item-extent=20
+}
+"#,
+        );
+        let mut pump = RequestPump::new("test.slab", slir, images);
+        let keyed = pump.request(
+            &mut instance,
+            r##"{"method":"list.set_key","params":{"param":"rows","path":"","index":7,"key":"t7"}}"##,
+        );
+        assert_eq!(result(&keyed), &json!({"ok": true}));
+
+        let revealed = pump.request(
+            &mut instance,
+            r##"{"method":"scroll.reveal","params":{"key":"#viewport/rows~t7","margin":0}}"##,
+        );
+        assert_eq!(
+            result(&revealed),
+            &json!({"ok": true}),
+            "{:?}",
+            revealed.response
+        );
+
+        // Item 7 spans 140..160 in a 40-unit viewport: nearest alignment
+        // scrolls to end - viewport = 120.
+        let offset = pump.request(
+            &mut instance,
+            r##"{"method":"scroll.get","params":{"key":"#viewport","axis":0}}"##,
+        );
+        assert_eq!(result(&offset), &json!({"axis": 0, "off": 120.0}));
+
+        let unknown = pump.request(
+            &mut instance,
+            r##"{"method":"scroll.reveal","params":{"key":"#viewport/rows~missing","margin":0}}"##,
+        );
+        assert!(
+            unknown.response["error"]["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("unknown key")),
+            "{:?}",
+            unknown.response
+        );
+    }
+
+    #[test]
+    fn nearest_key_suggestions_rank_id_segment_matches_first() {
+        let (slir, mut instance, images) = compile_live(
+            r#"
+col#app {
+  row#fall focusable w=100 h=20 { text "fall" }
+  row#del focusable w=100 h=20 { text "del" }
+}
+"#,
+        );
+        let mut pump = RequestPump::new("test.slab", slir, images);
+        let response = pump.request(
+            &mut instance,
+            r##"{"method":"input.click","params":{"key":"#fal"}}"##,
+        );
+        let message = response.response["error"]["message"]
+            .as_str()
+            .expect("missing key error");
+        let nearest = message
+            .split("nearest: ")
+            .nth(1)
+            .expect("nearest suggestions");
+        let first = nearest.split(", ").next().expect("first suggestion");
+        assert!(first.contains("#fall"), "{message}");
+    }
+
+    #[test]
+    fn doc_info_signals_are_deduplicated() {
+        let (slir, mut instance, images) = compile_live(
+            r#"
+col {
+  row#a focusable act="save" w=100 h=20 { text "one" }
+  row#b focusable act="save" w=100 h=20 { text "two" }
+}
+"#,
+        );
+        let mut pump = RequestPump::new("test.slab", slir, images);
+        let info = pump.request(&mut instance, r#"{"method":"doc.info","params":{}}"#);
+        let signals = result(&info)["signals"].as_array().expect("signals array");
+        let mut unique = signals.clone();
+        unique.dedup();
+        assert_eq!(signals, &unique, "signals must not repeat");
+        assert!(signals.contains(&json!("save")), "{signals:?}");
+    }
+
+    #[test]
+    fn doc_diags_reports_the_cumulative_diagnostic_set() {
+        let (slir, mut instance, images) = live_document();
+        let mut pump = RequestPump::new("test.slab", slir, images);
+        let clean = pump.request(&mut instance, r#"{"method":"doc.diags","params":{}}"#);
+        assert_eq!(result(&clean), &json!({"diags": []}));
     }
 }

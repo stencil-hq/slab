@@ -26,12 +26,13 @@ import sys
 import termios
 import time
 import tty
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Callable, Sequence
 
 from . import CELL_HEIGHT, CELL_WIDTH, Session, Signal
 
 __all__ = [
+    "ClickTracker",
     "Decoder",
     "Key",
     "Paste",
@@ -43,6 +44,7 @@ __all__ = [
     "Wheel",
     "WHEEL_STEP",
     "DEFAULT_SIZE",
+    "paint",
     "pointer_units",
     "run",
 ]
@@ -95,6 +97,8 @@ class Pointer:
         row: Zero-based row.
         button: `0` left, `1` middle, `2` right.
         mods: Modifiers held during the report.
+        clicks: Consecutive click count for a `down`, counted by the decoder
+            like the Rust driver; the kernel ignores it on `move` and `up`.
     """
 
     kind: str
@@ -102,6 +106,7 @@ class Pointer:
     row: int
     button: int = 0
     mods: tuple[str, ...] = ()
+    clicks: int = 1
 
 
 @dataclass(frozen=True, slots=True)
@@ -222,6 +227,52 @@ _PASTE_START = b"\x1b[200~"
 _PASTE_END = b"\x1b[201~"
 
 
+class ClickTracker:
+    """Stateful consecutive-click counter, matching the Rust terminal driver.
+
+    A press repeats the previous click when it uses the same button, lands
+    within :data:`CLICK_RADIUS` layout units of it, and arrives within
+    :data:`CLICK_INTERVAL` seconds; anything else starts a fresh single click.
+    """
+
+    #: Seconds within which a press can extend the previous click.
+    CLICK_INTERVAL = 0.5
+
+    #: Distance in layout units within which a press extends the click.
+    CLICK_RADIUS = 4.0
+
+    __slots__ = ("_last",)
+
+    def __init__(self) -> None:
+        """Creates a tracker with no click history."""
+        self._last: tuple[float, int, float, float, int] | None = None
+
+    def pointer_down(self, button: int, x: float, y: float, now: float | None = None) -> int:
+        """Records a press at layout units `(x, y)` and returns its click count.
+
+        Args:
+            button: `0` left, `1` middle, `2` right.
+            x: Horizontal position in layout units.
+            y: Vertical position in layout units.
+            now: Monotonic timestamp in seconds; defaults to the current one.
+        """
+        stamp = time.monotonic() if now is None else now
+        clicks = 1
+        if self._last is not None:
+            last_stamp, last_button, last_x, last_y, count = self._last
+            dx = x - last_x
+            dy = y - last_y
+            if (
+                button == last_button
+                and stamp - last_stamp <= self.CLICK_INTERVAL
+                and dx * dx + dy * dy <= self.CLICK_RADIUS * self.CLICK_RADIUS
+            ):
+                clicks = count + 1
+        self._last = (stamp, button, x, y, clicks)
+        return clicks
+
+
+
 class Decoder:
     """Incremental decoder from terminal bytes to :data:`TerminalEvent` values.
 
@@ -231,12 +282,13 @@ class Decoder:
     :meth:`flush` after an input timeout to turn it into an `Escape` key.
     """
 
-    __slots__ = ("_buffer", "_paste")
+    __slots__ = ("_buffer", "_clicks", "_paste")
 
     def __init__(self) -> None:
-        """Creates a decoder with an empty buffer."""
+        """Creates a decoder with an empty buffer and click history."""
         self._buffer = bytearray()
         self._paste: bytearray | None = None
+        self._clicks = ClickTracker()
 
     def feed(self, data: bytes) -> list[TerminalEvent]:
         """Appends `data` and returns every event that is now complete."""
@@ -337,7 +389,7 @@ class Decoder:
         body = buffer[2:index].decode("ascii", "replace")
         total = index + 1
         if body.startswith("<"):
-            return (total, _sgr_mouse(body[1:], final))
+            return (total, [self._count(event) for event in _sgr_mouse(body[1:], final)])
         params = [int(part) if part.isdigit() else 0 for part in body.split(";")] if body else []
         mods = _xterm_mods(params[1]) if len(params) > 1 else ()
         if final == "Z":
@@ -347,6 +399,13 @@ class Decoder:
             return (total, [Key(name, mods)]) if name else (total, [])
         name = _CSI_FINAL.get(final)
         return (total, [Key(name, mods)]) if name else (total, [])
+
+    def _count(self, event: TerminalEvent) -> TerminalEvent:
+        """Stamps a pointer press with its consecutive click count."""
+        if isinstance(event, Pointer) and event.kind == "down":
+            x, y = pointer_units(event.col, event.row)
+            return replace(event, clicks=self._clicks.pointer_down(event.button, x, y))
+        return event
 
     def _step_utf8(self) -> tuple[int, list[TerminalEvent]]:
         """Decodes one printable character into a key plus its text."""
@@ -464,8 +523,14 @@ class Terminal:
             self._saved = None
 
 
-def _paint(terminal: Terminal, text: str) -> None:
-    """Repaints the whole grid from the top-left corner."""
+def paint(terminal: Terminal, text: str) -> None:
+    """Repaints the whole grid from the top-left corner.
+
+    This is the driver's own repaint: home the cursor, write each row followed
+    by an erase-to-end, and erase everything below the last row. A host that
+    writes its own event loop from :class:`Terminal` and :class:`Decoder` can
+    call it directly with :meth:`Session.render_cells` text.
+    """
     lines = text.split("\n")
     if lines and lines[-1] == "":
         lines.pop()
@@ -499,7 +564,7 @@ def _dispatch(
     elif isinstance(event, Pointer):
         x, y = pointer_units(event.col, event.row)
         signals = session.pointer(
-            event.kind, x, y, button=event.button, mods=event.mods
+            event.kind, x, y, button=event.button, clicks=event.clicks, mods=event.mods
         ).signals
     elif isinstance(event, Wheel):
         x, y = pointer_units(event.col, event.row)
@@ -516,6 +581,8 @@ def run(
     dark: bool = False,
     fps: float = DEFAULT_FPS,
     on_signal: Callable[[Signal], None] | None = None,
+    on_tick: Callable[[Session], None] | None = None,
+    tick_interval: float = 1.0,
     fd: int | None = None,
 ) -> None:
     """Drives `session` interactively until Ctrl+C or `protocol.quit`.
@@ -525,14 +592,21 @@ def run(
         dark: Whether to request the dark environment.
         fps: Frame rate for clock ticks and repaints; must be positive.
         on_signal: Called once per emitted signal, in emission order.
+        on_tick: Called with the session once immediately after the first
+            environment write and then every `tick_interval` seconds, so a
+            host can write live params (a clock, timers) without owning the
+            loop. Repaints triggered by its writes happen on the same frame.
+        tick_interval: Seconds between `on_tick` calls; must be positive.
         fd: Input descriptor; defaults to standard input.
 
     Raises:
-        ValueError: `fps` is not positive.
+        ValueError: `fps` or `tick_interval` is not positive.
         OSError: The descriptor is not a terminal.
     """
     if fps <= 0:
         raise ValueError("fps must be positive")
+    if tick_interval <= 0:
+        raise ValueError("tick_interval must be positive")
     frame = 1.0 / fps
     decoder = Decoder()
     resized = [True]
@@ -550,6 +624,7 @@ def run(
             cols, rows = terminal.size()
             painted = ""
             clock = time.monotonic()
+            ticked: float | None = None
             running = True
             while running:
                 if resized[0]:
@@ -581,13 +656,16 @@ def run(
                 clock = now
                 if elapsed > 0:
                     session.advance(elapsed)
+                if on_tick is not None and (ticked is None or now - ticked >= tick_interval):
+                    ticked = now
+                    on_tick(session)
                 if terminal.size() != (cols, rows):
                     resized[0] = True
                     continue
                 text = session.render_cells(plain=False, caret=True).text
                 if text != painted:
                     painted = text
-                    _paint(terminal, text)
+                    paint(terminal, text)
                 if session.has_quit:
                     running = False
         finally:

@@ -129,6 +129,12 @@ class SignalMeta:
 
     The pointer fields are in Slab layout units; `mods` is the packed modifier
     bitmask the kernel used for the originating event.
+
+    `key` is always the full node path of the emitting node. Two optional
+    companions narrow the origin further and are empty when the kernel omitted
+    them: `hit_key` names the deepest hit-target node under the pointer for
+    pointer-derived signals, and `pressed_key` carries the keyboard key name
+    (for example `Enter`) when the signal came from keyboard activation.
     """
 
     x: float = 0.0
@@ -141,6 +147,8 @@ class SignalMeta:
     button: int = 0
     clicks: int = 0
     key: str = ""
+    hit_key: str = ""
+    pressed_key: str = ""
     src_key: str = ""
     src_item: str = ""
     cancelled: bool = False
@@ -162,6 +170,8 @@ class SignalMeta:
             button=int(value.get("button", 0)),
             clicks=int(value.get("clicks", 0)),
             key=str(value.get("key", "")),
+            hit_key=str(value.get("hit_key", "")),
+            pressed_key=str(value.get("pressed_key", "")),
             src_key=str(value.get("src_key", "")),
             src_item=str(value.get("src_item", "")),
             cancelled=bool(value.get("cancelled", False)),
@@ -272,6 +282,7 @@ class Cells:
         cols: Column count of the grid.
         rows: Row count of the grid.
         notes: Renderer notes, for example unsupported-feature warnings.
+        lines: Grid rows, split on newlines, as a property like its siblings.
     """
 
     text: str
@@ -289,8 +300,9 @@ class Cells:
             notes=tuple(str(note) for note in result.get("notes", [])),
         )
 
+    @property
     def lines(self) -> list[str]:
-        """Splits :attr:`text` into rows without trailing empty padding."""
+        """Rows of :attr:`text`, split on newlines."""
         return self.text.split("\n")
 
 
@@ -821,6 +833,57 @@ class Session:
     def get_param(self, name: str) -> Any:
         """Returns the live value of one declared parameter."""
         return self.request("param.get", {"name": name}).get("value")
+
+    def set_list(self, name: str, rows: Iterable[Mapping[str, Any]]) -> None:
+        """Replaces one declared `list(...)` parameter with `rows`, atomically.
+
+        This is the bulk list write from `spec/SDP.md` §5.2: a single
+        `param.set {sets:{name: rows}}` that validates the whole batch before
+        the first mutation. Each row is a mapping of item field names to
+        values; an optional `"key"` entry sets the item's stable key (used for
+        diffing so focus, scroll, and hover survive a re-projection), and
+        omitted fields keep the item type's declared defaults.
+
+        Args:
+            name: Declared list parameter name.
+            rows: One mapping per item, in list order.
+        """
+        self.request("param.set", {"sets": {name: [dict(row) for row in rows]}})
+
+    def set_list_field(
+        self,
+        param: str,
+        index: int,
+        fieldname: str,
+        kind: str,
+        value: Any,
+        *,
+        path: str = "",
+    ) -> None:
+        """Sets one typed field of one list item, matching `list.set_field`.
+
+        Args:
+            param: Declared list parameter name.
+            index: Zero-based item index.
+            fieldname: Item field name.
+            kind: Field kind: `text`, `num`, `pct`, `color`, `bool`, or `enum`.
+            value: Field value; a string for `text`/`enum`, a number for
+                `num`/`pct`, an unsigned RGBA integer for `color`, and a
+                boolean or number for `bool`.
+            path: Nested list path for lists inside items; empty for the
+                top-level list.
+        """
+        self.request(
+            "list.set_field",
+            {
+                "param": param,
+                "path": path,
+                "index": int(index),
+                "field": fieldname,
+                "kind": kind,
+                "value": value,
+            },
+        )
 
     def info(self) -> DocInfo:
         """Returns the document's parameters, themes, holes, signals, and env."""

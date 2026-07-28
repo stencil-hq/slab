@@ -124,6 +124,10 @@ export interface SigMeta {
    src_item: string;
    cancelled: boolean;
    dropped: boolean;
+   /** Deepest hit-target canonical key on pointer-derived signals. */
+   hit_key?: string;
+   /** Pressed key name on keyboard-driven activation. */
+   pressed_key?: string;
 }
 
 /** One retained scroll offset changed by a dispatch. */
@@ -214,6 +218,10 @@ export interface SceneNode {
    /** Effective kernel disabled and focus ownership for this frame. */
    disabled: boolean;
    focused: boolean;
+   /** Whether the node carries an ACTIVE `field=` binder this frame. */
+   editable: boolean;
+   /** Painted subtree text in scene order (driver-annotated), lines joined with `\n`. */
+   text: string;
 }
 
 export interface OpRect {
@@ -257,6 +265,10 @@ export interface OpText {
    color: number;
    opacity: number;
    strike: boolean;
+   /** Offset of this op's uncovered-run pairs in `Frame.uncovered`. */
+   uncov_off: number;
+   /** Number of uncovered runs (0 = every cluster covered by `font`). */
+   uncov_len: number;
    /** 1 = solid (`color` is packed RGBA), 2 = gradient (`color` is a GRAD handle). */
    color_kind: number;
    /** Gradient box = the text node's content box (all 0 when `color_kind` is 1). */
@@ -413,4 +425,6 @@ export interface Frame {
    dirty: boolean;
    motionActive: boolean;
    diagnostics: FrameDiagnostic[];
+   /** Flat `[start, end)` codepoint-offset pairs indexed by `OpText.uncov_off`. */
+   uncovered: Uint32Array;
 }

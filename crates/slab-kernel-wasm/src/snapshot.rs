@@ -129,6 +129,10 @@ struct SigMetaSnapshot<'a> {
     button: u32,
     clicks: u32,
     key: &'a str,
+    #[serde(skip_serializing_if = "str::is_empty")]
+    hit_key: &'a str,
+    #[serde(skip_serializing_if = "str::is_empty")]
+    pressed_key: &'a str,
     src_key: &'a str,
     src_item: &'a str,
     cancelled: bool,
@@ -223,6 +227,7 @@ struct SceneSnapshot<'a> {
     set_size: Option<f64>,
     disabled: bool,
     focused: bool,
+    editable: bool,
 }
 
 pub(crate) fn statics_json(instance: &Instance) -> String {
@@ -357,6 +362,8 @@ pub(crate) fn effects_json(effects: &Effects) -> String {
             button: meta.button,
             clicks: meta.clicks,
             key: &meta.key,
+            hit_key: &meta.hit_key,
+            pressed_key: &meta.pressed_key,
             src_key: &meta.src_key,
             src_item: &meta.src_item,
             cancelled: meta.cancelled,
@@ -441,6 +448,37 @@ pub(crate) fn lifts_json(lifts: &[motion::Lift]) -> String {
     to_json(&lifts)
 }
 
+/// Auto-derived `(pos_in_set, set_size)` for an each item root without
+/// authored set metadata, so materialized virtual rows keep AT list context.
+fn item_set_metadata(instance: &Instance, index: usize, node: u32) -> (Option<f64>, Option<f64>) {
+    let lists = &instance.st.lists;
+    let each = list::each_of(lists, &instance.doc, node);
+    if each == slir::NONE {
+        return (None, None);
+    }
+    // Item roots are the outermost synthetic entries under their each: the
+    // scene parent belongs to a different (or no) each instance.
+    let parent = instance.sc.parent[index];
+    let parent_each = usize::try_from(parent)
+        .ok()
+        .map(|parent_index| list::each_of(lists, &instance.doc, instance.sc.node[parent_index]))
+        .unwrap_or(slir::NONE);
+    if parent_each == each {
+        return (None, None);
+    }
+    let item = list::item_ix(lists, &instance.doc, node);
+    let handle = list::param_of(lists, &instance.doc, node);
+    if item < 0 || handle < 0 {
+        return (None, None);
+    }
+    let handle = u32::try_from(handle).expect("list handle must be nonnegative");
+    let length = list::length(&instance.doc, lists, handle);
+    if length <= 0 {
+        return (None, None);
+    }
+    (Some(f64::from(item + 1)), Some(f64::from(length)))
+}
+
 pub(crate) fn scene_json(instance: &Instance) -> String {
     let scene = &instance.sc;
     let nodes: Vec<_> = scene
@@ -454,6 +492,12 @@ pub(crate) fn scene_json(instance: &Instance) -> String {
             } else {
                 instance.doc.node_line[index_u32(base)]
             };
+            let (item_pos, item_size) =
+                if scene.pos_in_set[index].is_none() && scene.set_size[index].is_none() {
+                    item_set_metadata(instance, index, node)
+                } else {
+                    (None, None)
+                };
             SceneSnapshot {
                 key: scene::key_of(&instance.doc, &instance.st.lists, node),
                 node,
@@ -494,10 +538,11 @@ pub(crate) fn scene_json(instance: &Instance) -> String {
                 live: live_snapshot(scene.live[index]),
                 live_atomic: optional_bool(scene.live_atomic[index]),
                 level: scene.level[index],
-                pos_in_set: scene.pos_in_set[index],
-                set_size: scene.set_size[index],
+                pos_in_set: scene.pos_in_set[index].or(item_pos),
+                set_size: scene.set_size[index].or(item_size),
                 disabled: scene.disabled[index],
                 focused: scene.focused[index],
+                editable: scene.editable[index],
             }
         })
         .collect();

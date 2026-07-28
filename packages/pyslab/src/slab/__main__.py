@@ -9,7 +9,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from . import CompileError, Signal, open_file
+from . import CompileError, EnvSpec, ProtocolError, Session, Signal, open_file
 from .tui import DEFAULT_FPS, run
 
 __all__ = ["main", "parser"]
@@ -39,11 +39,54 @@ def parser() -> argparse.ArgumentParser:
         help=f"clock tick and repaint rate; default {DEFAULT_FPS:g}",
     )
     parsed.add_argument(
+        "--set",
+        action="append",
+        default=[],
+        dest="sets",
+        metavar="PARAM=VALUE",
+        help=(
+            "override a declared param before the first frame, repeatable; "
+            "values are typed like the slab-tui CLI (text/num/pct/color/bool/"
+            "enum scalars, or a JSON array of {field: value} objects with "
+            "optional 'key' entries for a list param)"
+        ),
+    )
+    parsed.add_argument(
+        "--theme",
+        metavar="NAME",
+        help="start with a declared theme instead of the authored base",
+    )
+    parsed.add_argument(
         "--quiet",
         action="store_true",
         help="do not print emitted signals after the session ends",
     )
     return parsed
+
+
+def _apply_overrides(session: Session, args: argparse.Namespace) -> str | None:
+    """Applies `--theme` and `--set` before the first frame.
+
+    Returns:
+        An error message when an override is rejected, else `None`.
+    """
+    if args.theme is not None:
+        try:
+            session.set_env(EnvSpec(theme=args.theme))
+        except ProtocolError as err:
+            return err.message
+    sets: dict[str, str] = {}
+    for entry in args.sets:
+        name, separator, value = entry.partition("=")
+        if not separator or not name:
+            return f"--set needs param=value, not {entry!r}"
+        sets[name] = value
+    if sets:
+        try:
+            session.request("param.set", {"sets": sets})
+        except ProtocolError as err:
+            return err.message
+    return None
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -54,7 +97,8 @@ def main(argv: list[str] | None = None) -> int:
 
     Returns:
         `0` on a clean exit, `1` when the document did not compile, and `2`
-        when standard input is not a terminal.
+        when an argument is unusable, including a rejected `--set` or
+        `--theme`, or when standard input is not a terminal.
     """
     args = parser().parse_args(argv)
     if args.fps <= 0:
@@ -73,6 +117,11 @@ def main(argv: list[str] | None = None) -> int:
     except OSError as err:
         print(f"slab: {err}", file=sys.stderr)
         return 1
+    rejected = _apply_overrides(session, args)
+    if rejected is not None:
+        session.close()
+        print(f"slab: {rejected}", file=sys.stderr)
+        return 2
 
     emitted: list[Signal] = []
     try:

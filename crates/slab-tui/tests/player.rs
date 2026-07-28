@@ -234,15 +234,21 @@ fn bad_set_exits_two() {
     let (code, err) = run_err(&["--set", "progress=banana"]);
     assert_eq!(code, 2, "stderr: {err}");
     assert!(
-        err.contains("'banana' is not a percentage"),
+        err.contains("param 'progress': 'banana' is not a percentage"),
         "stderr: {err}"
     );
     let (code, err) = run_err(&["--set", "nope=1"]);
     assert_eq!(code, 2);
-    assert!(err.contains("unknown param 'nope'"), "stderr: {err}");
+    assert!(
+        err.contains("param 'nope': no such document param"),
+        "stderr: {err}"
+    );
     let (code, err) = run_err(&["--set", "playing=maybe"]);
     assert_eq!(code, 2);
-    assert!(err.contains("'maybe' is not a bool"), "stderr: {err}");
+    assert!(
+        err.contains("param 'playing': 'maybe' is not a bool"),
+        "stderr: {err}"
+    );
 }
 
 /// (d) The queue hole: UP NEXT header renders and the hole region below

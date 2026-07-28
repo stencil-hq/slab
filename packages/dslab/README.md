@@ -57,6 +57,31 @@ const visible = await client.call('list.window', { each: '#feed/rows' });
 await client.close();
 ```
 
+### Wire tap
+
+Every entry point (`connect`, `launch`, `fromStreams`) accepts an `onLine`
+option that observes each NDJSON line on the wire — `send` lines as written,
+`recv` lines as parsed, without the trailing newline. Use it for evidence-grade
+transcripts instead of wrapping every call:
+
+```ts
+import { appendFileSync } from 'node:fs';
+
+const client = await DriveClient.connect({
+   port: 4242,
+   onLine: (direction, line) => {
+      appendFileSync('transcript.ndjson', `${direction} ${line}\n`);
+   },
+});
+```
+
+### Runtime diagnostics
+
+`client.diags()` (SDP `doc.diags`) returns the cumulative runtime diagnostic
+set — deduplicated `{code, line, msg}` entries ordered by first occurrence and
+cleared only by a successful load — so one-shot per-solve notes such as
+`glyph-missing` stay queryable after intermediate solves.
+
 `DriveSceneKey` and `DriveEachKey` document the canonical locator surface.
 Use an exact full key returned by `scene.tree`, a unique authored `#id`/`id`,
 or a unique authored suffix rooted at an id such as `#toolbar/#save` or

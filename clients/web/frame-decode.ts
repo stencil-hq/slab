@@ -81,6 +81,7 @@ export function decodeFrame(frame: FrameBuf): Frame {
       const dirty = frame.dirty();
       const motionActive = frame.motion_active();
       const diagnostics = decodeDiagnostics(frame.diagnostics_json());
+      const uncovered = frame.uncovered_u32s();
       let wi = 0;
       let fi = 0;
 
@@ -141,6 +142,8 @@ export function decodeFrame(frame: FrameBuf): Frame {
                      color: u32('Text.color'),
                      color_kind: u32('Text.color_kind'),
                      strike: u32('Text.strike') !== 0,
+                     uncov_off: signedWord(u32('Text.uncov_off')),
+                     uncov_len: u32('Text.uncov_len'),
                      x: f64('Text.x'),
                      y_baseline: f64('Text.y_baseline'),
                      measured_w: f64('Text.measured_w'),
@@ -293,7 +296,17 @@ export function decodeFrame(frame: FrameBuf): Frame {
       if (fi !== floats.length)
          throw new Error(`invalid FrameBuf: ${floats.length - fi} trailing f64 values`);
 
-      return { width, height, ops, strings, pathsRt, dirty, motionActive, diagnostics };
+      return {
+         width,
+         height,
+         ops,
+         strings,
+         pathsRt,
+         dirty,
+         motionActive,
+         diagnostics,
+         uncovered,
+      };
    } finally {
       frame.free();
    }

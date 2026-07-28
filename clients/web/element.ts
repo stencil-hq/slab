@@ -433,6 +433,17 @@ export class SlabElement extends HTMLElement {
    #composing = false;
    #imeFieldKey = '';
    #focusNode = 0xffffffff;
+   // Driver-owned click chaining (browsers disagree on PointerEvent.detail):
+   // pointer downs within 500 ms and 6 px of the previous same-button down
+   // extend the chain, and the matching pointer up reports the same count.
+   #clickCount = 0;
+   #clickTime = 0;
+   #clickX = 0;
+   #clickY = 0;
+   #clickButton = -1;
+   // Painted text per kernel node id for the current frame (a11y mirror and
+   // SceneNode.text annotation share it).
+   #ownTexts = new Map<number, string>();
    #contextEdit: { start: number; end: number; x: number; y: number } | null = null;
    #contextTimer = 0;
    #ownImageUrls: string[] = [];
@@ -557,6 +568,16 @@ export class SlabElement extends HTMLElement {
    /** The most recently painted frame (null before the first paint). */
    get lastFrame(): Frame | null {
       return this.#lastFrame;
+   }
+
+   /** Cumulative per-instance diagnostics: every distinct diagnostic since
+    * the document mounted, in first-occurrence order (reset by SLIR swaps).
+    * `lastFrame.diagnostics` stays the per-solve stream; the bubbling
+    * `slab-diagnostics` CustomEvent still fires when that stream changes. */
+   get diagnostics(): readonly FrameDiagnostic[] {
+      const inst = this.#inst;
+      if (!inst) return [];
+      return JSON.parse(inst.diags_json()) as FrameDiagnostic[];
    }
 
    /** Mount or hot-swap SLIR bytes on a live element (live-preview hosts
@@ -741,6 +762,7 @@ export class SlabElement extends HTMLElement {
       this.#painter = null;
       this.#lastFrame = null;
       this.#scene = null;
+      this.#ownTexts.clear();
       this.#diagnosticsSignature = '';
    }
 
@@ -1032,12 +1054,22 @@ export class SlabElement extends HTMLElement {
             this.setPointerCapture(event.pointerId);
             this.#ime.focus({ preventScroll: true });
          }
+         const chained =
+            event.button === this.#clickButton &&
+            event.timeStamp - this.#clickTime <= 500 &&
+            Math.abs(x - this.#clickX) <= 6 &&
+            Math.abs(y - this.#clickY) <= 6;
+         this.#clickCount = chained ? this.#clickCount + 1 : 1;
+         this.#clickTime = event.timeStamp;
+         this.#clickX = x;
+         this.#clickY = y;
+         this.#clickButton = event.button;
          const effects = this.#dispatch(
             kernelEvent(E_POINTER_DOWN, {
                x,
                y,
                button: event.button,
-               clicks: event.detail,
+               clicks: this.#clickCount,
                modifiers: modsOf(event),
             }),
          );
@@ -1079,6 +1111,9 @@ export class SlabElement extends HTMLElement {
                dx: event.movementX,
                dy: event.movementY,
                button: event.button,
+               // The kernel stamps the CURRENT event's count into every signal
+               // meta, so the up must echo its down's chain count.
+               clicks: event.button === this.#clickButton ? this.#clickCount : 0,
                modifiers: modsOf(event),
             }),
          );
@@ -1906,6 +1941,7 @@ export class SlabElement extends HTMLElement {
       }
 
       let focused: HTMLDivElement | null = null;
+      let focusedNode: SceneNode | null = null;
       const focusable: HTMLDivElement[] = [];
       for (let index = 0; index < scene.length; index++) {
          const node = scene[index];
@@ -1924,7 +1960,9 @@ export class SlabElement extends HTMLElement {
          element.dataset.rotation = String(node.rotation);
          setSemanticTransform(element, node);
 
-         setOptionalAttribute(element, 'role', node.role || null);
+         // Kernel-edited fields are textboxes without host boilerplate; an
+         // authored role always wins.
+         setOptionalAttribute(element, 'role', node.role || (node.editable ? 'textbox' : null));
          setOptionalAttribute(element, 'aria-label', node.label || null);
          setOptionalAttribute(element, 'aria-description', node.desc || null);
          setOptionalAttribute(element, 'aria-checked', node.checked);
@@ -1954,11 +1992,28 @@ export class SlabElement extends HTMLElement {
          } else if (!editor && element.hasAttribute('contenteditable')) {
             element.removeAttribute('contenteditable');
          }
+         // Mirror the node's own painted text into the semantic node so live
+         // regions announce and textboxes expose their value; DOM nesting
+         // aggregates descendants for containers. The mirror rides a leading
+         // Text child and never touches semantic child elements. Skip the
+         // active editor mid-composition: the browser owns its text then.
+         if (!(editor && this.#composing)) {
+            const mirror = this.#ownTexts.get(node.node) ?? '';
+            const first = element.firstChild;
+            if (first instanceof Text) {
+               if (first.data !== mirror) first.data = mirror;
+            } else if (mirror !== '') {
+               element.prepend(mirror);
+            }
+         }
          const acceptsFocus =
             (node.flags & F_FOCUSABLE) !== 0 && (node.flags & F_INERT) === 0 && !node.disabled;
          if (acceptsFocus) {
             focusable.push(element);
-            if (node.focused) focused = element;
+            if (node.focused) {
+               focused = element;
+               focusedNode = node;
+            }
          } else {
             if (element.hasAttribute('tabindex')) element.removeAttribute('tabindex');
          }
@@ -1969,8 +2024,26 @@ export class SlabElement extends HTMLElement {
          if (element.tabIndex !== tabIndex) element.tabIndex = tabIndex;
       }
 
+      // Screen readers track kernel focus (FRAME.md a11y contract): while a
+      // field is being edited the IME textarea stays the browser focus holder
+      // and exposes the field through aria-activedescendant + the mirrored
+      // label (it is only aria-hidden while idle and unfocusable); any other
+      // kernel focus moves real DOM focus onto the focused semantic node.
+      const editing = this.#focusNode !== 0xffffffff;
+      if (editing) {
+         this.#ime.removeAttribute('aria-hidden');
+         setOptionalAttribute(this.#ime, 'aria-label', focusedNode?.label || null);
+         setOptionalAttribute(this.#ime, 'aria-activedescendant', focused?.id ?? null);
+      } else {
+         this.#ime.setAttribute('aria-hidden', 'true');
+         this.#ime.removeAttribute('aria-label');
+         this.#ime.removeAttribute('aria-activedescendant');
+      }
       const activeElement = this.shadowRoot?.activeElement;
-      if (focused && activeElement !== this.#ime && activeElement !== focused) {
+      // Never steal focus from outside the component; mirror only while the
+      // shadow tree already holds it.
+      if (activeElement === null || activeElement === undefined) return;
+      if (focused && activeElement !== focused && !(editing && activeElement === this.#ime)) {
          focused.focus({ preventScroll: true });
       } else if (
          !focused &&
@@ -1981,13 +2054,46 @@ export class SlabElement extends HTMLElement {
       }
    }
 
-   /** Return the current retained scene, stable until the next solve. */
+   /** Return the current retained scene, stable until the next solve. Each
+    * entry's `text` carries the subtree's painted text (scene order, lines
+    * joined with `\n`) so automation can assert what a node shows. */
    sceneSnapshot(): readonly SceneNode[] {
       const inst = this.#inst;
       if (!inst) return [];
-      const scene: readonly SceneNode[] = this.#scene ?? JSON.parse(inst.scene_json());
+      if (this.#scene) return this.#scene;
+      const scene: SceneNode[] = JSON.parse(inst.scene_json());
+      this.#annotateSceneText(scene);
       this.#scene = scene;
       return scene;
+   }
+
+   /** Fill `#ownTexts` from the painted frame, then each entry's subtree
+    * `text`. Scene order is pre-order, so a child's text lands on every
+    * ancestor by walking parent links; runs join with `\n` like SDP
+    * `scene.text`. */
+   #annotateSceneText(scene: SceneNode[]): void {
+      const own = this.#ownTexts;
+      own.clear();
+      const frame = this.#lastFrame;
+      if (frame) {
+         for (const op of frame.ops) {
+            if (op.tag !== 'Text') continue;
+            const text = frame.strings[op.v.str_ref] ?? '';
+            const previous = own.get(op.v.node);
+            own.set(op.v.node, previous === undefined ? text : `${previous}\n${text}`);
+         }
+      }
+      const parts: string[][] = scene.map(() => []);
+      for (let index = 0; index < scene.length; index++) {
+         const text = own.get(scene[index].node);
+         if (text === undefined) continue;
+         for (let ancestor = index; ancestor >= 0; ancestor = scene[ancestor].parent) {
+            parts[ancestor].push(text);
+         }
+      }
+      for (let index = 0; index < scene.length; index++) {
+         scene[index].text = parts[index].join('\n');
+      }
    }
 
    /** Test a point against a retained scene node, including clips and rotation. */

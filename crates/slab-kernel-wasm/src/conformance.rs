@@ -12,6 +12,12 @@ pub(crate) fn cells_text(instance: &mut Instance, time_ms: f64) -> String {
     cells::cells_to_text(&grid, true)
 }
 
+pub(crate) fn cells_attrs(instance: &mut Instance, time_ms: f64) -> String {
+    let solved = frame::inst_frame(instance, time_ms);
+    let grid = cells::cells_from_frame(&instance.doc, &solved, solved.width, solved.height);
+    cells::cells_attrs_text(&grid)
+}
+
 pub(crate) fn caps_report(
     instance: &mut Instance,
     time_ms: f64,

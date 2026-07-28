@@ -69,107 +69,161 @@ export function fontRulesCss(fonts: (FontCss | null)[]): string {
    return rules;
 }
 
-interface CoveredTextRun {
-   text: string;
-}
-
-interface MissingGlyphRun {
-   advance: number;
-   codepoint: number;
-}
-
-type CoveredRun = CoveredTextRun | MissingGlyphRun;
-
-interface CoveredTextState {
+interface TextRunState {
    font: number;
    size: number;
+   tracking: number;
    text: string;
+   /** Serialized uncovered codepoint ranges (`"3-5,9-12"`, `""` when covered). */
+   runs: string;
 }
 
-const coveredTextState = Symbol('slab.coveredTextState');
+const textRunState = Symbol('slab.textRunState');
 
-interface CoveredTextElement extends Element {
-   [coveredTextState]?: CoveredTextState;
+interface TextRunElement extends Element {
+   [textRunState]?: TextRunState;
 }
 
-function isGlyphModifier(codepoint: number): boolean {
-   const variationSelector =
-      (codepoint >= 0xfe00 && codepoint <= 0xfe0f) ||
-      (codepoint >= 0xe0100 && codepoint <= 0xe01ef);
-   return codepoint === 0x200d || variationSelector;
-}
+// Unicode 16.0.0 terminal-width-two ranges, ported verbatim from the kernel's
+// `graphemes::WIDE_LO`/`WIDE_HI` so fallback spans fill exactly the advance
+// the kernel charged. Keep in lockstep with crates/slab-kernel/src/graphemes.rs.
+// prettier-ignore
+const WIDE_LO = new Uint32Array([
+   0x1100, 0x231a, 0x2329, 0x23e9, 0x23f0, 0x23f3, 0x25fd, 0x2614, 0x2630, 0x2648, 0x267f, 0x268a,
+   0x2693, 0x26a1, 0x26aa, 0x26bd, 0x26c4, 0x26ce, 0x26d4, 0x26ea, 0x26f2, 0x26f5, 0x26fa, 0x26fd,
+   0x2705, 0x270a, 0x2728, 0x274c, 0x274e, 0x2753, 0x2757, 0x2795, 0x27b0, 0x27bf, 0x2b1b, 0x2b50,
+   0x2b55, 0x2e80, 0x2e9b, 0x2f00, 0x2ff0, 0x3041, 0x3099, 0x3105, 0x3131, 0x3190, 0x31ef, 0x3220,
+   0x3250, 0xa490, 0xa960, 0xac00, 0xf900, 0xfe10, 0xfe30, 0xfe54, 0xfe68, 0xff01, 0xffe0, 0x16fe0,
+   0x16ff0, 0x17000, 0x18800, 0x18cff, 0x1aff0, 0x1aff5, 0x1affd, 0x1b000, 0x1b132, 0x1b150,
+   0x1b155, 0x1b164, 0x1b170, 0x1d300, 0x1d360, 0x1f004, 0x1f0cf, 0x1f18e, 0x1f191, 0x1f200,
+   0x1f210, 0x1f240, 0x1f250, 0x1f260, 0x1f300, 0x1f32d, 0x1f337, 0x1f37e, 0x1f3a0, 0x1f3cf,
+   0x1f3e0, 0x1f3f4, 0x1f3f8, 0x1f440, 0x1f442, 0x1f4ff, 0x1f54b, 0x1f550, 0x1f57a, 0x1f595,
+   0x1f5a4, 0x1f5fb, 0x1f680, 0x1f6cc, 0x1f6d0, 0x1f6d5, 0x1f6dc, 0x1f6eb, 0x1f6f4, 0x1f7e0,
+   0x1f7f0, 0x1f90c, 0x1f93c, 0x1f947, 0x1fa70, 0x1fa80, 0x1fa8f, 0x1face, 0x1fadf, 0x1faf0,
+   0x20000, 0x30000,
+]);
+// prettier-ignore
+const WIDE_HI = new Uint32Array([
+   0x115f, 0x231b, 0x232a, 0x23ec, 0x23f0, 0x23f3, 0x25fe, 0x2615, 0x2637, 0x2653, 0x267f, 0x268f,
+   0x2693, 0x26a1, 0x26ab, 0x26be, 0x26c5, 0x26ce, 0x26d4, 0x26ea, 0x26f3, 0x26f5, 0x26fa, 0x26fd,
+   0x2705, 0x270b, 0x2728, 0x274c, 0x274e, 0x2755, 0x2757, 0x2797, 0x27b0, 0x27bf, 0x2b1c, 0x2b50,
+   0x2b55, 0x2e99, 0x2ef3, 0x2fd5, 0x303e, 0x3096, 0x30ff, 0x312f, 0x318e, 0x31e5, 0x321e, 0x3247,
+   0xa48c, 0xa4c6, 0xa97c, 0xd7a3, 0xfaff, 0xfe19, 0xfe52, 0xfe66, 0xfe6b, 0xff60, 0xffe6, 0x16fe4,
+   0x16ff1, 0x187f7, 0x18cd5, 0x18d08, 0x1aff3, 0x1affb, 0x1affe, 0x1b122, 0x1b132, 0x1b152,
+   0x1b155, 0x1b167, 0x1b2fb, 0x1d356, 0x1d376, 0x1f004, 0x1f0cf, 0x1f18e, 0x1f19a, 0x1f202,
+   0x1f23b, 0x1f248, 0x1f251, 0x1f265, 0x1f320, 0x1f335, 0x1f37c, 0x1f393, 0x1f3ca, 0x1f3d3,
+   0x1f3f0, 0x1f3f4, 0x1f43e, 0x1f440, 0x1f4fc, 0x1f53d, 0x1f54e, 0x1f567, 0x1f57a, 0x1f596,
+   0x1f5a4, 0x1f64f, 0x1f6c5, 0x1f6cc, 0x1f6d2, 0x1f6d7, 0x1f6df, 0x1f6ec, 0x1f6fc, 0x1f7eb,
+   0x1f7f0, 0x1f93a, 0x1f945, 0x1f9ff, 0x1fa7c, 0x1fa89, 0x1fac6, 0x1fadc, 0x1fae9, 0x1faf8,
+   0x2fffd, 0x3fffd,
+]);
 
-/** Split unsupported codepoints into non-inking runs with kernel advances. */
-function coveredText(
-   doc: Statics,
-   font: number,
-   size: number,
-   text: string,
-): string | CoveredRun[] {
-   if (font < 0) return text;
-   const start = doc.font_cmap_off[font] ?? 0;
-   const end = start + (doc.font_cmap_len[font] ?? 0);
-   const upem = doc.font_upem[font] ?? 0;
-   const defaultAdvance = upem > 0 ? ((doc.font_default_adv[font] ?? 0) * size) / upem : 0;
-   const runs: CoveredRun[] = [];
-   let retainedFrom = 0;
-   let offset = 0;
-   for (const character of text) {
-      const codepoint = character.codePointAt(0) ?? 0;
-      if (!isGlyphModifier(codepoint)) {
-         let low = start;
-         let high = end;
-         while (low < high) {
-            const middle = (low + high) >>> 1;
-            if (doc.font_cmap_cp[middle] < codepoint) low = middle + 1;
-            else high = middle;
-         }
-         if (low >= end || doc.font_cmap_cp[low] !== codepoint || doc.font_cmap_gid[low] === 0) {
-            if (retainedFrom < offset) runs.push({ text: text.slice(retainedFrom, offset) });
-            runs.push({ advance: defaultAdvance, codepoint });
-            retainedFrom = offset + character.length;
-         }
-      }
-      offset += character.length;
+/** Whether `cp` occupies two terminal cells (kernel `graphemes::cp_wide`). */
+function isWideCodepoint(cp: number): boolean {
+   if (cp < WIDE_LO[0]) return false;
+   let low = 0;
+   let high = WIDE_LO.length;
+   while (low < high) {
+      const middle = (low + high) >>> 1;
+      if (WIDE_LO[middle] <= cp) low = middle + 1;
+      else high = middle;
    }
-   if (runs.length === 0) return text;
-   if (retainedFrom < text.length) runs.push({ text: text.slice(retainedFrom) });
-   return runs;
+   return low !== 0 && cp <= WIDE_HI[low - 1];
 }
 
-/** Update one text op without rebuilding retained missing-glyph spacers. */
-function setCoveredText(
-   el: CoveredTextElement,
+/** Whether `cp` modifies neighboring glyphs without painting its own
+ * (kernel `graphemes::is_glyph_modifier`): ZWJ and variation selectors
+ * charge no fallback advance. */
+function isGlyphModifier(cp: number): boolean {
+   return cp === 0x200d || (cp >= 0xfe00 && cp <= 0xfe0f) || (cp >= 0xe0100 && cp <= 0xe01ef);
+}
+
+/** Kernel-charged base advance for one uncovered codepoint (FRAME.md
+ * fallback policy): the face's default advance scaled to `size`; callers add
+ * tracking per codepoint and double EAW-wide codepoints on mono faces. */
+function fallbackAdvance(doc: Statics, font: number, size: number): number {
+   const upem = doc.font_upem[font] ?? 0;
+   return upem > 0 ? ((doc.font_default_adv[font] ?? 0) * size) / upem : 0;
+}
+
+/** Uncovered codepoint ranges for one text op, or `null` when fully covered. */
+function uncoveredRanges(fr: Frame, uncovOff: number, uncovLen: number): Uint32Array | null {
+   if (uncovLen <= 0 || uncovOff < 0) return null;
+   return fr.uncovered.subarray(uncovOff, uncovOff + 2 * uncovLen);
+}
+
+/** Update one text op's runs without rebuilding retained fallback spans.
+ *
+ * Covered slices paint with the embedded face; kernel-marked uncovered
+ * slices paint through the browser's system-font fallback inside a fixed
+ * inline-block sized to the kernel-charged fallback advances, so painted
+ * geometry matches the solve on every client. */
+function setTextRuns(
+   el: TextRunElement,
    doc: Statics,
+   fr: Frame,
    font: number,
    size: number,
+   tracking: number,
    text: string,
+   uncovOff: number,
+   uncovLen: number,
 ): void {
-   const previous = el[coveredTextState];
-   if (previous?.font === font && previous.size === size && previous.text === text) return;
+   const ranges = font >= 0 ? uncoveredRanges(fr, uncovOff, uncovLen) : null;
+   const runsKey = ranges === null ? '' : ranges.join(',');
+   const previous = el[textRunState];
+   if (
+      previous?.font === font &&
+      previous.size === size &&
+      previous.tracking === tracking &&
+      previous.text === text &&
+      previous.runs === runsKey
+   ) {
+      return;
+   }
 
-   const covered = coveredText(doc, font, size, text);
-   if (typeof covered === 'string') {
-      el.textContent = covered;
+   if (ranges === null) {
+      el.textContent = text;
    } else {
+      // Split by codepoint offsets: runs are sorted, non-overlapping pairs.
+      const codepoints = [...text];
       const children: HTMLElement[] = [];
-      for (const run of covered) {
+      const pushCovered = (from: number, to: number): void => {
+         if (from >= to) return;
          const child = document.createElement('span');
-         if ('text' in run) {
-            child.dataset.slabCoveredRun = '';
-            child.textContent = run.text;
-            child.style.cssText =
-               'position:static;font:inherit;letter-spacing:inherit;white-space:inherit;';
-         } else {
-            child.dataset.slabMissing = `U+${run.codepoint.toString(16).toUpperCase()}`;
-            child.setAttribute('aria-hidden', 'true');
-            child.style.cssText = `position:static;display:inline-block;width:${run.advance}px;height:0;overflow:hidden;vertical-align:baseline;font:inherit;letter-spacing:inherit;`;
-         }
+         child.dataset.slabCoveredRun = '';
+         child.textContent = codepoints.slice(from, to).join('');
+         child.style.cssText =
+            'position:static;font:inherit;letter-spacing:inherit;white-space:inherit;';
          children.push(child);
+      };
+      let cursor = 0;
+      for (let run = 0; run < ranges.length; run += 2) {
+         const start = ranges[run];
+         const end = Math.min(ranges[run + 1], codepoints.length);
+         pushCovered(cursor, start);
+         if (start < end) {
+            const slice = codepoints.slice(start, end);
+            const base = fallbackAdvance(doc, font, size);
+            const mono = doc.font_class[font] === 1;
+            let width = 0;
+            for (const character of slice) {
+               const cp = character.codePointAt(0) ?? 0;
+               if (isGlyphModifier(cp)) continue;
+               width += base * (mono && isWideCodepoint(cp) ? 2 : 1) + tracking;
+            }
+            const child = document.createElement('span');
+            child.dataset.slabUncovered = '';
+            child.textContent = slice.join('');
+            child.style.cssText = `position:static;display:inline-block;width:${width}px;overflow:visible;vertical-align:baseline;font:inherit;letter-spacing:inherit;white-space:inherit;`;
+            children.push(child);
+         }
+         cursor = Math.max(cursor, end);
       }
+      pushCovered(cursor, codepoints.length);
       el.replaceChildren(...children);
    }
-   el[coveredTextState] = { font, size, text };
+   el[textRunState] = { font, size, tracking, text, runs: runsKey };
 }
 
 /** Converts the kernel's little-endian packed RGBA word into a CSS color. */
@@ -1135,7 +1189,17 @@ export class Painter {
                if (o.opacity !== 1) css += `opacity:${o.opacity};`;
                css += this.animations.get(o.node) ?? '';
                setCss(el, css);
-               setCoveredText(el, doc, o.font, o.size, fr.strings[o.str_ref]);
+               setTextRuns(
+                  el,
+                  doc,
+                  fr,
+                  o.font,
+                  o.size,
+                  o.tracking,
+                  fr.strings[o.str_ref],
+                  o.uncov_off,
+                  o.uncov_len,
+               );
                break;
             }
             case 'Image': {
