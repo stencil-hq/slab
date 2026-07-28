@@ -238,6 +238,9 @@ pub fn emit_text(out: &mut Vec<u32>, t: &flatten::OpText) {
     emit_paint(out, t.color_kind, t.color);
     emit(out, ",\"opacity\":");
     emit_num(out, t.opacity);
+    if t.strike {
+        emit(out, ",\"strike\":true");
+    }
     if t.color_kind == 2 {
         emit(out, ",\"grad_box\":[");
         emit_num(out, t.gx);

@@ -299,6 +299,9 @@ pub const A_SET_SIZE: u32 = 88u32;
 /// Conditional animation binding channel.
 pub const A_ANIMATE: u32 = 89u32;
 
+/// Inherited boolean text strike-through style.
+pub const A_STRIKE: u32 = 90u32;
+
 /// Parameter types stored in [`Doc::parm_type`] and host parameter values.
 pub const PARAM_TEXT: u32 = 0u32;
 

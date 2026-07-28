@@ -248,7 +248,7 @@ pub fn test_caret_geometry_honors_padding_and_alignment() {
     let mut f = fix_new();
     fill(&mut f, "ab", true, false, 100.0);
     let ri = style::build_rstyle(
-        &f.d, &mut f.st, 0, 255, false, 0, 1, 0, 14.0, 400.0, 1.2, 0.0,
+        &f.d, &mut f.st, 0, 255, false, 0, 1, 0, 14.0, 400.0, 1.2, 0.0, false,
     );
     let ri = usize::try_from(ri).expect("render style index must be non-negative");
     f.st.rs[ri].pad_l = 10.0;

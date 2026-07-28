@@ -106,6 +106,7 @@ pub struct Lay {
     pub seg_size: Vec<f64>,
     pub seg_weight: Vec<f64>,
     pub seg_tracking: Vec<f64>,
+    pub seg_strike: Vec<bool>,
     pub seg_color: Vec<u32>,
     /// 1 when the segment color is packed RGBA, 2 when it is a gradient handle.
     pub seg_color_kind: Vec<u32>,
@@ -150,6 +151,7 @@ pub fn lay_reset(l: &mut Lay) {
     l.seg_font.clear();
     l.seg_size.clear();
     l.seg_tracking.clear();
+    l.seg_strike.clear();
     l.seg_weight.clear();
     l.seg_color.clear();
     l.seg_color_kind.clear();
@@ -265,6 +267,7 @@ pub struct Inh {
     pub weight: f64,
     pub leading: f64,
     pub tracking: f64,
+    pub strike: bool,
 }
 
 /// Returns the inherited text style used at the document root.
@@ -277,6 +280,7 @@ pub fn inh_root() -> Inh {
         weight: 400.0,
         leading: 1.4,
         tracking: 0.0,
+        strike: false,
     }
 }
 
@@ -291,6 +295,7 @@ pub fn inh_of(st: &St, ri: i32) -> Inh {
         weight: style.weight,
         leading: style.leading,
         tracking: style.tracking,
+        strike: style.strike,
     }
 }
 
@@ -417,6 +422,7 @@ pub fn measure(
         inh.weight,
         inh.leading,
         inh.tracking,
+        inh.strike,
     );
     if swap {
         let tk = st.rs[idx(ri)].w_kind;
@@ -2436,6 +2442,7 @@ pub fn para_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &
             st.rs[idx(ri)].weight,
             st.rs[idx(ri)].leading,
             st.rs[idx(ri)].tracking,
+            st.rs[idx(ri)].strike,
         );
         let mut cs: Vec<u32> = vec![];
         for cp in st.rs[idx(sri)].content.chars().map(u32::from) {
@@ -2558,6 +2565,8 @@ pub fn para_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &
                         && style.fam == segment_style.fam
                         && style.weight == segment_style.weight
                         && style.tracking == segment_style.tracking
+                        && style.strike == segment_style.strike
+                        && style.color_kind == segment_style.color_kind
                         && style.color == segment_style.color)
             } else {
                 false
@@ -2678,6 +2687,7 @@ pub fn close_seg(d: &Doc, st: &St, l: &mut Lay, seg_start: i32, sri: i32, x: f64
     l.seg_tracking.push(st.rs[idx(sri)].tracking);
     l.seg_color.push(st.rs[idx(sri)].color);
     l.seg_color_kind.push(st.rs[idx(sri)].color_kind);
+    l.seg_strike.push(st.rs[idx(sri)].strike);
 }
 
 /// Measures an image while preserving its intrinsic aspect ratio.
@@ -3637,7 +3647,9 @@ mod attachment_tests {
         let mut roots = Vec::new();
         crate::test_list::roots(&d, &mut st, &mut roots);
         let row = roots[0];
-        let ri = style::build_rstyle(&d, &mut st, row, 255, false, 0, 1, 0, 14.0, 400.0, 1.2, 0.0);
+        let ri = style::build_rstyle(
+            &d, &mut st, row, 255, false, 0, 1, 0, 14.0, 400.0, 1.2, 0.0, false,
+        );
         let rule = &st.rs[idx(ri)];
 
         assert!(rule.has_attach);

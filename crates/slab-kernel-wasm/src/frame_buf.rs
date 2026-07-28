@@ -80,6 +80,7 @@ impl FrameBuf {
                         text.weight,
                         text.color,
                         text.color_kind,
+                        u32::from(text.strike),
                     ]);
                     f64s.extend([
                         text.x,
@@ -257,6 +258,7 @@ mod tests {
                     tracking: 0.5,
                     color: 0x1122_3344,
                     opacity: 0.75,
+                    strike: true,
                     color_kind: 1,
                     gx: 0.0,
                     gy: 0.0,
@@ -303,6 +305,7 @@ mod tests {
                 u32::MAX,
                 400,
                 0x1122_3344,
+                1,
                 1,
                 CLIP_POP,
                 GROUP_PUSH,

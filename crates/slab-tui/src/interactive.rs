@@ -82,7 +82,11 @@ fn cell_colors(g: &cells::CellGrid, ix: usize) -> (u32, u32) {
 fn cell_changed(old: &cells::CellGrid, new: &cells::CellGrid, ix: usize) -> bool {
     let (old_fg, old_bg) = cell_colors(old, ix);
     let (new_fg, new_bg) = cell_colors(new, ix);
-    old.ch[ix] != new.ch[ix] || old.cl[ix] != new.cl[ix] || old_fg != new_fg || old_bg != new_bg
+    old.ch[ix] != new.ch[ix]
+        || old.cl[ix] != new.cl[ix]
+        || old_fg != new_fg
+        || old_bg != new_bg
+        || old.flags[ix] & cells::CF_STRIKE != new.flags[ix] & cells::CF_STRIKE
 }
 
 /// Nearest xterm-256 index for 0xRRGGBB (6×6×6 cube + gray ramp).
@@ -117,6 +121,7 @@ pub struct Painter {
     cur_fg: u32,
     cur_bg: u32,
     cur_pos: Option<(i32, i32)>, // (row, col) the terminal cursor sits at
+    cur_strike: bool,
 }
 
 impl Painter {
@@ -137,14 +142,18 @@ impl Painter {
             cur_fg: cells::NO_COLOR,
             cur_bg: cells::NO_COLOR,
             cur_pos: None,
+            cur_strike: false,
         }
     }
 
-    fn sgr(&mut self, fg: u32, bg: u32) {
-        if fg == self.cur_fg && bg == self.cur_bg {
+    fn sgr(&mut self, fg: u32, bg: u32, strike: bool) {
+        if fg == self.cur_fg && bg == self.cur_bg && strike == self.cur_strike {
             return;
         }
         self.buf.push_str("\x1b[0");
+        if strike {
+            self.buf.push_str(";9");
+        }
         for (base, c) in [(38u8, fg), (48u8, bg)] {
             if c == cells::NO_COLOR {
                 continue;
@@ -163,6 +172,7 @@ impl Painter {
         self.buf.push('m');
         self.cur_fg = fg;
         self.cur_bg = bg;
+        self.cur_strike = strike;
     }
 
     /// Paints `grid` into the buffered terminal diff.
@@ -178,6 +188,7 @@ impl Painter {
             self.buf.push_str("\x1b[0m\x1b[2J");
             self.cur_fg = cells::NO_COLOR;
             self.cur_bg = cells::NO_COLOR;
+            self.cur_strike = false;
         }
         self.cur_pos = None;
         let vis_rows = g.rows.min(i32::from(rows));
@@ -206,7 +217,7 @@ impl Painter {
                 if self.cur_pos != Some((r, c)) {
                     self.buf.push_str(&format!("\x1b[{};{}H", r + 1, c + 1));
                 }
-                self.sgr(fg, bg);
+                self.sgr(fg, bg, g.flags[ix] & cells::CF_STRIKE != 0);
                 if g.cl[ix].is_empty() {
                     self.buf.push(char::from_u32(g.ch[ix]).unwrap_or(' '));
                 } else {

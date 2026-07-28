@@ -1628,6 +1628,39 @@ impl Renderer {
                         };
                         fb.push_glyph(clip.scissor, inst);
                     }
+                    if t.strike && t.measured_w > 0.0 {
+                        let mut fill = rgba(t.color, t.opacity);
+                        let mut gradient = -1.0;
+                        let mut direction = [0.0, 0.0];
+                        if t.color_kind == 2 && t.color < self.docs[li.doc_id].grad_count {
+                            let index = t.color as usize;
+                            gradient = (self.docs[li.doc_id].grad_base + t.color) as f32;
+                            direction = grad_dir(
+                                doc.grad_kind[index],
+                                doc.grad_angle[index],
+                                t.measured_w as f32 * s,
+                                (t.size / 16.0).max(1.0 / f64::from(s)) as f32 * s,
+                            );
+                            fill = [0.0, 0.0, 0.0, t.opacity as f32];
+                        }
+                        let thickness = (t.size * f64::from(s) / 16.0).max(1.0) as f32;
+                        let cx = ((t.x + t.measured_w / 2.0) as f32 + ox) * s;
+                        let cy = ((t.y_baseline - t.size * 0.3) as f32 + oy) * s;
+                        fb.push_rect(
+                            clip.scissor,
+                            RectI {
+                                mabcd: [mat.a, mat.b, mat.c, mat.d],
+                                mtc: [mat.tx, mat.ty, cx, cy],
+                                hrs: [(t.measured_w / 2.0) as f32 * s, thickness / 2.0, 0.0, 0.0],
+                                sg: [0.0, 0.0, gradient, direction[0]],
+                                dc: [direction[1], clip.radius, clip.sdf[0], clip.sdf[1]],
+                                c2: [clip.sdf[2], clip.sdf[3], 0.0, 0.0],
+                                fill,
+                                stroke: [0.0; 4],
+                                g2: [0.0, 1.0, -1.0, 0.0],
+                            },
+                        );
+                    }
                 }
                 FrameOp::Image(im) => {
                     let cx = ((im.x + im.w / 2.0) as f32 + ox) * s;

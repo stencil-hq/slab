@@ -1,9 +1,9 @@
 //! Per-node style resolution.
 //!
 //! Base attributes are overlaid by active conditional patches in document
-//! order (last wins), then parameter and list-property references are
-//! resolved. This module also applies the sizing defaults and the inherited
-//! text-style whitelist: color, family, size, weight, leading, and tracking.
+//! order (last wins). Parameter and list-property references resolve next.
+//! The inherited text-style whitelist includes color, family, size, weight,
+//! leading, tracking, and strike.
 //!
 //! Runtime layers include node states maintained by dispatch, scroll offsets
 //! owned by the host and dispatch, field text overrides maintained by editing,
@@ -12,7 +12,7 @@
 //! inputs. Overlay tuples are stored in [`St::mo_f`] under [`T_OV_TUPLE`].
 use rustc_hash::FxHashMap;
 
-const ATTR_COUNT: usize = 90;
+const ATTR_COUNT: usize = 91;
 
 /// Mutable style-resolution state owned by an instance.
 ///
@@ -1874,6 +1874,7 @@ pub struct RStyle {
     pub weight: f64,
     pub leading: f64,
     pub tracking: f64,
+    pub strike: bool,
     pub color: u32,
     /// 1 when `color` is packed RGBA, 2 when it is a gradient handle.
     pub color_kind: u32,
@@ -2052,6 +2053,7 @@ pub fn build_rstyle(
     inh_weight: f64,
     inh_leading: f64,
     inh_tracking: f64,
+    inh_strike: bool,
 ) -> i32 {
     let b = prepare_attrs(d, st, node);
     let base = index_u32(b);
@@ -2333,6 +2335,8 @@ pub fn build_rstyle(
     st.rs[ri].weight = crate::style::attr_num(d, st, node, crate::slir::A_WEIGHT, inh_weight);
     st.rs[ri].leading = crate::style::attr_num(d, st, node, crate::slir::A_LEADING, inh_leading);
     st.rs[ri].tracking = crate::style::attr_num(d, st, node, crate::slir::A_TRACKING, inh_tracking);
+    st.rs[ri].strike =
+        crate::style::attr_num(d, st, node, crate::slir::A_STRIKE, f64::from(inh_strike)) != 0.0;
     let col = crate::style::attr_val(d, st, node, crate::slir::A_COLOR);
     if (col.tag == crate::slir::T_COLOR) || (col.tag == crate::slir::T_PAINT_SOLID) {
         st.rs[ri].color = col.h;
@@ -2563,6 +2567,7 @@ pub fn rstyle_default(node: u32, kind: u32, line: u32) -> crate::style::RStyle {
         weight: 400.0f64,
         leading: 1.4f64,
         tracking: 0.0f64,
+        strike: false,
         color: 0x111111FFu32,
         color_kind: 1u32,
         talign: 0u32,

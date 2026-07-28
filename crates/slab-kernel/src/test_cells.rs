@@ -63,6 +63,7 @@ pub fn text_op(x: f64, y_baseline: f64, str_ref: i32, color: u32) -> OpText {
         tracking: 0.0,
         color,
         opacity: 1.0,
+        strike: false,
         color_kind: 1,
         gx: 0.0,
         gy: 0.0,
@@ -653,6 +654,21 @@ pub fn test_serialize() {
     assert!(
         str_eq(&ansi, "\u{1B}[0;38;2;255;0;0mA\u{1B}[0m\n"),
         "ansi: sgr on change, reset at row end"
+    );
+
+    let mut strike_frame = flatten::frame_new();
+    strike_frame.strings.push("S".to_owned());
+    let mut strike_op = text_op(0.0, 12.0, 0, 0x1111_11FF);
+    strike_op.strike = true;
+    strike_frame.ops.push(FrameOp::Text(strike_op));
+    let strike_grid = cells::cells_from_frame(&doc, &strike_frame, 8.0, 16.0);
+    assert_ne!(strike_grid.flags[0] & cells::CF_STRIKE, 0);
+    assert!(
+        str_eq(
+            &cells::cells_to_text(&strike_grid, false),
+            "\u{1B}[0;9mS\u{1B}[0m\n"
+        ),
+        "strike uses ANSI SGR 9"
     );
 
     let mut default_frame = flatten::frame_new();

@@ -74,6 +74,9 @@ pub const CF_FG: u32 = 1;
 /// Indicates that a cell has an explicit background color.
 pub const CF_BG: u32 = 2;
 
+/// Indicates that a cell uses terminal strike-through decoration.
+pub const CF_STRIKE: u32 = 4;
+
 /// A row-major terminal cell grid and its rendering diagnostics.
 #[derive(Clone, Debug)]
 pub struct CellGrid {
@@ -334,7 +337,7 @@ fn is_clipped_in(grid: &CellGrid, column: i32, row: i32) -> bool {
 fn blank_glyph_raw(grid: &mut CellGrid, index: usize) {
     grid.ch[index] = 32;
     grid.cl[index].clear();
-    grid.flags[index] &= !CF_FG;
+    grid.flags[index] &= !(CF_FG | CF_STRIKE);
 }
 
 fn clear_wide_touching(grid: &mut CellGrid, column: i32, row: i32) {
@@ -357,6 +360,7 @@ fn clear_wide_touching(grid: &mut CellGrid, column: i32, row: i32) {
 fn put_raw(grid: &mut CellGrid, index: usize, ch: u32, fg: u32, bg: u32) {
     grid.ch[index] = ch;
     grid.cl[index].clear();
+    grid.flags[index] &= !(CF_FG | CF_STRIKE);
     if fg != NO_COLOR {
         grid.fg[index] = fg;
         grid.flags[index] |= CF_FG;
@@ -895,6 +899,14 @@ pub fn draw_text(
             put_wide_cluster(grid, column, row, first, &full_cluster, foreground);
         } else {
             put_cluster(grid, column, row, first, &full_cluster, foreground);
+        }
+        if text_op.strike {
+            if let Some(index) = cell_index(grid, column, row) {
+                grid.flags[index] |= CF_STRIKE;
+            }
+            if wide && let Some(index) = cell_index(grid, column.wrapping_add(1), row) {
+                grid.flags[index] |= CF_STRIKE;
+            }
         }
         column_offset = column_offset.wrapping_add(if wide { 2 } else { 1 });
     }
@@ -1509,6 +1521,7 @@ pub fn cells_to_text(grid: &CellGrid, plain: bool) -> String {
         } else {
             let mut current_fg = NO_COLOR;
             let mut current_bg = NO_COLOR;
+            let mut current_strike = false;
             for column in 0..grid.cols {
                 let index = index(row.wrapping_mul(grid.cols).wrapping_add(column));
                 let flags = grid.flags[index];
@@ -1522,9 +1535,14 @@ pub fn cells_to_text(grid: &CellGrid, plain: bool) -> String {
                 } else {
                     NO_COLOR
                 };
-                if foreground != current_fg || background != current_bg {
+                let strike = flags & CF_STRIKE != 0;
+                if foreground != current_fg || background != current_bg || strike != current_strike
+                {
                     // ESC [ 0, followed by optional truecolor foreground/background.
                     line.extend([27, u32::from('['), u32::from('0')]);
+                    if strike {
+                        line.extend([u32::from(';'), u32::from('9')]);
+                    }
                     if foreground != NO_COLOR {
                         line.push(u32::from(';'));
                         push_sgr(&mut line, 38, foreground);
@@ -1536,6 +1554,7 @@ pub fn cells_to_text(grid: &CellGrid, plain: bool) -> String {
                     line.push(u32::from('m'));
                     current_fg = foreground;
                     current_bg = background;
+                    current_strike = strike;
                 }
                 push_cell_text(
                     &mut line,

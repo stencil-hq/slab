@@ -66,6 +66,8 @@ pub struct OpText {
     pub tracking: f64,
     pub color: u32,
     pub opacity: f64,
+    /// Whether the renderer paints a line through this text run.
+    pub strike: bool,
     /// `1` when `color` is packed RGBA, `2` when it is a gradient handle.
     pub color_kind: u32,
     /// Gradient box (the text node's content box); zero when `color_kind` is 1.
@@ -1090,6 +1092,7 @@ fn walk_node(
                 tracking: rule.tracking,
                 color: rule.color,
                 opacity: 1.0,
+                strike: rule.strike,
                 color_kind: rule.color_kind,
                 gx: 0.0,
                 gy: 0.0,
@@ -1151,6 +1154,7 @@ fn walk_node(
                     tracking: l.seg_tracking[segment_index],
                     color: l.seg_color[segment_index],
                     opacity: 1.0,
+                    strike: l.seg_strike[segment_index],
                     color_kind: seg_kind,
                     gx: 0.0,
                     gy: 0.0,
