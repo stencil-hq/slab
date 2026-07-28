@@ -17,6 +17,10 @@ fn usage_err(msg: &str) -> ExitCode {
 }
 
 pub fn cmd_gen_rust(args: &[String]) -> ExitCode {
+    if args == ["--help"] || args == ["-h"] {
+        println!("{GEN_USAGE}");
+        return ExitCode::SUCCESS;
+    }
     let mut file: Option<PathBuf> = None;
     let mut out: Option<PathBuf> = None;
     let mut it = args.iter();

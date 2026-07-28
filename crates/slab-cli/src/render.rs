@@ -160,6 +160,10 @@ fn print_diags(diags: &Diagnostics, file: &str) {
 }
 
 pub fn cmd_render(args: &[String]) -> ExitCode {
+    if args == ["--help"] || args == ["-h"] {
+        print!("{USAGE}");
+        return ExitCode::SUCCESS;
+    }
     let a = match parse(args) {
         Ok(a) => a,
         Err(e) => {

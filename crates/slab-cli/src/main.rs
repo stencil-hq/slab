@@ -32,6 +32,16 @@ commands:
   gen wc FILE -o DIR [--tag NAME] [--separate-ir]   emit a web-component module
   gen rust FILE -o OUT.rs                  emit a typed Rust module (native client)
 ";
+const CHECK_USAGE: &str = "\
+usage: slab check FILE [--width N] [--height N] [--state a,b]
+                       [--env portrait,dark,coarse] [--client web|gpu|tui|svg|png]
+";
+const BUILD_USAGE: &str = "usage: slab build FILE -o OUT.slir [--no-embed-assets]\n";
+const DUMP_USAGE: &str = "usage: slab dump FILE.slir\n";
+const GEN_USAGE: &str = "\
+usage: slab gen wc FILE -o DIR [--tag NAME] [--separate-ir]
+       slab gen rust FILE -o OUT.rs
+";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -40,8 +50,20 @@ fn main() -> ExitCode {
         return ExitCode::from(2);
     };
     match cmd.as_str() {
+        "check" if args[1..] == ["--help"] || args[1..] == ["-h"] => {
+            print!("{CHECK_USAGE}");
+            ExitCode::SUCCESS
+        }
         "check" => cmd_check(&args[1..]),
+        "build" if args[1..] == ["--help"] || args[1..] == ["-h"] => {
+            print!("{BUILD_USAGE}");
+            ExitCode::SUCCESS
+        }
         "build" => cmd_build(&args[1..]),
+        "dump" if args[1..] == ["--help"] || args[1..] == ["-h"] => {
+            print!("{DUMP_USAGE}");
+            ExitCode::SUCCESS
+        }
         "dump" => cmd_dump(&args[1..]),
         "fmt" => cmd_fmt(&args[1..]),
         "conformance" => conformance::cmd_conformance(&args[1..]),
@@ -50,6 +72,10 @@ fn main() -> ExitCode {
         "lsp" => {
             let code = slab_lsp::serve(std::io::stdin().lock(), std::io::stdout().lock());
             ExitCode::from(code.clamp(0, 255) as u8)
+        }
+        "gen" if args[1..] == ["--help"] || args[1..] == ["-h"] => {
+            print!("{GEN_USAGE}");
+            ExitCode::SUCCESS
         }
         "gen" => match args.get(1).map(String::as_str) {
             Some("wc") => gen_wc::cmd_gen_wc(&args[2..]),
@@ -124,6 +150,7 @@ fn print_diags(diags: &Diagnostics, file: &str) {
 pub(crate) fn compile_file(
     path: &Path,
     embed_assets: bool,
+    standalone_exports: bool,
 ) -> (Option<slab_slir::Slir>, Diagnostics) {
     let src = match std::fs::read_to_string(path) {
         Ok(s) => s,
@@ -139,7 +166,11 @@ pub(crate) fn compile_file(
         assets: None,
         fonts: std::collections::HashMap::new(),
     };
-    slab_compile::compile(&src, &opts)
+    if standalone_exports {
+        slab_compile::compile_with_exports(&src, &opts)
+    } else {
+        slab_compile::compile(&src, &opts)
+    }
 }
 
 fn cmd_check(args: &[String]) -> ExitCode {
@@ -157,7 +188,7 @@ fn cmd_check(args: &[String]) -> ExitCode {
         eprintln!("error: check needs a FILE");
         return ExitCode::from(2);
     };
-    let (_, diags) = compile_file(&file, false);
+    let (_, diags) = compile_file(&file, false, true);
     let name = file.display().to_string();
     print_diags(&diags, &name);
     if diags.has_errors() {
@@ -250,7 +281,7 @@ fn cmd_build(args: &[String]) -> ExitCode {
         eprintln!("error: build needs FILE and -o OUT.slir");
         return ExitCode::from(2);
     };
-    let (slir, diags) = compile_file(&file, p.embed_assets);
+    let (slir, diags) = compile_file(&file, p.embed_assets, false);
     let name = file.display().to_string();
     print_diags(&diags, &name);
     let Some(slir) = slir else {

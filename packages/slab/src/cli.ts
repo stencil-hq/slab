@@ -26,16 +26,39 @@ commands:
   render FILE -o OUT.{svg,png,apng,txt}    static export (see \`slab render --help\`)
   gen wc FILE -o DIR [--tag NAME] [--separate-ir]   emit a web-component module
   gen rust FILE -o OUT.rs                  emit a typed Rust module (native client)
+  drive                                    requires native slab-cli (see below)
+
+drive requires the native slab-cli:
+  cargo install --git https://github.com/stencil-hq/slab slab-cli
+`;
+const CHECK_USAGE = `usage: slab check FILE [--width N] [--height N] [--state a,b]
+                       [--env portrait,dark,coarse] [--client web|gpu|tui|svg|png]
+`;
+const BUILD_USAGE = 'usage: slab build FILE -o OUT.slir [--no-embed-assets]\n';
+const DUMP_USAGE = 'usage: slab dump FILE.slir\n';
+const RENDER_USAGE = `usage: slab render FILE [-o OUT.{svg,png,apng,txt}]
+                        [--client web|gpu|tui|svg|png] [--width N] [--height N]
+                        [--scale N] [--t MS] [--dur S] [--fps N]
+                        [--state a,b] [--env portrait,dark,coarse]
+                        [--set param=value]... [--plain]
+`;
+const GEN_USAGE = `usage: slab gen wc FILE -o DIR [--tag NAME] [--separate-ir]
+       slab gen rust FILE -o OUT.rs
+`;
+const DRIVE_USAGE = `usage: slab drive [FILE] [OPTIONS]
+
+drive requires the native slab-cli:
+  cargo install --git https://github.com/stencil-hq/slab slab-cli
 `;
 
 function b64(buf: Buffer): string {
    return buf.toString('base64');
 }
 
-/** Read image assets the document references, relative to the .slab's dir,
- *  into a `{src: base64}` JSON string. Missing files are skipped (the
- *  compiler emits its own `image not found` warning). */
-function assetsJsonFor(src: string, baseDir: string): string {
+/** Read image assets relative to the `.slab` file into a JSON map.
+ *  `$slabSourceName` carries generator attribution when supplied. Missing
+ *  files stay absent, so the compiler emits its normal warning. */
+function assetsJsonFor(src: string, baseDir: string, sourceName?: string): string {
    const W = wasm();
    let srcs: string[] = [];
    try {
@@ -44,6 +67,7 @@ function assetsJsonFor(src: string, baseDir: string): string {
       srcs = [];
    }
    const map: Record<string, string> = {};
+   if (sourceName !== undefined) map.$slabSourceName = sourceName;
    for (const s of srcs) {
       const p = join(baseDir, s);
       if (existsSync(p)) {
@@ -325,7 +349,7 @@ function cmdGenWc(args: string[]): void {
          .pop() ?? 'slab';
    const W = wasm();
    const assetsJson = assetsJsonFor(src, baseDir);
-   const optsJson = JSON.stringify({ tag, separateIr, stem });
+   const optsJson = JSON.stringify({ tag, separateIr, stem, sourceName: file });
    let resultJson: string;
    try {
       resultJson = W.gen_wc(src, optsJson, assetsJson);
@@ -373,7 +397,7 @@ function cmdGenRust(args: string[]): void {
    if (!file || !out) usageErr('gen rust needs FILE and -o OUT.rs');
    const { src, baseDir } = readSource(file);
    const W = wasm();
-   const assetsJson = assetsJsonFor(src, baseDir);
+   const assetsJson = assetsJsonFor(src, baseDir, file);
    let resultJson: string;
    try {
       resultJson = W.gen_rust(src, assetsJson);
@@ -397,6 +421,34 @@ if (!cmd) {
    process.exit(2);
 }
 const rest = args.slice(1);
+if (
+   cmd === 'gen' &&
+   rest.length === 2 &&
+   (rest[1] === '--help' || rest[1] === '-h') &&
+   (rest[0] === 'wc' || rest[0] === 'rust')
+) {
+   process.stdout.write(
+      rest[0] === 'wc'
+         ? 'usage: slab gen wc FILE -o DIR [--tag NAME] [--separate-ir]\n'
+         : 'usage: slab gen rust FILE -o OUT.rs\n',
+   );
+   process.exit(0);
+}
+const help = rest.length === 1 && (rest[0] === '--help' || rest[0] === '-h');
+if (help) {
+   const usage = {
+      check: CHECK_USAGE,
+      build: BUILD_USAGE,
+      dump: DUMP_USAGE,
+      render: RENDER_USAGE,
+      gen: GEN_USAGE,
+      drive: DRIVE_USAGE,
+   }[cmd];
+   if (usage !== undefined) {
+      process.stdout.write(usage);
+      process.exit(0);
+   }
+}
 switch (cmd) {
    case 'check':
       cmdCheck(rest);
@@ -415,6 +467,10 @@ switch (cmd) {
       else if (rest[0] === 'rust') cmdGenRust(rest.slice(1));
       else if (rest[0]) usageErr(`unknown gen target '${rest[0]}'`);
       else usageErr('gen needs a target (wc)');
+      break;
+   case 'drive':
+      process.stderr.write(DRIVE_USAGE);
+      process.exit(2);
       break;
    case '--help':
    case '-h':

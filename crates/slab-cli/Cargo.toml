@@ -14,5 +14,6 @@ slab-slir = { path = "../slab-slir" }
 slab-compile = { path = "../slab-compile" }
 slab-fonts = { path = "../slab-fonts" }
 slab-kernel = { path = "../slab-kernel" }
+slab-drive = { path = "../slab-drive" }
 slab-lsp = { path = "../slab-lsp" }
 serde_json.workspace = true

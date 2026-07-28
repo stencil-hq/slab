@@ -1,18 +1,13 @@
 [package]
-name = "slab-tui"
+name = "slab-drive"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
-[lib]
-path = "src/lib.rs"
-
-[[bin]]
-name = "slab-tui"
-path = "src/main.rs"
-
 [dependencies]
-crossterm.workspace = true
-slab-compile = { path = "../slab-compile" }
+slab-syntax = { path = "../slab-syntax" }
 slab-slir = { path = "../slab-slir" }
+slab-compile = { path = "../slab-compile" }
+slab-fonts = { path = "../slab-fonts" }
 slab-kernel = { path = "../slab-kernel" }
+serde_json.workspace = true

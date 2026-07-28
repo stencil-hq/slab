@@ -34,6 +34,10 @@ fn write_output(out: &Path, name: &str, bytes: &[u8]) -> Result<(), String> {
 }
 
 pub fn cmd_gen_wc(args: &[String]) -> ExitCode {
+    if args == ["--help"] || args == ["-h"] {
+        println!("{GEN_USAGE}");
+        return ExitCode::SUCCESS;
+    }
     let mut file: Option<PathBuf> = None;
     let mut out: Option<PathBuf> = None;
     let mut tag: Option<String> = None;
