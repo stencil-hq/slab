@@ -553,19 +553,16 @@ pub struct Raster<'a> {
 }
 
 struct GlyphSink {
-	pb: PathBuilder,
-	s:  f32,
-	dx: f32,
-	dy: f32,
+	pb:   PathBuilder,
+	s:    f32,
+	dx:   f32,
+	dy:   f32,
 	skew: f32,
 }
 
 impl GlyphSink {
 	fn point(&self, x: f32, y: f32) -> (f32, f32) {
-		(
-			x.mul_add(self.s, y * self.s * self.skew + self.dx),
-			y.mul_add(-self.s, self.dy),
-		)
+		(x.mul_add(self.s, (y * self.s).mul_add(self.skew, self.dx)), y.mul_add(-self.s, self.dy))
 	}
 }
 
@@ -1330,11 +1327,7 @@ impl<'a> Raster<'a> {
 			face.outline_glyph(ttf_parser::GlyphId(glyph.gid as u16), &mut sink);
 		}
 		for (enabled, center, thickness) in [
-			(
-				op.strike,
-				op.size.mul_add(-0.3, op.y_baseline) * s,
-				(op.size * s / 16.0).max(1.0),
-			),
+			(op.strike, op.size.mul_add(-0.3, op.y_baseline) * s, (op.size * s / 16.0).max(1.0)),
 			(
 				op.underline,
 				(op.y_baseline + op.underline_offset) * s,
@@ -1411,10 +1404,10 @@ impl<'a> Raster<'a> {
 			if let Some(gid) = face.glyph_index(ch) {
 				if ch != ' ' {
 					let mut sink = GlyphSink {
-						pb: PathBuilder::new(),
-						s:  (size_px / upem) as f32,
-						dx: pen as f32,
-						dy: ybase as f32,
+						pb:   PathBuilder::new(),
+						s:    (size_px / upem) as f32,
+						dx:   pen as f32,
+						dy:   ybase as f32,
 						skew: 0.0,
 					};
 					if face.outline_glyph(gid, &mut sink).is_some()

@@ -2,7 +2,7 @@
 //! Swift clients.
 //!
 //! Go and Python embed deterministic gzip bytes. Swift embeds the raw module
-//! because WasmKit accepts uncompressed bytes and Foundation has no portable
+//! because `WasmKit` accepts uncompressed bytes and Foundation has no portable
 //! gzip decoder.
 
 use std::{

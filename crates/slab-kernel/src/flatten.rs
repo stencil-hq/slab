@@ -57,47 +57,47 @@ pub struct OpRect {
 /// A positioned text run referencing the frame-local string pool.
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct OpText {
-	pub node:       u32,
-	pub x:          f64,
-	pub y_baseline: f64,
+	pub node:                u32,
+	pub x:                   f64,
+	pub y_baseline:          f64,
 	/// Index into [`Frame::strings`].
-	pub str_ref:    i32,
-	pub measured_w: f64,
+	pub str_ref:             i32,
+	pub measured_w:          f64,
 	/// Font table index, or `-1` when the document has no matching font.
-	pub font:       i32,
-	pub size:       f64,
-	pub weight:     u32,
-	pub tracking:   f64,
-	pub color:      u32,
-	pub opacity:    f64,
+	pub font:                i32,
+	pub size:                f64,
+	pub weight:              u32,
+	pub tracking:            f64,
+	pub color:               u32,
+	pub opacity:             f64,
 	/// Whether the renderer paints a line through this text run.
-	pub strike:     bool,
+	pub strike:              bool,
 	/// Whether the renderer selects or synthesizes an oblique face.
-	pub italic:     bool,
+	pub italic:              bool,
 	/// Whether the renderer paints an underline.
-	pub underline:  bool,
+	pub underline:           bool,
 	/// Underline center offset below the baseline.
-	pub underline_offset: f64,
+	pub underline_offset:    f64,
 	/// Underline thickness in layout units.
 	pub underline_thickness: f64,
 	/// `1` when `color` is packed RGBA, `2` when it is a gradient handle.
-	pub color_kind: u32,
+	pub color_kind:          u32,
 	/// Gradient box (the text node's content box); zero when `color_kind` is 1.
-	pub gx:         f64,
-	pub gy:         f64,
-	pub gw:         f64,
-	pub gh:         f64,
+	pub gx:                  f64,
+	pub gy:                  f64,
+	pub gw:                  f64,
+	pub gh:                  f64,
 	/// Start of this run's pairs in [`Frame::uncovered`]; `0` when `uncov_len`
 	/// is `0`.
-	pub uncov_off:  i32,
+	pub uncov_off:           i32,
 	/// Number of uncovered-glyph codepoint runs in [`Frame::uncovered`].
-	pub uncov_len:  i32,
+	pub uncov_len:           i32,
 	/// Start of this run's positioned glyphs in [`Frame::glyphs`].
-	pub glyph_off:  i32,
+	pub glyph_off:           i32,
 	/// Number of positioned glyphs in [`Frame::glyphs`].
-	pub glyph_len:  i32,
+	pub glyph_len:           i32,
 	/// Whether this run has right-to-left glyph order.
-	pub rtl:        bool,
+	pub rtl:                 bool,
 }
 
 /// A positioned image operation.
@@ -332,7 +332,8 @@ pub struct Frame {
 	/// Flat `[start, end)` codepoint-offset pairs of uncovered-glyph runs,
 	/// addressed by [`OpText::uncov_off`] and [`OpText::uncov_len`].
 	pub uncovered:   Vec<u32>,
-	/// Positioned glyphs addressed by [`OpText::glyph_off`] and [`OpText::glyph_len`].
+	/// Positioned glyphs addressed by [`OpText::glyph_off`] and
+	/// [`OpText::glyph_len`].
 	pub glyphs:      Vec<FrameGlyph>,
 	/// Runtime paths referenced by negative [`OpPath::path`] values.
 	pub paths_rt:    Vec<RtPath>,
@@ -1162,8 +1163,8 @@ fn walk_node(
 			let line_origin = (content_width - text_layout.line_w[line_index])
 				.mul_add(alignment, x + padding_left)
 				- field_scroll_x;
-			let baseline = f64::from(line)
-				.mul_add(text_layout.line_h, y + padding_top + text_layout.ascent);
+			let baseline =
+				f64::from(line).mul_add(text_layout.line_h, y + padding_top + text_layout.ascent);
 			for run in &text_layout.shaped[line_index].runs {
 				if run.end <= run.start {
 					continue;
@@ -1257,15 +1258,9 @@ fn walk_node(
 				}
 				for run in &l.seg_shaped[segment_index].runs {
 					let string_ref = push_str_slice(fr, &l.para_chars, run.start, run.end);
-					let (uncov_off, uncov_len) =
-						push_uncovered_runs(d, fr, run.font, string_ref);
-					let (glyph_off, glyph_len) = push_shaped_glyphs(
-						fr,
-						run,
-						segment_origin,
-						baseline,
-						l.seg_size[segment_index],
-					);
+					let (uncov_off, uncov_len) = push_uncovered_runs(d, fr, run.font, string_ref);
+					let (glyph_off, glyph_len) =
+						push_shaped_glyphs(fr, run, segment_origin, baseline, l.seg_size[segment_index]);
 					let (underline_offset, underline_thickness) =
 						textm::underline_geometry(d, run.font, l.seg_size[segment_index]);
 					let font_weight = if run.font >= 0 {

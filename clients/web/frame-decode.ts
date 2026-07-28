@@ -70,6 +70,12 @@ function decodeDiagnostics(json: string): FrameDiagnostic[] {
    }
    return diagnostics;
 }
+function decodeGlyphs(json: string): FrameGlyph[] {
+   const value: unknown = JSON.parse(json);
+   if (!Array.isArray(value)) throw new Error('invalid FrameBuf glyphs: expected an array');
+   return value as FrameGlyph[];
+}
+
 
 /** Consumes a bindgen frame buffer and reconstructs the painter operation stream. */
 export function decodeFrame(frame: FrameBuf): Frame {
@@ -82,6 +88,7 @@ export function decodeFrame(frame: FrameBuf): Frame {
       const motionActive = frame.motion_active();
       const diagnostics = decodeDiagnostics(frame.diagnostics_json());
       const uncovered = frame.uncovered_u32s();
+      const glyphs = decodeGlyphs(frame.glyphs_json ? frame.glyphs_json() : '[]');
       let wi = 0;
       let fi = 0;
 
@@ -147,6 +154,8 @@ export function decodeFrame(frame: FrameBuf): Frame {
                      italic: u32('Text.italic') !== 0,
                      underline: u32('Text.underline') !== 0,
                      rtl: u32('Text.rtl') !== 0,
+                     glyph_off: signedWord(u32('Text.glyph_off')),
+                     glyph_len: signedWord(u32('Text.glyph_len')),
                      x: f64('Text.x'),
                      y_baseline: f64('Text.y_baseline'),
                      measured_w: f64('Text.measured_w'),
@@ -305,12 +314,14 @@ export function decodeFrame(frame: FrameBuf): Frame {
          width,
          height,
          ops,
+         scene: [],
          strings,
+         uncovered,
+         glyphs,
          pathsRt,
          dirty,
          motionActive,
          diagnostics,
-         uncovered,
       };
    } finally {
       frame.free();

@@ -53,7 +53,8 @@ fn token_tval(value: &RVal) -> Option<TVal> {
 		_ => None,
 	}
 }
-/// Collects authored family names and exact numeric weights from an attribute run.
+/// Collects authored family names and exact numeric weights from an attribute
+/// run.
 fn collect_font_attrs(
 	attrs: &[AttrE],
 	families: &mut BTreeSet<String>,

@@ -269,14 +269,10 @@ fn from_pb(mut doc: pb::Doc) -> Result<Slir, String> {
 	let font_descent = i16s("font_descent", std::mem::take(&mut doc.font_descent))?;
 	let font_line_gap = i16s("font_line_gap", std::mem::take(&mut doc.font_line_gap))?;
 	let font_default_adv = u16s("font_default_adv", std::mem::take(&mut doc.font_default_adv))?;
-	let mut font_underline_position = i16s(
-		"font_underline_position",
-		std::mem::take(&mut doc.font_underline_position),
-	)?;
-	let mut font_underline_thickness = i16s(
-		"font_underline_thickness",
-		std::mem::take(&mut doc.font_underline_thickness),
-	)?;
+	let mut font_underline_position =
+		i16s("font_underline_position", std::mem::take(&mut doc.font_underline_position))?;
+	let mut font_underline_thickness =
+		i16s("font_underline_thickness", std::mem::take(&mut doc.font_underline_thickness))?;
 	if font_underline_position.is_empty() {
 		font_underline_position.extend(
 			font_upem
@@ -331,18 +327,18 @@ fn from_pb(mut doc: pb::Doc) -> Result<Slir, String> {
 		let data_range =
 			index_range(font_data_off[index], font_data_len[index], font_data.len(), "font data")?;
 		fonts.push(FontE {
-			family:          font_family[index],
-			class:           font_class[index],
-			weight:          font_weight[index],
-			upem:            font_upem[index],
-			ascent:          font_ascent[index],
-			descent:         font_descent[index],
-			line_gap:        font_line_gap[index],
-			default_advance: font_default_adv[index],
-			underline_position: font_underline_position[index],
+			family:              font_family[index],
+			class:               font_class[index],
+			weight:              font_weight[index],
+			upem:                font_upem[index],
+			ascent:              font_ascent[index],
+			descent:             font_descent[index],
+			line_gap:            font_line_gap[index],
+			default_advance:     font_default_adv[index],
+			underline_position:  font_underline_position[index],
 			underline_thickness: font_underline_thickness[index],
-			data:             font_data[data_range].to_vec(),
-			cmap:            font_cmap_cp[cmap_range]
+			data:                font_data[data_range].to_vec(),
+			cmap:                font_cmap_cp[cmap_range]
 				.iter()
 				.copied()
 				.zip(
@@ -356,7 +352,7 @@ fn from_pb(mut doc: pb::Doc) -> Result<Slir, String> {
 					.copied(),
 				)
 				.collect(),
-			advances:        font_adv[advance_range].to_vec(),
+			advances:            font_adv[advance_range].to_vec(),
 		});
 	}
 	slir.fonts = fonts;
@@ -871,19 +867,19 @@ mod tests {
 			attrs:            vec![(27, 1)],
 			paths:            vec![PathE { verbs: vec![0, 4], coords: vec![1.0, 2.0] }],
 			fonts:            vec![FontE {
-				family:          0,
-				class:           0,
-				weight:          400,
-				upem:            1000,
-				ascent:          800,
-				descent:         -200,
-				line_gap:        20,
-				default_advance: 600,
-				underline_position: -100,
+				family:              0,
+				class:               0,
+				weight:              400,
+				upem:                1000,
+				ascent:              800,
+				descent:             -200,
+				line_gap:            20,
+				default_advance:     600,
+				underline_position:  -100,
 				underline_thickness: 50,
-				data:             vec![0, 1, 2, 3],
-				cmap:            vec![(65, 3)],
-				advances:        vec![600],
+				data:                vec![0, 1, 2, 3],
+				cmap:                vec![(65, 3)],
+				advances:            vec![600],
 			}],
 			conds:            vec![CondE { kind: 3, neg: 1, op: 2, num: 20.0, sym: 1 }],
 			patches:          vec![PatchE {

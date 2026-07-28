@@ -185,8 +185,22 @@ pub fn test_default_advance() {
 	let mut output = flatten::frame_new();
 	output.strings.push("\u{200D}\u{FE0E}".to_owned());
 	output.glyphs.extend([
-		FrameGlyph { font: 0, gid: 0, cluster: 0, x: 10.0, y: 12.0, size: 10.0 },
-		FrameGlyph { font: 0, gid: 0, cluster: 1, x: 10.0, y: 12.0, size: 10.0 },
+		FrameGlyph {
+			font:    0,
+			gid:     0,
+			cluster: 0,
+			x:       10.0,
+			y:       12.0,
+			size:    10.0,
+		},
+		FrameGlyph {
+			font:    0,
+			gid:     0,
+			cluster: 1,
+			x:       10.0,
+			y:       12.0,
+			size:    10.0,
+		},
 	]);
 	let mut op = test_cells::text_op(10.0, 12.0, 0, 0);
 	op.font = 0;
@@ -288,7 +302,11 @@ pub fn test_bidi_visual_order() {
 		0,
 		i32::try_from(chars.len()).expect("text fits i32"),
 	);
-	let starts: Vec<i32> = shaped.clusters.iter().map(|cluster| cluster.start).collect();
+	let starts: Vec<i32> = shaped
+		.clusters
+		.iter()
+		.map(|cluster| cluster.start)
+		.collect();
 	assert_eq!(starts, [0, 1, 2, 3, 6, 5, 4], "RTL clusters paint in visual order");
 	assert!(shaped.runs.iter().any(|run| run.rtl), "frame splits an RTL shaped run");
 	let layout = measure(&doc, "abc אבג", 200.0, false, false, -1);
@@ -353,10 +371,7 @@ pub fn test_font_fallback_splits_shaped_runs() {
 		[0, 1, 0],
 		"fallback face becomes a distinct positioned run"
 	);
-	assert_eq!(
-		shaped.runs[1].glyphs[0].gid, 99,
-		"fallback cmap supplies the emitted glyph"
-	);
+	assert_eq!(shaped.runs[1].glyphs[0].gid, 99, "fallback cmap supplies the emitted glyph");
 }
 
 /// Verifies uncovered-glyph run marking on text operations (C-16).

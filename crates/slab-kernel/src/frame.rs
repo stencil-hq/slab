@@ -188,6 +188,7 @@ pub fn inst_init(i: &mut Instance) {
 	i.focus_note.clear();
 	i.solved = false;
 	i.dirty = true;
+	i.lay.shape_cache.clear();
 	if i.ok {
 		style::init_params(&i.doc, &mut i.st);
 	}
@@ -1744,10 +1745,8 @@ pub fn text_glyphs(_i: &Instance, fr: &Frame, op: i32) -> Vec<GlyphPos> {
 	let Some(FrameOp::Text(text)) = fr.ops.get(op) else {
 		return Vec::new();
 	};
-	let (Ok(start), Ok(length)) = (
-		usize::try_from(text.glyph_off),
-		usize::try_from(text.glyph_len),
-	) else {
+	let (Ok(start), Ok(length)) = (usize::try_from(text.glyph_off), usize::try_from(text.glyph_len))
+	else {
 		return Vec::new();
 	};
 	let Some(glyphs) = fr.glyphs.get(start..start.saturating_add(length)) else {
@@ -1757,9 +1756,9 @@ pub fn text_glyphs(_i: &Instance, fr: &Frame, op: i32) -> Vec<GlyphPos> {
 		.iter()
 		.map(|glyph| GlyphPos {
 			font: glyph.font,
-			gid: glyph.gid,
-			x: glyph.x,
-			y: glyph.y,
+			gid:  glyph.gid,
+			x:    glyph.x,
+			y:    glyph.y,
 			size: glyph.size,
 		})
 		.collect()

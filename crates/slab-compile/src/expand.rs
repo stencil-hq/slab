@@ -1355,8 +1355,7 @@ fn apply_attr_concrete(ctx: &mut Ctx, sink: &mut Sink, key: &str, rv: &RVal, lin
 					sink.set(at::attr_id(key).expect("text attribute id is defined"), tv);
 				}
 			},
-			"expanded" | "selected" | "modal" | "live-atomic" | "strike" | "italic"
-			| "underline" => {
+			"expanded" | "selected" | "modal" | "live-atomic" | "strike" | "italic" | "underline" => {
 				if let Some(tv) = expect_prop_ty(ctx, *field, &[ParamType::Bool], line, key) {
 					sink.set(at::attr_id(key).expect("boolean attribute id is defined"), tv);
 				}

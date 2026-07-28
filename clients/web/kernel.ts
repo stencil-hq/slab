@@ -281,6 +281,10 @@ export interface OpText {
    uncov_off: number;
    /** Number of uncovered runs (0 = every cluster covered by `font`). */
    uncov_len: number;
+   /** Offset of this op's shaped glyphs in `Frame.glyphs`. */
+   glyph_off: number;
+   /** Number of shaped glyphs (0 = default/legacy per-codepoint advances). */
+   glyph_len: number;
    /** 1 = solid (`color` is packed RGBA), 2 = gradient (`color` is a GRAD handle). */
    color_kind: number;
    /** Gradient box = the text node's content box (all 0 when `color_kind` is 1). */
@@ -329,13 +333,34 @@ export interface OpClip {
    /** Corner smoothing 0..1 — squircle clip when >0 and radius>0. */
    smooth: number;
 }
+export interface FrameGlyph {
+   font: number;
+   gid: number;
+   cluster: number;
+   x: number;
+   y: number;
+   size: number;
+}
+
+export interface Frame {
+   width: number;
+   height: number;
+   ops: FrameOp[];
+   scene: SceneNode[];
+   strings: string[];
+   uncovered: number[];
+   glyphs: FrameGlyph[];
+   pathsRt: RtPath[];
+   dirty: boolean;
+   motionActive: boolean;
+   diagnostics: FrameDiagnostic[];
+}
 
 export interface OpGroup {
    /** Document node owning this group; `0xffffffff` marks a host envelope. */
    node: number;
    opacity: number;
    blur: number;
-   /** 0 = none, 1 = solid (`mask` is packed RGBA), 2 = gradient (GRAD handle). */
    mask_kind: number;
    mask: number;
    /** Compositing box = the owning node's border box. */

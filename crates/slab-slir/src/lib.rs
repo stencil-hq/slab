@@ -204,25 +204,25 @@ pub struct PathE {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FontE {
-	pub family:          u32,
+	pub family:              u32,
 	/// 0 sans | 1 mono
-	pub class:           u8,
-	pub weight:          u16,
-	pub upem:            u16,
-	pub ascent:          i16,
-	pub descent:         i16,
-	pub line_gap:        i16,
-	pub default_advance: u16,
+	pub class:               u8,
+	pub weight:              u16,
+	pub upem:                u16,
+	pub ascent:              i16,
+	pub descent:             i16,
+	pub line_gap:            i16,
+	pub default_advance:     u16,
 	/// Underline center relative to the baseline in font coordinates.
-	pub underline_position: i16,
+	pub underline_position:  i16,
 	/// Recommended underline thickness in font units.
 	pub underline_thickness: i16,
 	/// Complete sfnt data used for OpenType shaping.
-	pub data:             Vec<u8>,
+	pub data:                Vec<u8>,
 	/// (codepoint, glyph id), sorted by codepoint.
-	pub cmap:            Vec<(u32, u16)>,
+	pub cmap:                Vec<(u32, u16)>,
 	/// Advance widths in font units, parallel to `cmap`.
-	pub advances:        Vec<u16>,
+	pub advances:            Vec<u16>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

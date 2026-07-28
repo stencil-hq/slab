@@ -32,6 +32,8 @@ pub struct FrameBuf {
 	pub strings:       Vec<String>,
 	/// Flat uncovered-glyph codepoint ranges.
 	pub uncovered:     Vec<u32>,
+	/// Shaped glyphs referenced by [`crate::flatten::OpText::glyph_off`].
+	pub glyphs:        Vec<crate::flatten::FrameGlyph>,
 	/// Frame-local paths addressed by negative Path operation indices.
 	pub rt_paths:      Vec<RtPath>,
 	/// Host-visible diagnostics emitted by this solve.
@@ -48,6 +50,7 @@ impl FrameBuf {
 		let mut encoded = Self::encode_ops(&frame, dirty, motion_active);
 		encoded.strings = frame.strings;
 		encoded.uncovered = frame.uncovered;
+		encoded.glyphs = frame.glyphs;
 		encoded.rt_paths = frame.paths_rt;
 		encoded.diagnostics = frame.diagnostics;
 		encoded
@@ -58,6 +61,7 @@ impl FrameBuf {
 		let mut encoded = Self::encode_ops(frame, dirty, motion_active);
 		encoded.strings.clone_from(&frame.strings);
 		encoded.uncovered.clone_from(&frame.uncovered);
+		encoded.glyphs.clone_from(&frame.glyphs);
 		encoded.rt_paths.clone_from(&frame.paths_rt);
 		encoded.diagnostics.clone_from(&frame.diagnostics);
 		encoded
@@ -114,6 +118,8 @@ impl FrameBuf {
 						u32::from(text.italic),
 						u32::from(text.underline),
 						u32::from(text.rtl),
+						signed_word(text.glyph_off),
+						signed_word(text.glyph_len),
 					]);
 					f64s.extend([
 						text.x,
@@ -209,6 +215,7 @@ impl FrameBuf {
 			f64s,
 			strings: Vec::new(),
 			uncovered: Vec::new(),
+			glyphs: Vec::new(),
 			rt_paths: Vec::new(),
 			diagnostics: Vec::new(),
 			dirty,

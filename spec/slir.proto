@@ -142,5 +142,5 @@ message Doc {
   repeated int32 font_underline_thickness = 139;
   repeated int32 font_data_off = 140;
   repeated int32 font_data_len = 141;
-  bytes font_data = 142; // sfnt bytes sliced by font_data_off/len
+  bytes font_data = 142; // sfnt bytes sliced by `font_data_off`/`font_data_len`
 }

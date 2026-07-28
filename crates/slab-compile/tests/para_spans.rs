@@ -450,11 +450,8 @@ col {
 
 #[test]
 fn kernel_shapes_kerning_and_emits_visual_bidi_runs() {
-	let mut instance = compile_instance(
-		r#"col w=300 h=60 { text "AV office אבג" nowrap }"#,
-		300.0,
-		60.0,
-	);
+	let mut instance =
+		compile_instance(r#"col w=300 h=60 { text "AV office אבג" nowrap }"#, 300.0, 60.0);
 	let rendered = frame::inst_frame(&mut instance, 0.0);
 	let runs: Vec<_> = rendered
 		.ops
@@ -475,13 +472,7 @@ fn kernel_shapes_kerning_and_emits_visual_bidi_runs() {
 		.1
 		.chars()
 		.map(|codepoint| {
-			textm::char_w(
-				instance.doc(),
-				latin.font,
-				latin.size,
-				latin.tracking,
-				u32::from(codepoint),
-			)
+			textm::char_w(instance.doc(), latin.font, latin.size, latin.tracking, u32::from(codepoint))
 		})
 		.sum();
 	assert!(

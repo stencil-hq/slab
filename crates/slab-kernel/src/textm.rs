@@ -16,6 +16,10 @@
 //! units_per_em) / 2`. This keeps kernel baselines aligned with browser-painted
 //! glyphs.
 
+use std::{fmt, sync::Arc};
+
+use rustc_hash::FxHashMap;
+
 use crate::{
 	graphemes,
 	slir::{self, Doc},
@@ -27,7 +31,64 @@ pub const ELLIPSIS: u32 = 0x2026;
 pub const NBSP: u32 = 0xa0;
 const WIDTH_EPSILON: f64 = 1e-6;
 
-/// One glyph emitted by OpenType shaping, positioned relative to its visual line.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct ShapePlanKey {
+	font:   i32,
+	script: u32,
+	rtl:    bool,
+}
+
+/// Retains expensive OpenType shape plans across text runs and frames.
+#[derive(Clone, Default)]
+pub(crate) struct ShapeCache {
+	plans: FxHashMap<ShapePlanKey, Arc<rustybuzz::ShapePlan>>,
+}
+
+impl fmt::Debug for ShapeCache {
+	fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+		formatter
+			.debug_struct("ShapeCache")
+			.field("plans", &self.plans.len())
+			.finish()
+	}
+}
+
+impl ShapeCache {
+	fn plan(
+		&mut self,
+		font: i32,
+		rtl: bool,
+		script: rustybuzz::Script,
+		face: &rustybuzz::Face<'_>,
+	) -> Arc<rustybuzz::ShapePlan> {
+		let key = ShapePlanKey { font, script: script.tag().0, rtl };
+		self
+			.plans
+			.entry(key)
+			.or_insert_with(|| {
+				Arc::new(rustybuzz::ShapePlan::new(
+					face,
+					if rtl {
+						rustybuzz::Direction::RightToLeft
+					} else {
+						rustybuzz::Direction::LeftToRight
+					},
+					Some(script),
+					None,
+					&[],
+				))
+			})
+			.clone()
+	}
+
+	/// Drops plans tied to the previously initialized document.
+	pub(crate) fn clear(&mut self) {
+		self.plans.clear();
+	}
+}
+
+/// One glyph emitted by OpenType shaping, positioned relative to its visual
+/// line.
 #[derive(Clone, Debug)]
 pub struct ShapedGlyph {
 	pub font:    i32,
@@ -181,9 +242,9 @@ pub fn char_w(d: &Doc, f: i32, size: f64, tracking: f64, cp: u32) -> f64 {
 
 fn font_covers(d: &Doc, font: i32, chars: &[u32]) -> bool {
 	font >= 0
-		&& chars
-			.iter()
-			.all(|&codepoint| !graphemes::requires_glyph(codepoint) || slir::font_gid(d, font, codepoint) != 0)
+		&& chars.iter().all(|&codepoint| {
+			!graphemes::requires_glyph(codepoint) || slir::font_gid(d, font, codepoint) != 0
+		})
 }
 
 fn fallback_font(d: &Doc, primary: i32, chars: &[u32]) -> i32 {
@@ -250,6 +311,7 @@ fn shape_font_run(
 	output_start: i32,
 	source_delta: i32,
 	source_end: i32,
+	cache: &mut ShapeCache,
 ) -> (ShapedRun, Vec<ShapedCluster>) {
 	let run_start = output_start.wrapping_add(i32::try_from(start).expect("text exceeds i32"));
 	let run_end = output_start.wrapping_add(i32::try_from(end).expect("text exceeds i32"));
@@ -267,18 +329,20 @@ fn shape_font_run(
 		if let Some(weight) = usize::try_from(font)
 			.ok()
 			.and_then(|index| d.font_weight.get(index))
-			&& let Ok(variation) = format!("wght={weight}").parse::<rustybuzz::Variation>()
+			.copied()
 		{
-			face.set_variations(&[variation]);
+			let weight = u16::try_from(weight).expect("font weight exceeds u16");
+			face.set_variations(&[rustybuzz::Variation {
+				tag:   rustybuzz::ttf_parser::Tag::from_bytes(b"wght"),
+				value: f32::from(weight),
+			}]);
 		}
 		let mut buffer = rustybuzz::UnicodeBuffer::new();
 		for (local, &codepoint) in chars[start..end].iter().enumerate() {
 			buffer.add(
 				char::from_u32(codepoint).unwrap_or(char::REPLACEMENT_CHARACTER),
-				u32::try_from(
-					run_start.wrapping_add(i32::try_from(local).expect("text exceeds i32")),
-				)
-				.expect("negative shape cluster"),
+				u32::try_from(run_start.wrapping_add(i32::try_from(local).expect("text exceeds i32")))
+					.expect("negative shape cluster"),
 			);
 		}
 		buffer.set_cluster_level(rustybuzz::BufferClusterLevel::MonotoneGraphemes);
@@ -288,7 +352,8 @@ fn shape_font_run(
 			rustybuzz::Direction::LeftToRight
 		});
 		buffer.guess_segment_properties();
-		let shaped = rustybuzz::shape(&face, &[], buffer);
+		let plan = cache.plan(font, rtl, buffer.script(), &face);
+		let shaped = rustybuzz::shape_with_plan(&face, plan.as_ref(), buffer);
 		let infos = shaped.glyph_infos();
 		let positions = shaped.glyph_positions();
 		let scale = size / f64::from(upem);
@@ -308,10 +373,10 @@ fn shape_font_run(
 				font,
 				gid: info.glyph_id,
 				cluster: cluster.wrapping_add(source_delta),
-				x: cursor + f64::from(position.x_offset) * scale,
+				x: f64::from(position.x_offset).mul_add(scale, cursor),
 				y: -f64::from(position.y_offset) * scale,
 			});
-			cursor += f64::from(position.x_advance) * scale;
+			cursor = f64::from(position.x_advance).mul_add(scale, cursor);
 			if index + 1 == infos.len() {
 				cursor += tracking;
 				groups.push((cluster, group_x, cursor));
@@ -325,16 +390,7 @@ fn shape_font_run(
 				.binary_search(&cluster)
 				.expect("shape cluster is in logical starts");
 			let end = logical_starts.get(logical + 1).copied().unwrap_or(run_end);
-			push_cluster(
-				&mut clusters,
-				cluster,
-				end,
-				x0,
-				x1,
-				rtl,
-				source_delta,
-				source_end,
-			);
+			push_cluster(&mut clusters, cluster, end, x0, x1, rtl, source_delta, source_end);
 		}
 		return (
 			ShapedRun {
@@ -419,6 +475,31 @@ pub fn shape_line(
 	source_start: i32,
 	source_end: i32,
 ) -> ShapedLine {
+	let mut cache = ShapeCache::default();
+	shape_line_cached(
+		d,
+		primary_font,
+		size,
+		tracking,
+		chars,
+		output_start,
+		source_start,
+		source_end,
+		&mut cache,
+	)
+}
+
+pub(crate) fn shape_line_cached(
+	d: &Doc,
+	primary_font: i32,
+	size: f64,
+	tracking: f64,
+	chars: &[u32],
+	output_start: i32,
+	source_start: i32,
+	source_end: i32,
+	cache: &mut ShapeCache,
+) -> ShapedLine {
 	if chars.is_empty() {
 		return ShapedLine::default();
 	}
@@ -472,6 +553,7 @@ pub fn shape_line(
 				output_start,
 				source_delta,
 				source_end,
+				cache,
 			);
 			line.width += run.width;
 			line.runs.push(run);
@@ -497,7 +579,11 @@ pub fn caret_x(layout: &TextLayout, line: usize, at: i32) -> f64 {
 			return if cluster.rtl { cluster.x0 } else { cluster.x1 };
 		}
 	}
-	if at <= layout.src_ls[line] { 0.0 } else { shaped.width }
+	if at <= layout.src_ls[line] {
+		0.0
+	} else {
+		shaped.width
+	}
 }
 
 /// Finds the nearest shaped-cluster caret on one visual line.
@@ -508,15 +594,29 @@ pub fn caret_for_visual_x(layout: &TextLayout, line: usize, goal: f64) -> i32 {
 	for cluster in &shaped.clusters {
 		let midpoint = f64::midpoint(cluster.x0, cluster.x1);
 		if goal < midpoint {
-			return if cluster.rtl { cluster.end } else { cluster.start };
+			return if cluster.rtl {
+				cluster.end
+			} else {
+				cluster.start
+			};
 		}
 		if goal <= cluster.x1 {
-			return if cluster.rtl { cluster.start } else { cluster.end };
+			return if cluster.rtl {
+				cluster.start
+			} else {
+				cluster.end
+			};
 		}
 	}
 	shaped.clusters.last().map_or_else(
 		|| layout.src_ls.get(line).copied().unwrap_or(0),
-		|cluster| if cluster.rtl { cluster.start } else { cluster.end },
+		|cluster| {
+			if cluster.rtl {
+				cluster.start
+			} else {
+				cluster.end
+			}
+		},
 	)
 }
 
@@ -544,12 +644,19 @@ pub fn selection_bands(layout: &TextLayout, line: usize, lo: i32, hi: i32) -> Ve
 	}
 	bands
 }
-fn shape_layout(d: &Doc, font: i32, size: f64, tracking: f64, layout: &mut TextLayout) {
+fn shape_layout(
+	d: &Doc,
+	font: i32,
+	size: f64,
+	tracking: f64,
+	layout: &mut TextLayout,
+	cache: &mut ShapeCache,
+) {
 	layout.shaped.clear();
 	for line in 0..layout.ls.len() {
 		let start = usize::try_from(layout.ls[line]).expect("negative line start");
 		let end = usize::try_from(layout.le[line]).expect("negative line end");
-		let shaped = shape_line(
+		let shaped = shape_line_cached(
 			d,
 			font,
 			size,
@@ -558,19 +665,40 @@ fn shape_layout(d: &Doc, font: i32, size: f64, tracking: f64, layout: &mut TextL
 			layout.ls[line],
 			layout.src_ls[line],
 			layout.src_le[line],
+			cache,
 		);
 		layout.line_w[line] = shaped.width;
 		layout.shaped.push(shaped);
 	}
 }
 
+/// Measures a codepoint slice without allocating another character buffer.
+pub fn advance_slice_w(d: &Doc, f: i32, size: f64, tracking: f64, chars: &[u32], a: i32, b: i32) -> f64 {
+	slice_w(d, f, size, tracking, chars, a, b)
+}
 
 /// Measures a codepoint slice without allocating another character buffer.
 pub fn slice_w(d: &Doc, f: i32, size: f64, tracking: f64, chars: &[u32], a: i32, b: i32) -> f64 {
+	let mut cache = ShapeCache::default();
+	slice_w_cached(d, f, size, tracking, chars, a, b, &mut cache)
+}
+
+/// Measures a codepoint slice while reusing retained OpenType plans.
+pub(crate) fn slice_w_cached(
+	d: &Doc,
+	f: i32,
+	size: f64,
+	tracking: f64,
+	chars: &[u32],
+	a: i32,
+	b: i32,
+	cache: &mut ShapeCache,
+) -> f64 {
 	let start = usize::try_from(a).expect("negative character index");
 	let end = usize::try_from(b).expect("negative character index");
-	shape_line(d, f, size, tracking, &chars[start..end], a, a, b).width
+	shape_line_cached(d, f, size, tracking, &chars[start..end], a, a, b, cache).width
 }
+
 
 /// Measures a string's codepoint slice without materializing codepoints.
 pub fn str_slice_w(d: &Doc, f: i32, size: f64, tracking: f64, text: &str, a: i32, b: i32) -> f64 {
@@ -615,17 +743,20 @@ pub fn underline_geometry(d: &Doc, font: i32, size: f64) -> (f64, f64) {
 		return (size / 10.0, size / 16.0);
 	}
 	(
-		-f64::from(d.font_underline_position.get(index).copied().unwrap_or(-(d.font_upem[index] as i32 / 10)))
-			* size
+		-f64::from(
+			d.font_underline_position
+				.get(index)
+				.copied()
+				.unwrap_or(-(d.font_upem[index] as i32 / 10)),
+		) * size
 			/ upem,
 		f64::from(
 			d.font_underline_thickness
 				.get(index)
 				.copied()
-				.unwrap_or((d.font_upem[index] as i32 / 20).max(1)),
+				.unwrap_or_else(|| (d.font_upem[index] as i32 / 20).max(1)),
 		)
-		.abs()
-			* size
+		.abs() * size
 			/ upem,
 	)
 }
@@ -688,10 +819,9 @@ pub fn cut_line(
 	let mut retained_end = retained;
 	while retained_end > a
 		&& is_strippable(
-			tl.chars[usize::try_from(retained_end.wrapping_sub(1))
-				.expect("nonnegative character index")],
-		)
-	{
+			tl.chars
+				[usize::try_from(retained_end.wrapping_sub(1)).expect("nonnegative character index")],
+		) {
 		retained_end = retained_end.wrapping_sub(1);
 	}
 	let output_start = i32::try_from(tl.chars.len()).expect("text exceeds i32");
@@ -759,18 +889,11 @@ pub fn wrap_hard(
 			for pair in boundaries.windows(2) {
 				let cluster_start = word_start.wrapping_add(pair[0]);
 				let cluster_end = word_start.wrapping_add(pair[1]);
-				let candidate_width =
-					slice_w(d, f, size, tracking, src, source_start, cluster_end);
+				let candidate_width = slice_w(d, f, size, tracking, src, source_start, cluster_end);
 				let line_nonempty =
 					i32::try_from(tl.chars.len()).expect("text exceeds i32") > line_start;
 				if line_nonempty && candidate_width > max_w + WIDTH_EPSILON {
-					finish_line(
-						tl,
-						line_start,
-						source_start,
-						cluster_start,
-						line_width,
-					);
+					finish_line(tl, line_start, source_start, cluster_start, line_width);
 					line_start = i32::try_from(tl.chars.len()).expect("text exceeds i32");
 					source_start = cluster_start;
 				}
@@ -836,6 +959,35 @@ pub fn measure_text(
 	ellipsis: bool,
 	max_lines: i32,
 ) -> TextLayout {
+	let mut cache = ShapeCache::default();
+	measure_text_cached(
+		d,
+		f,
+		size,
+		leading,
+		tracking,
+		text,
+		max_w,
+		wrap,
+		ellipsis,
+		max_lines,
+		&mut cache,
+	)
+}
+
+pub(crate) fn measure_text_cached(
+	d: &Doc,
+	f: i32,
+	size: f64,
+	leading: f64,
+	tracking: f64,
+	text: &str,
+	max_w: f64,
+	wrap: bool,
+	ellipsis: bool,
+	max_lines: i32,
+	cache: &mut ShapeCache,
+) -> TextLayout {
 	let mut src: Vec<u32> = Vec::with_capacity(text.len());
 	src.extend(text.chars().map(u32::from));
 	let mut layout = tl_new();
@@ -844,6 +996,17 @@ pub fn measure_text(
 
 	// Split on hard newlines before applying wrapping to each hard line.
 	let source_len = i32::try_from(src.len()).expect("text exceeds i32");
+	if !src.contains(&10) {
+		let shaped = shape_line_cached(d, f, size, tracking, &src, 0, 0, source_len, cache);
+		if shaped.width <= max_w + WIDTH_EPSILON {
+			layout.chars = src;
+			finish_line(&mut layout, 0, 0, source_len, shaped.width);
+			layout.shaped.push(shaped);
+			layout.w = layout.line_w[0];
+			layout.h = layout.line_h;
+			return layout;
+		}
+	}
 	let mut hard_start = 0_i32;
 	loop {
 		let mut hard_end = hard_start;
@@ -970,7 +1133,7 @@ pub fn measure_text(
 		}
 	}
 
-	shape_layout(d, f, size, tracking, &mut layout);
+	shape_layout(d, f, size, tracking, &mut layout, cache);
 	layout.w = layout.line_w.iter().copied().fold(0.0_f64, f64::max);
 	layout.h = layout.line_h * f64::from(line_count(&layout)).max(1.0);
 	layout

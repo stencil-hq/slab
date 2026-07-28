@@ -68,64 +68,66 @@ pub const INF: f64 = 1.0e30;
 /// relative to the parent border-box origin.
 #[derive(Clone, Debug, Default)]
 pub struct Lay {
-	pub p_node:         Vec<u32>,
+	pub p_node:             Vec<u32>,
 	/// Index of the node's resolved style in [`St::rs`].
-	pub p_ri:           Vec<i32>,
-	pub p_x:            Vec<f64>,
-	pub p_y:            Vec<f64>,
-	pub p_w:            Vec<f64>,
-	pub p_h:            Vec<f64>,
-	pub p_base:         Vec<f64>,
-	pub p_has_base:     Vec<bool>,
-	pub p_clip:         Vec<bool>,
+	pub p_ri:               Vec<i32>,
+	pub p_x:                Vec<f64>,
+	pub p_y:                Vec<f64>,
+	pub p_w:                Vec<f64>,
+	pub p_h:                Vec<f64>,
+	pub p_base:             Vec<f64>,
+	pub p_has_base:         Vec<bool>,
+	pub p_clip:             Vec<bool>,
 	/// Placed index of a quarter-turn payload, or `-1` when absent.
-	pub p_rot:          Vec<i32>,
+	pub p_rot:              Vec<i32>,
 	/// Placements omitted from paint, scene export, and hit testing.
-	pub p_skip:         Vec<bool>,
-	pub p_child_off:    Vec<i32>,
-	pub p_child_len:    Vec<i32>,
+	pub p_skip:             Vec<bool>,
+	pub p_child_off:        Vec<i32>,
+	pub p_child_len:        Vec<i32>,
 	/// Index in [`Lay::tls`], or `-1` when this placement has no text layout.
-	pub p_tl:           Vec<i32>,
+	pub p_tl:               Vec<i32>,
 	/// Paragraph block index in the paragraph line pools, or `-1`.
-	pub p_para:         Vec<i32>,
-	pub child_pool:     Vec<i32>,
-	pub tls:            Vec<std::rc::Rc<TextLayout>>,
+	pub p_para:             Vec<i32>,
+	pub child_pool:         Vec<i32>,
+	pub tls:                Vec<std::rc::Rc<TextLayout>>,
 	/// Per-paragraph ranges into the line pools; each line stores a segment
 	/// range.
-	pub para_line_off:  Vec<i32>,
-	pub para_line_len:  Vec<i32>,
-	pub pl_h:           Vec<f64>,
-	pub pl_asc:         Vec<f64>,
-	pub pl_w:           Vec<f64>,
-	pub pl_seg_off:     Vec<i32>,
-	pub pl_seg_len:     Vec<i32>,
-	pub seg_x:          Vec<f64>,
+	pub para_line_off:      Vec<i32>,
+	pub para_line_len:      Vec<i32>,
+	pub pl_h:               Vec<f64>,
+	pub pl_asc:             Vec<f64>,
+	pub pl_w:               Vec<f64>,
+	pub pl_seg_off:         Vec<i32>,
+	pub pl_seg_len:         Vec<i32>,
+	pub seg_x:              Vec<f64>,
 	/// Start of the segment's codepoint slice in [`Lay::para_chars`].
-	pub seg_a:          Vec<i32>,
-	pub seg_b:          Vec<i32>,
-	pub seg_w:          Vec<f64>,
-	pub seg_font:       Vec<i32>,
-	pub seg_size:       Vec<f64>,
-	pub seg_weight:     Vec<f64>,
-	pub seg_tracking:   Vec<f64>,
-	pub seg_strike:     Vec<bool>,
-	pub seg_italic:     Vec<bool>,
-	pub seg_underline:  Vec<bool>,
-	pub seg_color:      Vec<u32>,
+	pub seg_a:              Vec<i32>,
+	pub seg_b:              Vec<i32>,
+	pub seg_w:              Vec<f64>,
+	pub seg_font:           Vec<i32>,
+	pub seg_size:           Vec<f64>,
+	pub seg_weight:         Vec<f64>,
+	pub seg_tracking:       Vec<f64>,
+	pub seg_strike:         Vec<bool>,
+	pub seg_italic:         Vec<bool>,
+	pub seg_underline:      Vec<bool>,
+	pub seg_color:          Vec<u32>,
 	/// 1 when the segment color is packed RGBA, 2 when it is a gradient handle.
-	pub seg_color_kind: Vec<u32>,
+	pub seg_color_kind:     Vec<u32>,
 	/// Background paint behind the segment (`0` none, `1` solid, `2` gradient).
-	pub seg_bg_kind:    Vec<u32>,
-	pub seg_bg:         Vec<u32>,
-	pub seg_shaped:     Vec<crate::textm::ShapedLine>,
-	pub para_chars:     Vec<u32>,
+	pub seg_bg_kind:        Vec<u32>,
+	pub seg_bg:             Vec<u32>,
+	pub seg_shaped:         Vec<crate::textm::ShapedLine>,
+	pub para_chars:         Vec<u32>,
 	/// Reusable measure-pass scratch buffers, taken on container entry and
 	/// returned cleared on exit; recursion depth bounds each pool's size.
-	scratch_u32:        Vec<Vec<u32>>,
-	scratch_i32:        Vec<Vec<i32>>,
-	scratch_f64:        Vec<Vec<f64>>,
+	scratch_u32:            Vec<Vec<u32>>,
+	scratch_i32:            Vec<Vec<i32>>,
+	scratch_f64:            Vec<Vec<f64>>,
+	/// Reusable OpenType plans, retained across solves for this document.
+	pub(crate) shape_cache: crate::textm::ShapeCache,
 	/// Retained [`place_attached`] scratch, cleared and refilled per call.
-	attach:             AttachScratch,
+	attach:                 AttachScratch,
 }
 
 /// Creates an empty set of layout pools.
@@ -2268,7 +2270,7 @@ pub fn text_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &
 	if let Some(layout) = cached {
 		l.tls.push(layout);
 	} else {
-		let layout = std::rc::Rc::new(crate::textm::measure_text(
+		let layout = std::rc::Rc::new(crate::textm::measure_text_cached(
 			d,
 			font,
 			size,
@@ -2279,6 +2281,7 @@ pub fn text_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &
 			wrap,
 			ellipsis,
 			max_lines,
+			&mut l.shape_cache,
 		));
 		// Bound the hot generation; the demoted generation still serves probes
 		// until the next swap, so eviction never re-measures a whole frame.
@@ -2458,7 +2461,7 @@ fn ellipsize_para_line(d: &Doc, l: &mut Lay, segment_start: i32, max_width: f64)
 		let output_end = len_i32(&l.para_chars);
 		l.seg_a[segment] = output_start;
 		l.seg_b[segment] = output_end;
-		let shaped = crate::textm::shape_line(
+		let shaped = crate::textm::shape_line_cached(
 			d,
 			l.seg_font[segment],
 			l.seg_size[segment],
@@ -2467,6 +2470,7 @@ fn ellipsize_para_line(d: &Doc, l: &mut Lay, segment_start: i32, max_width: f64)
 			output_start,
 			output_start,
 			output_end,
+			&mut l.shape_cache,
 		);
 		l.seg_w[segment] = shaped.width;
 		l.seg_shaped[segment] = shaped;
@@ -2585,7 +2589,7 @@ pub fn para_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &
 	let mut line_len = 0i32;
 	for i in 0i32..(len_i32(&w_a)) {
 		let sri = w_ri[idx(i)];
-		let ww = crate::textm::slice_w(
+		let ww = crate::textm::slice_w_cached(
 			d,
 			st.rs[idx(sri)].font,
 			st.rs[idx(sri)].size,
@@ -2593,6 +2597,7 @@ pub fn para_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &
 			&l.para_chars,
 			w_a[idx(i)],
 			w_b[idx(i)],
+			&mut l.shape_cache,
 		);
 		let sp = crate::textm::char_w(
 			d,
@@ -2767,7 +2772,7 @@ pub fn para_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &
 /// Closes a paragraph segment and records its measured glyph slice.
 pub fn close_seg(d: &Doc, st: &St, l: &mut Lay, seg_start: i32, sri: i32, x: f64) {
 	let seg_end = len_i32(&l.para_chars);
-	let shaped = crate::textm::shape_line(
+	let shaped = crate::textm::shape_line_cached(
 		d,
 		st.rs[idx(sri)].font,
 		st.rs[idx(sri)].size,
@@ -2776,6 +2781,7 @@ pub fn close_seg(d: &Doc, st: &St, l: &mut Lay, seg_start: i32, sri: i32, x: f64
 		seg_start,
 		seg_start,
 		seg_end,
+		&mut l.shape_cache,
 	);
 	let wseg = shaped.width;
 	l.seg_x.push(x);

@@ -1,6 +1,6 @@
 //! wasm-bindgen projection of the shared compact frame transport.
 
-use slab_kernel::{frame_buf::FrameBuf as KernelFrameBuf, flatten::Frame};
+use slab_kernel::{flatten::Frame, frame_buf::FrameBuf as KernelFrameBuf};
 use wasm_bindgen::prelude::*;
 
 /// Binary frame payload decoded by `clients/web/frame-decode.ts`.
@@ -8,6 +8,7 @@ use wasm_bindgen::prelude::*;
 pub struct FrameBuf {
 	inner:       KernelFrameBuf,
 	rt_paths:    String,
+	glyphs_json: String,
 	diagnostics: String,
 }
 
@@ -22,6 +23,7 @@ impl FrameBuf {
 				.collect::<Vec<_>>(),
 		)
 		.expect("runtime paths serialize");
+		let glyphs_json = serde_json::to_string(&inner.glyphs).expect("glyphs serialize");
 
 		#[derive(serde::Serialize)]
 		struct DiagnosticJson<'a> {
@@ -42,7 +44,7 @@ impl FrameBuf {
 		)
 		.expect("frame diagnostics serialize");
 
-		Self { inner, rt_paths, diagnostics }
+		Self { inner, rt_paths, diagnostics, glyphs_json }
 	}
 }
 
@@ -66,6 +68,11 @@ impl FrameBuf {
 	/// Returns the flat uncovered-glyph run pool.
 	pub fn uncovered_u32s(&self) -> Vec<u32> {
 		self.inner.uncovered.clone()
+	}
+
+	/// Returns the shaped glyph pool as JSON.
+	pub fn glyphs_json(&self) -> String {
+		self.glyphs_json.clone()
 	}
 
 	/// Returns frame-local runtime paths as `[verbs, coords]` JSON pairs.

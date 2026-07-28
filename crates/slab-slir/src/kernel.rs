@@ -170,7 +170,9 @@ pub fn decode_doc(bytes: &[u8]) -> Result<(slab_kernel::slir::Doc, Vec<Vec<u8>>)
 		let end = offset
 			.checked_add(length)
 			.ok_or_else(|| "font data: range overflow".to_string())?;
-		if offset < 0 || length < 0 || usize::try_from(end).map_or(true, |end| end > doc.font_data.len())
+		if offset < 0
+			|| length < 0
+			|| usize::try_from(end).map_or(true, |end| end > doc.font_data.len())
 		{
 			return Err("font data: range is out of bounds".into());
 		}

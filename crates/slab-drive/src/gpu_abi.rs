@@ -7,8 +7,7 @@ use slab_kernel::{
 	frame,
 	frame::Instance,
 	frame_buf::FrameBuf,
-	scene,
-	slir as kernel_slir,
+	scene, slir as kernel_slir,
 };
 use slab_slir::Slir;
 
@@ -356,9 +355,7 @@ impl Writer {
 		let payload_at = self.len();
 		write(self);
 		let length = self.len() - payload_at;
-		self.patch_u32(
-			length_at,
-			u32::try_from(length).expect("GPU ABI section length must fit u32"),
-		);
+		self
+			.patch_u32(length_at, u32::try_from(length).expect("GPU ABI section length must fit u32"));
 	}
 }

@@ -123,12 +123,12 @@ fn x256(rgb: u32) -> u8 {
 
 /// Stateful ANSI diff painter for kernel cell grids.
 pub struct Painter {
-	truecolor:  bool,
-	prev:       Option<cells::CellGrid>,
-	buf:        String,
-	cur_fg:     u32,
-	cur_bg:     u32,
-	cur_pos:    Option<(i32, i32)>, // (row, col) the terminal cursor sits at
+	truecolor: bool,
+	prev:      Option<cells::CellGrid>,
+	buf:       String,
+	cur_fg:    u32,
+	cur_bg:    u32,
+	cur_pos:   Option<(i32, i32)>, // (row, col) the terminal cursor sits at
 	cur_style: u32,
 }
 
@@ -158,11 +158,7 @@ impl Painter {
 			return;
 		}
 		self.buf.push_str("\x1b[0");
-		for (flag, code) in [
-			(cells::CF_ITALIC, 3),
-			(cells::CF_UNDERLINE, 4),
-			(cells::CF_STRIKE, 9),
-		] {
+		for (flag, code) in [(cells::CF_ITALIC, 3), (cells::CF_UNDERLINE, 4), (cells::CF_STRIKE, 9)] {
 			if style & flag != 0 {
 				write!(self.buf, ";{code}").expect("writing to String cannot fail");
 			}

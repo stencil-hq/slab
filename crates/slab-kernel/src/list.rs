@@ -258,7 +258,7 @@ pub fn state_new() -> State {
 		sy_each:             Vec::new(),
 		sy_tpl:              Vec::new(),
 		sy_key:              Vec::new(),
-		sy_key_hash:          Vec::new(),
+		sy_key_hash:         Vec::new(),
 		sy_item:             Vec::new(),
 		sy_list:             Vec::new(),
 		sy_generation:       Vec::new(),
@@ -1267,12 +1267,8 @@ pub(crate) fn parent(s: &State, d: &slir::Doc, node: u32) -> u32 {
 	if template_parent == slir::NONE {
 		return slir::NONE;
 	}
-	identity_match(
-		s,
-		(s.sy_each[slot], template_parent, s.sy_key_hash[slot]),
-		&s.sy_key[slot],
-	)
-	.unwrap_or(template_parent)
+	identity_match(s, (s.sy_each[slot], template_parent, s.sy_key_hash[slot]), &s.sy_key[slot])
+		.unwrap_or(template_parent)
 }
 
 #[inline]
@@ -1418,7 +1414,8 @@ pub fn synthetic(_d: &slir::Doc, s: &mut State, each: u32, tpl: u32, key: &str) 
 	synthetic_identity(s, each, tpl, key, identity_hash(key)).0
 }
 
-/// Resolves a synthetic identity while reusing a hash computed for sibling templates.
+/// Resolves a synthetic identity while reusing a hash computed for sibling
+/// templates.
 pub(crate) fn synthetic_hashed(
 	s: &mut State,
 	each: u32,
@@ -1429,7 +1426,8 @@ pub(crate) fn synthetic_hashed(
 	synthetic_identity(s, each, tpl, key, key_hash).0
 }
 
-/// Resolves a synthetic sibling without copying or rehashing its source item's key.
+/// Resolves a synthetic sibling without copying or rehashing its source item's
+/// key.
 pub(crate) fn synthetic_from(s: &mut State, source: u32, each: u32, tpl: u32) -> u32 {
 	let source_slot = synthetic_slot(s, source).expect("synthetic child source is not live");
 	let key_hash = s.sy_key_hash[source_slot];

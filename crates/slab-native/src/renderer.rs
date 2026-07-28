@@ -16,7 +16,6 @@
 //! to the window surface or reads back for headless PNG/probes. f64 model
 //! values narrow to f32 ONLY here, at instance packing.
 
-use slab_kernel::textm;
 use std::collections::{HashMap, HashSet};
 
 use bytemuck::Zeroable;
@@ -24,6 +23,7 @@ use slab_kernel::{
 	flatten::{Frame, FrameOp, RtPath},
 	frame::Instance,
 	slir::Doc,
+	textm,
 };
 use wgpu::util::DeviceExt;
 
@@ -1663,15 +1663,36 @@ impl Renderer {
 						let runs = li.frame.uncovered.get(lo..hi).unwrap_or(&[]);
 						for pair in runs.as_chunks::<2>().0 {
 							let string_index = usize::try_from(t.str_ref).unwrap_or(0);
-							let op_text = li.frame.strings.get(string_index).map_or("", String::as_str);
+							let op_text = li
+								.frame
+								.strings
+								.get(string_index)
+								.map_or("", String::as_str);
 							let cps: Vec<u32> = op_text.chars().map(u32::from).collect();
 							let start = (pair[0] as usize).min(cps.len());
 							let end = (pair[1] as usize).min(cps.len());
 							if start >= end {
 								continue;
 							}
-							let x0 = t.x + textm::str_slice_w(li.inst.doc(), t.font, t.size, t.tracking, op_text, 0, pair[0] as i32);
-							let adv = textm::str_slice_w(li.inst.doc(), t.font, t.size, t.tracking, op_text, pair[0] as i32, pair[1] as i32);
+							let x0 = t.x
+								+ textm::str_slice_w(
+									li.inst.doc(),
+									t.font,
+									t.size,
+									t.tracking,
+									op_text,
+									0,
+									pair[0] as i32,
+								);
+							let adv = textm::str_slice_w(
+								li.inst.doc(),
+								t.font,
+								t.size,
+								t.tracking,
+								op_text,
+								pair[0] as i32,
+								pair[1] as i32,
+							);
 							if adv <= 0.05 {
 								continue;
 							}
@@ -1695,11 +1716,7 @@ impl Renderer {
 					}
 					for (enabled, center, logical_thickness) in [
 						(t.strike, t.size.mul_add(-0.3, t.y_baseline), t.size / 16.0),
-						(
-							t.underline,
-							t.y_baseline + t.underline_offset,
-							t.underline_thickness,
-						),
+						(t.underline, t.y_baseline + t.underline_offset, t.underline_thickness),
 					] {
 						if !enabled || t.measured_w <= 0.0 {
 							continue;

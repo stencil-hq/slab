@@ -439,11 +439,7 @@ pub fn caret_for_x(
 	_tracking: f64,
 	goal: f64,
 ) -> i32 {
-	textm::caret_for_visual_x(
-		tl,
-		usize::try_from(line).expect("negative visual line"),
-		goal,
-	)
+	textm::caret_for_visual_x(tl, usize::try_from(line).expect("negative visual line"), goal)
 }
 
 /// Moves one caret stop in visual order across shaped lines.
@@ -477,8 +473,16 @@ pub fn visual_step(es: &mut EditState, tl: &TextLayout, delta: i32, select: bool
 			continue;
 		}
 		for cluster in &shaped.clusters {
-			visit(if cluster.rtl { cluster.end } else { cluster.start });
-			visit(if cluster.rtl { cluster.start } else { cluster.end });
+			visit(if cluster.rtl {
+				cluster.end
+			} else {
+				cluster.start
+			});
+			visit(if cluster.rtl {
+				cluster.start
+			} else {
+				cluster.end
+			});
 		}
 	}
 	if !done && delta >= 0 {

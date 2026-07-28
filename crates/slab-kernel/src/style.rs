@@ -1562,13 +1562,7 @@ pub fn children(d: &crate::slir::Doc, st: &mut crate::style::St, node: u32, out:
 			let key_hash = crate::list::identity_hash(&key);
 			let mut template = crate::list::template_first(d, &st.lists, node);
 			while template != crate::slir::NONE {
-				out.push(crate::list::synthetic_hashed(
-					&mut st.lists,
-					node,
-					template,
-					&key,
-					key_hash,
-				));
+				out.push(crate::list::synthetic_hashed(&mut st.lists, node, template, &key, key_hash));
 				template = d.node_next[index_u32(template)];
 			}
 		}
@@ -2221,12 +2215,15 @@ fn cached_font(d: &crate::slir::Doc, st: &mut crate::style::St, family: u32, wei
 	st.font_selection[family].push((weight, font));
 	font
 }
-
 /// Builds the resolved style for `node` and returns its pool index.
 ///
 /// `parent_kind` is the layout parent's node kind; [`crate::slir::NONE`] marks
 /// the root, whose context is a column. The `inh_*` arguments are the parent's
 /// inherited text-style whitelist.
+#[allow(
+	clippy::fn_params_excessive_bools,
+	reason = "style builder receives parent whitelist flags"
+)]
 pub fn build_rstyle(
 	d: &crate::slir::Doc,
 	st: &mut crate::style::St,
@@ -2496,7 +2493,8 @@ pub fn build_rstyle(
 	st.rs[ri].italic =
 		crate::style::attr_num(d, st, node, crate::slir::A_ITALIC, f64::from(inh_italic)) != 0.0;
 	st.rs[ri].underline =
-		crate::style::attr_num(d, st, node, crate::slir::A_UNDERLINE, f64::from(inh_underline)) != 0.0;
+		crate::style::attr_num(d, st, node, crate::slir::A_UNDERLINE, f64::from(inh_underline))
+			!= 0.0;
 	let col = crate::style::attr_val(d, st, node, crate::slir::A_COLOR);
 	if (col.tag == crate::slir::T_COLOR) || (col.tag == crate::slir::T_PAINT_SOLID) {
 		st.rs[ri].color = col.h;
