@@ -77,6 +77,28 @@ fn inst_set_field_text(i: &mut Instance, key: &str, text: &str) -> bool
 fn inst_field_text(i: &Instance, key: &str) -> Option<String>
     // Committed EditState text, or resolved content before first bind.
     // None = unknown key or a node without field=.
+struct CaretState { caret: i32, anchor: i32, composing: bool, goal_x: f64 }
+    // caret is the active selection end; anchor is the fixed end. Both are
+    // codepoint offsets at grapheme-cluster boundaries in committed text.
+    // goal_x is the visual-x target retained by vertical movement; negative
+    // means no active target.
+fn inst_set_caret(i: &mut Instance, key: &str, caret: i32, anchor: i32) -> bool
+    // Resolve key by the field API's canonical locator conventions. The target
+    // must have field= and be focusable in the CURRENT painted scene; otherwise
+    // false with no caret change. Focus it with a pointer-grade (hidden) ring.
+    // Clamp offsets to text bounds and then to the nearest grapheme boundary
+    // (an equal-distance tie chooses the preceding boundary), preserve their
+    // direction, cancel active composition, reset goal_x, and mark dirty.
+fn inst_set_caret_goal(i: &mut Instance, key: &str, caret: i32,
+                       anchor: i32, goal_x: f64) -> bool
+    // As inst_set_caret, but caret first chooses a visual line in the retained
+    // TextLayout, then resolves to its nearest shaped stop at goal_x. A
+    // collapsed selection follows the resolved caret. Retain goal_x for the
+    // next vertical move. false = invalid goal or no retained text layout, in
+    // addition to inst_set_caret failures.
+fn inst_get_caret(i: &Instance, key: &str) -> Option<CaretState>
+    // Return caret, anchor, composing, and goal_x for the target's EditState.
+    // None = unknown/non-field key or no EditState (before first focus/write).
 fn inst_focus(i: &Instance) -> u32
     // Current focused node; 0xFFFFFFFF means no focus.
 fn inst_param_json(i: &Instance, name: &str) -> Option<String>
@@ -358,8 +380,14 @@ its `cancel=` binder (trigger 14) with the retained committed buffer as
 `sig_text`, and clears focus while retaining its EditState; without that
 explicit opt-in, Escape remains available to authored `keys=` mappings and app
 semantics. Key-down routing with empty focus starts at the document root's
-`keys=` map, and an unhandled focused walk falls back to that root map;
-printable keys never leave a focused editor. PageUp/PageDown/Home/End scroll
+`keys=` map, and an unhandled focused walk falls back to that root map.
+With a field focused, its own `keys=` map preempts editing for plain
+(unmodified), non-printable keys; unmodified printable keys never leave the
+editor, while modified printable chords (for example Cmd+B) bubble with
+`SigMeta.mods` set. A field-edit command that changes nothing at a boundary
+(Backspace/Delete at a text edge, an arrow clamped at a text or visual-line
+edge) is not consumed and bubbles through `keys=`; commands that mutate
+text, move the caret, or emit an effect never bubble. PageUp/PageDown/Home/End scroll
 the nearest scroll-container ancestor of the focus (or the primary root
 scroller when focus is empty) by exactly one viewport extent per page step.
 Wheel scrolls the deepest `scroll` node in the path with the retained-scene
@@ -406,6 +434,16 @@ submits by SPEC §15.6's modifier/flag matrix. Text, paste, cut, kill, word
 delete, undo/redo, and composition all flow through the same committed-change
 path. Single-line display text owns horizontal scroll; multiline caret follow
 may adjust the nearest scroll ancestor.
+
+`inst_set_caret` focuses a painted field with a hidden focus ring, cancels
+uncommitted composition without changing committed text, installs the directed
+selection at clamped grapheme boundaries, resets vertical-movement `goal_x`,
+and repaints. `inst_set_caret_goal` instead resolves the active end on the
+selected visual line at its supplied non-negative finite `goal_x`, retains that
+goal for vertical movement, and keeps a collapsed selection collapsed at the
+resolved position. This permits a host to carry the visual target across block
+boundaries. `inst_get_caret` reports the directed selection, composition state,
+and goal only after an EditState exists.
 
 Secondary pointer-down emits Context with pointer metadata and never presses
 or arms drag. On an editable focusable field, it applies pointer-grade focus.

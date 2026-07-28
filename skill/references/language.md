@@ -302,10 +302,12 @@ equal-field diffing preserves retained item state and avoids needless work.
 
 Fonts: the compiler embeds complete metric/coverage tables (SLIR `FONT`) for
 the vendored faces — an authored `family` containing `mono`
-(ASCII-case-insensitive) maps to JetBrains Mono, everything else to Inter;
-weights snap to 400/500/600/700 (ties up). The authored name is preserved;
-a runtime-registered face of the same name overrides metrics and paint.
-Every client solves from the same real font tables. Shaping is
+(ASCII-case-insensitive) maps to JetBrains Mono, everything else to Inter.
+Authored weights are rounded to integers, clamped to 1–1000, and preserved in
+SLIR; only bundled fallback face selection chooses the nearest
+400/500/600/700 face (ties up). A runtime-registered matching face keeps its
+registered weight and overrides an equal-weight compiled fallback. Every
+client solves from the same real font tables. Shaping is
 per-codepoint advances; complex scripts (Arabic, RTL) are out of scope.
 
 The selected SLIR font cmap is authoritative coverage on every client.

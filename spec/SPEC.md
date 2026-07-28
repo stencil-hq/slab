@@ -438,8 +438,9 @@ the same tables every driver rasterizes from.
 `each` may be a direct child of `para` to supply data-driven rich-text runs.
 Its list schema def MUST contain exactly one top-level `span`; any other body,
 including two spans, is `err[each-span]`. The span may read Text, Color, Num,
-and family item props for its content, `color`, `size`, `weight`, `family`,
-and `tracking`. Every item remains one independently styled run, while line
+Bool, and family item props for its content, `color`, `bg`, `size`, `weight`,
+`family`, `tracking`, `strike`, `italic`, and `underline`. Every item remains one
+independently styled run, while line
 breaking, baselines, paragraph spacing, and gradient bounds are computed once
 for the combined paragraph. This is the syntax-highlighting primitive; it does
 not create a box per token.
@@ -569,6 +570,8 @@ Small closed set; everything else is composition.
 | `family` | text | authored family name. **Inherits**; runtime registration may provide its actual face (§11.1) |
 | `size`, `weight`, `leading`, `tracking` | text | font metrics. **Inherit** (leading = line-height multiplier, default 1.4; tracking = letter-spacing in u, after every glyph) |
 | `strike` | text | boolean line-through decoration (default `false`). **Inherits**; bare `strike` means `true` |
+| `italic` | text | boolean italic style (default `false`). **Inherits**; bare `italic` means `true` |
+| `underline` | text | boolean underline decoration (default `false`). **Inherits**; bare `underline` means `true`; offset and thickness come from the selected font |
 | `style` | any node | token group applied as an attribute bundle, e.g. `style=text.title`, `style=card.raised`. Explicit attrs win |
 | `align-text` | text | `start\|center\|end` within the text box |
 | `rotate` | any node | rotation in degrees about the node's center. **Quarter turns (±90/270) are layout-aware**: the node measures against swapped constraints and occupies its rotated bounding box — a spine caption authors in place inside its strip. **Arbitrary angles are ink-only** (§6.1's third overlap opt-in): geometry untouched, paint tilts. TUI skips rotated subtrees (`cap-transform`) — redesign with `when tui` |
@@ -623,8 +626,8 @@ tokens { fx { glass { backdrop 22,1.35; bg #FFFFFF12; stroke #FFFFFF3D; stroke-w
 col style=fx.glass shadow=shadow.soft,shadow.edge { … }
 ```
 
-**Inheritance whitelist:** `color family size weight leading` flow to
-descendants. Nothing else inherits, ever.
+**Inheritance whitelist:** `color family size weight leading tracking strike
+italic underline` flow to descendants. Nothing else inherits, ever.
 
 ## 8. The boundary rule
 
@@ -1625,22 +1628,32 @@ directly to its paired signal and no `act=` is present. Both imply `focusable`.
 On key-down, dispatch walks from the focused scene node through its parents;
 the first enabled node whose active `keys` binding contains the event key
 receives the synthesized activate event for the selected signal. Its
-`SigMeta.key` is the emitter's node path and `SigMeta.pressed_key` is the
-fired key name. A disabled or conditionally inactive match
+`SigMeta.key` is the emitter's node path, `SigMeta.pressed_key` is the
+fired key name, and `SigMeta.mods` carries the event's modifier bitset. A disabled or conditionally inactive match
 is skipped so an enabled ancestor may handle it. With **empty focus**, key
 dispatch starts directly at the document root's `keys=` map; when a focused
 walk leaves the key unhandled, it likewise falls back to the root map, so
 global shortcuts work before anything is focused. Routing precedence is
 drag cancellation by Escape, editable `escape-blur` (which also fires a
-`cancel=` binder with the retained buffer, §13.3), field-edit commands,
+`cancel=` binder with the retained buffer, §13.3), the focused field's own
+`keys=` map for a plain (unmodified), non-printable key — a field-local
+binding preempts kernel editing for that key, so plain Enter can split a
+block rather than insert a newline while Shift+Enter still reaches the
+editor — field-edit commands,
 focused divider adjustment, focused scrolling, page scrolling
 (PageUp/PageDown/Home/End against the nearest scroll ancestor, §15.5),
 `keys=` (focused walk, then the root-map fallback), default Enter/Space
 activation, then Tab/arrow focus navigation. `escape-blur` consumes Escape and
 clears focus; without that authored opt-in it remains available to `keys=` and
-application cancel/close semantics. While an edit field is focused, single
-printable keys stay in the text-input path and never reach any `keys=` map;
-unconsumed named keys may bubble.
+application cancel/close semantics. While an edit field is focused, unmodified
+single printable keys stay in the text-input path and never reach any `keys=`
+map; modified printable shortcuts (for example Cmd+B) and unconsumed named
+keys may bubble. A field-edit command that changes nothing at a boundary —
+Backspace at the start of the buffer, Delete at the end, or an arrow clamped
+at a text or visual-line edge — is not consumed: it bubbles through `keys=`
+with `SigMeta.pressed_key` and `SigMeta.mods` set, so hosts can implement
+block-merge and cross-field navigation. Edit commands that mutate text, move
+the caret or selection, or emit an effect (submit) never bubble.
 
 The portable named-key vocabulary is `Enter Space Escape Tab Backspace Delete
 Insert Home End PageUp PageDown ArrowLeft ArrowRight ArrowUp ArrowDown` and
@@ -2127,10 +2140,12 @@ exporters print to stderr). Machine-readable source:
     `gui` is now an ordinary (inactive) state ident.
   - **rule 7** — family fallback metrics route any authored `family`
     containing `mono` (ASCII-case-insensitive) to JetBrains Mono and every
-    other name to Inter; weights snap to 400/500/600/700 (ties up). The
-    authored name remains in SLIR, and a runtime-registered matching face
-    overrides those fallback metrics and paint data. Every client still
-    solves from real font tables, including cell media.
+    other name to Inter. Authored weights are rounded to an integer, clamped to
+    1–1000, and preserved in SLIR; only bundled fallback face selection chooses
+    the nearest 400/500/600/700 face (ties up). The authored family remains in
+    SLIR, and a runtime-registered matching face keeps its registered weight
+    and overrides an equal-weight compiled fallback. Every client still solves
+    from real font tables, including cell media.
   - **rule 8** — new `warn[shadow]`: a def param shadowing an
     attribute/flag name or the `fill`/`hug` keywords is reported instead
     of silently winning.

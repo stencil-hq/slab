@@ -194,24 +194,27 @@ cmap offset/length, sorted codepoint pool, glyph-id pool, advance pool
 
 It never contains TTF or OTF bytes. `family` is the authored `family=` string
 verbatim; string reference 0 means the generic default. `class` is the
-fallback metric class (`0` sans, `1` mono), and `weight` is one of the snapped
-fallback weights 400, 500, 600, or 700. Cmap and advance entries are parallel,
-sorted by codepoint, and cover the complete selected face. Complete coverage is
-required because host strings may introduce any supported codepoint after
-compilation.
+fallback metric class (`0` sans, `1` mono), and `weight` is the normalized
+authored axis value: rounded to an integer and clamped to 1–1000. Cmap and
+advance entries are parallel, sorted by codepoint, and cover the complete
+selected face. Complete coverage is required because host strings may introduce
+any supported codepoint after compilation.
 
-The compiler emits a table for each authored family and snapped weight used by
-the document, including the implicit default family and weight 400. Its
-fallback metrics come from Inter for sans and JetBrains Mono for mono; a family
-whose ASCII-case-folded name contains `mono` selects mono fallback metrics.
-Weights snap to the nearest of 400/500/600/700, with ties rounding up.
+The compiler emits a table for each authored family and statically knowable
+normalized weight used by the document, including the implicit default family
+and weight 400. Fallback metrics come from Inter for sans and JetBrains Mono
+for mono; a family whose ASCII-case-folded name contains `mono` selects mono
+fallback metrics. Only fallback face selection chooses among the bundled
+400/500/600/700 faces, taking the nearest weight and rounding ties up; the
+table's `weight` remains the normalized authored value.
 
-Runtimes may register a face by `(family name, metrics, font bytes)`. The
-kernel appends its metric table, matches family names ASCII-case-insensitively,
-and selects the nearest weight; later equal candidates win, so a registered
-face overrides the equal compiled fallback. If no matching family exists, it
-falls back to the generic family table. A registered face that is far from all
-compiled weights still supplies the nearest match.
+Runtimes may register a face by `(family name, weight, metrics, font bytes)`;
+the registered table preserves that supplied weight. The kernel appends its
+metric table, matches family names ASCII-case-insensitively, and selects the
+nearest weight; later equal candidates win, so a registered face overrides an
+equal-weight compiled fallback. If no matching family exists, it falls back to
+the generic family table. When the selected font bytes expose a `wght`
+variation axis, shaping applies the selected table's preserved weight.
 
 The selected `FONT` cmap is authoritative for glyph coverage as well as
 metrics. Hosts use matching registered or bundled bytes to paint only nonzero
