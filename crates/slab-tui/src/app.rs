@@ -21,6 +21,56 @@ pub const M_SHIFT: u32 = 1;
 pub const M_ALT: u32 = 2;
 pub const M_CTRL: u32 = 4;
 pub const M_META: u32 = 8;
+/// Whether a host shortcut consumed a terminal key or should let the kernel handle it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum KeyHandling {
+    /// Do not dispatch the key or its paired printable-text event to the kernel.
+    Consumed,
+    /// Forward the key and any paired printable-text event to the kernel unchanged.
+    Forward,
+}
+
+/// A translated terminal key offered to [`Host::on_key`].
+///
+/// The managed loop only offers keys while focus is outside an edit field, so
+/// printable shortcuts cannot steal text entry. `focused_key` is the canonical
+/// full scene key and `item` is the innermost stable list-item key, when any.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HostKey {
+    /// FRAME key name (`Enter`, `ArrowDown`, `F2`, or a printable character).
+    pub key: String,
+    /// FRAME modifier bitset (`M_SHIFT | M_ALT | M_CTRL | M_META`).
+    pub mods: u32,
+    /// Canonical full key of the focused node.
+    pub focused_key: Option<String>,
+    /// Innermost stable list-item key containing the focused node.
+    pub item: Option<String>,
+}
+
+/// Builds host-shortcut context for a translated key outside an edit field.
+///
+/// Returns `None` for non-key events and whenever the focused node is currently
+/// editing. This is also useful to host-owned loops such as `slab-ratatui`.
+pub fn host_key(inst: &kframe::Instance, event: &dispatch::Event) -> Option<HostKey> {
+    if event.etype != E_KEY_DOWN {
+        return None;
+    }
+    let focused = kframe::inst_focus(inst);
+    if focused != slab_kernel::slir::NONE && dispatch::ed_ix(&inst.ds, focused) >= 0 {
+        return None;
+    }
+    let focused_key = (focused != slab_kernel::slir::NONE)
+        .then(|| slab_kernel::scene::key_of(&inst.doc, &inst.st.lists, focused));
+    let item = (focused != slab_kernel::slir::NONE)
+        .then(|| slab_kernel::list::item_key(&inst.st.lists, &inst.doc, focused))
+        .filter(|item| !item.is_empty());
+    Some(HostKey {
+        key: event.key.clone(),
+        mods: event.mods,
+        focused_key,
+        item,
+    })
+}
 
 /// Compile FILE to SLIR bytes plus its formatted §12 warnings; errors come
 /// back as the joined diagnostics. Nothing is printed: the interactive loop
@@ -137,6 +187,19 @@ pub trait Host {
         let _ = (inst, signal);
         Ok(())
     }
+    /// Intercepts one translated terminal key while focus is outside an edit field.
+    ///
+    /// Return [`KeyHandling::Consumed`] after applying a host shortcut, or
+    /// [`KeyHandling::Forward`] to preserve normal kernel dispatch. Printable
+    /// text paired with a consumed key is consumed with it.
+    fn on_key(
+        &mut self,
+        inst: &mut kframe::Instance,
+        key: &HostKey,
+    ) -> Result<KeyHandling, String> {
+        let _ = (inst, key);
+        Ok(KeyHandling::Forward)
+    }
     /// Advances host time by `dt_ms` before a frame; param writes repaint.
     fn tick(&mut self, inst: &mut kframe::Instance, dt_ms: f64) -> Result<(), String> {
         let _ = (inst, dt_ms);
@@ -215,4 +278,25 @@ pub fn settle_frame(inst: &mut kframe::Instance, t: f64) -> flatten::Frame {
         fr = kframe::inst_frame(inst, t);
     }
     fr
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn host_key_context_preserves_typed_key_and_modifiers() {
+        let inst = kframe::inst_shell();
+        let event = key_event("d", M_CTRL | M_SHIFT);
+        assert_eq!(
+            host_key(&inst, &event),
+            Some(HostKey {
+                key: "d".to_string(),
+                mods: M_CTRL | M_SHIFT,
+                focused_key: None,
+                item: None,
+            })
+        );
+        assert!(host_key(&inst, &text_event("d")).is_none());
+    }
 }

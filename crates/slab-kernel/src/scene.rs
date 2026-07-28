@@ -214,19 +214,30 @@ pub fn chain(sc: &Scene, ix: i32, out: &mut Vec<i32>) {
     out.reverse();
 }
 
+fn focusable_index(sc: &Scene, index: usize) -> bool {
+    let flags = sc.flags[index];
+    flags & F_FOCUSABLE != 0
+        && flags & F_INERT == 0
+        && !sc.disabled.get(index).copied().unwrap_or(false)
+        && focus_painted(sc, index)
+}
+
+/// Reports whether `node` is an eligible current keyboard focus target.
+pub fn is_focusable(sc: &Scene, node: u32) -> bool {
+    let index = index_of(sc, node);
+    index >= 0 && focusable_index(sc, usize::try_from(index).expect("negative scene index"))
+}
+
 /// Writes focusable node identifiers in materialized authored order.
 ///
 /// An entry is included when its focusable flag is set, its effective inert
-/// flag is unset, and its resolved disabled state is false. Nodes absent from
-/// the retained scene, including unmaterialized virtual items, are excluded.
+/// flag is unset, its resolved disabled state is false, and it has nonempty
+/// painted geometry. Non-scroll clipping ancestors also exclude descendants
+/// wholly outside their clip. Scroll clips deliberately do not: off-screen
+/// children remain keyboard targets so traversal can reveal them.
 pub fn focusables(sc: &Scene, out: &mut Vec<u32>) {
     out.clear();
-    let is_focusable = |index: usize| {
-        let flags = sc.flags[index];
-        flags & F_FOCUSABLE != 0
-            && flags & F_INERT == 0
-            && !sc.disabled.get(index).copied().unwrap_or(false)
-    };
+    let is_focusable = |index: usize| focusable_index(sc, index);
     if sc.authored_order.len() == sc.node.len()
         && sc.authored_order.iter().all(|&index| index < sc.node.len())
     {
@@ -244,96 +255,256 @@ pub fn focusables(sc: &Scene, out: &mut Vec<u32>) {
     }
 }
 
-/// Returns the node identifier for a full key path such as `"col@0/a/box@0"`.
+/// Reports whether an entry has nonempty painted geometry after non-scroll
+/// ancestor clips. Scroll viewports are ignored so off-screen content can
+/// remain in the focus ring and be revealed by keyboard traversal.
+pub fn focus_painted(sc: &Scene, index: usize) -> bool {
+    let Some((x, y, w, h)) =
+        sc.x.get(index)
+            .zip(sc.y.get(index))
+            .zip(sc.w.get(index).zip(sc.h.get(index)))
+            .map(|((&x, &y), (&w, &h))| (x, y, w, h))
+    else {
+        // Hand-built semantic scenes may omit geometry; loaded frames never do.
+        return true;
+    };
+    let (mut left, mut top, mut right, mut bottom) = (x, y, x + w, y + h);
+    if !left.is_finite()
+        || !top.is_finite()
+        || !right.is_finite()
+        || !bottom.is_finite()
+        || right <= left
+        || bottom <= top
+    {
+        return false;
+    }
+
+    let mut parent = sc.parent.get(index).copied().unwrap_or(-1);
+    while parent >= 0 {
+        let parent_index = usize::try_from(parent).expect("negative scene index");
+        let flags = sc.flags[parent_index];
+        if flags & crate::slir::F_CLIP != 0
+            && flags & (crate::slir::F_SCROLL | crate::slir::F_SCROLL_CROSS) == 0
+        {
+            left = left.max(sc.x[parent_index]);
+            top = top.max(sc.y[parent_index]);
+            right = right.min(sc.x[parent_index] + sc.w[parent_index]);
+            bottom = bottom.min(sc.y[parent_index] + sc.h[parent_index]);
+            if right <= left || bottom <= top {
+                return false;
+            }
+        }
+        parent = sc.parent[parent_index];
+    }
+    true
+}
+
+/// Result of resolving a canonical scene-key locator.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum KeyResolution {
+    /// Exactly one node resolved.
+    Found(u32),
+    /// No node resolved; the keys are deterministic near matches or examples.
+    Missing { candidates: Vec<String> },
+    /// A shorthand locator matched more than one canonical full key.
+    Ambiguous { candidates: Vec<String> },
+}
+
+fn detached_each_template(d: &Doc, node: u32) -> bool {
+    let mut parent = d
+        .node_parent
+        .get(usize::try_from(node).unwrap_or(usize::MAX))
+        .copied()
+        .unwrap_or(NONE);
+    while parent != NONE {
+        let index = usize::try_from(parent).expect("node id exceeds usize");
+        if d.node_kind.get(index) == Some(&crate::slir::K_EACH) {
+            return true;
+        }
+        parent = d.node_parent.get(index).copied().unwrap_or(NONE);
+    }
+    false
+}
+
+fn candidate_nodes(d: &Doc, lists: &State) -> Vec<u32> {
+    let mut nodes = Vec::with_capacity(d.node_key.len() + lists.sy_id.len());
+    nodes.extend((0..d.node_key.len()).filter_map(|node| {
+        let node = u32::try_from(node).expect("document has more than u32::MAX nodes");
+        (!detached_each_template(d, node)).then_some(node)
+    }));
+    nodes.extend(
+        lists
+            .sy_id
+            .iter()
+            .copied()
+            .filter(|&node| list::item_ix(lists, d, node) >= 0),
+    );
+    nodes
+}
+
+fn unique_keys(d: &Doc, lists: &State, nodes: &[u32]) -> Vec<String> {
+    let mut keys = Vec::new();
+    for &node in nodes {
+        let key = key_of(d, lists, node);
+        if !key.is_empty() && !keys.contains(&key) {
+            keys.push(key);
+        }
+    }
+    keys.sort();
+    keys
+}
+
+fn edit_distance(left: &str, right: &str) -> usize {
+    let right: Vec<char> = right.chars().collect();
+    let mut previous: Vec<usize> = (0..=right.len()).collect();
+    let mut current = vec![0; right.len() + 1];
+    for (left_index, left_char) in left.chars().enumerate() {
+        current[0] = left_index + 1;
+        for (right_index, &right_char) in right.iter().enumerate() {
+            current[right_index + 1] = (previous[right_index + 1] + 1)
+                .min(current[right_index] + 1)
+                .min(previous[right_index] + if left_char == right_char { 0 } else { 1 });
+        }
+        std::mem::swap(&mut previous, &mut current);
+    }
+    previous[right.len()]
+}
+
+fn key_distance(candidate: &str, query: &str) -> usize {
+    let wanted = query.strip_prefix('#').unwrap_or(query);
+    let leaf = candidate.rsplit('/').next().unwrap_or(candidate);
+    let leaf = leaf.strip_prefix('#').unwrap_or(leaf);
+    let mut score = edit_distance(candidate, query).min(edit_distance(leaf, wanted));
+    if query.starts_with('#')
+        && let Some(id_start) = candidate
+            .split('/')
+            .scan(0_usize, |offset, segment| {
+                let start = *offset;
+                *offset += segment.len() + 1;
+                Some((start, segment))
+            })
+            .find_map(|(start, segment)| segment.starts_with('#').then_some(start))
+    {
+        score = score.min(edit_distance(&candidate[id_start..], query));
+    }
+    score
+}
+
+/// Resolves an exact canonical key or an author-friendly unique locator.
 ///
-/// Returns [`NONE`] when the key is absent. The first match in node-identifier
-/// order wins; keys are unique except where duplicate-key diagnostics apply.
-/// A bare query without `/` (an authored `#id`, with or without the leading
-/// `#`) also resolves against the final segment of hierarchical keys, so
-/// hosts can address `#diff-scroll` as `"diff-scroll"` without knowing the
-/// instantiation path.
-pub fn node_by_key(d: &Doc, lists: &State, key: &str) -> u32 {
-    if !key.is_empty() && list::key_index_ready(lists) {
-        if let Some(node) = list::key_index_get(lists, key) {
-            return node;
-        }
-        for &node in &lists.sy_id {
-            if list::item_ix(lists, d, node) >= 0 && key_eq(d, lists, node, key) {
-                return node;
-            }
-        }
-        if !key.contains('/') {
-            let want = key.strip_prefix('#').unwrap_or(key);
-            if let Some(node) = list::key_leaf_get(lists, want) {
-                return node;
-            }
-        }
-        return NONE;
-    }
-    node_by_key_scan(d, lists, key)
-}
-
-/// Reports whether a synthetic node's hierarchical key equals `key` without
-/// materializing it. Mirrors the `prefix~item/relative` shape built by
-/// [`key_of`].
-fn key_eq(d: &Doc, lists: &State, node: u32, key: &str) -> bool {
-    let each = list::each_of(lists, d, node);
-    if each == NONE {
-        let Some(&key_ref) = d
-            .node_key
-            .get(usize::try_from(node).expect("node id fits usize"))
-        else {
-            return false;
+/// Exact full keys win. A bare `#id`/`id` resolves the node carrying that
+/// authored id (including a component call id placed on its first root), then
+/// falls back to a unique final segment. A path beginning with `#id`, such as
+/// `#feed/rows`, resolves a unique authored suffix. Ambiguous shorthands are
+/// rejected with their canonical full-key candidates.
+pub fn resolve_key(d: &Doc, lists: &State, key: &str) -> KeyResolution {
+    if key.is_empty() {
+        return KeyResolution::Missing {
+            candidates: Vec::new(),
         };
-        let key_index = usize::try_from(key_ref).expect("string reference does not fit usize");
-        return d.strs[key_index] == key;
     }
-    let base = list::base(lists, d, node);
-    let relative_ref = d.node_key[usize::try_from(base).expect("base node id fits usize")];
-    let relative = &d.strs[usize::try_from(relative_ref).expect("string reference fits usize")];
-    let Some(prefix_item) = key.strip_suffix(relative.as_str()) else {
-        return false;
-    };
-    let Some(prefix_item) = prefix_item.strip_suffix('/') else {
-        return false;
-    };
-    let Some(each_key) = prefix_item.strip_suffix(list::item_key_ref(lists, d, node)) else {
-        return false;
-    };
-    let Some(each_key) = each_key.strip_suffix('~') else {
-        return false;
-    };
-    key_eq(d, lists, each, each_key)
-}
-
-/// Linear key resolution for states built without [`list::init`]'s index.
-fn node_by_key_scan(d: &Doc, lists: &State, key: &str) -> u32 {
-    for (node, &key_ref) in d.node_key.iter().enumerate() {
-        let key_index = usize::try_from(key_ref).expect("string reference does not fit usize");
-        if d.strs[key_index] == key {
-            return u32::try_from(node).expect("document has more than u32::MAX nodes");
+    if list::key_index_ready(lists) {
+        if let Some(node) = list::key_index_get(lists, key)
+            && !detached_each_template(d, node)
+        {
+            return KeyResolution::Found(node);
+        }
+    } else {
+        for (node, &key_ref) in d.node_key.iter().enumerate() {
+            let node = u32::try_from(node).expect("document has more than u32::MAX nodes");
+            if !detached_each_template(d, node) && crate::slir::str_at(d, key_ref) == key {
+                return KeyResolution::Found(node);
+            }
         }
     }
-
     for &node in &lists.sy_id {
         if list::item_ix(lists, d, node) >= 0 && key_of(d, lists, node) == key {
-            return node;
+            return KeyResolution::Found(node);
         }
     }
+    let nodes = candidate_nodes(d, lists);
 
-    if !key.is_empty() && !key.contains('/') {
-        let want = key.strip_prefix('#').unwrap_or(key);
-        for (node, &key_ref) in d.node_key.iter().enumerate() {
-            let key_index = usize::try_from(key_ref).expect("string reference does not fit usize");
-            let full = d.strs[key_index].as_str();
-            let leaf = full.rsplit('/').next().unwrap_or(full);
-            if leaf.strip_prefix('#').unwrap_or(leaf) == want {
-                return u32::try_from(node).expect("document has more than u32::MAX nodes");
+    let mut matches = Vec::new();
+    if !key.contains('/') {
+        let wanted = key.strip_prefix('#').unwrap_or(key);
+        for &node in &nodes {
+            let base = list::base(lists, d, node);
+            let Some(&id_ref) = d.node_id.get(usize::try_from(base).unwrap_or(usize::MAX)) else {
+                continue;
+            };
+            if id_ref != 0 && crate::slir::str_at(d, id_ref) == wanted {
+                matches.push(node);
+            }
+        }
+        if matches.is_empty() {
+            for &node in &nodes {
+                let full = key_of(d, lists, node);
+                let leaf = full.rsplit('/').next().unwrap_or(full.as_str());
+                if leaf.strip_prefix('#').unwrap_or(leaf) == wanted {
+                    matches.push(node);
+                }
+            }
+        }
+    } else if key.starts_with('#') {
+        for &node in &nodes {
+            let full = key_of(d, lists, node);
+            if full == key
+                || full
+                    .strip_suffix(key)
+                    .is_some_and(|prefix| prefix.ends_with('/'))
+            {
+                matches.push(node);
             }
         }
     }
 
-    NONE
+    if matches.len() == 1 {
+        return KeyResolution::Found(matches[0]);
+    }
+    if !matches.is_empty() {
+        return KeyResolution::Ambiguous {
+            candidates: unique_keys(d, lists, &matches),
+        };
+    }
+
+    let all = unique_keys(d, lists, &nodes);
+    let mut scored: Vec<(usize, String)> = all
+        .into_iter()
+        .map(|candidate| (key_distance(&candidate, key), candidate))
+        .collect();
+    scored.sort_by_key(|(score, _)| *score);
+    KeyResolution::Missing {
+        candidates: scored
+            .into_iter()
+            .take(5)
+            .map(|(_, candidate)| candidate)
+            .collect(),
+    }
+}
+
+/// Returns the resolved node, or [`NONE`] for a missing or ambiguous locator.
+pub fn node_by_key(d: &Doc, lists: &State, key: &str) -> u32 {
+    match resolve_key(d, lists, key) {
+        KeyResolution::Found(node) => node,
+        KeyResolution::Missing { .. } | KeyResolution::Ambiguous { .. } => NONE,
+    }
+}
+
+/// Escapes one authored key or item-key segment for an unambiguous full path.
+///
+/// `%`, `/`, and `~` are the structural reserved bytes and use uppercase
+/// percent escapes. Other UTF-8 content remains readable.
+pub fn escape_segment(segment: &str) -> String {
+    let mut escaped = String::with_capacity(segment.len());
+    for ch in segment.chars() {
+        match ch {
+            '%' => escaped.push_str("%25"),
+            '/' => escaped.push_str("%2F"),
+            '~' => escaped.push_str("%7E"),
+            _ => escaped.push(ch),
+        }
+    }
+    escaped
 }
 
 /// Returns the key string for `node`, or an empty string for [`NONE`].
@@ -361,7 +532,7 @@ pub fn key_of(d: &Doc, lists: &State, node: u32) -> String {
 
     let prefix = key_of(d, lists, each);
     let relative = &d.strs[relative_index];
-    let item = list::item_key(lists, d, node);
+    let item = escape_segment(list::item_key_ref(lists, d, node));
     let mut key = String::with_capacity(prefix.len() + item.len() + relative.len() + 2);
     key.push_str(&prefix);
     key.push('~');

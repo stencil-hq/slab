@@ -32,6 +32,7 @@ pub struct FrameBuf {
     rt_paths: String,
     dirty: bool,
     motion_active: bool,
+    diagnostics: String,
 }
 
 impl FrameBuf {
@@ -185,6 +186,25 @@ impl FrameBuf {
         )
         .expect("runtime paths serialize");
 
+        #[derive(serde::Serialize)]
+        struct DiagnosticJson<'a> {
+            code: &'a str,
+            line: u32,
+            msg: &'a str,
+        }
+        let diagnostics = serde_json::to_string(
+            &frame
+                .diagnostics
+                .iter()
+                .map(|diagnostic| DiagnosticJson {
+                    code: &diagnostic.code,
+                    line: diagnostic.line,
+                    msg: &diagnostic.msg,
+                })
+                .collect::<Vec<_>>(),
+        )
+        .expect("frame diagnostics serialize");
+
         Self {
             u32s,
             f64s,
@@ -192,6 +212,7 @@ impl FrameBuf {
             dirty,
             motion_active,
             rt_paths,
+            diagnostics,
         }
     }
 }
@@ -218,6 +239,11 @@ impl FrameBuf {
         self.rt_paths.clone()
     }
 
+    /// Returns host-visible frame diagnostics as JSON objects.
+    pub fn diagnostics_json(&self) -> String {
+        self.diagnostics.clone()
+    }
+
     /// Reports whether the solve dirtied the instance for another frame.
     pub fn dirty(&self) -> bool {
         self.dirty
@@ -238,7 +264,7 @@ mod tests {
     use super::{
         CLIP_POP, FrameBuf, GROUP_POP, GROUP_PUSH, ROTATE_POP, SCALE_POP, SCALE_PUSH, TEXT,
     };
-    use slab_kernel::flatten::{Frame, FrameOp, OpGroup, OpScale, OpText, RtPath};
+    use slab_kernel::flatten::{Frame, FrameDiagnostic, FrameOp, OpGroup, OpScale, OpText, RtPath};
 
     #[test]
     fn encodes_dimensions_signed_indices_and_operation_tags() {
@@ -293,6 +319,11 @@ mod tests {
                 verbs: vec![0, 1],
                 coords: vec![1.0, 2.0, 3.0, 4.0],
             }],
+            diagnostics: vec![FrameDiagnostic {
+                code: "glyph-missing".to_owned(),
+                line: 7,
+                msg: "missing U+2715".to_owned(),
+            }],
         };
 
         let encoded = FrameBuf::encode(frame, true, false);
@@ -327,6 +358,10 @@ mod tests {
         );
         assert_eq!(encoded.strings, [String::from("hello")]);
         assert_eq!(encoded.rt_paths, "[[[0,1],[1.0,2.0,3.0,4.0]]]");
+        assert_eq!(
+            encoded.diagnostics,
+            r#"[{"code":"glyph-missing","line":7,"msg":"missing U+2715"}]"#
+        );
         assert!(encoded.dirty);
         assert!(!encoded.motion_active);
     }

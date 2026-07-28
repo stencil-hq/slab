@@ -145,6 +145,21 @@ impl KInst {
     pub fn set_focus(&mut self, key: &str, visible: bool) -> bool {
         kframe::inst_set_focus(&mut self.inner, key, visible)
     }
+
+    /// Clears kernel focus and any visible focus ring.
+    pub fn clear_focus(&mut self) -> bool {
+        kframe::inst_clear_focus(&mut self.inner)
+    }
+
+    /// Reveals, materializes, and focuses one virtual-list item.
+    pub fn focus_item(&mut self, each_key: &str, item_index: i32) -> bool {
+        kframe::inst_focus_item(&mut self.inner, each_key, item_index)
+    }
+
+    /// Returns the last failed focus request's actionable explanation.
+    pub fn focus_note(&self) -> String {
+        kframe::inst_focus_note(&self.inner).to_owned()
+    }
     /// Replaces one keyed field edit buffer and queues its Change signal.
     pub fn set_field_text(&mut self, key: &str, text: &str) -> bool {
         kframe::inst_set_field_text(&mut self.inner, key, text)
@@ -173,6 +188,27 @@ impl KInst {
     /// Returns the current theme name.
     pub fn theme(&self) -> String {
         kframe::inst_theme(&self.inner)
+    }
+
+    /// Returns one active-theme token as typed JSON, or `undefined` when absent.
+    pub fn get_token_json(&self, path: &str) -> Option<String> {
+        match kframe::inst_get_token(&self.inner, path)? {
+            kframe::TokenValue::Number(value) => {
+                Some(serde_json::to_string(&value).expect("token number serializes"))
+            }
+            kframe::TokenValue::Color(rgba) => {
+                let [r, g, b, a] = rgba.to_le_bytes();
+                let css = if a == u8::MAX {
+                    format!("#{r:02x}{g:02x}{b:02x}")
+                } else {
+                    format!("#{r:02x}{g:02x}{b:02x}{a:02x}")
+                };
+                Some(serde_json::to_string(&css).expect("token color serializes"))
+            }
+            kframe::TokenValue::Text(value) => {
+                Some(serde_json::to_string(value).expect("token text serializes"))
+            }
+        }
     }
 
     /// Changes one retained scroll offset by node key and axis.

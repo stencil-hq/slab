@@ -10,7 +10,7 @@
 use crate::{
     dispatch::{self, DState, Effects, Event},
     dumpjson, edit,
-    flatten::{self, Frame, FrameOp},
+    flatten::{self, Frame, FrameDiagnostic, FrameOp},
     focus, hit, layout,
     layout::Lay,
     list, motion,
@@ -21,6 +21,7 @@ use crate::{
     style::{self, St},
     textm,
 };
+use std::collections::BTreeSet;
 
 /// Mutable state for one decoded document and its most recent solve.
 #[derive(Clone, Debug)]
@@ -49,6 +50,10 @@ pub struct Instance {
     pub last_t: f64,
     /// Root patch index produced by the latest solve.
     pub root_pi: i32,
+    /// Actionable result of the most recent failed focus request.
+    focus_note: String,
+    /// Runtime glyph notes already surfaced, keyed by authored family and codepoint.
+    glyph_warned: BTreeSet<(String, u32)>,
 }
 
 /// One stable runtime image slot; inactive slots retain their unified index.
@@ -80,6 +85,17 @@ pub struct ParamValue {
     pub rgba: u32,
     /// Enum symbol payload.
     pub sym: String,
+}
+
+/// One resolved public token value.
+///
+/// Colors use Slab's packed RGBA word (`u32::from_le_bytes([r, g, b, a])`).
+/// Text borrows the decoded document, so token lookup performs no allocation.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum TokenValue<'a> {
+    Number(f64),
+    Color(u32),
+    Text(&'a str),
 }
 
 /// Absolute geometry for one document hole.
@@ -129,14 +145,77 @@ pub fn inst_shell() -> Instance {
         solved: false,
         last_t: 0.0,
         root_pi: -1,
+        focus_note: String::new(),
+        glyph_warned: BTreeSet::new(),
     }
 }
 
 /// Initializes style state after a host assigns the decoded document.
 pub fn inst_init(i: &mut Instance) {
     i.ok = i.doc.ok;
+    i.glyph_warned.clear();
+    i.focus_note.clear();
+    i.solved = false;
+    i.dirty = true;
     if i.ok {
         style::init_params(&i.doc, &mut i.st);
+    }
+}
+fn finish_frame_diagnostics(i: &mut Instance, frame: &mut Frame) {
+    frame.diagnostics.clear();
+    frame.diagnostics.extend(
+        i.st.diag_code
+            .iter()
+            .zip(&i.st.diag_line)
+            .zip(&i.st.diag_msg)
+            .map(|((code, &line), msg)| FrameDiagnostic {
+                code: code.clone(),
+                line,
+                msg: msg.clone(),
+            }),
+    );
+
+    for op in &frame.ops {
+        let FrameOp::Text(text) = op else {
+            continue;
+        };
+        let Ok(font) = usize::try_from(text.font) else {
+            continue;
+        };
+        let Some(&family_ref) = i.doc.font_family.get(font) else {
+            continue;
+        };
+        let family = i
+            .doc
+            .strs
+            .get(family_ref as usize)
+            .map(String::as_str)
+            .unwrap_or("");
+        let display_family = if family.is_empty() { "sans" } else { family };
+        let Some(content) = frame.strings.get(text.str_ref as usize) else {
+            continue;
+        };
+        for character in content.chars().filter(|character| !character.is_control()) {
+            let codepoint = u32::from(character);
+            if slir::font_gid(&i.doc, text.font, codepoint) != 0
+                || !i.glyph_warned.insert((family.to_owned(), codepoint))
+            {
+                continue;
+            }
+            let line = i
+                .doc
+                .node_line
+                .get(text.node as usize)
+                .copied()
+                .unwrap_or(0);
+            frame.diagnostics.push(FrameDiagnostic {
+                code: "glyph-missing".to_owned(),
+                line,
+                msg: format!(
+                    "character '{character}' (U+{codepoint:04X}) is missing from runtime font family '{display_family}'"
+                ),
+            });
+        }
     }
 }
 
@@ -389,16 +468,22 @@ pub fn inst_set_env(i: &mut Instance, vw: f64, vh: f64, client: u32, dark: bool,
 /// The empty name restores the authored base. An unknown name returns `false`
 /// and leaves the current theme unchanged.
 pub fn inst_set_theme(i: &mut Instance, name: &str) -> bool {
-    let known = name.is_empty()
-        || i.doc.theme_name.iter().any(|&name_ref| {
-            let index = usize::try_from(name_ref).expect("theme string index is too large");
-            i.doc.strs[index] == name
-        });
-    if !known {
+    let theme = if name.is_empty() {
+        Some(0)
+    } else {
+        i.doc
+            .theme_name
+            .iter()
+            .position(|&name_ref| slir::str_at(&i.doc, name_ref) == name)
+            .and_then(|index| u32::try_from(index).ok())
+            .and_then(|index| index.checked_add(1))
+    };
+    let Some(theme_index) = theme else {
         return false;
-    }
+    };
     if i.st.env.theme != name {
         i.st.env.theme = name.to_owned();
+        i.st.theme_index = theme_index;
         i.dirty = true;
     }
     true
@@ -407,6 +492,38 @@ pub fn inst_set_theme(i: &mut Instance, name: &str) -> bool {
 /// Returns the current theme name; empty means the authored base.
 pub fn inst_theme(i: &Instance) -> String {
     i.st.env.theme.clone()
+}
+
+/// Returns one scalar token resolved through the active named theme.
+///
+/// `path` is the authored dotted path (for example `color.accent`). Unknown
+/// paths and non-scalar token groups return `None`. The returned value borrows
+/// document storage and the lookup itself does not allocate.
+pub fn inst_get_token<'a>(i: &'a Instance, path: &str) -> Option<TokenValue<'a>> {
+    let token = i
+        .doc
+        .token_name
+        .iter()
+        .position(|&name| slir::str_at(&i.doc, name) == path)?;
+    let token = u32::try_from(token).ok()?;
+    let value = crate::value::decode_active(
+        &i.doc,
+        i.st.theme_index,
+        crate::value::token_aval(&i.doc, i.st.theme_index, token),
+    );
+    match value.tag {
+        slir::T_NUM => Some(TokenValue::Number(value.num)),
+        slir::T_COLOR | slir::T_PAINT_SOLID => Some(TokenValue::Color(value.h)),
+        slir::T_STR | slir::T_ENUM_SYM => Some(TokenValue::Text(
+            i.doc.strs.get(usize::try_from(value.h).ok()?)?,
+        )),
+        _ => {
+            let repr = crate::value::token_repr(&i.doc, i.st.theme_index, token)?;
+            Some(TokenValue::Text(
+                i.doc.strs.get(usize::try_from(repr).ok()?)?,
+            ))
+        }
+    }
 }
 
 /// Toggles a global state by name.
@@ -451,35 +568,75 @@ pub fn inst_set_node_state(i: &mut Instance, key: &str, name: &str, on: bool) ->
     }
     true
 }
+/// Clears keyboard focus without discarding retained edit buffers.
+///
+/// Returns whether focus or focus-ring visibility changed.
+pub fn inst_clear_focus(i: &mut Instance) -> bool {
+    i.focus_note.clear();
+    let changed = dispatch::clear_focus(&i.doc, &mut i.st, &mut i.ds);
+    if changed {
+        i.dirty = true;
+    }
+    changed
+}
+
+fn focus_resolution_note(key: &str, resolution: &scene::KeyResolution) -> String {
+    match resolution {
+        scene::KeyResolution::Found(_) => String::new(),
+        scene::KeyResolution::Missing { candidates } if candidates.is_empty() => {
+            format!("unknown focus key '{key}'; inspect sceneSnapshot() for canonical keys")
+        }
+        scene::KeyResolution::Missing { candidates } => format!(
+            "unknown focus key '{key}'; try one of: {}",
+            candidates.join(", ")
+        ),
+        scene::KeyResolution::Ambiguous { candidates } => format!(
+            "focus key '{key}' is ambiguous; use one canonical full key: {}",
+            candidates.join(", ")
+        ),
+    }
+}
 
 /// Moves focus to a keyed node, or clears focus when `key` is empty.
 ///
 /// Hosts move focus for dialogs and wizards. The node must be focusable in
-/// the CURRENT scene (present, not inert, `focusable`); unknown, absent, or
-/// non-focusable keys return `false` without side effects. `visible` selects
-/// the keyboard-grade focus ring exactly as Tab traversal does, and a
-/// `field=` target binds its edit state on focus.
+/// the CURRENT painted scene. Unknown, ambiguous, absent, inert, disabled,
+/// collapsed, or fully clipped targets return `false`; [`inst_focus_note`]
+/// explains the most recent failure. `visible` selects the keyboard-grade
+/// focus ring. Unlike keyboard traversal, explicit focus does not auto-reveal.
 pub fn inst_set_focus(i: &mut Instance, key: &str, visible: bool) -> bool {
     if key.is_empty() {
-        if focus::set_focus(&i.doc, &mut i.st, &mut i.ds.fs, slir::NONE, false) {
-            i.dirty = true;
-        }
+        inst_clear_focus(i);
         return true;
     }
-    let node = scene::node_by_key(&i.doc, &i.st.lists, key);
-    if node == slir::NONE {
+    let resolution = scene::resolve_key(&i.doc, &i.st.lists, key);
+    let scene::KeyResolution::Found(node) = resolution else {
+        i.focus_note = focus_resolution_note(key, &resolution);
         return false;
-    }
+    };
     let mut focusables = Vec::new();
     scene::focusables(&i.sc, &mut focusables);
     if !focusables.contains(&node) {
+        let canonical = scene::key_of(&i.doc, &i.st.lists, node);
+        i.focus_note = format!(
+            "focus target '{canonical}' is not currently focusable and painted; \
+             settle conditional content or use focus_item(each_key, index)"
+        );
         return false;
     }
+    i.focus_note.clear();
     if focus::set_focus(&i.doc, &mut i.st, &mut i.ds.fs, node, visible) {
         i.dirty = true;
     }
     dispatch::bind_edit_on_focus(&i.doc, &mut i.st, &mut i.ds);
     true
+}
+
+/// Returns the actionable note from the most recent failed focus request.
+///
+/// A successful focus or clear request resets the note.
+pub fn inst_focus_note(i: &Instance) -> &str {
+    &i.focus_note
 }
 /// Replaces a keyed field's edit buffer and synchronizes a same-named text parameter.
 ///
@@ -796,6 +953,69 @@ pub fn inst_reveal_item(i: &mut Instance, each_key: &str, item_index: i32, align
     true
 }
 
+fn first_focusable_template(i: &mut Instance, each: u32, mut template: u32, item_key: &str) -> u32 {
+    while template != slir::NONE {
+        let node = list::synthetic(&i.doc, &mut i.st.lists, each, template, item_key);
+        let flags = style::eff_flags(&i.doc, &i.st, node);
+        if flags & slir::F_FOCUSABLE != 0
+            && flags & slir::F_INERT == 0
+            && !style::node_state_on(&i.doc, &i.st, node, "disabled")
+        {
+            return node;
+        }
+        let child = i.doc.node_first[usize::try_from(template).expect("template id exceeds usize")];
+        let descendant = first_focusable_template(i, each, child, item_key);
+        if descendant != slir::NONE {
+            return descendant;
+        }
+        template = i.doc.node_next[usize::try_from(template).expect("template id exceeds usize")];
+    }
+    slir::NONE
+}
+
+/// Focuses the first active focusable descendant of one virtual `each` item.
+///
+/// The item is revealed with nearest alignment and may be outside the current
+/// materialized window. Focus becomes keyboard-visible. Failures populate
+/// [`inst_focus_note`] with an actionable explanation.
+pub fn inst_focus_item(i: &mut Instance, each_key: &str, item_index: i32) -> bool {
+    let resolution = scene::resolve_key(&i.doc, &i.st.lists, each_key);
+    let scene::KeyResolution::Found(each) = resolution else {
+        i.focus_note = focus_resolution_note(each_key, &resolution);
+        return false;
+    };
+    if list::virtual_config(&i.doc, &i.st.lists, each).is_none() {
+        i.focus_note = format!("focus_item target '{each_key}' is not a virtual each");
+        return false;
+    }
+    let list_id = list::each_list(&i.doc, &i.st.lists, each);
+    if list_id < 0
+        || item_index < 0
+        || item_index >= list::length(&i.doc, &i.st.lists, list_id as u32)
+    {
+        i.focus_note = format!("focus_item index {item_index} is outside the list");
+        return false;
+    }
+    if !inst_reveal_item(i, each_key, item_index, 3) {
+        i.focus_note = format!("focus_item could not reveal item {item_index} in '{each_key}'");
+        return false;
+    }
+    let item_key = list::key_at(&i.doc, &i.st.lists, list_id as u32, item_index);
+    let template = list::template_first(&i.doc, &i.st.lists, each);
+    let target = first_focusable_template(i, each, template, &item_key);
+    if target == slir::NONE {
+        i.focus_note =
+            format!("item {item_index} in '{each_key}' has no active focusable descendant");
+        return false;
+    }
+    i.focus_note.clear();
+    if focus::set_focus(&i.doc, &mut i.st, &mut i.ds.fs, target, true) {
+        i.dirty = true;
+    }
+    dispatch::bind_edit_on_focus(&i.doc, &mut i.st, &mut i.ds);
+    true
+}
+
 /// Returns the materialized range for a virtual `each`, or `(-1, -1)`.
 pub fn inst_each_window(i: &Instance, each_key: &str) -> (i32, i32) {
     let each = scene::node_by_key(&i.doc, &i.st.lists, each_key);
@@ -1062,6 +1282,7 @@ pub fn inst_set_hole_size(i: &mut Instance, hole: u32, w: f64, h: f64) {
 pub fn solve_frame(i: &mut Instance, t_ms: f64, with_motion: bool) -> Frame {
     let mut frame = flatten::frame_new();
     solve_frame_into(i, t_ms, with_motion, &mut frame);
+    finish_frame_diagnostics(i, &mut frame);
     frame
 }
 
@@ -1225,6 +1446,7 @@ fn write_frame(i: &mut Instance, t_ms: f64, frame: &mut Frame, retain_clean: boo
             return false;
         }
         flatten::flatten_into(&i.doc, &i.st, &i.lay, &i.ds, &i.ms, i.root_pi, frame);
+        finish_frame_diagnostics(i, frame);
         return true;
     }
 
@@ -1238,11 +1460,8 @@ fn write_frame(i: &mut Instance, t_ms: f64, frame: &mut Frame, retain_clean: boo
         scene::load(&mut i.sc, frame);
     }
     if refresh_virtual_windows(i) {
-        i.dirty = true;
-    }
-
-    if clamp_retained_scrolls(i) {
-        i.dirty = true;
+        i.dirty |= solve_frame_settled(i, t_ms, true, frame);
+        scene::load(&mut i.sc, frame);
     }
 
     // Editing dispatch used the previous layout. Follow once more against the
@@ -1258,14 +1477,15 @@ fn write_frame(i: &mut Instance, t_ms: f64, frame: &mut Frame, retain_clean: boo
         }
     }
 
-    // Restore vanished focus to its nearest neighbour.
+    // Restore focus when its node vanished or is no longer visibly focusable.
     if i.ds.fs.focus != slir::NONE
-        && scene::index_of(&i.sc, i.ds.fs.focus) < 0
+        && !scene::is_focusable(&i.sc, i.ds.fs.focus)
         && focus::restore(&i.doc, &mut i.st, &i.sc, &mut i.ds.fs)
     {
         i.dirty = true;
     }
     focus::refresh(&i.sc, &mut i.ds.fs);
+    finish_frame_diagnostics(i, frame);
     true
 }
 
@@ -1288,6 +1508,7 @@ pub fn inst_frame_static(i: &mut Instance) -> Frame {
         solve_frame_settled(i, 0.0, false, &mut frame);
         scene::load(&mut i.sc, &frame);
     }
+    finish_frame_diagnostics(i, &mut frame);
     frame
 }
 
@@ -1348,7 +1569,19 @@ pub fn inst_dispatch(i: &mut Instance, ev: &Event) -> Effects {
     if !i.ok {
         return dispatch::effects_new();
     }
+    let before_focus = i.ds.fs.focus;
     let effects = dispatch::dispatch(&i.doc, &mut i.st, &i.lay, &i.sc, &mut i.ds, ev);
+    let traversal_key = ev.etype == dispatch::E_KEY_DOWN
+        && matches!(
+            ev.key.as_str(),
+            "Tab" | "ArrowRight" | "ArrowDown" | "ArrowLeft" | "ArrowUp"
+        );
+    if traversal_key && i.ds.fs.focus != before_focus && i.ds.fs.visible {
+        let key = scene::key_of(&i.doc, &i.st.lists, i.ds.fs.focus);
+        if !key.is_empty() {
+            let _ = inst_reveal(i, &key, 0.0);
+        }
+    }
     if effects.repaint {
         i.dirty = true;
     }

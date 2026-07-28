@@ -62,6 +62,8 @@ pub const F_VIRTUAL: u32 = 1024u32;
 
 pub const F_STICKY: u32 = 2048u32;
 pub const F_DRAG_GHOST: u32 = 4096u32;
+/// Escape clears focus on an editable node instead of bubbling.
+pub const F_ESCAPE_BLUR: u32 = 8192u32;
 
 /// Attribute-value tags stored in [`Doc::aval_tag`].
 pub const T_NUM: u32 = 0u32;
@@ -102,6 +104,7 @@ pub const T_LIST_DEFAULT: u32 = 17u32;
 
 pub const T_TUPLE_DYN: u32 = 18u32;
 pub const T_PAINT_CURRENT: u32 = 19u32;
+pub const T_TOKEN_REF: u32 = 20u32;
 
 /// Condition kinds stored in [`Doc::cond_kind`].
 pub const C_STATE: u32 = 0u32;
@@ -452,6 +455,15 @@ pub struct Doc {
     pub list_item_value_val: Vec<u32>,
     // THEM pool.
     pub theme_name: Vec<u32>,
+    // TOKN pool. Public rows precede typed use-site rows.
+    pub token_name: Vec<u32>,
+    pub token_base: Vec<u32>,
+    pub token_base_repr: Vec<u32>,
+    pub token_theme_off: Vec<i32>,
+    pub token_theme_len: Vec<i32>,
+    pub token_theme_name: Vec<u32>,
+    pub token_theme_val: Vec<u32>,
+    pub token_theme_repr: Vec<u32>,
     // HOLE pool.
     pub hole_name: Vec<u32>,
     pub hole_node: Vec<u32>,

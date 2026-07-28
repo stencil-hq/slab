@@ -11,7 +11,7 @@ pub const FULL: u8 = 2;
 pub const CLIENTS: [&str; 5] = ["web", "gpu", "tui", "svg", "png"];
 
 /// Feature rows, chart order.
-pub const FEATURES: [&str; 40] = [
+pub const FEATURES: [&str; 41] = [
     "radius",
     "shadow",
     "blur",
@@ -51,11 +51,12 @@ pub const FEATURES: [&str; 40] = [
     "signals",
     "a11y",
     "text-edit",
+    "text-strike",
     "text-raster",
 ];
 
 /// `LEVELS[feature][client]`.
-pub const LEVELS: [[u8; 5]; 40] = [
+pub const LEVELS: [[u8; 5]; 41] = [
     [FULL, FULL, DEGRADED, FULL, FULL],             // radius
     [FULL, DEGRADED, NONE, DEGRADED, FULL],         // shadow
     [FULL, FULL, NONE, FULL, FULL],                 // blur
@@ -95,12 +96,13 @@ pub const LEVELS: [[u8; 5]; 40] = [
     [FULL, FULL, FULL, NONE, NONE],                 // signals
     [FULL, FULL, NONE, NONE, NONE],                 // a11y
     [FULL, DEGRADED, FULL, NONE, NONE],             // text-edit
+    [FULL, FULL, FULL, FULL, FULL],                 // text-strike
     [DEGRADED, FULL, DEGRADED, DEGRADED, FULL],     // text-raster
 ];
 
 /// `NOTES[feature][client]`: `""` for full, the degradation sentence
 /// for degraded, the `cap-*` diag code for none.
-pub const NOTES: [[&str; 5]; 40] = [
+pub const NOTES: [[&str; 5]; 41] = [
     // radius
     [
         "",
@@ -311,6 +313,8 @@ pub const NOTES: [[&str; 5]; 40] = [
         "cap-edit",
         "cap-edit",
     ],
+    // text-strike
+    ["", "", "", "", ""],
     // text-raster
     [
         "browser-rasterized glyphs; kernel line breaks and advances are authoritative",

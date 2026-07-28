@@ -2,8 +2,9 @@
 //!
 //! Document order is tab order. Keyboard-driven focus sets both `focus` and
 //! `focus-visible`, while pointer focus sets only `focus`. When a focused node
-//! disappears after a re-solve, focus moves to the nearest following entry in
-//! the previous focusables list, then the nearest preceding entry, or clears.
+//! disappears or becomes ineligible after a re-solve, focus moves to the
+//! nearest following entry in the previous focusables list, then the nearest
+//! preceding entry, or clears.
 
 use crate::{
     scene::{self, Scene},
@@ -80,7 +81,7 @@ pub fn focus_next(d: &Doc, st: &mut St, sc: &Scene, fs: &mut FSt, back: bool) ->
     set_focus(d, st, fs, focusables[next], true)
 }
 
-/// Restores focus when the focused node is absent from the new scene.
+/// Restores focus when the focused node is absent or ineligible in the new scene.
 ///
 /// The nearest following entry in the previous focusables list is preferred,
 /// followed by the nearest preceding entry in reverse order. If neither
@@ -92,19 +93,21 @@ pub fn restore(d: &Doc, st: &mut St, sc: &Scene, fs: &mut FSt) -> bool {
         .rposition(|&node| node == fs.focus)
         .unwrap_or(0);
 
+    let mut current = Vec::new();
+    scene::focusables(sc, &mut current);
     let restored = fs
         .last_focusables
         .get(previous_index.saturating_add(1)..)
         .unwrap_or_default()
         .iter()
         .copied()
-        .find(|&node| scene::index_of(sc, node) >= 0)
+        .find(|node| current.contains(node))
         .or_else(|| {
             fs.last_focusables[..previous_index]
                 .iter()
                 .rev()
                 .copied()
-                .find(|&node| scene::index_of(sc, node) >= 0)
+                .find(|node| current.contains(node))
         })
         .unwrap_or(NONE);
 

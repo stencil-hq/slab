@@ -1234,11 +1234,6 @@ pub(crate) fn key_index_get(s: &State, key: &str) -> Option<u32> {
     s.key_index.get(key).copied()
 }
 
-/// Returns the first node whose authored key's final segment matches `leaf`.
-pub(crate) fn key_leaf_get(s: &State, leaf: &str) -> Option<u32> {
-    s.key_leaf_index.get(leaf).copied()
-}
-
 fn synthetic_location(s: &State, d: &slir::Doc, node: u32) -> Option<(u32, i32)> {
     let slot = synthetic_slot(s, node)?;
     if s.sy_generation[slot] == s.location_generation {

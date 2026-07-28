@@ -18,7 +18,14 @@
 //!
 //! A host can keep ownership of its live [`Instance`] with [`RequestPump`].
 //! Pump one request from the host event loop, then pass each returned
-//! [`Effects`] value through the host's normal signal handler.
+//! [`Effects`] through the host's normal signal handler. [`RequestPump::request`]
+//! is kernel-only; [`RequestPump::request_with_host_input`] lets host keyboard
+//! layers observe and consume SDP key/text input before kernel dispatch.
+//! Host-mounted document replacement is denied by default. An opted-in reload
+//! sets [`PumpResponse::reloaded`]; call generated `Doc::invalidate_caches()`
+//! before re-syncing setters. Host-owned params should be driven through
+//! signals/input because the next host sync may overwrite `param.set`.
+//!
 //!
 //! Parameter writes keep their existing deferred-solve semantics. A transition
 //! flip starts at the first solve that observes it. Snapshot scripts must use
@@ -36,14 +43,16 @@
 //! # Methods
 //!
 //! `rect` means `{"x":f64,"y":f64,"w":f64,"h":f64}`. `mods` is an optional
-//! array containing `shift`, `alt`, `ctrl`, or `meta`. Scene keys are full
-//! retained paths returned by `scene.tree`.
+//! array containing `shift`, `alt`, `ctrl`, or `meta`. Key locators accept an
+//! exact full path returned by `scene.tree`, a unique authored `#id`/`id`, or a
+//! unique id-rooted suffix such as `#feed/rows`. Component-call ids resolve to
+//! their expanded definition root. See `spec/SDP.md` for the normative protocol.
 //!
 //! | Method | Parameters | Result and semantics |
 //! |---|---|---|
 //! | `protocol.info` | none | `{"name":"sdp","version":1,"doc":path-or-null,"methods":[...]}` |
 //! | `protocol.quit` | none | `{"ok":true}`, then the server exits |
-//! | `doc.load` | `{"file":str}` | `{"ok":bool,"diags":[{"level","code","msg","line","remedy"?}],"theme_reset"?}` |
+//! | `doc.load` | `{"file":str}` | `{"ok":bool,"diags":[...],"reloaded"?:true,"theme_reset"?}` |
 //! | `doc.reload` | none | reloads the current path with `doc.load` semantics |
 //! | `doc.info` | none | file, parameter declarations, themes, holes, signals, env, and clock |
 //! | `env.get` | none | `{"width","height","client","dark","coarse","theme"}` |
@@ -57,7 +66,7 @@
 //! | `state.set` | `{"name":str,"on":bool}` | toggles a global state |
 //! | `state.node` | `{"key":str,"name":str,"on":bool}` | toggles a keyed node state |
 //! | `focus.get` | none | `{"focus":u32,"key":str,"visible":bool}`; `slir::NONE` means none |
-//! | `focus.set` | `{"key":str,"visible":bool?}` | moves or clears focus |
+//! | `focus.set` | `{"key":str,"visible":bool?}` | moves focus to a resolved focusable node |
 //! | `img.register` | `{"name":str,"w":u32,"h":u32,"format":1,"rgba":[u8...]}` or `format:0,"png_b64":str` | unified `{"img":i32}` |
 //! | `img.unregister` | `{"name":str}` | removes a runtime image |
 //! | `img.info` | `{"img":i32}` | `{"w","h","format","generation"}` |
@@ -223,6 +232,8 @@ struct Session {
     quit: bool,
     pending_effects: Vec<Effects>,
     capture_effects: bool,
+    reload_policy: Option<ReloadPolicy>,
+    reload_succeeded: bool,
 }
 
 struct LoadedDoc {
@@ -245,6 +256,8 @@ impl Session {
             quit: false,
             pending_effects: Vec::new(),
             capture_effects: false,
+            reload_policy: None,
+            reload_succeeded: false,
         }
     }
 
@@ -298,22 +311,58 @@ impl Session {
             fonts,
         });
         self.t_ms = 0.0;
+        self.reload_succeeded = true;
 
         let mut result = Map::new();
         result.insert("ok".into(), Value::Bool(true));
         result.insert("diags".into(), Value::Array(diag_values));
+        result.insert("reloaded".into(), Value::Bool(true));
         if theme_reset {
             result.insert("theme_reset".into(), Value::Bool(true));
         }
         Value::Object(result)
     }
 }
+/// Controls whether a host-mounted request pump may replace its live document.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ReloadPolicy {
+    /// Reject `doc.load` and `doc.reload`, preserving the caller-owned instance.
+    Deny,
+    /// Permit replacement; the host must invalidate generated setter caches.
+    Allow,
+}
+
+/// A keyboard or text event received from SDP before kernel dispatch.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PumpHostEvent<'a> {
+    /// One `input.key` or key-down `input.event`.
+    Key { key: &'a str, mods: u32 },
+    /// One `input.text`, `input.paste`, or equivalent `input.event`.
+    Text { text: &'a str, paste: bool },
+}
+
+/// Decides whether the pump should continue dispatching an observed host event.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PumpHostAction {
+    /// Dispatch the event to the shared kernel after host observation.
+    Dispatch,
+    /// The host consumed the event; do not dispatch it to the kernel.
+    Consumed,
+}
+
+type HostInputHook<'a> =
+    dyn for<'event> FnMut(&mut Instance, PumpHostEvent<'event>) -> PumpHostAction + 'a;
+
 /// One response from a host-pumped SDP request.
 pub struct PumpResponse {
     /// JSON response to write as one NDJSON line.
     pub response: Value,
     /// Dispatch effects that the host must pass through its normal handler.
     pub effects: Vec<Effects>,
+    /// Whether a successful `doc.load` or `doc.reload` replaced the instance.
+    ///
+    /// Call the generated `Doc::invalidate_caches()` before re-syncing setters.
+    pub reloaded: bool,
     /// Whether `protocol.quit` requested server shutdown.
     pub quit: bool,
 }
@@ -325,6 +374,10 @@ pub struct RequestPump {
 
 impl RequestPump {
     /// Creates a pump for an instance decoded from the matching SLIR and images.
+    ///
+    /// Host-mounted document replacement is denied by default because replacing
+    /// the instance without invalidating generated setter caches desynchronizes
+    /// host state. Opt in explicitly with [`Self::with_reload_policy`].
     pub fn new(path: impl Into<PathBuf>, slir: Slir, images: Vec<Vec<u8>>) -> Self {
         let env = EnvSpec {
             width: 800.0,
@@ -336,6 +389,7 @@ impl RequestPump {
         };
         let mut session = Session::new(env, Vec::new());
         session.capture_effects = true;
+        session.reload_policy = Some(ReloadPolicy::Deny);
         let path = path.into();
         session.doc = Some(LoadedDoc {
             base_dir: path.parent().unwrap_or(Path::new(".")).to_path_buf(),
@@ -349,8 +403,43 @@ impl RequestPump {
         Self { session }
     }
 
-    /// Applies one NDJSON request to the caller-owned instance.
+    /// Sets the explicit document replacement policy for this host mount.
+    ///
+    /// With [`ReloadPolicy::Allow`], inspect [`PumpResponse::reloaded`] and call
+    /// the generated `Doc::invalidate_caches()` before re-syncing host values.
+    pub fn with_reload_policy(mut self, policy: ReloadPolicy) -> Self {
+        self.session.reload_policy = Some(policy);
+        self
+    }
+
+    /// Applies one NDJSON request directly to the caller-owned kernel instance.
+    ///
+    /// `input.key`, `input.text`, and `input.paste` dispatch only to the kernel.
+    /// Use [`Self::request_with_host_input`] when the host has a keyboard layer.
     pub fn request(&mut self, instance: &mut Instance, line: &str) -> PumpResponse {
+        self.request_inner(instance, line, None)
+    }
+
+    /// Applies one request while letting the host observe and consume key/text input.
+    ///
+    /// The hook runs before kernel dispatch. Returning
+    /// [`PumpHostAction::Consumed`] leaves the kernel untouched and marks the
+    /// successful input result with `host_consumed: true`.
+    pub fn request_with_host_input(
+        &mut self,
+        instance: &mut Instance,
+        line: &str,
+        mut host_input: impl for<'event> FnMut(&mut Instance, PumpHostEvent<'event>) -> PumpHostAction,
+    ) -> PumpResponse {
+        self.request_inner(instance, line, Some(&mut host_input))
+    }
+
+    fn request_inner(
+        &mut self,
+        instance: &mut Instance,
+        line: &str,
+        host_input: Option<&mut HostInputHook<'_>>,
+    ) -> PumpResponse {
         let doc = self
             .session
             .doc
@@ -366,7 +455,9 @@ impl RequestPump {
             theme: doc.inst.st.env.theme.clone(),
         };
 
-        let response = handle_line(&mut self.session, line);
+        self.session.reload_succeeded = false;
+        let response = handle_line_with_host_input(&mut self.session, line, host_input);
+        let reloaded = self.session.reload_succeeded;
         let doc = self
             .session
             .doc
@@ -376,6 +467,7 @@ impl RequestPump {
         PumpResponse {
             response,
             effects: std::mem::take(&mut self.session.pending_effects),
+            reloaded,
             quit: self.session.quit,
         }
     }
@@ -650,6 +742,14 @@ fn serve_session(
 }
 
 fn handle_line(session: &mut Session, line: &str) -> Value {
+    handle_line_with_host_input(session, line, None)
+}
+
+fn handle_line_with_host_input(
+    session: &mut Session,
+    line: &str,
+    host_input: Option<&mut HostInputHook<'_>>,
+) -> Value {
     let request = match serde_json::from_str::<Value>(line) {
         Ok(request) => request,
         Err(_) => return error_response(None, ERR_PARSE, "parse error"),
@@ -666,7 +766,7 @@ fn handle_line(session: &mut Session, line: &str) -> Value {
     if !params.is_object() {
         return error_response(id, ERR_PARAMS, "params must be an object");
     }
-    match handle(session, method, params) {
+    match handle(session, method, params, host_input) {
         Ok(result) => success_response(id, result),
         Err((code, message)) => error_response(id, code, message),
     }
@@ -793,7 +893,12 @@ fn ensure_frame(session: &mut Session) -> ProtocolResult<&mut LoadedDoc> {
     Ok(doc)
 }
 
-fn handle(session: &mut Session, method: &str, value: &Value) -> ProtocolResult {
+fn handle(
+    session: &mut Session,
+    method: &str,
+    value: &Value,
+    host_input: Option<&mut HostInputHook<'_>>,
+) -> ProtocolResult {
     match method {
         "protocol.info" => Ok(protocol_info(session)),
         "protocol.quit" => {
@@ -801,10 +906,12 @@ fn handle(session: &mut Session, method: &str, value: &Value) -> ProtocolResult 
             Ok(json!({"ok": true}))
         }
         "doc.load" => {
+            require_reload_allowed(session, "doc.load")?;
             let file = required_str(params(value), "file")?;
             Ok(session.load(Path::new(file)))
         }
         "doc.reload" => {
+            require_reload_allowed(session, "doc.reload")?;
             let path = session
                 .doc
                 .as_ref()
@@ -849,19 +956,30 @@ fn handle(session: &mut Session, method: &str, value: &Value) -> ProtocolResult 
         "scene.find" => scene_find(session, params(value)),
         "frame.dump" => frame_dump(session),
         "frame.summary" => frame_summary(session),
-        "input.event" => input_event(session, value),
+        "input.event" => input_event(session, value, host_input),
         "input.pointer" => input_pointer(session, params(value)),
         "input.click" => input_click(session, params(value)),
         "input.wheel" => input_wheel(session, params(value)),
-        "input.key" => input_key(session, params(value)),
-        "input.text" => input_text(session, params(value), dispatch::E_TEXT),
-        "input.paste" => input_text(session, params(value), dispatch::E_PASTE),
+        "input.key" => input_key(session, params(value), host_input),
+        "input.text" => input_text(session, params(value), dispatch::E_TEXT, host_input),
+        "input.paste" => input_text(session, params(value), dispatch::E_PASTE, host_input),
         "render.png" => render_png(session, params(value)),
         "render.svg" => render_svg(session, params(value)),
         "render.cells" => render_cells(session, params(value)),
         "render.apng" => render_apng(session, params(value)),
         _ => Err((ERR_METHOD, format!("unknown method '{method}'"))),
     }
+}
+
+fn require_reload_allowed(session: &Session, method: &str) -> ProtocolResult<()> {
+    if session.reload_policy == Some(ReloadPolicy::Deny) {
+        return Err(domain(format!(
+            "{method} is disabled for host-mounted RequestPump sessions; opt in with \
+             RequestPump::with_reload_policy(ReloadPolicy::Allow), then call the generated \
+             Doc::invalidate_caches() whenever PumpResponse::reloaded is true"
+        )));
+    }
+    Ok(())
 }
 
 fn protocol_info(session: &Session) -> Value {
@@ -1086,18 +1204,20 @@ fn param_get(session: &mut Session, object: &Map<String, Value>) -> ProtocolResu
 }
 
 fn field_set(session: &mut Session, object: &Map<String, Value>) -> ProtocolResult {
-    let key = required_str(object, "key")?.to_string();
+    let query = required_str(object, "key")?.to_string();
     let text = required_str(object, "text")?.to_string();
     let doc = ensure_frame(session)?;
+    let (_, key) = resolve_node_key(doc, &query)?;
     let changed = frame::inst_set_field_text(&mut doc.inst, &key, &text);
     Ok(json!({"ok": true, "changed": changed}))
 }
 
 fn field_get(session: &mut Session, object: &Map<String, Value>) -> ProtocolResult {
-    let key = required_str(object, "key")?;
+    let query = required_str(object, "key")?.to_string();
     let doc = ensure_frame(session)?;
-    let text = frame::inst_field_text(&doc.inst, key)
-        .ok_or_else(|| domain(format!("unknown field '{key}'")))?;
+    let (_, key) = resolve_node_key(doc, &query)?;
+    let text = frame::inst_field_text(&doc.inst, &key)
+        .ok_or_else(|| domain(format!("key '{key}' is not a field")))?;
     Ok(json!({"text": text}))
 }
 
@@ -1110,12 +1230,13 @@ fn state_set(session: &mut Session, object: &Map<String, Value>) -> ProtocolResu
 }
 
 fn state_node(session: &mut Session, object: &Map<String, Value>) -> ProtocolResult {
-    let key = required_str(object, "key")?.to_string();
+    let query = required_str(object, "key")?.to_string();
     let name = required_str(object, "name")?.to_string();
     let on = required_bool(object, "on")?;
     let doc = ensure_frame(session)?;
+    let (_, key) = resolve_node_key(doc, &query)?;
     if !frame::inst_set_node_state(&mut doc.inst, &key, &name, on) {
-        return Err(domain(format!("unknown key '{key}'")));
+        return Err(domain(format!("cannot set state on key '{key}'")));
     }
     Ok(json!({"ok": true}))
 }
@@ -1131,11 +1252,12 @@ fn focus_get(session: &mut Session) -> ProtocolResult {
 }
 
 fn focus_set(session: &mut Session, object: &Map<String, Value>) -> ProtocolResult {
-    let key = required_str(object, "key")?.to_string();
+    let query = required_str(object, "key")?.to_string();
     let visible = optional_bool(object, "visible", true)?;
     let doc = ensure_frame(session)?;
+    let (_, key) = resolve_node_key(doc, &query)?;
     if !frame::inst_set_focus(&mut doc.inst, &key, visible) {
-        return Err(domain(format!("cannot focus key '{key}'")));
+        return Err(domain(format!("key '{key}' is not focusable")));
     }
     Ok(json!({"ok": true}))
 }
@@ -1190,12 +1312,10 @@ fn img_data(session: &mut Session, object: &Map<String, Value>) -> ProtocolResul
 }
 
 fn scroll_get(session: &mut Session, object: &Map<String, Value>) -> ProtocolResult {
-    let key = required_str(object, "key")?.to_string();
+    let query = required_str(object, "key")?.to_string();
     let axis = required_axis(object)?;
     let doc = ensure_frame(session)?;
-    if scene::node_by_key(&doc.inst.doc, &doc.inst.st.lists, &key) == slir::NONE {
-        return Err(domain(format!("unknown key '{key}'")));
-    }
+    let (_, key) = resolve_node_key(doc, &query)?;
     Ok(json!({
         "axis": axis,
         "off": frame::inst_get_scroll(&doc.inst, &key, axis),
@@ -1203,11 +1323,12 @@ fn scroll_get(session: &mut Session, object: &Map<String, Value>) -> ProtocolRes
 }
 
 fn scroll_set(session: &mut Session, object: &Map<String, Value>) -> ProtocolResult {
-    let key = required_str(object, "key")?.to_string();
+    let query = required_str(object, "key")?.to_string();
     let axis = required_axis(object)?;
     let off = required_f64(object, "off")?;
     let t_ms = session.t_ms;
     let doc = ensure_frame(session)?;
+    let (_, key) = resolve_node_key(doc, &query)?;
     if !frame::inst_set_scroll(&mut doc.inst, &key, axis, off) {
         return Err(domain(format!(
             "key '{key}' is not scrollable on axis {axis}"
@@ -1221,10 +1342,11 @@ fn scroll_set(session: &mut Session, object: &Map<String, Value>) -> ProtocolRes
 }
 
 fn scroll_reveal(session: &mut Session, object: &Map<String, Value>) -> ProtocolResult {
-    let key = required_str(object, "key")?.to_string();
+    let query = required_str(object, "key")?.to_string();
     let margin = required_f64(object, "margin")?;
     let t_ms = session.t_ms;
     let doc = ensure_frame(session)?;
+    let (_, key) = resolve_node_key(doc, &query)?;
     if !frame::inst_reveal(&mut doc.inst, &key, margin) {
         return Err(domain(format!("cannot reveal key '{key}'")));
     }
@@ -1307,7 +1429,7 @@ fn list_set_key(session: &mut Session, object: &Map<String, Value>) -> ProtocolR
 }
 
 fn list_reveal_item(session: &mut Session, object: &Map<String, Value>) -> ProtocolResult {
-    let each = required_str(object, "each")?.to_string();
+    let query = required_str(object, "each")?.to_string();
     let index = required_i32(object, "index")?;
     let align = required_u32(object, "align")?;
     if align > 3 {
@@ -1315,9 +1437,10 @@ fn list_reveal_item(session: &mut Session, object: &Map<String, Value>) -> Proto
     }
     let t_ms = session.t_ms;
     let doc = ensure_frame(session)?;
+    let (_, each) = resolve_node_key(doc, &query)?;
     if !frame::inst_reveal_item(&mut doc.inst, &each, index, align) {
         return Err(domain(format!(
-            "cannot reveal item {index} in each '{each}'"
+            "key '{each}' is not a virtual each containing item {index}"
         )));
     }
     doc.fr = frame::inst_frame(&mut doc.inst, t_ms);
@@ -1325,19 +1448,20 @@ fn list_reveal_item(session: &mut Session, object: &Map<String, Value>) -> Proto
 }
 
 fn list_window(session: &mut Session, object: &Map<String, Value>) -> ProtocolResult {
-    let each = required_str(object, "each")?.to_string();
+    let query = required_str(object, "each")?.to_string();
     let doc = ensure_frame(session)?;
+    let (_, each) = resolve_node_key(doc, &query)?;
     let (start, end) = frame::inst_each_window(&doc.inst, &each);
+    if (start, end) == (-1, -1) {
+        return Err(domain(format!("key '{each}' is not a virtual each")));
+    }
     Ok(json!({"start": start, "end": end}))
 }
 
 fn divider_get(session: &mut Session, object: &Map<String, Value>) -> ProtocolResult {
-    let key = required_str(object, "key")?.to_string();
+    let query = required_str(object, "key")?.to_string();
     let doc = ensure_frame(session)?;
-    let node = scene::node_by_key(&doc.inst.doc, &doc.inst.st.lists, &key);
-    if node == slir::NONE {
-        return Err(domain(format!("key '{key}' is not a divider")));
-    }
+    let (node, key) = resolve_node_key(doc, &query)?;
     let base = slab_kernel::list::base(&doc.inst.st.lists, &doc.inst.doc, node);
     let divider = usize::try_from(base)
         .ok()
@@ -1351,9 +1475,10 @@ fn divider_get(session: &mut Session, object: &Map<String, Value>) -> ProtocolRe
 }
 
 fn divider_set(session: &mut Session, object: &Map<String, Value>) -> ProtocolResult {
-    let key = required_str(object, "key")?.to_string();
+    let query = required_str(object, "key")?.to_string();
     let extent = required_f64(object, "extent")?;
     let doc = ensure_frame(session)?;
+    let (_, key) = resolve_node_key(doc, &query)?;
     if !frame::inst_set_divider(&mut doc.inst, &key, extent) {
         return Err(domain(format!("key '{key}' is not a divider")));
     }
@@ -1541,14 +1666,39 @@ fn scene_entry(doc: &LoadedDoc, index: usize) -> Value {
     })
 }
 
-fn node_scene_index(doc: &LoadedDoc, key: &str) -> ProtocolResult<(u32, usize)> {
-    let node = scene::node_by_key(&doc.inst.doc, &doc.inst.st.lists, key);
-    if node == slir::NONE {
-        return Err(domain(format!("unknown key '{key}'")));
+fn resolve_node_key(doc: &LoadedDoc, query: &str) -> ProtocolResult<(u32, String)> {
+    match scene::resolve_key(&doc.inst.doc, &doc.inst.st.lists, query) {
+        scene::KeyResolution::Found(node) => {
+            let key = scene::key_of(&doc.inst.doc, &doc.inst.st.lists, node);
+            Ok((node, key))
+        }
+        scene::KeyResolution::Ambiguous { candidates } => Err(domain(format!(
+            "ambiguous key '{query}'; candidates: {}",
+            quoted_candidates(&candidates)
+        ))),
+        scene::KeyResolution::Missing { candidates } if candidates.is_empty() => {
+            Err(domain(format!("unknown key '{query}'")))
+        }
+        scene::KeyResolution::Missing { candidates } => Err(domain(format!(
+            "unknown key '{query}'; nearest: {}",
+            quoted_candidates(&candidates)
+        ))),
     }
+}
+
+fn quoted_candidates(candidates: &[String]) -> String {
+    candidates
+        .iter()
+        .map(|candidate| format!("'{candidate}'"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn node_scene_index(doc: &LoadedDoc, key: &str) -> ProtocolResult<(u32, usize)> {
+    let (node, canonical) = resolve_node_key(doc, key)?;
     let index = scene::index_of(&doc.inst.sc, node);
-    let index =
-        usize::try_from(index).map_err(|_| domain(format!("key '{key}' is not in scene")))?;
+    let index = usize::try_from(index)
+        .map_err(|_| domain(format!("key '{canonical}' is not in the retained scene")))?;
     Ok((node, index))
 }
 
@@ -1771,10 +1921,14 @@ fn validate_event(object: &Map<String, Value>) -> ProtocolResult<()> {
     Ok(())
 }
 
-fn input_event(session: &mut Session, value: &Value) -> ProtocolResult {
+fn input_event(
+    session: &mut Session,
+    value: &Value,
+    host_input: Option<&mut HostInputHook<'_>>,
+) -> ProtocolResult {
     validate_event(params(value))?;
     let event = wire::build_event(value).map_err(invalid)?;
-    dispatch_one(session, &event)
+    dispatch_input(session, &event, host_input)
 }
 
 fn base_event(etype: u32) -> Event {
@@ -1896,17 +2050,58 @@ fn input_wheel(session: &mut Session, object: &Map<String, Value>) -> ProtocolRe
     dispatch_one(session, &event)
 }
 
-fn input_key(session: &mut Session, object: &Map<String, Value>) -> ProtocolResult {
+fn input_key(
+    session: &mut Session,
+    object: &Map<String, Value>,
+    host_input: Option<&mut HostInputHook<'_>>,
+) -> ProtocolResult {
     let mut event = base_event(dispatch::E_KEY_DOWN);
     event.key = required_str(object, "key")?.to_string();
     event.mods = validate_mods(object)?;
-    dispatch_one(session, &event)
+    dispatch_input(session, &event, host_input)
 }
 
-fn input_text(session: &mut Session, object: &Map<String, Value>, etype: u32) -> ProtocolResult {
+fn input_text(
+    session: &mut Session,
+    object: &Map<String, Value>,
+    etype: u32,
+    host_input: Option<&mut HostInputHook<'_>>,
+) -> ProtocolResult {
     let mut event = base_event(etype);
     event.text = required_str(object, "text")?.to_string();
-    dispatch_one(session, &event)
+    dispatch_input(session, &event, host_input)
+}
+
+fn dispatch_input(
+    session: &mut Session,
+    event: &Event,
+    host_input: Option<&mut HostInputHook<'_>>,
+) -> ProtocolResult {
+    let host_event = match event.etype {
+        dispatch::E_KEY_DOWN => Some(PumpHostEvent::Key {
+            key: &event.key,
+            mods: event.mods,
+        }),
+        dispatch::E_TEXT | dispatch::E_PASTE => Some(PumpHostEvent::Text {
+            text: &event.text,
+            paste: event.etype == dispatch::E_PASTE,
+        }),
+        _ => None,
+    };
+    if let (Some(hook), Some(host_event)) = (host_input, host_event) {
+        let t_ms = session.t_ms;
+        let doc = ensure_frame(session)?;
+        if hook(&mut doc.inst, host_event) == PumpHostAction::Consumed {
+            let effects = dispatch::effects_new();
+            let mut result = effects_result(doc, &effects, t_ms)?;
+            result
+                .as_object_mut()
+                .expect("input result is an object")
+                .insert("host_consumed".into(), Value::Bool(true));
+            return Ok(result);
+        }
+    }
+    dispatch_one(session, event)
 }
 
 fn dispatch_one(session: &mut Session, event: &Event) -> ProtocolResult {
@@ -1986,6 +2181,23 @@ fn runtime_images<'a>(
     images
 }
 
+fn frame_diagnostic_notes(frame: &Frame) -> Vec<String> {
+    frame
+        .diagnostics
+        .iter()
+        .map(|diagnostic| {
+            if diagnostic.line == 0 {
+                format!("note {}: {}", diagnostic.code, diagnostic.msg)
+            } else {
+                format!(
+                    "note {} line {}: {}",
+                    diagnostic.code, diagnostic.line, diagnostic.msg
+                )
+            }
+        })
+        .collect()
+}
+
 fn render_png(session: &mut Session, object: &Map<String, Value>) -> ProtocolResult {
     let scale = checked_scale(optional_f64(object, "scale", 1.0)?)?;
     let path = optional_path(object)?;
@@ -2001,8 +2213,13 @@ fn render_png(session: &mut Session, object: &Map<String, Value>) -> ProtocolRes
     )
     .map_err(domain)?;
     let (width, height) = png_dimensions(&bytes)?;
-    let notes =
-        slab_compile::capsnote::render_notes(&doc.inst.doc, &doc.fr, doc.inst.st.env.client, &[]);
+    let mut notes = frame_diagnostic_notes(&doc.fr);
+    notes.extend(slab_compile::capsnote::render_notes(
+        &doc.inst.doc,
+        &doc.fr,
+        doc.inst.st.env.client,
+        &[],
+    ));
     let mut result = Map::new();
     result.insert("width_px".into(), json!(width));
     result.insert("height_px".into(), json!(height));
@@ -2032,8 +2249,13 @@ fn render_svg(session: &mut Session, object: &Map<String, Value>) -> ProtocolRes
         &doc.fr,
         &doc.base_dir,
     );
-    let notes =
-        slab_compile::capsnote::render_notes(&doc.inst.doc, &doc.fr, doc.inst.st.env.client, &[]);
+    let mut notes = frame_diagnostic_notes(&doc.fr);
+    notes.extend(slab_compile::capsnote::render_notes(
+        &doc.inst.doc,
+        &doc.fr,
+        doc.inst.st.env.client,
+        &[],
+    ));
     let mut result = Map::new();
     result.insert("bytes".into(), json!(byte_count(svg.as_bytes())?));
     result.insert("notes".into(), json!(notes));
@@ -2056,12 +2278,13 @@ fn render_cells(session: &mut Session, object: &Map<String, Value>) -> ProtocolR
     let doc = ensure_frame(session)?;
     let grid = cells::cells_from_frame(&doc.inst.doc, &doc.fr, doc.fr.width, doc.fr.height);
     let text = cells::cells_to_text(&grid, plain);
-    let mut notes = grid
-        .diag_code
-        .iter()
-        .zip(&grid.diag_msg)
-        .map(|(code, message)| format!("note {code}: {message}"))
-        .collect::<Vec<_>>();
+    let mut notes = frame_diagnostic_notes(&doc.fr);
+    notes.extend(
+        grid.diag_code
+            .iter()
+            .zip(&grid.diag_msg)
+            .map(|(code, message)| format!("note {code}: {message}")),
+    );
     notes.extend(slab_compile::capsnote::render_notes(
         &doc.inst.doc,
         &doc.fr,
@@ -2206,13 +2429,7 @@ fn b64(bytes: &[u8]) -> String {
 mod tests {
     use super::*;
 
-    fn live_document() -> (Slir, Instance, Vec<Vec<u8>>) {
-        let source = r#"
-params {
-  draft text = "start"
-}
-text#field param.draft field=draft size=14 w=200 nowrap
-"#;
+    fn compile_live(source: &str) -> (Slir, Instance, Vec<Vec<u8>>) {
         let options = slab_compile::Options {
             embed_assets: true,
             base_dir: PathBuf::from("."),
@@ -2226,6 +2443,17 @@ text#field param.draft field=draft size=14 w=200 nowrap
         let (mut instance, images) = slab_slir::instance(&bytes).expect("test SLIR decodes");
         frame::inst_set_env(&mut instance, 320.0, 100.0, 1, false, false);
         (slir, instance, images)
+    }
+
+    fn live_document() -> (Slir, Instance, Vec<Vec<u8>>) {
+        compile_live(
+            r#"
+params {
+  draft text = "start"
+}
+text#field param.draft field=draft size=14 w=200 nowrap
+"#,
+        )
     }
 
     fn result(response: &PumpResponse) -> &Value {
@@ -2280,5 +2508,173 @@ text#field param.draft field=draft size=14 w=200 nowrap
         );
         assert_eq!(response.effects.len(), 1);
         assert!(!response.effects[0].sig_name.is_empty());
+    }
+
+    #[test]
+    fn resolves_component_call_ids_to_the_actionable_definition_root() {
+        let (slir, mut instance, images) = compile_live(
+            r#"
+def Button(caption, action) {
+  row focusable act=action w=120 h=32 { text caption }
+}
+col { Button#theme "Theme" "theme" }
+"#,
+        );
+        let mut pump = RequestPump::new("test.slab", slir, images);
+        let response = pump.request(
+            &mut instance,
+            r##"{"method":"input.click","params":{"key":"#theme"}}"##,
+        );
+        let signals = result(&response)["effects"]["signals"]
+            .as_array()
+            .expect("input result signals");
+        assert!(
+            signals.iter().any(|signal| signal["name"] == "theme"),
+            "{:?}",
+            response.response
+        );
+    }
+
+    #[test]
+    fn resolves_canonical_each_suffixes_and_reports_non_each_nodes() {
+        let (slir, mut instance, images) = compile_live(
+            r#"
+def Row(label="") export { row h=20 { text label } }
+params {
+  rows list(Row) = [Row(label="one"), Row(label="two")]
+}
+col#viewport w=120 h=40 scroll {
+  each param.rows key=rows virtual item-extent=20
+}
+"#,
+        );
+        let mut pump = RequestPump::new("test.slab", slir, images);
+        let window = pump.request(
+            &mut instance,
+            r##"{"method":"list.window","params":{"each":"#viewport/rows"}}"##,
+        );
+        assert_eq!(result(&window), &json!({"start": 0, "end": 2}));
+
+        let wrong_kind = pump.request(
+            &mut instance,
+            r##"{"method":"list.window","params":{"each":"#viewport"}}"##,
+        );
+        assert!(
+            wrong_kind.response["error"]["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("not a virtual each"))
+        );
+    }
+
+    #[test]
+    fn key_errors_include_ambiguity_candidates_and_nearest_paths() {
+        let (slir, mut instance, images) = compile_live(
+            r#"
+col {
+  row { box#go focusable w=100 h=20 { text "one" } }
+  row { box#go focusable w=100 h=20 { text "two" } }
+}
+"#,
+        );
+        let mut pump = RequestPump::new("test.slab", slir, images);
+        let ambiguous = pump.request(
+            &mut instance,
+            r##"{"method":"input.click","params":{"key":"#go"}}"##,
+        );
+        let message = ambiguous.response["error"]["message"]
+            .as_str()
+            .expect("ambiguous key error");
+        assert!(message.contains("ambiguous key '#go'"));
+        assert!(message.contains("candidates:"));
+
+        let missing = pump.request(
+            &mut instance,
+            r##"{"method":"input.click","params":{"key":"#goo"}}"##,
+        );
+        let message = missing.response["error"]["message"]
+            .as_str()
+            .expect("missing key error");
+        assert!(message.contains("unknown key '#goo'"));
+        assert!(message.contains("nearest:"));
+        assert!(message.contains("#go"));
+    }
+
+    #[test]
+    fn host_input_hook_observes_and_consumes_sdp_keyboard_input() {
+        let (slir, mut instance, images) = live_document();
+        let mut pump = RequestPump::new("test.slab", slir, images);
+        let mut observed = Vec::new();
+        let response = pump.request_with_host_input(
+            &mut instance,
+            r#"{"method":"input.key","params":{"key":"t","mods":["meta"]}}"#,
+            |_, event| {
+                observed.push(match event {
+                    PumpHostEvent::Key { key, mods } => format!("key:{key}:{mods}"),
+                    PumpHostEvent::Text { text, paste } => format!("text:{text}:{paste}"),
+                });
+                PumpHostAction::Consumed
+            },
+        );
+        assert_eq!(observed.len(), 1);
+        assert!(observed[0].starts_with("key:t:"));
+        assert_eq!(result(&response)["host_consumed"], true);
+        assert!(response.effects.is_empty());
+    }
+
+    #[test]
+    fn host_mount_denies_reload_by_default_and_flags_opted_in_reload() {
+        let source = "text#label \"reload\" size=14\n";
+        let (slir, mut instance, images) = compile_live(source);
+        let path = std::env::temp_dir().join(format!(
+            "slab-drive-reload-{}-{}.slab",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock after epoch")
+                .as_nanos()
+        ));
+        std::fs::write(&path, source).expect("write reload fixture");
+
+        let mut denied = RequestPump::new(&path, slir.clone(), images.clone());
+        let rejected = denied.request(&mut instance, r#"{"method":"doc.reload","params":{}}"#);
+        assert!(!rejected.reloaded);
+        assert!(
+            rejected.response["error"]["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("disabled for host-mounted"))
+        );
+
+        let mut allowed =
+            RequestPump::new(&path, slir, images).with_reload_policy(ReloadPolicy::Allow);
+        let loaded = allowed.request(&mut instance, r#"{"method":"doc.reload","params":{}}"#);
+        assert!(loaded.reloaded);
+        assert_eq!(result(&loaded)["reloaded"], true);
+        std::fs::remove_file(path).expect("remove reload fixture");
+    }
+
+    #[test]
+    fn render_notes_preserve_ordered_frame_diagnostics() {
+        let mut frame = slab_kernel::flatten::frame_new();
+        frame
+            .diagnostics
+            .push(slab_kernel::flatten::FrameDiagnostic {
+                code: "glyph-missing".into(),
+                line: 7,
+                msg: "missing U+2713".into(),
+            });
+        frame
+            .diagnostics
+            .push(slab_kernel::flatten::FrameDiagnostic {
+                code: "runtime".into(),
+                line: 0,
+                msg: "second".into(),
+            });
+        assert_eq!(
+            frame_diagnostic_notes(&frame),
+            [
+                "note glyph-missing line 7: missing U+2713",
+                "note runtime: second"
+            ]
+        );
     }
 }

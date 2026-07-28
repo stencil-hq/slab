@@ -2375,6 +2375,114 @@ pub fn text_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &
     pi
 }
 
+fn truncate_para_segments(l: &mut Lay, end: usize) {
+    l.seg_x.truncate(end);
+    l.seg_a.truncate(end);
+    l.seg_b.truncate(end);
+    l.seg_w.truncate(end);
+    l.seg_font.truncate(end);
+    l.seg_size.truncate(end);
+    l.seg_weight.truncate(end);
+    l.seg_tracking.truncate(end);
+    l.seg_strike.truncate(end);
+    l.seg_color.truncate(end);
+    l.seg_color_kind.truncate(end);
+}
+
+/// Rewrites the current tail line to a styled prefix plus one ellipsis.
+///
+/// The ellipsis joins the last retained segment, so it inherits that run's
+/// font, size, weight, tracking, color, and decoration without a new paint op.
+fn ellipsize_para_line(d: &Doc, l: &mut Lay, segment_start: i32, max_width: f64) {
+    let start = idx(segment_start);
+    let end = l.seg_x.len();
+    if start >= end {
+        return;
+    }
+    let line_width = l.seg_x[end - 1] + l.seg_w[end - 1];
+    if line_width <= max_width + EPS {
+        return;
+    }
+
+    let mut retained: Vec<Vec<u32>> = Vec::new();
+    'segments: for segment in start..end {
+        let mut run = Vec::new();
+        let mut prefix_width = 0.0;
+        let ellipsis_width = crate::textm::char_w(
+            d,
+            l.seg_font[segment],
+            l.seg_size[segment],
+            l.seg_tracking[segment],
+            crate::textm::ELLIPSIS,
+        );
+        for character in l.seg_a[segment]..l.seg_b[segment] {
+            let codepoint = l.para_chars[idx(character)];
+            let character_width = crate::textm::char_w(
+                d,
+                l.seg_font[segment],
+                l.seg_size[segment],
+                l.seg_tracking[segment],
+                codepoint,
+            );
+            if l.seg_x[segment] + prefix_width + character_width + ellipsis_width > max_width + EPS
+            {
+                if !run.is_empty() {
+                    retained.push(run);
+                }
+                break 'segments;
+            }
+            run.push(codepoint);
+            prefix_width += character_width;
+        }
+        if !run.is_empty() {
+            retained.push(run);
+        }
+    }
+    while retained.len() > 1
+        && retained.last().is_some_and(|run| {
+            run.iter()
+                .all(|codepoint| crate::textm::is_strippable(*codepoint))
+        })
+    {
+        retained.pop();
+    }
+    if let Some(last) = retained.last_mut() {
+        while last
+            .last()
+            .is_some_and(|codepoint| crate::textm::is_strippable(*codepoint))
+        {
+            last.pop();
+        }
+    }
+    if retained.is_empty() {
+        retained.push(Vec::new());
+    }
+    retained
+        .last_mut()
+        .expect("retained paragraph run exists")
+        .push(crate::textm::ELLIPSIS);
+
+    let kept_end = start + retained.len();
+    for (offset, codepoints) in retained.into_iter().enumerate() {
+        let segment = start + offset;
+        let output_start = len_i32(&l.para_chars);
+        l.para_chars.extend(codepoints);
+        let output_end = len_i32(&l.para_chars);
+        l.seg_a[segment] = output_start;
+        l.seg_b[segment] = output_end;
+        l.seg_w[segment] = crate::textm::slice_w(
+            d,
+            l.seg_font[segment],
+            l.seg_size[segment],
+            l.seg_tracking[segment],
+            &l.para_chars,
+            output_start,
+            output_end,
+        );
+    }
+    truncate_para_segments(l, kept_end);
+}
+
 /// Measures a paragraph using greedy word wrapping and merged text segments.
 pub fn para_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &Cons) -> i32 {
     let pt = st.rs[idx(ri)].pad_t;
@@ -2406,6 +2514,9 @@ pub fn para_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &
     if has_w {
         avail = (own_w - pl) - pr;
     }
+    let flags = st.rs[idx(ri)].flags;
+    let nowrap = flags & crate::slir::F_NOWRAP != 0;
+    let ellipsis = flags & crate::slir::F_ELLIPSIS != 0;
     // Flatten spans into words while retaining each word's resolved style.
     let mut direct: Vec<u32> = vec![];
     crate::style::children(d, st, node, &mut direct);
@@ -2502,7 +2613,7 @@ pub fn para_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &
         );
         let mut eff = w_gap[idx(i)];
         let mut add = ww + (f64::from(eff)) * sp;
-        if ((line_len > 0i32) && (avail != INF)) && ((cur_w + add) > (avail + EPS)) {
+        if !nowrap && ((line_len > 0i32) && (avail != INF)) && ((cur_w + add) > (avail + EPS)) {
             cur_line = cur_line.wrapping_add(1i32);
             cur_w = 0.0f64;
             line_len = 0i32;
@@ -2607,6 +2718,10 @@ pub fn para_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &
         }
         if seg_open {
             close_seg(d, st, l, seg_start, seg_sri, x);
+        }
+        let segment_off = l.pl_seg_off[idx(len_i32(&l.pl_seg_off).wrapping_sub(1i32))];
+        if nowrap && ellipsis && avail != INF {
+            ellipsize_para_line(d, l, segment_off, avail);
         }
         l.pl_seg_len.push(
             len_i32(&l.seg_x)

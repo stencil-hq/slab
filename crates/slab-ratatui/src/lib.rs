@@ -33,7 +33,7 @@ use ratatui::style::{Color, Modifier};
 use ratatui::widgets::StatefulWidget;
 use slab_kernel::{cells, dispatch, frame as kframe};
 use slab_tui::crossterm::event::{Event, MouseEvent};
-use slab_tui::{Signal, Translated, Translator};
+use slab_tui::{HostKey, KeyHandling, Signal, Translated, Translator};
 use std::path::Path;
 
 /// Live Slab document state driven by a host-owned ratatui render loop.
@@ -84,11 +84,30 @@ impl SlabState {
         &mut self.inst
     }
 
+    /// Borrows the live kernel instance for host queries.
+    pub fn instance(&self) -> &kframe::Instance {
+        &self.inst
+    }
+
     /// Translates one crossterm event, dispatches it to the kernel, and queues
     /// any emitted signals; returns `true` when the kernel consumed input.
     /// Pointer coordinates are offset by `area` so mouse events hit the cells
     /// the widget actually painted; mouse events outside `area` are dropped.
     pub fn handle_event(&mut self, event: &Event, area: Rect) -> bool {
+        self.handle_event_with(event, area, |_, _| KeyHandling::Forward)
+    }
+
+    /// Handles an event with a host shortcut layer matching `slab_tui::run`.
+    ///
+    /// `on_key` runs only for translated keys outside edit fields. Returning
+    /// [`KeyHandling::Consumed`] suppresses both the key and its paired text
+    /// event; [`KeyHandling::Forward`] preserves normal kernel handling.
+    pub fn handle_event_with(
+        &mut self,
+        event: &Event,
+        area: Rect,
+        mut on_key: impl FnMut(&mut kframe::Instance, &HostKey) -> KeyHandling,
+    ) -> bool {
         let event = match event {
             Event::Mouse(mouse) => {
                 let inside = mouse.column >= area.x
@@ -108,6 +127,11 @@ impl SlabState {
         };
         match slab_tui::translate(&mut self.translator, event) {
             Translated::Events(first, second) => {
+                if let Some(key) = slab_tui::host_key(&self.inst, &first)
+                    && on_key(&mut self.inst, &key) == KeyHandling::Consumed
+                {
+                    return true;
+                }
                 for event in std::iter::once(first).chain(second) {
                     let effects = kframe::inst_dispatch(&mut self.inst, &event);
                     collect_signals(&self.inst, &effects, &mut self.signals);

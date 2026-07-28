@@ -1,4 +1,4 @@
-//! Vendored fallback fonts and metrics extracted from registered font files.
+//! Vendored fallback fonts and authoritative coverage/metrics extracted from registered files.
 
 use std::collections::BTreeMap;
 
@@ -135,6 +135,7 @@ pub fn parse_metrics(bytes: &[u8]) -> Option<RegisteredMetrics> {
         subtable.codepoints(|cp| {
             if let Some(ch) = char::from_u32(cp)
                 && let Some(gid) = face.glyph_index(ch)
+                && gid.0 != 0
             {
                 cmap.entry(cp).or_insert((
                     gid.0,

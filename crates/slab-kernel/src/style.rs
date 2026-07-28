@@ -23,6 +23,8 @@ const ATTR_COUNT: usize = 91;
 pub struct St {
     pub lists: crate::list::State,
     pub env: crate::when::Env,
+    /// Zero for authored base; otherwise one plus the active theme row.
+    pub theme_index: u32,
     /// Global state set, stored as string-pool references.
     pub states: Vec<u32>,
     /// Per-node dispatch states, parallel with [`Self::ns_sym`].
@@ -119,6 +121,7 @@ pub fn st_new() -> crate::style::St {
     crate::style::St {
         env: crate::when::env_default(),
         lists: crate::list::state_new(),
+        theme_index: 0,
         states: vec![],
         ns_node: vec![],
         ns_sym: vec![],
@@ -204,6 +207,16 @@ fn authored_attr_values(d: &crate::slir::Doc, node: usize) -> [i32; ATTR_COUNT] 
 
 /// Initializes persistent parameter defaults and zeroed host hole reports.
 pub fn init_params(d: &crate::slir::Doc, st: &mut crate::style::St) {
+    st.theme_index = if st.env.theme.is_empty() {
+        0
+    } else {
+        d.theme_name
+            .iter()
+            .position(|&name| crate::slir::str_at(d, name) == st.env.theme)
+            .and_then(|index| u32::try_from(index).ok())
+            .and_then(|index| index.checked_add(1))
+            .unwrap_or(0)
+    };
     st.pv_num.clear();
     st.pv_str.clear();
     st.pv_h.clear();
@@ -995,7 +1008,8 @@ pub fn attr_val(
     if mv.tag != crate::value::V_MISSING {
         return mv;
     }
-    let v = crate::value::decode(d, crate::style::attr_ix(d, st, node, attr));
+    let v =
+        crate::value::decode_active(d, st.theme_index, crate::style::attr_ix(d, st, node, attr));
     if v.tag == crate::slir::T_PARAM_REF {
         let parameter = index_u32(v.h);
         let parameter_type = d.parm_type[parameter];
@@ -1357,8 +1371,9 @@ pub fn content_str(d: &crate::slir::Doc, st: &crate::style::St, node: u32) -> St
     {
         return st.field_text[index].clone();
     }
-    let v = crate::value::decode(
+    let v = crate::value::decode_active(
         d,
+        st.theme_index,
         crate::style::attr_ix(d, st, node, crate::slir::A_CONTENT),
     );
     if v.tag == crate::slir::T_STR {
@@ -1410,7 +1425,11 @@ pub fn eff_flags(d: &crate::slir::Doc, st: &crate::style::St, node: u32) -> u32 
         for (&entry_attr, &encoded) in d.wattr_id[start..end].iter().zip(&d.wattr_val[start..end]) {
             if entry_attr == crate::slir::A_FLAGS {
                 flags |= f64_to_u32(crate::value::num_of(
-                    &crate::value::decode(d, i32::from_ne_bytes(encoded.to_ne_bytes())),
+                    &crate::value::decode_active(
+                        d,
+                        st.theme_index,
+                        i32::from_ne_bytes(encoded.to_ne_bytes()),
+                    ),
                     0.0,
                 ));
             }
@@ -2420,7 +2439,7 @@ pub fn build_rstyle(
         crate::slir::A_FIT,
     ));
     let path_attr = crate::style::attr_ix(d, st, node, crate::slir::A_D);
-    let encoded_path = crate::value::decode(d, path_attr);
+    let encoded_path = crate::value::decode_active(d, st.theme_index, path_attr);
     let path = if path_attr < 0 {
         crate::style::PATH_NONE
     } else if encoded_path.tag == crate::slir::T_PATH_REF {

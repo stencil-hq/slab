@@ -515,6 +515,10 @@ pub fn test_host_focus_binds_field_and_rejects_inert() {
         "unknown key is rejected"
     );
     assert!(
+        frame::inst_focus_note(&inst).contains("unknown focus key 'nope'"),
+        "failed focus exposes an actionable note"
+    );
+    assert!(
         frame::inst_set_focus(&mut inst, "field-key", true),
         "focusable field key accepted"
     );
@@ -533,6 +537,29 @@ pub fn test_host_focus_binds_field_and_rejects_inert() {
         "empty key clears focus"
     );
     assert_eq!(inst.ds.fs.focus, slir::NONE, "focus cleared");
+    assert!(
+        !frame::inst_clear_focus(&mut inst),
+        "explicit clear is idempotent once focus is already clear"
+    );
+
+    let mut escape = host_field_instance();
+    escape.doc.node_flags[0] |= slir::F_ESCAPE_BLUR;
+    assert!(frame::inst_set_focus(&mut escape, "field-key", true));
+    assert!(frame::inst_set_field_text(
+        &mut escape,
+        "field-key",
+        "retained"
+    ));
+    frame::inst_dispatch(
+        &mut escape,
+        &host_field_event(dispatch::E_KEY_DOWN, "Escape", ""),
+    );
+    assert_eq!(escape.ds.fs.focus, slir::NONE, "escape-blur clears focus");
+    assert_eq!(
+        frame::inst_field_text(&escape, "field-key").as_deref(),
+        Some("retained"),
+        "escape-blur preserves the retained edit buffer"
+    );
 
     let mut inert = keyed_inst(true);
     assert!(

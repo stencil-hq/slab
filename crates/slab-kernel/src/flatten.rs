@@ -302,6 +302,14 @@ pub struct RtPath {
     pub coords: Vec<f64>,
 }
 
+/// One host-visible diagnostic produced while solving or inspecting a frame.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FrameDiagnostic {
+    pub code: String,
+    pub line: u32,
+    pub msg: String,
+}
+
 /// Flattened output for one frame.
 #[derive(Clone, Debug)]
 pub struct Frame {
@@ -313,6 +321,8 @@ pub struct Frame {
     pub strings: Vec<String>,
     /// Runtime paths referenced by negative [`OpPath::path`] values.
     pub paths_rt: Vec<RtPath>,
+    /// Diagnostics observed for this frame. Runtime notes may be one-shot.
+    pub diagnostics: Vec<FrameDiagnostic>,
 }
 
 impl Frame {
@@ -324,6 +334,7 @@ impl Frame {
         self.scene.clear();
         self.strings.clear();
         self.paths_rt.clear();
+        self.diagnostics.clear();
     }
 }
 
@@ -336,6 +347,7 @@ pub fn frame_new() -> Frame {
         scene: Vec::new(),
         strings: Vec::new(),
         paths_rt: Vec::new(),
+        diagnostics: Vec::new(),
     }
 }
 
@@ -494,8 +506,15 @@ fn frame_path_ref(d: &slir::Doc, st: &St, fr: &mut Frame, path: i32) -> Option<i
     Some(!index)
 }
 
-fn icon_paint(d: &slir::Doc, node: u32, attr: u32, current_kind: u32, current: u32) -> (u32, u32) {
-    let value = crate::value::decode(d, slir::base_attr(d, node, attr));
+fn icon_paint(
+    d: &slir::Doc,
+    st: &St,
+    node: u32,
+    attr: u32,
+    current_kind: u32,
+    current: u32,
+) -> (u32, u32) {
+    let value = crate::value::decode_active(d, st.theme_index, slir::base_attr(d, node, attr));
     match value.tag {
         slir::T_PAINT_CURRENT => (current_kind, current),
         slir::T_PAINT_SOLID | slir::T_COLOR => (1, value.h),
@@ -504,7 +523,16 @@ fn icon_paint(d: &slir::Doc, node: u32, attr: u32, current_kind: u32, current: u
     }
 }
 
-fn emit_icon(d: &slir::Doc, fr: &mut Frame, rule: &RStyle, node: u32, x: f64, y: f64, side: f64) {
+fn emit_icon(
+    d: &slir::Doc,
+    st: &St,
+    fr: &mut Frame,
+    rule: &RStyle,
+    node: u32,
+    origin: (f64, f64),
+    side: f64,
+) {
+    let (x, y) = origin;
     let Ok(icon) = usize::try_from(rule.icon) else {
         return;
     };
@@ -526,19 +554,36 @@ fn emit_icon(d: &slir::Doc, fr: &mut Frame, rule: &RStyle, node: u32, x: f64, y:
     while child != slir::NONE {
         let child_index = usize::try_from(child).expect("icon child exceeds usize");
         if d.node_kind[child_index] == slir::K_PATH {
-            let path_value = crate::value::decode(d, slir::base_attr(d, child, slir::A_D));
+            let path_value = crate::value::decode_active(
+                d,
+                st.theme_index,
+                slir::base_attr(d, child, slir::A_D),
+            );
             if path_value.tag == slir::T_PATH_REF {
-                let (bg_kind, bg) = icon_paint(d, child, slir::A_BG, rule.color_kind, rule.color);
+                let (bg_kind, bg) =
+                    icon_paint(d, st, child, slir::A_BG, rule.color_kind, rule.color);
                 let (stroke_kind, stroke) =
-                    icon_paint(d, child, slir::A_STROKE, rule.color_kind, rule.color);
+                    icon_paint(d, st, child, slir::A_STROKE, rule.color_kind, rule.color);
                 let stroke_w = crate::value::num_of(
-                    &crate::value::decode(d, slir::base_attr(d, child, slir::A_STROKE_W)),
+                    &crate::value::decode_active(
+                        d,
+                        st.theme_index,
+                        slir::base_attr(d, child, slir::A_STROKE_W),
+                    ),
                     1.0,
                 );
-                let dash = crate::value::decode(d, slir::base_attr(d, child, slir::A_STROKE_DASH));
+                let dash = crate::value::decode_active(
+                    d,
+                    st.theme_index,
+                    slir::base_attr(d, child, slir::A_STROKE_DASH),
+                );
                 let has_dash = dash.tag == slir::T_TUPLE && dash.ln >= 2;
                 let opacity = crate::value::num_of(
-                    &crate::value::decode(d, slir::base_attr(d, child, slir::A_OPACITY)),
+                    &crate::value::decode_active(
+                        d,
+                        st.theme_index,
+                        slir::base_attr(d, child, slir::A_OPACITY),
+                    ),
                     1.0,
                 );
                 fr.ops.push(FrameOp::PathDraw(OpPath {
@@ -985,7 +1030,7 @@ fn walk_node(
             }));
         }
     } else if kind == slir::K_ICON {
-        emit_icon(d, fr, rule, node, x, y, w.min(h));
+        emit_icon(d, st, fr, rule, node, (x, y), w.min(h));
     } else if rule.bg_kind != 0
         || rule.stroke_kind != 0
         || rule.shadow_len > 0

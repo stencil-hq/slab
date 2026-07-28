@@ -60,6 +60,51 @@ pub fn test_value_decode() {
     assert_eq!(value::num_of(&missing, 7.0), 7.0, "missing fallback");
 }
 
+/// Verifies allocation-free public token lookup and named-theme/base fallback.
+pub fn test_active_theme_token_lookup() {
+    let mut doc = slir::doc_new();
+    doc.ok = true;
+    doc.strs = vec![
+        String::new(),
+        "dusk".to_string(),
+        "space.unit".to_string(),
+        "8".to_string(),
+        "12".to_string(),
+    ];
+    doc.aval_tag.extend([slir::T_NUM, slir::T_NUM]);
+    doc.aval_lo.extend([0, 0]);
+    doc.aval_hi.extend([0, 0]);
+    doc.aval_num.extend([8.0, 12.0]);
+    doc.theme_name.push(1);
+    doc.token_name.push(2);
+    doc.token_base.push(0);
+    doc.token_base_repr.push(3);
+    doc.token_theme_off.push(0);
+    doc.token_theme_len.push(1);
+    doc.token_theme_name.push(1);
+    doc.token_theme_val.push(1);
+    doc.token_theme_repr.push(4);
+
+    let mut instance = crate::frame::inst_shell();
+    instance.doc = doc;
+    crate::frame::inst_init(&mut instance);
+    assert_eq!(
+        crate::frame::inst_get_token(&instance, "space.unit"),
+        Some(crate::frame::TokenValue::Number(8.0))
+    );
+    assert!(crate::frame::inst_set_theme(&mut instance, "dusk"));
+    assert_eq!(
+        crate::frame::inst_get_token(&instance, "space.unit"),
+        Some(crate::frame::TokenValue::Number(12.0))
+    );
+    assert!(crate::frame::inst_set_theme(&mut instance, ""));
+    assert_eq!(
+        crate::frame::inst_get_token(&instance, "space.unit"),
+        Some(crate::frame::TokenValue::Number(8.0))
+    );
+    assert_eq!(crate::frame::inst_get_token(&instance, "missing"), None);
+}
+
 /// Verifies reconstruction of representative IEEE-754 bit patterns.
 pub fn test_f64_bits() {
     assert_eq!(f64::from_bits(0x0000000000000000), 0.0, "zero");

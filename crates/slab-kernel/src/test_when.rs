@@ -412,6 +412,25 @@ pub fn test_conditional_binder_tab_exclusion() {
     }
 }
 
+/// Verifies that deactivating a field binder preserves the authored node's edit buffer.
+pub fn test_conditional_binder_retains_edit_state() {
+    let doc = gated_interactivity_doc();
+    let mut inactive = gated_style(&doc, false);
+    let mut dispatch_state = dispatch::dstate_new();
+    dispatch_state.ed_node.push(0);
+    dispatch_state
+        .ed
+        .push(crate::edit::es_new(0, "retained draft"));
+
+    assert!(!dispatch::prune_vanished(
+        &doc,
+        &mut inactive,
+        &mut dispatch_state
+    ));
+    assert_eq!(dispatch_state.ed_node, [0]);
+    assert_eq!(dispatch_state.ed[0].text, "retained draft");
+}
+
 /// Verifies that animation on a child declared under `when` follows parent materialization.
 pub fn test_conditional_child_animation_idle() {
     let mut doc = gated_interactivity_doc();

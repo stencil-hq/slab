@@ -213,10 +213,51 @@ pub fn test_focusables_document_order() {
         0.0,
         slir::F_FOCUSABLE,
     );
+    add(&mut sc, 4, 0, 0.0, 30.0, 10.0, 0.0, 0.0, 0.0, slir::F_CLIP);
+    add(
+        &mut sc,
+        5,
+        4,
+        0.0,
+        30.0,
+        10.0,
+        10.0,
+        0.0,
+        0.0,
+        slir::F_FOCUSABLE,
+    );
+    add(
+        &mut sc,
+        6,
+        0,
+        0.0,
+        40.0,
+        10.0,
+        10.0,
+        0.0,
+        0.0,
+        slir::F_CLIP | slir::F_SCROLL,
+    );
+    add(
+        &mut sc,
+        7,
+        6,
+        0.0,
+        1_000.0,
+        10.0,
+        10.0,
+        0.0,
+        0.0,
+        slir::F_FOCUSABLE,
+    );
     let mut focusables = Vec::new();
     scene::focusables(&sc, &mut focusables);
-    assert_eq!(focusables.len(), 2, "inert focusable skipped");
-    assert_eq!(focusables, [1, 3], "document order");
+    assert_eq!(focusables.len(), 3, "inert and clipped focusables skipped");
+    assert_eq!(
+        focusables,
+        [1, 3, 7],
+        "document order retains off-screen scroll descendants"
+    );
 }
 
 /// Verifies column and row scroll clamping against their viewports.
@@ -575,6 +616,32 @@ pub fn test_activation_key_bubbles_to_ancestor() {
     assert_eq!(
         effects.sig_meta[0].key, "Escape",
         "metadata names fired key"
+    );
+}
+
+/// Verifies that a typed key map routes each key to its own static signal.
+pub fn test_activation_key_map_routes_distinct_signals() {
+    let mut doc = activation_doc();
+    doc.strs[1] = "Escape:cancel,F2:rename".into();
+    doc.sign_trigger[0] = dispatch::TR_KEY_ACTIVATE;
+    doc.strs.push("rename".into());
+    doc.sign_name.push(4);
+    doc.sign_node.push(0);
+    doc.sign_trigger.push(dispatch::TR_KEY_ACTIVATE);
+    let mut st = style::st_new();
+    let sc = activation_scene();
+    let mut ds = dispatch::dstate_new();
+    ds.fs.focus = 1;
+    let lay = layout::lay_new();
+
+    let escape = dispatch::dispatch(&doc, &mut st, &lay, &sc, &mut ds, &key_event("Escape"));
+    assert_eq!(escape.sig_name, [2], "Escape routes to cancel");
+    let f2 = dispatch::dispatch(&doc, &mut st, &lay, &sc, &mut ds, &key_event("F2"));
+    assert_eq!(f2.sig_name, [4], "F2 routes to rename");
+    let enter = dispatch::dispatch(&doc, &mut st, &lay, &sc, &mut ds, &key_event("Enter"));
+    assert!(
+        enter.sig_name.is_empty(),
+        "default Enter selects no mapped signal"
     );
 }
 

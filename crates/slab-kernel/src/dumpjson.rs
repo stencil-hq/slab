@@ -594,7 +594,7 @@ pub fn param_json(d: &slir::Doc, st: &style::St, param: u32) -> Option<String> {
 }
 
 /// Emits the complete conformance payload: frame data and solved diagnostics.
-pub fn dump(d: &slir::Doc, st: &style::St, fr: &flatten::Frame) -> String {
+pub fn dump(d: &slir::Doc, _st: &style::St, fr: &flatten::Frame) -> String {
     let mut out: Vec<u32> = vec![];
     emit(&mut out, "{\"width\":");
     emit_num(&mut out, fr.width);
@@ -652,16 +652,16 @@ pub fn dump(d: &slir::Doc, st: &style::St, fr: &flatten::Frame) -> String {
         emit(&mut out, "]}");
     }
     emit(&mut out, "],\"diags\":[");
-    for (index, code) in st.diag_code.iter().enumerate() {
+    for (index, diagnostic) in fr.diagnostics.iter().enumerate() {
         if index > 0 {
             out.push(COMMA);
         }
         emit(&mut out, "{\"code\":");
-        emit_jstr(&mut out, code);
+        emit_jstr(&mut out, &diagnostic.code);
         emit(&mut out, ",\"line\":");
-        emit_u32(&mut out, st.diag_line[index]);
+        emit_u32(&mut out, diagnostic.line);
         emit(&mut out, ",\"msg\":");
-        emit_jstr(&mut out, &st.diag_msg[index]);
+        emit_jstr(&mut out, &diagnostic.msg);
         out.push(OBJECT_CLOSE);
     }
     emit(&mut out, "]}");

@@ -72,6 +72,66 @@ pub fn decode(d: &Doc, ix: i32) -> V {
     }
 }
 
+fn token_theme_entry(d: &Doc, theme_index: u32, token_index: usize) -> Option<usize> {
+    let theme_row = usize::try_from(theme_index.checked_sub(1)?).ok()?;
+    let theme_name = *d.theme_name.get(theme_row)?;
+    let start = usize::try_from(*d.token_theme_off.get(token_index)?).ok()?;
+    let length = usize::try_from(*d.token_theme_len.get(token_index)?).ok()?;
+    let end = start.checked_add(length)?.min(d.token_theme_name.len());
+
+    // The compiler writes complete tables in theme declaration order. Keep a
+    // checked fallback for hand-built/forward-compatible documents.
+    let direct = start.checked_add(theme_row)?;
+    if direct < end && d.token_theme_name[direct] == theme_name {
+        return Some(direct);
+    }
+    (start..end).find(|&index| d.token_theme_name[index] == theme_name)
+}
+
+/// Returns the concrete AVAL index for one token row in the active theme.
+///
+/// `theme_index` is zero for authored base and otherwise one plus the index in
+/// `Doc::theme_name`. Missing overrides fall back to the authored base.
+pub fn token_aval(d: &Doc, theme_index: u32, token: u32) -> i32 {
+    let Ok(token_index) = usize::try_from(token) else {
+        return -1;
+    };
+    let Some(&base) = d.token_base.get(token_index) else {
+        return -1;
+    };
+    if theme_index == 0 {
+        return i32::from_ne_bytes(base.to_ne_bytes());
+    }
+    if let Some(index) = token_theme_entry(d, theme_index, token_index) {
+        return i32::from_ne_bytes(d.token_theme_val[index].to_ne_bytes());
+    }
+    i32::from_ne_bytes(base.to_ne_bytes())
+}
+
+/// Returns the canonical host-text STRS reference for one active token value.
+pub fn token_repr(d: &Doc, theme_index: u32, token: u32) -> Option<u32> {
+    let token_index = usize::try_from(token).ok()?;
+    let base = *d.token_base_repr.get(token_index)?;
+    if theme_index == 0 {
+        return Some(base);
+    }
+    let index = token_theme_entry(d, theme_index, token_index);
+    index
+        .and_then(|index| d.token_theme_repr.get(index).copied())
+        .or(Some(base))
+}
+
+/// Decodes an AVAL and follows token references through the active theme.
+pub fn decode_active(d: &Doc, theme_index: u32, ix: i32) -> V {
+    let mut value = decode(d, ix);
+    let mut depth = 0;
+    while value.tag == crate::slir::T_TOKEN_REF && depth < 64 {
+        value = decode(d, token_aval(d, theme_index, value.h));
+        depth += 1;
+    }
+    value
+}
+
 /// Returns the payload of a numeric or size value, or `fallback` for any other tag.
 pub fn num_of(v: &V, fallback: f64) -> f64 {
     if matches!(

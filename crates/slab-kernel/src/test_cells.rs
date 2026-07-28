@@ -671,6 +671,24 @@ pub fn test_serialize() {
         "strike uses ANSI SGR 9"
     );
 
+    let mut coverage_doc = slir::doc_new();
+    coverage_doc.font_cmap_off.push(0);
+    coverage_doc.font_cmap_len.push(2);
+    coverage_doc
+        .font_cmap_cp
+        .extend([u32::from('A'), u32::from('B')]);
+    coverage_doc.font_cmap_gid.extend([1, 2]);
+    let mut coverage_frame = flatten::frame_new();
+    coverage_frame.strings.push("A✕B".to_owned());
+    let mut coverage_op = text_op(0.0, 12.0, 0, 0x1111_11FF);
+    coverage_op.font = 0;
+    coverage_frame.ops.push(FrameOp::Text(coverage_op));
+    let coverage_grid = cells::cells_from_frame(&coverage_doc, &coverage_frame, 24.0, 16.0);
+    assert!(
+        str_eq(&cells::cells_to_text(&coverage_grid, true), "A B\n"),
+        "missing cmap glyph keeps its cell advance but paints no terminal fallback"
+    );
+
     let mut default_frame = flatten::frame_new();
     default_frame.strings.push("D".to_owned());
     default_frame

@@ -522,11 +522,12 @@ enum Handled {
 
 fn handle(
     inst: &mut kframe::Instance,
+    host: &mut dyn app::Host,
     event: Event,
     signals: &mut Vec<app::Signal>,
     translator: &mut Translator,
     gallery: Option<&Gallery>,
-) -> Handled {
+) -> Result<Handled, String> {
     if let Event::Key(KeyEvent {
         code: KeyCode::Char(c @ ('n' | 'p')),
         modifiers,
@@ -543,10 +544,10 @@ fn handle(
             gallery.prev()
         };
         app::close_instance(inst, signals);
-        return Handled::Switch(next);
+        return Ok(Handled::Switch(next));
     }
 
-    match translate(translator, event) {
+    Ok(match translate(translator, event) {
         Translated::Ignored => Handled::Continue,
         Translated::Quit => {
             app::close_instance(inst, signals);
@@ -554,13 +555,18 @@ fn handle(
         }
         Translated::Resize(cols, rows) => Handled::Resized(cols, rows),
         Translated::Events(first, second) => {
+            if let Some(key) = app::host_key(inst, &first)
+                && host.on_key(inst, &key)? == app::KeyHandling::Consumed
+            {
+                return Ok(Handled::Continue);
+            }
             for event in std::iter::once(first).chain(second) {
                 let effects = kframe::inst_dispatch(inst, &event);
                 app::collect_signals(inst, &effects, signals);
             }
             Handled::Continue
         }
-    }
+    })
 }
 
 fn forward_host_signals(
@@ -671,9 +677,15 @@ impl Terminal {
                 }
                 if ui.debug {
                     let badges = host.badges();
-                    let text = match signals.last() {
+                    let signal = match signals.last() {
                         Some(signal) => format!("sig: {}{badges}", app::format_signal(signal)),
                         None => format!("sig: —{badges}"),
+                    };
+                    let text = match fr.diagnostics.last() {
+                        Some(diagnostic) => {
+                            format!("{signal} · {}: {}", diagnostic.code, diagnostic.msg)
+                        }
+                        None => signal,
                     };
                     if full || text != footer_shown {
                         painter.footer(bottom.saturating_sub(gallery_rows).max(1), cols, &text);
@@ -702,11 +714,12 @@ impl Terminal {
                 loop {
                     match handle(
                         inst,
+                        host,
                         event::read().map_err(ioerr)?,
                         &mut signals,
                         &mut translator,
                         ui.gallery.as_ref(),
-                    ) {
+                    )? {
                         Handled::Quit => {
                             forward_host_signals(inst, host, &signals, &mut seen_signals)?;
                             return Ok(Exit::Quit);

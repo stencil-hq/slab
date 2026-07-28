@@ -1,4 +1,4 @@
-use crate::{frame, list, motion, scene, slir, style};
+use crate::{dispatch, frame, list, motion, scene, slir, style};
 
 /// Appends an attribute value to the fixture document and returns its index.
 pub fn aval(d: &mut slir::Doc, tag: u32, lo: u32, hi: u32, num: f64) -> u32 {
@@ -332,6 +332,24 @@ pub fn test_list_keyed_reorder_identity_prune_and_key_addressing() {
         scene::node_by_key(&d, &st.lists, "list~a/row"),
         slir::NONE,
         "vanished key not addressable"
+    );
+    assert_eq!(
+        list::set_key(&d, &mut st.lists, 0, 0, "a/b~%"),
+        1,
+        "reserved item-key bytes are accepted as data"
+    );
+    style::begin_solve(&d, &mut st);
+    let mut escaped = Vec::new();
+    roots(&d, &mut st, &mut escaped);
+    assert_eq!(
+        scene::key_of(&d, &st.lists, escaped[0]),
+        "list~a%2Fb%7E%25/row",
+        "full scene keys percent-escape structural item-key bytes"
+    );
+    assert_eq!(
+        scene::node_by_key(&d, &st.lists, "list~a%2Fb%7E%25/row"),
+        escaped[0],
+        "escaped canonical key resolves"
     );
 }
 
@@ -898,8 +916,54 @@ pub fn test_virtual_list_frame_settle_reveal_and_op_bound() {
         "start alignment includes padding and the preceding sibling"
     );
 
+    assert!(frame::inst_focus_item(&mut inst, "virtual", 20));
+    frame::inst_frame(&mut inst, 14.0);
+    assert_eq!(
+        scene::key_of(&inst.doc, &inst.st.lists, frame::inst_focus(&inst)),
+        "virtual~20/row",
+        "focus_item materializes and focuses the first interactive descendant"
+    );
+
+    assert!(frame::inst_set_scroll(&mut inst, "scroll", 0, 0.0));
+    frame::inst_frame(&mut inst, 15.0);
+    assert!(frame::inst_set_focus(&mut inst, "virtual~0/row", true));
+    let tab = dispatch::Event {
+        etype: dispatch::E_KEY_DOWN,
+        x: 0.0,
+        y: 0.0,
+        dx: 0.0,
+        dy: 0.0,
+        button: 0,
+        clicks: 0,
+        key: "Tab".into(),
+        text: String::new(),
+        mods: 0,
+    };
+    for step in 0..8 {
+        frame::inst_dispatch(&mut inst, &tab);
+        frame::inst_frame(&mut inst, 15.0 + f64::from(step));
+    }
+    assert!(
+        frame::inst_get_scroll(&inst, "scroll", 0) > 0.0,
+        "keyboard traversal reveals focus through the virtual scroll owner"
+    );
+
+    assert!(frame::inst_set_scroll(&mut inst, "scroll", 0, 0.0));
+    frame::inst_frame(&mut inst, 30.0);
+    assert!(frame::inst_set_focus(&mut inst, "virtual~0/row", true));
+    let mut arrow = tab.clone();
+    arrow.key = "ArrowDown".into();
+    for step in 0..8 {
+        frame::inst_dispatch(&mut inst, &arrow);
+        frame::inst_frame(&mut inst, 31.0 + f64::from(step));
+    }
+    assert!(
+        frame::inst_get_scroll(&inst, "scroll", 0) > 0.0,
+        "directional traversal also reveals virtual focus"
+    );
+
     assert!(frame::inst_set_scroll(&mut inst, "scroll", 0, 1_000.0));
-    let moved = frame::inst_frame(&mut inst, 16.0);
+    let moved = frame::inst_frame(&mut inst, 48.0);
     let (start, end) = frame::inst_each_window(&inst, "virtual");
     assert!(start > 0);
     assert!(end - start < 32);
@@ -907,7 +971,7 @@ pub fn test_virtual_list_frame_settle_reveal_and_op_bound() {
     assert!(moved.ops.len() < 200);
 
     assert!(frame::inst_reveal_item(&mut inst, "virtual", 9_999, 2));
-    let revealed = frame::inst_frame(&mut inst, 32.0);
+    let revealed = frame::inst_frame(&mut inst, 64.0);
     let (start, end) = frame::inst_each_window(&inst, "virtual");
     assert!(start < 10_000);
     assert_eq!(end, 10_000);

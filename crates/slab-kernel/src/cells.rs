@@ -825,11 +825,19 @@ pub fn draw_text(
     let text = &frame.strings[index(text_op.str_ref)];
     let mut boundaries = Vec::new();
     graphemes::boundaries(text, &mut boundaries);
-    let mut column_offset = 0;
+    let mut column_offset: i32 = 0;
     for boundary_pair in boundaries.windows(2) {
         let start = boundary_pair[0];
         let end = boundary_pair[1];
         let wide = graphemes::cluster_wide(text, start, end);
+        let mut cluster = crate::rt::str_slice(text, start, end);
+        cluster.retain(|character| {
+            text_op.font < 0 || slir::font_gid(doc, text_op.font, u32::from(character)) != 0
+        });
+        if cluster.is_empty() {
+            column_offset = column_offset.wrapping_add(if wide { 2 } else { 1 });
+            continue;
+        }
         let column = start_column.wrapping_add(column_offset);
         let clip = grid.clip_x0.len() - 1;
 
@@ -888,7 +896,7 @@ pub fn draw_text(
             }
         }
 
-        let cluster = crate::rt::str_slice(text, start, end);
+        let cluster = cluster;
         let first = cluster.chars().next().map_or(32, u32::from);
         let full_cluster = if end.wrapping_sub(start) > 1 {
             cluster

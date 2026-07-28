@@ -93,11 +93,16 @@ pub fn is_tuplelike(tag: u32) -> bool {
 /// This mirrors style attribute resolution so interpolation always receives a
 /// concrete value.
 pub fn pv(d: &Doc, st: &St, v: &V) -> V {
-    if v.tag != slir::T_PARAM_REF {
-        return v.clone();
+    let resolved = if v.tag == slir::T_TOKEN_REF {
+        value::decode_active(d, st.theme_index, value::token_aval(d, st.theme_index, v.h))
+    } else {
+        v.clone()
+    };
+    if resolved.tag != slir::T_PARAM_REF {
+        return resolved;
     }
 
-    let parameter = index(i32::try_from(v.h).expect("parameter index exceeds i32"));
+    let parameter = index(i32::try_from(resolved.h).expect("parameter index exceeds i32"));
     match d.parm_type[parameter] {
         1 | 4 => V {
             tag: slir::T_NUM,
@@ -120,7 +125,7 @@ pub fn pv(d: &Doc, st: &St, v: &V) -> V {
             off: 0,
             ln: 0,
         },
-        _ => v.clone(),
+        _ => resolved,
     }
 }
 

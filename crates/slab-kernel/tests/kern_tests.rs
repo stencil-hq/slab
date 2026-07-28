@@ -93,6 +93,7 @@ kernel_tests! {
     test_gesture__test_secondary_pointer_up_routes_without_releasing_primary_capture => slab_kernel::test_gesture::test_secondary_pointer_up_routes_without_releasing_primary_capture;
 
     test_hit__test_activation_key_bubbles_to_ancestor => slab_kernel::test_hit::test_activation_key_bubbles_to_ancestor;
+    test_hit__test_activation_key_map_routes_distinct_signals => slab_kernel::test_hit::test_activation_key_map_routes_distinct_signals;
     test_hit__test_clip_parent_blocks_outside_hits => slab_kernel::test_hit::test_clip_parent_blocks_outside_hits;
     test_hit__test_disabled_activation_key_is_suppressed => slab_kernel::test_hit::test_disabled_activation_key_is_suppressed;
     test_hit__test_focusables_document_order => slab_kernel::test_hit::test_focusables_document_order;
@@ -159,6 +160,7 @@ kernel_tests! {
     test_textm__test_wrap_basic => slab_kernel::test_textm::test_wrap_basic;
     test_textm__test_wrap_nbsp_glue => slab_kernel::test_textm::test_wrap_nbsp_glue;
 
+    test_value__test_active_theme_token_lookup => slab_kernel::test_value::test_active_theme_token_lookup;
     test_value__test_f64_bits => slab_kernel::test_value::test_f64_bits;
     test_value__test_fmt_u32 => slab_kernel::test_value::test_fmt_u32;
     test_value__test_integer_power_of_two_arithmetic => slab_kernel::test_value::test_integer_power_of_two_arithmetic;
@@ -170,6 +172,7 @@ kernel_tests! {
     test_when__test_conditional_animation_idle => slab_kernel::test_when::test_conditional_animation_idle;
     test_when__test_conditional_child_animation_idle => slab_kernel::test_when::test_conditional_child_animation_idle;
     test_when__test_conditional_binder_tab_exclusion => slab_kernel::test_when::test_conditional_binder_tab_exclusion;
+    test_when__test_conditional_binder_retains_edit_state => slab_kernel::test_when::test_conditional_binder_retains_edit_state;
     test_when__test_conditional_signal_firing => slab_kernel::test_when::test_conditional_signal_firing;
     test_when__test_bool_param_override => slab_kernel::test_when::test_bool_param_override;
     test_when__test_client_code => slab_kernel::test_when::test_client_code;

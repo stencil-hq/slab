@@ -81,6 +81,11 @@ pub const TR_POINTER_UP: u32 = 10;
 pub const TR_DRAG_UPDATE: u32 = 11;
 /// Drag termination signal trigger.
 pub const TR_DRAG_END: u32 = 12;
+/// Typed `keys=Key:signal` activation discriminator.
+///
+/// Host-facing effects remain ordinary Activate signals; the distinct static
+/// trigger prevents Enter/Space from selecting an arbitrary mapped signal.
+pub const TR_KEY_ACTIVATE: u32 = 13;
 
 /// Shift modifier bit.
 pub const M_SHIFT: u32 = 1;
@@ -439,7 +444,8 @@ pub fn sig_of(d: &Doc, st: &St, node: u32, trigger: u32) -> i32 {
     }
     let base = list::base(&st.lists, d, node);
     let active_name = signal_attr(trigger).and_then(|attr| {
-        let value = crate::value::decode(d, style::attr_ix(d, st, node, attr));
+        let value =
+            crate::value::decode_active(d, st.theme_index, style::attr_ix(d, st, node, attr));
         (value.tag == slir::T_STR).then_some(value.h)
     });
     let uses_channel =
@@ -726,6 +732,21 @@ pub fn bind_edit_on_focus(d: &Doc, st: &mut St, ds: &mut DState) {
     if focused != slir::NONE && sig_of(d, st, focused, 1) >= 0 {
         ensure_edit(d, st, ds, focused);
     }
+}
+
+/// Clears focus and cancels any uncommitted IME composition without dropping
+/// the field's committed buffer, selection, or undo history.
+pub fn clear_focus(d: &Doc, st: &mut St, ds: &mut DState) -> bool {
+    let focused = ds.fs.focus;
+    if focused != slir::NONE {
+        let edit_index = ed_ix(ds, focused);
+        if edit_index >= 0 {
+            let index = usize::try_from(edit_index).expect("negative edit index");
+            edit::composition_end(&mut ds.ed[index], "");
+            style::set_node_state(d, st, focused, "composing", false);
+        }
+    }
+    focus::set_focus(d, st, &mut ds.fs, slir::NONE, false)
 }
 pub(crate) fn sync_bound_text_param(d: &Doc, st: &mut St, node: u32, text: &str) -> bool {
     let signal_index = sig_of(d, st, node, TR_CHANGE);
@@ -1215,9 +1236,23 @@ pub(crate) fn cancel_invalid_drag(d: &Doc, st: &mut St, sc: &Scene, ds: &mut DSt
     true
 }
 
-/// Reports whether a comma-separated `keys=` value contains `key`.
+/// Reports whether a concise comma-separated `keys=` value contains `key`.
 pub fn key_list_has(keys: &str, key: &str) -> bool {
-    !keys.is_empty() && keys.split(',').any(|candidate| candidate == key)
+    !keys.is_empty()
+        && keys.split(',').any(|candidate| {
+            candidate
+                .rsplit_once(':')
+                .is_none_or(|(_, signal)| signal.is_empty())
+                && candidate == key
+        })
+}
+
+/// Resolves `key` in a typed `keys=Key:signal,...` map.
+pub fn key_map_signal<'a>(keys: &'a str, key: &str) -> Option<&'a str> {
+    keys.split(',').find_map(|entry| {
+        let (candidate, signal) = entry.rsplit_once(':')?;
+        (candidate == key && !signal.is_empty()).then_some(signal)
+    })
 }
 
 /// Delivers to the nearest enabled `keys=` node on the focused scene path.
@@ -1233,14 +1268,33 @@ pub fn activate_key_path(
     while scene_index >= 0 {
         let index = usize::try_from(scene_index).expect("negative scene index");
         let node = sc.node[index];
-        if key_list_has(&style::attr_str(d, st, node, slir::A_KEYS), key) && !disabled(d, st, node)
-        {
-            deliver_activate(d, st, eff, node);
-            eff.sig_meta
-                .last_mut()
-                .expect("activation has metadata")
-                .key = key.to_owned();
-            return true;
+        let keys = style::attr_str(d, st, node, slir::A_KEYS);
+        if !disabled(d, st, node) {
+            if let Some(signal) = key_map_signal(&keys, key) {
+                let base = list::base(&st.lists, d, node);
+                if let Some(signal_index) =
+                    d.sign_name.iter().enumerate().find_map(|(index, name)| {
+                        (d.sign_node[index] == base
+                            && d.sign_trigger[index] == TR_KEY_ACTIVATE
+                            && slir::str_at(d, *name) == signal)
+                            .then_some(index)
+                    })
+                {
+                    emit_signal(d, st, eff, signal_index, node, String::new());
+                    eff.sig_meta
+                        .last_mut()
+                        .expect("activation has metadata")
+                        .key = key.to_owned();
+                    return true;
+                }
+            } else if key_list_has(&keys, key) {
+                deliver_activate(d, st, eff, node);
+                eff.sig_meta
+                    .last_mut()
+                    .expect("activation has metadata")
+                    .key = key.to_owned();
+                return true;
+            }
         }
         scene_index = sc.parent[index];
     }
@@ -2056,6 +2110,15 @@ pub fn dispatch(
             } else {
                 false
             };
+            if !handled
+                && ev.key == "Escape"
+                && focused != slir::NONE
+                && ed_ix(ds, focused) >= 0
+                && style::eff_flags(d, st, focused) & slir::F_ESCAPE_BLUR != 0
+            {
+                handled = true;
+                effects.repaint |= clear_focus(d, st, ds);
+            }
             // Editing has precedence, followed by divider adjustment, scrolling,
             // activation-key bubbling, and focus-ring navigation.
             if !handled && focused != slir::NONE {

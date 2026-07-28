@@ -122,6 +122,9 @@ pub fn uses(doc: &Doc, frame: &Frame, feature: &str) -> bool {
             .any(|flags| flags & F_STICKY != 0),
         "divider" => doc.node_kind.contains(&K_DIVIDER),
         "holes" => !doc.hole_name.is_empty(),
+        "text-strike" => ops
+            .iter()
+            .any(|op| matches!(op, FrameOp::Text(text) if text.strike)),
         "text-raster" => ops.iter().any(|op| matches!(op, FrameOp::Text(_))),
         _ => false,
     }
