@@ -22,6 +22,7 @@ public final class SlabView: NSView {
     private var renderRevision: UInt64 = 0
     private var renderScheduled = false
     private var environmentDirty = true
+    private var deferredLiveResizePresentation = false
     private var documentLoaded = false
     private var documentStarted: TimeInterval = 0
     private var cursor = SlabCursor.arrow
@@ -31,6 +32,8 @@ public final class SlabView: NSView {
     private var markedSelection = NSRange(location: 0, length: 0)
     private var animationTimer: Timer?
     private var animationFramePending = false
+    private var pendingPointerMove: PendingPointerMove?
+    private var pointerMoveScheduled = false
 
     /// Creates a native Metal surface for an existing live session.
     public init(session: SlabSession) throws {
@@ -64,9 +67,11 @@ public final class SlabView: NSView {
     /// Compiles source into this view's session and schedules its first frame.
     public func load(source: String, name: String = "<source>") {
         enqueue { [weak self] in
+            FileHandle.standardError.write(Data("Slab probe: load started\n".utf8))
             guard let self else { return }
             documentLoaded = false
             try await session.open(source: source, name: name)
+            FileHandle.standardError.write(Data("Slab probe: document opened\n".utf8))
             documentStarted = ProcessInfo.processInfo.systemUptime
             documentLoaded = true
             environmentDirty = true
@@ -85,9 +90,28 @@ public final class SlabView: NSView {
         let changed = frame.size != newSize
         super.setFrameSize(newSize)
         if changed {
+            presentFrame()
+            deferredLiveResizePresentation = false
             environmentDirty = true
             invalidateFrame()
         }
+    }
+
+    /// Coalesces kernel work while AppKit owns the live-resize event loop.
+    public override func viewWillStartLiveResize() {
+        super.viewWillStartLiveResize()
+        pendingPointerMove = nil
+    }
+
+    /// Presents a frame completed after the final resize event, then refreshes the final viewport.
+    public override func viewDidEndLiveResize() {
+        super.viewDidEndLiveResize()
+        if deferredLiveResizePresentation {
+            deferredLiveResizePresentation = false
+            presentFrame()
+        }
+        environmentDirty = true
+        invalidateFrame()
     }
 
     /// Starts rendering once the view has a window and backing coordinate space.
@@ -101,6 +125,14 @@ public final class SlabView: NSView {
             invalidateFrame()
         }
     }
+    /// Draws once at the new backing scale inside AppKit's scale-change transaction.
+    public override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        presentFrame()
+        environmentDirty = true
+        invalidateFrame()
+    }
+
 
     /// Re-solves authored dark-mode conditions when AppKit appearance changes.
     public override func viewDidChangeEffectiveAppearance() {
@@ -240,7 +272,9 @@ public final class SlabView: NSView {
     private func enqueue(_ operation: @escaping @MainActor () async throws -> Void) {
         let previous = queueTail
         queueTail = Task { @MainActor [weak self] in
+            FileHandle.standardError.write(Data("Slab probe: queue waiting\n".utf8))
             _ = await previous?.result
+            FileHandle.standardError.write(Data("Slab probe: queue running\n".utf8))
             guard let self, !Task.isCancelled else { return }
             do {
                 try await operation()
@@ -253,6 +287,7 @@ public final class SlabView: NSView {
     private func dispatch(
         _ operation: @escaping @Sendable (SlabSession) async throws -> SlabEffects
     ) {
+        guard documentLoaded else { return }
         enqueue { [weak self, session] in
             guard let self else { return }
             let effects = try await operation(session)
@@ -262,18 +297,50 @@ public final class SlabView: NSView {
 
     private func dispatchPointer(_ kind: SlabPointerKind, event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
-        let button = Self.button(from: event.buttonNumber)
-        let clicks = UInt32(clamping: event.clickCount)
-        let modifiers = Self.modifiers(from: event.modifierFlags)
+        let move = PendingPointerMove(
+            x: point.x,
+            y: point.y,
+            button: Self.button(from: event.buttonNumber),
+            clicks: UInt32(clamping: event.clickCount),
+            modifiers: Self.modifiers(from: event.modifierFlags)
+        )
+        if kind == .move {
+            pendingPointerMove = move
+            schedulePointerMove()
+            return
+        }
         dispatch { session in
             try await session.pointer(
                 kind,
-                x: point.x,
-                y: point.y,
-                button: button,
-                clicks: clicks,
-                modifiers: modifiers
+                x: move.x,
+                y: move.y,
+                button: move.button,
+                clicks: move.clicks,
+                modifiers: move.modifiers
             )
+        }
+    }
+
+    private func schedulePointerMove() {
+        guard documentLoaded, !pointerMoveScheduled, pendingPointerMove != nil else { return }
+        pointerMoveScheduled = true
+        enqueue { [weak self, session] in
+            guard let self else { return }
+            defer {
+                pointerMoveScheduled = false
+                schedulePointerMove()
+            }
+            guard let move = pendingPointerMove else { return }
+            pendingPointerMove = nil
+            let effects = try await session.pointer(
+                .move,
+                x: move.x,
+                y: move.y,
+                button: move.button,
+                clicks: move.clicks,
+                modifiers: move.modifiers
+            )
+            apply(effects)
         }
     }
 
@@ -319,8 +386,8 @@ public final class SlabView: NSView {
                         client: .gpu,
                         dark: usesDarkAppearance
                     )
-                    try await session.setEnvironment(environment)
                     environmentDirty = false
+                    try await session.setEnvironment(environment)
                 }
                 let milliseconds = max(
                     0,
@@ -337,8 +404,7 @@ public final class SlabView: NSView {
                         document: frame.documentGeneration
                     )
                 }
-                try renderer.install(frame)
-                finishFrame(frame, revision: revision)
+                try finishFrame(frame, revision: revision)
             } catch {
                 renderScheduled = false
                 animationFramePending = false
@@ -353,14 +419,19 @@ public final class SlabView: NSView {
         }
     }
 
-    private func finishFrame(_ frame: SlabGPUFrame, revision: UInt64) {
+    private func finishFrame(_ frame: SlabGPUFrame, revision: UInt64) throws {
         renderScheduled = false
         animationFramePending = false
         guard revision == renderRevision else {
             scheduleFrameIfNeeded()
             return
         }
-        metalView.needsDisplay = true
+        try renderer.install(frame)
+        if inLiveResize {
+            deferredLiveResizePresentation = true
+        } else {
+            presentFrame()
+        }
         let notes = frame.diagnostics.map { diagnostic in
             diagnostic.line == 0
                 ? "\(diagnostic.code): \(diagnostic.message)"
@@ -373,6 +444,15 @@ public final class SlabView: NSView {
             invalidateFrame()
         }
     }
+    private func presentFrame() {
+        guard window != nil, metalView.bounds.width > 0, metalView.bounds.height > 0 else { return }
+        let drawableSize = metalView.convertToBacking(metalView.bounds).size
+        if metalView.drawableSize != drawableSize {
+            metalView.drawableSize = drawableSize
+        }
+        _ = renderer.present(in: metalView)
+    }
+
 
     private var usesDarkAppearance: Bool {
         effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
@@ -482,6 +562,7 @@ public final class SlabView: NSView {
 
     private static func plainText(from value: Any) -> String {
         if let text = value as? String {
+
             return text
         }
         if let attributed = value as? NSAttributedString {
@@ -490,6 +571,14 @@ public final class SlabView: NSView {
         return String(describing: value)
     }
 }
+private struct PendingPointerMove {
+    let x: Double
+    let y: Double
+    let button: SlabPointerButton
+    let clicks: UInt32
+    let modifiers: [SlabModifier]
+}
+
 
 extension SlabView: @preconcurrency NSTextInputClient {
     /// Dispatches committed AppKit text or completes the active composition.

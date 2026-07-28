@@ -18,13 +18,20 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
     private let sampler: any MTLSamplerState
     private let textureLoader: MTKTextureLoader
     private let dummyTexture: any MTLTexture
-    private var frame: SlabGPUFrame?
-    private var decodedFrame: MetalFrame?
+    private var presentation: MetalPresentation?
     private var documentGeneration: UInt32 = 0
     private var resources: [ResourceAddress: MetalResource] = [:]
+    private var resourceVersions: [ResourceAddress: UInt32] = [:]
+    private var stagedDocumentGeneration: UInt32?
+    private var stagedResources: [ResourceAddress: MetalResource] = [:]
+    private var stagedResourceVersions: [ResourceAddress: UInt32] = [:]
     private var pathMasks: [PathMaskKey: PathMask] = [:]
     private var textMasks: [TextMaskKey: TextMask] = [:]
     private var sceneTexture: (any MTLTexture)?
+    private var layerTextures: [any MTLTexture] = []
+    private var auxiliaryTextures: [any MTLTexture] = []
+    private var explicitDraw = false
+    private var drawSucceeded = false
 
     init(view: MTKView) throws {
         guard let device = view.device ?? MTLCreateSystemDefaultDevice() else {
@@ -79,20 +86,28 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         view.device = device
         view.colorPixelFormat = .bgra8Unorm_srgb
         view.framebufferOnly = false
-        view.enableSetNeedsDisplay = true
+        view.autoResizeDrawable = true
+        view.enableSetNeedsDisplay = false
         view.isPaused = true
+        guard let layer = view.layer as? CAMetalLayer else {
+            throw SlabRuntimeError.invalidArgument("MTKView did not create a CAMetalLayer")
+        }
+        layer.presentsWithTransaction = true
         view.delegate = self
     }
 
     func needs(_ reference: SlabGPUResourceRef, document: UInt32) -> Bool {
-        if document != documentGeneration {
-            return true
+        let address = ResourceAddress(reference)
+        if document == documentGeneration,
+           resourceVersions[address] == reference.generation
+        {
+            return false
         }
-        return resources[ResourceAddress(reference)] == nil
+        return stagedDocumentGeneration != document
+            || stagedResourceVersions[address] != reference.generation
     }
 
     func install(_ value: SlabGPUResource, for reference: SlabGPUResourceRef, document: UInt32) throws {
-        resetResourcesIfNeeded(document)
         let resource: MetalResource
         switch value {
         case let .gradient(gradient):
@@ -111,34 +126,84 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         case let .shadow(shadow):
             resource = .shadow(shadow)
         }
-        resources[ResourceAddress(reference)] = resource
+
+        if stagedDocumentGeneration != document {
+            stagedDocumentGeneration = document
+            stagedResources.removeAll(keepingCapacity: true)
+            stagedResourceVersions.removeAll(keepingCapacity: true)
+        }
+        let address = ResourceAddress(reference)
+        stagedResources[address] = resource
+        stagedResourceVersions[address] = reference.generation
     }
 
     func install(_ frame: SlabGPUFrame) throws {
-        resetResourcesIfNeeded(frame.documentGeneration)
-        decodedFrame = try MetalFrame(frame)
-        self.frame = frame
+        let decoded = try MetalFrame(frame)
+        commitStagedResources(for: frame.documentGeneration)
+        presentation = MetalPresentation(frame: frame, decoded: decoded)
+    }
+
+
+    func present(in view: MTKView) -> Bool {
+        guard presentation != nil else { return true }
+        explicitDraw = true
+        drawSucceeded = false
+        view.draw()
+        explicitDraw = false
+        return drawSucceeded
     }
 
     func draw(in view: MTKView) {
-        guard let frame, let decodedFrame, let drawable = view.currentDrawable else { return }
+        guard explicitDraw, let presentation, let drawable = view.currentDrawable else { return }
         do {
-            try encode(frame: frame, decoded: decodedFrame, in: view, drawable: drawable)
+            try encode(
+                frame: presentation.frame,
+                decoded: presentation.decoded,
+                in: view,
+                drawable: drawable
+            )
         } catch {
             onError?(error)
         }
+        drawSucceeded = true
     }
 
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {
         sceneTexture = nil
+        layerTextures.removeAll(keepingCapacity: true)
+        auxiliaryTextures.removeAll(keepingCapacity: true)
     }
 
-    private func resetResourcesIfNeeded(_ document: UInt32) {
-        guard document != documentGeneration else { return }
-        documentGeneration = document
-        resources.removeAll(keepingCapacity: true)
-        pathMasks.removeAll(keepingCapacity: true)
-        textMasks.removeAll(keepingCapacity: true)
+    private func commitStagedResources(for document: UInt32) {
+        let changesDocument = document != documentGeneration
+        if changesDocument {
+            documentGeneration = document
+            resources.removeAll(keepingCapacity: true)
+            resourceVersions.removeAll(keepingCapacity: true)
+            pathMasks.removeAll(keepingCapacity: true)
+            textMasks.removeAll(keepingCapacity: true)
+        }
+        guard stagedDocumentGeneration == document else { return }
+
+        var invalidatesPaths = false
+        var invalidatesText = false
+        for (address, resource) in stagedResources {
+            resources[address] = resource
+            invalidatesPaths = invalidatesPaths || address.kind == .path
+            invalidatesText = invalidatesText || address.kind == .font
+        }
+        for (address, version) in stagedResourceVersions {
+            resourceVersions[address] = version
+        }
+        stagedDocumentGeneration = nil
+        stagedResources.removeAll(keepingCapacity: true)
+        stagedResourceVersions.removeAll(keepingCapacity: true)
+        if invalidatesPaths {
+            pathMasks.removeAll(keepingCapacity: true)
+        }
+        if invalidatesText {
+            textMasks.removeAll(keepingCapacity: true)
+        }
     }
 
     private func encode(
@@ -156,7 +221,6 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
             throw SlabRuntimeError.invalidArgument("Metal could not create a command buffer")
         }
         commandBuffer.label = "Slab frame"
-        var transients: [any MTLTexture] = []
         let initial = PaintState(
             transform: matrix_identity_float3x3,
             clip: SIMD4(0, 0, Float(decoded.width), Float(decoded.height)),
@@ -176,7 +240,7 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
             context: context,
             state: initial,
             commandBuffer: commandBuffer,
-            transients: &transients,
+            layerDepth: 0,
             scale: scale
         )
         context.end()
@@ -207,9 +271,7 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         output.end()
         commandBuffer.present(drawable)
         commandBuffer.commit()
-        _ = transients
     }
-
     private func render(
         frame: SlabGPUFrame,
         decoded: MetalFrame,
@@ -217,7 +279,7 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         context: RenderContext,
         state initialState: PaintState,
         commandBuffer: any MTLCommandBuffer,
-        transients: inout [any MTLTexture],
+        layerDepth: Int,
         scale: Float
     ) throws {
         var state = initialState
@@ -262,8 +324,7 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
                     throw SlabRuntimeError.malformedResponse("GPU frame has an unclosed group")
                 }
                 context.end()
-                let layer = try transientLike(context.target)
-                transients.append(layer)
+                let layer = try layerTarget(depth: layerDepth, like: context.target)
                 let child = try RenderContext(
                     renderer: self,
                     commandBuffer: commandBuffer,
@@ -278,14 +339,13 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
                     context: child,
                     state: state,
                     commandBuffer: commandBuffer,
-                    transients: &transients,
+                    layerDepth: layerDepth + 1,
                     scale: scale
                 )
                 child.end()
                 let compositeTexture: any MTLTexture
                 if group.blur > 0 {
-                    let blurred = try transientLike(context.target)
-                    transients.append(blurred)
+                    let blurred = try auxiliaryTarget(index: 0, like: context.target)
                     let blur = MPSImageGaussianBlur(
                         device: device,
                         sigma: max(0.25, Float(group.blur) * scale / 2)
@@ -299,7 +359,6 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
                 drawGroup(
                     group,
                     texture: compositeTexture,
-                    frame: decoded,
                     state: state,
                     context: context
                 )
@@ -309,11 +368,9 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
             case let .backdrop(backdrop):
                 try drawBackdrop(
                     backdrop,
-                    decoded: decoded,
                     state: state,
                     context: context,
                     commandBuffer: commandBuffer,
-                    transients: &transients,
                     scale: scale
                 )
             }
@@ -655,12 +712,13 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
     private func drawGroup(
         _ group: MetalGroupOp,
         texture: any MTLTexture,
-        frame: MetalFrame,
         state: PaintState,
         context: RenderContext
     ) {
+        let width = Float(context.target.width) / context.scale
+        let height = Float(context.target.height) / context.scale
         var uniforms = baseUniforms(
-            rect: SIMD4(0, 0, Float(frame.width), Float(frame.height)),
+            rect: SIMD4(0, 0, width, height),
             radius: 0,
             state: state,
             mode: .composite
@@ -683,16 +741,13 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
 
     private func drawBackdrop(
         _ backdrop: MetalBackdropOp,
-        decoded: MetalFrame,
         state: PaintState,
         context: RenderContext,
         commandBuffer: any MTLCommandBuffer,
-        transients: inout [any MTLTexture],
         scale: Float
     ) throws {
         context.end()
-        let copy = try transientLike(context.target)
-        transients.append(copy)
+        let copy = try auxiliaryTarget(index: 0, like: context.target)
         guard let blit = commandBuffer.makeBlitCommandEncoder() else {
             throw SlabRuntimeError.invalidArgument("Metal could not create a backdrop blit encoder")
         }
@@ -710,8 +765,7 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         blit.endEncoding()
         let source: any MTLTexture
         if backdrop.blur > 0 {
-            let blurred = try transientLike(context.target)
-            transients.append(blurred)
+            let blurred = try auxiliaryTarget(index: 1, like: context.target)
             let blur = MPSImageGaussianBlur(
                 device: device,
                 sigma: max(0.25, Float(backdrop.blur) * scale / 2)
@@ -733,11 +787,13 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
             state: state,
             mode: .composite
         )
+        let targetWidth = Double(context.target.width) / Double(context.scale)
+        let targetHeight = Double(context.target.height) / Double(context.scale)
         uniforms.uv = SIMD4(
-            Float(backdrop.rect.x / decoded.width),
-            Float(backdrop.rect.y / decoded.height),
-            Float(backdrop.rect.z / decoded.width),
-            Float(backdrop.rect.w / decoded.height)
+            Float(backdrop.rect.x / targetWidth),
+            Float(backdrop.rect.y / targetHeight),
+            Float(backdrop.rect.z / targetWidth),
+            Float(backdrop.rect.w / targetHeight)
         )
         uniforms.extras.z = Float(backdrop.saturation)
         uniforms.extras.w = Float(backdrop.brightness)
@@ -1001,38 +1057,40 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         let width = max(1, Int(ceil(pathBounds.width * CGFloat(scale) + padding * 2)))
         let height = max(1, Int(ceil(pathBounds.height * CGFloat(scale) + padding * 2)))
         var pixels = [UInt8](repeating: 0, count: width * height)
-        guard let context = CGContext(
-            data: &pixels,
-            width: width,
-            height: height,
-            bitsPerComponent: 8,
-            bytesPerRow: width,
-            space: CGColorSpaceCreateDeviceGray(),
-            bitmapInfo: CGImageAlphaInfo.none.rawValue
-        ) else {
-            throw SlabRuntimeError.invalidArgument("Core Graphics could not rasterize a Slab path")
-        }
-        context.translateBy(x: 0, y: CGFloat(height))
-        context.scaleBy(x: 1, y: -1)
-        context.scaleBy(x: CGFloat(scale), y: CGFloat(scale))
-        context.translateBy(
-            x: -pathBounds.minX + padding / CGFloat(scale),
-            y: -pathBounds.minY + padding / CGFloat(scale)
-        )
-        context.addPath(path)
-        context.setShouldAntialias(true)
-        if strokeWidth > 0 {
-            context.setStrokeColor(gray: 1, alpha: 1)
-            context.setLineWidth(CGFloat(strokeWidth))
-            context.setLineCap(CGLineCap.butt)
-            context.setLineJoin(CGLineJoin.miter)
-            if dashOn > 0, dashOff > 0 {
-                context.setLineDash(phase: 0, lengths: [CGFloat(dashOn), CGFloat(dashOff)])
+        try pixels.withUnsafeMutableBytes { storage in
+            guard let context = CGContext(
+                data: storage.baseAddress,
+                width: width,
+                height: height,
+                bitsPerComponent: 8,
+                bytesPerRow: width,
+                space: CGColorSpaceCreateDeviceGray(),
+                bitmapInfo: CGImageAlphaInfo.none.rawValue
+            ) else {
+                throw SlabRuntimeError.invalidArgument("Core Graphics could not rasterize a Slab path")
             }
-            context.strokePath()
-        } else {
-            context.setFillColor(gray: 1, alpha: 1)
-            context.fillPath(using: CGPathFillRule.winding)
+            context.translateBy(x: 0, y: CGFloat(height))
+            context.scaleBy(x: 1, y: -1)
+            context.scaleBy(x: CGFloat(scale), y: CGFloat(scale))
+            context.translateBy(
+                x: -pathBounds.minX + padding / CGFloat(scale),
+                y: -pathBounds.minY + padding / CGFloat(scale)
+            )
+            context.addPath(path)
+            context.setShouldAntialias(true)
+            if strokeWidth > 0 {
+                context.setStrokeColor(gray: 1, alpha: 1)
+                context.setLineWidth(CGFloat(strokeWidth))
+                context.setLineCap(CGLineCap.butt)
+                context.setLineJoin(CGLineJoin.miter)
+                if dashOn > 0, dashOff > 0 {
+                    context.setLineDash(phase: 0, lengths: [CGFloat(dashOn), CGFloat(dashOff)])
+                }
+                context.strokePath()
+            } else {
+                context.setFillColor(gray: 1, alpha: 1)
+                context.fillPath(using: CGPathFillRule.winding)
+            }
         }
         let texture = try Self.makeTexture(
             device: device,
@@ -1095,23 +1153,25 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         let width = max(1, Int(ceil(max(CGFloat(measuredWidth) * CGFloat(scale), CGFloat(CTLineGetTypographicBounds(line, nil, nil, nil))) + padding * 2)))
         let height = max(1, Int(ceil(ascent + descent + leading + padding * 2)))
         var pixels = [UInt8](repeating: 0, count: width * height)
-        guard let context = CGContext(
-            data: &pixels,
-            width: width,
-            height: height,
-            bitsPerComponent: 8,
-            bytesPerRow: width,
-            space: CGColorSpaceCreateDeviceGray(),
-            bitmapInfo: CGImageAlphaInfo.none.rawValue
-        ) else {
-            throw SlabRuntimeError.invalidArgument("Core Graphics could not rasterize Slab text")
+        try pixels.withUnsafeMutableBytes { storage in
+            guard let context = CGContext(
+                data: storage.baseAddress,
+                width: width,
+                height: height,
+                bitsPerComponent: 8,
+                bytesPerRow: width,
+                space: CGColorSpaceCreateDeviceGray(),
+                bitmapInfo: CGImageAlphaInfo.none.rawValue
+            ) else {
+                throw SlabRuntimeError.invalidArgument("Core Graphics could not rasterize Slab text")
+            }
+            context.setShouldAntialias(true)
+            context.setFillColor(gray: 1, alpha: 1)
+            context.setTextDrawingMode(CGTextDrawingMode.fill)
+            context.textMatrix = CGAffineTransform.identity
+            context.textPosition = CGPoint(x: padding, y: descent + padding)
+            CTLineDraw(line, context)
         }
-        context.setShouldAntialias(true)
-        context.setFillColor(gray: 1, alpha: 1)
-        context.setTextDrawingMode(CGTextDrawingMode.fill)
-        context.textMatrix = CGAffineTransform.identity
-        context.textPosition = CGPoint(x: padding, y: descent + padding)
-        CTLineDraw(line, context)
         let texture = try Self.makeTexture(
             device: device,
             width: width,
@@ -1135,13 +1195,25 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         if let sceneTexture, sceneTexture.width == width, sceneTexture.height == height {
             return sceneTexture
         }
+        layerTextures.removeAll(keepingCapacity: true)
+        auxiliaryTextures.removeAll(keepingCapacity: true)
         let texture = try renderTexture(width: width, height: height)
         sceneTexture = texture
         return texture
     }
 
-    private func transientLike(_ texture: any MTLTexture) throws -> any MTLTexture {
-        try renderTexture(width: texture.width, height: texture.height)
+    private func layerTarget(depth: Int, like target: any MTLTexture) throws -> any MTLTexture {
+        while layerTextures.count <= depth {
+            layerTextures.append(try renderTexture(width: target.width, height: target.height))
+        }
+        return layerTextures[depth]
+    }
+
+    private func auxiliaryTarget(index: Int, like target: any MTLTexture) throws -> any MTLTexture {
+        while auxiliaryTextures.count <= index {
+            auxiliaryTextures.append(try renderTexture(width: target.width, height: target.height))
+        }
+        return auxiliaryTextures[index]
     }
 
     private func renderTexture(width: Int, height: Int) throws -> any MTLTexture {
@@ -1279,6 +1351,11 @@ private final class RenderContext {
         descriptor.colorAttachments[0].clearColor = MTLClearColorMake(0, 0, 0, 0)
         return commandBuffer.makeRenderCommandEncoder(descriptor: descriptor)
     }
+}
+
+private struct MetalPresentation {
+    let frame: SlabGPUFrame
+    let decoded: MetalFrame
 }
 
 private struct ResourceAddress: Hashable {
@@ -1642,7 +1719,7 @@ fragment float4 quadFragment(
             output = texture.sample(sampleState, in.uv) * u.params.w * coverage;
         }
     } else if (mode == 2) {
-        float alpha = max(texture.sample(sampleState, in.uv).r, texture.sample(sampleState, in.uv).a);
+        float alpha = texture.sample(sampleState, in.uv).r;
         output = paintColor(u.fill, u.effect.y, u.effect.z, in.source, u.paintBox, gradient, sampleState) * alpha;
     } else if (mode == 3) {
         output = adjustColor(texture.sample(sampleState, in.uv), u.extras.z, u.extras.w)

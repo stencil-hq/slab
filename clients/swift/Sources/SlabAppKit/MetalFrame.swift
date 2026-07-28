@@ -35,6 +35,7 @@ struct MetalTextOp {
     let strike: Bool
     let italic: Bool
     let underline: Bool
+    let rightToLeft: Bool
     let x: Double
     let baseline: Double
     let measuredWidth: Double
@@ -200,6 +201,9 @@ struct MetalFrame {
                 _ = try words.next("Text.uncov_len")
                 let italic = try words.next("Text.italic") != 0
                 let underline = try words.next("Text.underline") != 0
+                let rightToLeft = try words.next("Text.rtl") != 0
+                _ = try words.signed("Text.glyph_off")
+                _ = try words.signed("Text.glyph_len")
                 operations.append(
                     .text(
                         MetalTextOp(
@@ -211,6 +215,7 @@ struct MetalFrame {
                             strike: strike,
                             italic: italic,
                             underline: underline,
+                            rightToLeft: rightToLeft,
                             x: try scalars.next("Text.x"),
                             baseline: try scalars.next("Text.y_baseline"),
                             measuredWidth: try scalars.next("Text.measured_w"),
