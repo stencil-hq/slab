@@ -897,6 +897,95 @@ canvas w=240 h=160 {
     assert!((ghost_rect.x - base_rect.x - 20.0).abs() < 1e-9);
     assert!((ghost_rect.y - base_rect.y).abs() < 1e-9);
 }
+#[test]
+fn nested_drag_ghost_preserves_absolute_position_offset() {
+    let source = r#"
+col w=400 h=300 pad=100,50 {
+  row w=fill h=60 {
+    box key=source at=30,20 w=80 h=40 drag=started drag-ghost bg=#314158 {
+      text "source" color=#ffffff
+    }
+  }
+}
+"#;
+    let (slir, diagnostics) = compile(
+        source,
+        &Options {
+            embed_assets: false,
+            ..Default::default()
+        },
+    );
+    assert!(!diagnostics.has_errors(), "{:?}", diagnostics.0);
+    let slir = slir.expect("nested drag ghost document");
+    let source_node = slir
+        .nodes
+        .key
+        .iter()
+        .position(|&key| {
+            let key = slir.str_at(key);
+            key == "source" || key.ends_with("/source")
+        })
+        .expect("source node") as u32;
+    let bytes = slab_slir::write(&slir);
+    let (mut instance, _) = slab_slir::instance(&bytes).expect("drag ghost instance");
+    slab_kernel::frame::inst_set_env(&mut instance, 400.0, 300.0, 0, false, false);
+    let base = slab_kernel::frame::inst_frame(&mut instance, 0.0);
+    let base_rect = base
+        .ops
+        .iter()
+        .find_map(|op| match op {
+            slab_kernel::flatten::FrameOp::Rect(rect) if rect.node == source_node => Some(rect),
+            _ => None,
+        })
+        .expect("source rectangle");
+    assert!(base_rect.x >= 50.0, "nested base rect must include parent offset");
+
+    let event = |etype, x, y, dx, dy| slab_kernel::dispatch::Event {
+        etype,
+        x,
+        y,
+        dx,
+        dy,
+        button: 0,
+        clicks: 1,
+        key: String::new(),
+        text: String::new(),
+        mods: 0,
+    };
+    let down_x = base_rect.x + 10.0;
+    let down_y = base_rect.y + 10.0;
+    slab_kernel::frame::inst_dispatch(
+        &mut instance,
+        &event(slab_kernel::dispatch::E_POINTER_DOWN, down_x, down_y, 0.0, 0.0),
+    );
+    slab_kernel::frame::inst_dispatch(
+        &mut instance,
+        &event(slab_kernel::dispatch::E_POINTER_MOVE, down_x + 35.0, down_y + 25.0, 35.0, 25.0),
+    );
+    let ghost = slab_kernel::frame::inst_frame(&mut instance, 1.0);
+    let ghost_rect = ghost
+        .ops
+        .iter()
+        .rev()
+        .find_map(|op| match op {
+            slab_kernel::flatten::FrameOp::Rect(rect) if rect.node == source_node => Some(rect),
+            _ => None,
+        })
+        .expect("ghost source rectangle");
+
+    assert!(
+        (ghost_rect.x - (base_rect.x + 35.0)).abs() < 1e-9,
+        "ghost x {} must be base_rect.x {} + dx 35.0",
+        ghost_rect.x,
+        base_rect.x
+    );
+    assert!(
+        (ghost_rect.y - (base_rect.y + 25.0)).abs() < 1e-9,
+        "ghost y {} must be base_rect.y {} + dy 25.0",
+        ghost_rect.y,
+        base_rect.y
+    );
+}
 
 #[test]
 fn standalone_export_check_reports_export_context() {

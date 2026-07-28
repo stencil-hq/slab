@@ -923,13 +923,17 @@ What each client does with each feature is normative in the support chart
 (§Platform support), generated from machine-readable `spec/support.toml`
 into driver lookup tables — a driver reports the chart's `cap-*` code once
 per document (§12) instead of improvising. The classic cell-media rules
-still hold: box `stroke` degrades to box-drawing borders, a box thinner
-than a cell to a `─`/`│` hairline run (`╌`/`╎` when dashed — `rect h=1
-bg=…` stays the medium-independent rule primitive), gradients sample per
-cell, colors more than half transparent drop entirely, `BACKDROP`
-paints flat. Cross-media text divergence is the design: intentional
-per-medium redesign belongs in `when tui { … }` patches, not in renderer
-heuristics.
+still hold: box `stroke` degrades to box-drawing borders drawn only on
+cells the box **fully covers** — border ink never lands on a row or column
+shared with neighbouring content, and when fewer than two fully covered
+rows or columns exist the border is suppressed with one `stroke-band` note
+(give the node a cell-aligned ≥2-row band, or use bg cues); a box thinner
+than a cell degrades to a `─`/`│` hairline run (`╌`/`╎` when dashed —
+`rect h=1 bg=…` stays the medium-independent rule primitive), gradients
+sample per cell, colors more than half transparent drop entirely,
+`BACKDROP` paints flat. Cross-media text divergence is the design:
+intentional per-medium redesign belongs in `when tui { … }` patches, not
+in renderer heuristics.
 
 ## 12. Diagnostics
 
@@ -1426,12 +1430,25 @@ tweening. The document stays a pure function of its inputs and `t` — the
 flip stamps are the only retained clock, and they live in the kernel
 instance, not the host.
 
+`transition` also tweens **host-driven value changes**. When a resolved
+base attribute of the transition node changes between solves to a scalar
+number, percent, or color — a host writing a bound param (a progress bar's
+`w=param.done_pct`) or a theme flip retargeting a token — the kernel stamps
+a per-attribute value clock at the observing solve and blends from the
+previously painted value with the same duration, easing, and delay. A write
+landing mid-flight chains from the currently painted value, never jumping.
+Discrete values (strings, enums, flags, tuples, gradients) and attributes
+currently written by an active patch snap as before; item-field-driven
+values inside `each` templates do not value-tween. Value clocks live in the
+kernel instance alongside the flip stamps, so the document remains a pure
+function of its inputs and `t`.
+
 Attributes without an explicit base value step at the midpoint, except
 colors and solid paints, which fade through the target color at alpha 0
 (CSS `transparent` semantics) on both the entering and leaving leg; flags
 and extra `when` children never tween. Transition clocks start at the
-first frame that observes a state flip, so sparse frame sampling shifts
-the window with it.
+first frame that observes a state flip (or value change), so sparse frame
+sampling shifts the window with it.
 
 ### 14.4 What motion refuses
 
@@ -1524,12 +1541,24 @@ Adapters resolve dynamic values against the current scene and omit a
 relationship whose target is currently absent.
 
 The resolved `SceneNode` includes these values, its existing parent index and
-bounds, plus derived `disabled` and `focused` booleans. Native string fields
+bounds, plus derived `disabled`, `focused`, and `editable` booleans
+(`editable` is true for a text leaf whose `field=` binder is active this
+frame — adapters derive textbox semantics from it). Native string fields
 are references into the instance scene STRS pool: reference 0 means absent;
 the pool starts with the empty string, deduplicates static and runtime values,
 and remains append-only for the instance lifetime. The WASM snapshot resolves
 those references to strings and exports optional booleans/numbers as JSON
 `null` when absent.
+
+A **control without an authored `label=` names itself from content**: for a
+focusable or activation-bearing (`act=`) node whose label is absent, the
+kernel concatenates the resolved text of its attached descendant `text` and
+`para` nodes (string literals, params, item props, and live edit buffers) in
+document order, single-space separated, skipping whitespace-only runs and
+`each` subtrees, and exports the result through the ordinary scene label
+slot. Adapters inherit the computed name with no extra work. The
+`warn[a11y-name]` diagnostic (§12) therefore fires only when a control has
+neither `label=` nor any name-yielding text content.
 
 Accessibility adapters are framework-owned. The web client maintains a
 key-retained, pointer-transparent shadow-DOM semantic hierarchy. DOM ids derive
@@ -1731,6 +1760,19 @@ Hosts call `inst_set_scroll(i, key, axis, offset)` and
 both active axes of every scroll ancestor, applying each inner displacement to
 the target rectangle before considering its parent. Rust bindings and web
 components expose the same axis argument and reveal operation.
+
+Reveals are **sticky-aware**: a sticky child pinned at (or within its own
+extent of) a scroll container's start edge covers that strip of the
+viewport, so `inst_reveal`, `inst_reveal_item`
+(`align: 0 start | 1 center | 2 end | 3 nearest`), keyboard-traversal
+auto-reveal, and start-side item alignments all park the target just below
+the pinned band rather than underneath it; centering happens within the
+uncovered region. Revealing a sticky node itself never scrolls against its
+own pinned position. End-side alignments are unaffected. After clamping,
+the target band is fully visible whenever that is geometrically possible;
+when the viewport is not a whole multiple of a virtual list's
+`item-extent`, the residual partial item sits at the opposite edge of the
+reveal by construction.
 
 Web, GPU, and TUI clients support wheel, keyboard, reveal, sticky placement,
 and host-API scrolling. SVG and PNG have no interaction and report
