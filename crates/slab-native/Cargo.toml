@@ -26,3 +26,5 @@ lyon = { workspace = true }
 png = { workspace = true }
 bytemuck = { workspace = true }
 pollster = { workspace = true }
+
+arboard = { version = "3.6.1", default-features = false }

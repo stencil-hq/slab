@@ -13,12 +13,11 @@
 //! (toggle), and `act=window-drag` (starts an OS window move on press —
 //! bind it on the titlebar container; nested controls still win).
 
-#[path = "a11y.rs"]
-pub(crate) mod a11y;
-
+use crate::NativeDocument;
+use crate::a11y;
 use crate::demo::{self, write_png};
+use crate::input::{self, Clipboard, ImeState};
 use crate::renderer::{LayerInput, Renderer};
-use crate::{ClickCounter, NativeDocument};
 use slab_kernel::dispatch as kdispatch;
 use slab_kernel::dispatch::Event;
 use slab_kernel::frame::{self as kframe};
@@ -27,8 +26,8 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 use winit::application::ApplicationHandler;
-use winit::dpi::{LogicalPosition, LogicalSize};
-use winit::event::{ElementState, Ime, MouseScrollDelta, WindowEvent};
+use winit::dpi::LogicalSize;
+use winit::event::{ElementState, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
 use winit::keyboard::{Key, NamedKey};
 use winit::window::{Window, WindowId};
@@ -200,8 +199,10 @@ struct ViewApp {
     mods: u32,
     cursor: (f64, f64),
     cursor_sample: Option<(f64, f64)>,
-    clicks: ClickCounter,
-    composing: bool,
+    clicks: input::ClickCounter,
+    ime: ImeState,
+    clipboard: Clipboard,
+    context_actions: bool,
     start: Instant,
     frames: u64,
     exit_deadline: Option<Instant>,
@@ -231,8 +232,10 @@ impl ViewApp {
             mods: 0,
             cursor: (0.0, 0.0),
             cursor_sample: None,
-            clicks: ClickCounter::default(),
-            composing: false,
+            clicks: input::ClickCounter::default(),
+            ime: ImeState::default(),
+            clipboard: Clipboard::default(),
+            context_actions: false,
             start: Instant::now(),
             frames: 0,
         }
@@ -413,13 +416,10 @@ impl ViewApp {
         if eff.repaint {
             window.request_redraw();
         }
-        window.set_cursor(crate::cursor_icon(eff.cursor));
-        if eff.has_ime {
-            window.set_ime_cursor_area(
-                LogicalPosition::new(eff.ime_x, eff.ime_y),
-                LogicalSize::new(eff.ime_w.max(1.0), eff.ime_h),
-            );
-        }
+        window.set_cursor(input::cursor_icon(eff.cursor));
+        self.ime.sync_rect(window, &eff);
+        self.ime
+            .set_allowed(window, input::focus_in_field(&self.doc.inst));
     }
 
     fn base_event(&self, etype: u32) -> Event {
@@ -435,6 +435,78 @@ impl ViewApp {
             text: String::new(),
             mods: self.mods,
         }
+    }
+
+    /// Applies one clipboard action to the focused field.
+    fn clipboard_action(&mut self, event_loop: &ActiveEventLoop, action: &str) -> bool {
+        if !input::focus_in_field(&self.doc.inst) {
+            return false;
+        }
+        match action {
+            "c" | "x" => {
+                if let Some(selection) =
+                    input::selection_text(&self.doc.inst).filter(|s| !s.is_empty())
+                {
+                    self.clipboard.write(&selection);
+                    if action == "x" {
+                        let ev = self.base_event(kdispatch::E_CUT);
+                        self.dispatch(event_loop, ev);
+                    }
+                }
+                true
+            }
+            "v" => {
+                if let Some(text) = self.clipboard.read() {
+                    let mut ev = self.base_event(kdispatch::E_PASTE);
+                    ev.text = text;
+                    self.dispatch(event_loop, ev);
+                }
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Handles Cmd/Ctrl C/X/V for the focused field.
+    fn clipboard_shortcut(&mut self, event_loop: &ActiveEventLoop, key: &Key) -> bool {
+        if self.mods & (kdispatch::M_CTRL | kdispatch::M_META) == 0 {
+            return false;
+        }
+        let Key::Character(action) = key else {
+            return false;
+        };
+        self.clipboard_action(event_loop, action.as_str())
+    }
+
+    /// Opens or closes the reference host's keyboard-operated context affordance.
+    fn set_context_actions(&mut self, open: bool) {
+        self.context_actions = open;
+        if let Some(window) = &self.window {
+            window.set_title(if open {
+                "Text actions — C Copy · X Cut · V Paste · Esc Close"
+            } else {
+                &self.title
+            });
+        }
+    }
+
+    /// Handles a key while the text context affordance is open.
+    fn context_action_key(&mut self, event_loop: &ActiveEventLoop, key: &Key) -> bool {
+        if !self.context_actions {
+            return false;
+        }
+        let action = match key {
+            Key::Named(NamedKey::Escape) => None,
+            Key::Character(action) if matches!(action.as_str(), "c" | "x" | "v") => {
+                Some(action.as_str())
+            }
+            _ => return false,
+        };
+        if let Some(action) = action {
+            self.clipboard_action(event_loop, action);
+        }
+        self.set_context_actions(false);
+        true
     }
 
     fn accessibility_action(
@@ -481,7 +553,6 @@ impl ApplicationHandler<a11y::Event> for ViewApp {
         };
         let accessibility =
             a11y::WindowAccessibility::new(event_loop, &window, self.a11y_proxy.clone());
-        window.set_ime_allowed(true);
         let instance = wgpu::Instance::default();
         let surface = match instance.create_surface(window.clone()) {
             Ok(s) => s,
@@ -575,7 +646,7 @@ impl ApplicationHandler<a11y::Event> for ViewApp {
             WindowEvent::CursorMoved { position, .. } => {
                 let s = self.scale();
                 let cursor = (position.x / s, position.y / s);
-                let (dx, dy) = crate::cursor_delta(&mut self.cursor_sample, cursor);
+                let (dx, dy) = input::cursor_delta(&mut self.cursor_sample, cursor);
                 self.cursor = cursor;
                 let mut ev = self.base_event(kdispatch::E_POINTER_MOVE);
                 ev.dx = dx;
@@ -586,7 +657,7 @@ impl ApplicationHandler<a11y::Event> for ViewApp {
                 self.cursor_sample = None;
             }
             WindowEvent::MouseInput { state, button, .. } => {
-                let btn = crate::mouse_button_id(button);
+                let btn = input::mouse_button_id(button);
                 let clicks = if state == ElementState::Pressed {
                     self.clicks.pointer_down(btn, self.cursor.0, self.cursor.1)
                 } else {
@@ -619,6 +690,14 @@ impl ApplicationHandler<a11y::Event> for ViewApp {
                 ev.button = btn;
                 ev.clicks = clicks;
                 self.dispatch(event_loop, ev);
+                // Context signal dispatch is kernel mechanics. This reference
+                // host then exposes real clipboard actions in the title bar.
+                if state == ElementState::Pressed
+                    && btn == 2
+                    && input::focus_in_field(&self.doc.inst)
+                {
+                    self.set_context_actions(true);
+                }
             }
             WindowEvent::MouseWheel { delta, .. } => {
                 let (dx, dy) = match delta {
@@ -634,10 +713,16 @@ impl ApplicationHandler<a11y::Event> for ViewApp {
                 self.dispatch(event_loop, ev);
             }
             WindowEvent::KeyboardInput { event, .. } => {
-                if event.state != ElementState::Pressed || self.composing {
+                if event.state != ElementState::Pressed || self.ime.composing() {
                     return;
                 }
-                if let Some(name) = crate::key_name(&event.logical_key) {
+                if self.context_action_key(event_loop, &event.logical_key) {
+                    return;
+                }
+                if self.clipboard_shortcut(event_loop, &event.logical_key) {
+                    return;
+                }
+                if let Some(name) = input::key_name(&event.logical_key) {
                     let mut ev = self.base_event(kdispatch::E_KEY_DOWN);
                     ev.key = name;
                     self.dispatch(event_loop, ev);
@@ -647,6 +732,7 @@ impl ApplicationHandler<a11y::Event> for ViewApp {
                 let no_cmd = self.mods & (kdispatch::M_CTRL | kdispatch::M_META) == 0;
                 if insertable
                     && no_cmd
+                    && self.ime.forwards_key_text()
                     && let Some(text) = &event.text
                 {
                     let mut ev = self.base_event(kdispatch::E_TEXT);
@@ -654,41 +740,13 @@ impl ApplicationHandler<a11y::Event> for ViewApp {
                     self.dispatch(event_loop, ev);
                 }
             }
-            WindowEvent::Ime(ime) => match ime {
-                Ime::Enabled => {}
-                Ime::Preedit(text, _cursor) => {
-                    if !text.is_empty() {
-                        if !self.composing {
-                            self.composing = true;
-                            let ev = self.base_event(kdispatch::E_COMPOSITION_START);
-                            self.dispatch(event_loop, ev);
-                        }
-                        let mut ev = self.base_event(kdispatch::E_COMPOSITION_UPDATE);
-                        ev.text = text;
-                        self.dispatch(event_loop, ev);
-                    }
+            WindowEvent::Ime(ime) => {
+                for (etype, text) in self.ime.on_ime(ime) {
+                    let mut ev = self.base_event(etype);
+                    ev.text = text;
+                    self.dispatch(event_loop, ev);
                 }
-                Ime::Commit(text) => {
-                    if self.composing {
-                        self.composing = false;
-                        let mut ev = self.base_event(kdispatch::E_COMPOSITION_END);
-                        ev.text = text;
-                        self.dispatch(event_loop, ev);
-                    } else {
-                        // direct commit without preedit (e.g. dead keys)
-                        let mut ev = self.base_event(kdispatch::E_TEXT);
-                        ev.text = text;
-                        self.dispatch(event_loop, ev);
-                    }
-                }
-                Ime::Disabled => {
-                    if self.composing {
-                        self.composing = false;
-                        let ev = self.base_event(kdispatch::E_COMPOSITION_END);
-                        self.dispatch(event_loop, ev);
-                    }
-                }
-            },
+            }
             WindowEvent::Focused(false) => {
                 let ev = self.base_event(kdispatch::E_BLUR);
                 self.dispatch(event_loop, ev);

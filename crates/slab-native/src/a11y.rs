@@ -18,24 +18,27 @@ use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, EventLoopProxy};
 use winit::window::Window;
 
-pub(crate) type Event = AdapterEvent;
-pub(crate) type EventKind = AdapterWindowEvent;
+/// Event-loop event emitted by the AccessKit winit adapter.
+pub type Event = AdapterEvent;
+/// Window adapter event carried by [`Event`].
+pub type EventKind = AdapterWindowEvent;
 
 const ROOT_ID: NodeId = NodeId(0);
 const ITEM_SCROLL: f64 = 40.0;
 
 /// One retained scene mounted in a native window.
-pub(crate) struct SceneLayer<'a> {
-    pub document: usize,
-    pub instance: &'a Instance,
-    pub frame: &'a Frame,
-    pub offset_x: f64,
-    pub offset_y: f64,
-    pub mount: Option<MountPoint>,
+pub struct SceneLayer<'a> {
+    document: usize,
+    instance: &'a Instance,
+    frame: &'a Frame,
+    offset_x: f64,
+    offset_y: f64,
+    mount: Option<MountPoint>,
 }
 
 impl<'a> SceneLayer<'a> {
-    pub(crate) fn new(document: usize, instance: &'a Instance, frame: &'a Frame) -> Self {
+    /// Creates one accessibility layer from a settled kernel frame.
+    pub fn new(document: usize, instance: &'a Instance, frame: &'a Frame) -> Self {
         Self {
             document,
             instance,
@@ -46,13 +49,15 @@ impl<'a> SceneLayer<'a> {
         }
     }
 
-    pub(crate) fn translated(mut self, x: f64, y: f64) -> Self {
+    /// Translates this layer inside the host window.
+    pub fn translated(mut self, x: f64, y: f64) -> Self {
         self.offset_x = x;
         self.offset_y = y;
         self
     }
 
-    pub(crate) fn mounted(mut self, document: usize, node: u32) -> Self {
+    /// Mounts this layer below a node in another document layer.
+    pub fn mounted(mut self, document: usize, node: u32) -> Self {
         self.mount = Some(MountPoint { document, node });
         self
     }
@@ -66,8 +71,10 @@ pub(crate) struct MountPoint {
 
 /// An action already validated against the latest published scene.
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct RoutedAction {
+pub struct RoutedAction {
+    /// Host document identifier supplied through [`SceneLayer::new`].
     pub document: usize,
+    /// Stable Slab key that receives the action.
     pub key: String,
     kind: RoutedActionKind,
 }
@@ -89,22 +96,26 @@ enum RoutedActionKind {
 }
 
 /// Result of applying the direct part of a routed action.
-pub(crate) enum ActionResult {
+pub enum ActionResult {
+    /// The target did not accept the action.
     Ignored,
+    /// The action changed retained kernel state directly.
     Changed,
-    /// Dispatch through the host's normal wrapper so typed signals are retained.
+    /// Dispatch this event through the host wrapper to retain typed signals.
     Dispatch(KernelEvent),
 }
 
 impl RoutedAction {
-    pub(crate) fn moves_focus(&self) -> bool {
+    /// Whether this action moves keyboard focus between mounted documents.
+    pub fn moves_focus(&self) -> bool {
         matches!(
             self.kind,
             RoutedActionKind::Focus | RoutedActionKind::Default | RoutedActionKind::DividerKey(_)
         )
     }
 
-    pub(crate) fn apply(&self, instance: &mut Instance) -> ActionResult {
+    /// Applies this action to its target kernel instance.
+    pub fn apply(&self, instance: &mut Instance) -> ActionResult {
         match self.kind {
             RoutedActionKind::Focus => {
                 if kframe::inst_set_focus(instance, &self.key, true) {
@@ -225,7 +236,7 @@ impl Default for Snapshot {
 }
 
 /// Pure scene-to-AccessKit state. It is tested without constructing an OS adapter.
-pub(crate) struct Bridge {
+pub struct Bridge {
     ids: HashMap<Identity, NodeId>,
     next_id: u64,
     current: Snapshot,
@@ -257,7 +268,8 @@ impl Bridge {
         id
     }
 
-    pub(crate) fn refresh(
+    /// Projects the latest settled scene layers into an unpublished tree.
+    pub fn refresh(
         &mut self,
         title: &str,
         width: f64,
@@ -445,7 +457,8 @@ impl Bridge {
         }
     }
 
-    fn prepare_update(&self, force_full: bool) -> Option<TreeUpdate> {
+    /// Builds a full or changed-node update without publishing it.
+    pub fn prepare_update(&self, force_full: bool) -> Option<TreeUpdate> {
         let source = self.source()?;
         let full = force_full || !self.published.valid;
         let nodes = if full {
@@ -479,13 +492,15 @@ impl Bridge {
         })
     }
 
-    fn commit(&mut self) {
+    /// Marks the pending tree as published after the host applies its update.
+    pub fn commit(&mut self) {
         if self.current.valid {
             self.published = std::mem::take(&mut self.current);
         }
     }
 
-    pub(crate) fn resolve_action(&self, request: &ActionRequest) -> Option<RoutedAction> {
+    /// Resolves an AccessKit request against the latest projected tree.
+    pub fn resolve_action(&self, request: &ActionRequest) -> Option<RoutedAction> {
         if request.target_tree != TreeId::ROOT {
             return None;
         }
@@ -857,14 +872,20 @@ fn role_from_name(name: &str, kind: u32, flags: u32) -> Role {
 }
 
 /// Owns the platform adapter and delivers only changed tree snapshots.
-pub(crate) struct WindowAccessibility {
+///
+/// Create one bridge after the winit window. Pass every window event to
+/// [`Self::process_event`]. After each settled frame, call [`Self::refresh`]
+/// and then [`Self::update`]. Route adapter actions through
+/// [`Self::resolve_action`] and [`RoutedAction::apply`].
+pub struct WindowAccessibility {
     adapter: Adapter,
     bridge: Bridge,
     full_pending: bool,
 }
 
 impl WindowAccessibility {
-    pub(crate) fn new(
+    /// Mounts AccessKit for one winit window and event-loop proxy.
+    pub fn new(
         event_loop: &ActiveEventLoop,
         window: &Window,
         proxy: EventLoopProxy<Event>,
@@ -876,11 +897,13 @@ impl WindowAccessibility {
         }
     }
 
-    pub(crate) fn process_event(&mut self, window: &Window, event: &WindowEvent) {
+    /// Forwards one winit window event to the platform adapter.
+    pub fn process_event(&mut self, window: &Window, event: &WindowEvent) {
         self.adapter.process_event(window, event);
     }
 
-    pub(crate) fn refresh(
+    /// Projects settled kernel frames into the pending accessibility tree.
+    pub fn refresh(
         &mut self,
         title: &str,
         width: f64,
@@ -891,7 +914,8 @@ impl WindowAccessibility {
         self.bridge.refresh(title, width, height, scale, layers);
     }
 
-    pub(crate) fn update(&mut self, force_full: bool) {
+    /// Publishes changed nodes, or a full tree when `force_full` is true.
+    pub fn update(&mut self, force_full: bool) {
         self.full_pending |= force_full;
         let Some(update) = self.bridge.prepare_update(self.full_pending) else {
             return;
@@ -910,7 +934,8 @@ impl WindowAccessibility {
         }
     }
 
-    pub(crate) fn resolve_action(&self, request: &ActionRequest) -> Option<RoutedAction> {
+    /// Resolves one platform action against the latest published scene.
+    pub fn resolve_action(&self, request: &ActionRequest) -> Option<RoutedAction> {
         self.bridge.resolve_action(request)
     }
 }
@@ -975,6 +1000,9 @@ mod tests {
             .map(|index| u32::try_from(index).unwrap())
             .collect();
         instance.doc.node_kind = vec![slir::K_COL; keys.len()];
+        instance.doc.node_flags = vec![0; keys.len()];
+        instance.doc.node_parent = vec![slir::NONE; keys.len()];
+        instance.doc.attr_index = vec![0; keys.len() + 1];
         instance.st.scene_strs = vec![String::new()];
         instance
     }

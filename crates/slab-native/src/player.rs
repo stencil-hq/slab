@@ -8,12 +8,12 @@
 //! pixel probes. Queue rows mirror the document's exported `Track` def
 //! (focusable act=pick, hover/pressed/focus-visible, 140ms ease-out).
 
-use crate::ClickCounter;
+use crate::a11y;
 use crate::demo::{Opts, write_png};
 use crate::gen_player;
 use crate::holes::{HoleContent, InstanceHole};
+use crate::input::{self, ClickCounter};
 use crate::renderer::{LayerInput, Renderer};
-use crate::view::a11y;
 use slab_kernel::dispatch as kdispatch;
 use slab_kernel::dispatch::Event;
 use slab_kernel::flatten::Frame;
@@ -438,10 +438,10 @@ impl PlayerCore {
             }
             self.hover_route = route;
         }
-        if ev.etype == kdispatch::E_POINTER_DOWN {
+        if ev.etype == kdispatch::E_POINTER_DOWN && ev.button == 0 {
             self.transfer_focus(route);
             self.capture = Some(route);
-        } else if ev.etype == kdispatch::E_POINTER_UP {
+        } else if ev.etype == kdispatch::E_POINTER_UP && ev.button == 0 {
             self.capture = None;
         }
 
@@ -926,7 +926,7 @@ impl App {
         if out.repaint {
             window.request_redraw();
         }
-        window.set_cursor(crate::cursor_icon(out.cursor));
+        window.set_cursor(input::cursor_icon(out.cursor));
     }
 
     fn accessibility_action(&mut self, request: &accesskit::ActionRequest) {
@@ -1093,7 +1093,7 @@ impl ApplicationHandler<a11y::Event> for App {
             WindowEvent::CursorMoved { position, .. } => {
                 let s = self.scale();
                 let cursor = (position.x / s, position.y / s);
-                let (dx, dy) = crate::cursor_delta(&mut self.cursor_sample, cursor);
+                let (dx, dy) = input::cursor_delta(&mut self.cursor_sample, cursor);
                 self.cursor = cursor;
                 let mut ev = self.base_event(kdispatch::E_POINTER_MOVE);
                 ev.dx = dx;
@@ -1104,7 +1104,7 @@ impl ApplicationHandler<a11y::Event> for App {
                 self.cursor_sample = None;
             }
             WindowEvent::MouseInput { state, button, .. } => {
-                let btn = crate::mouse_button_id(button);
+                let btn = input::mouse_button_id(button);
                 let clicks = if state == ElementState::Pressed {
                     self.clicks.pointer_down(btn, self.cursor.0, self.cursor.1)
                 } else {
@@ -1137,7 +1137,7 @@ impl ApplicationHandler<a11y::Event> for App {
                 if event.state != ElementState::Pressed {
                     return;
                 }
-                if let Some(name) = crate::key_name(&event.logical_key) {
+                if let Some(name) = input::key_name(&event.logical_key) {
                     let mut ev = self.base_event(kdispatch::E_KEY_DOWN);
                     ev.key = name;
                     self.forward(ev);
