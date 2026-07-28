@@ -543,6 +543,19 @@ pub fn base_attr(d: &Doc, node: u32, attr: u32) -> i32 {
 pub fn font_cmap_ix(d: &Doc, font: i32, codepoint: u32) -> i32 {
 	let font = i32_index(font);
 	let offset = d.font_cmap_off[font];
+	if codepoint <= 0x7f && d.font_cmap_len[font] > 0 {
+		let first = d.font_cmap_cp[i32_index(offset)];
+		if codepoint >= first {
+			let candidate =
+				i32::try_from(codepoint - first).expect("ASCII cmap offset exceeds i32");
+			if candidate < d.font_cmap_len[font] {
+				let candidate = offset.wrapping_add(candidate);
+				if d.font_cmap_cp[i32_index(candidate)] == codepoint {
+					return candidate;
+				}
+			}
+		}
+	}
 	let mut lo = 0;
 	let mut hi = d.font_cmap_len[font];
 	while lo < hi {
