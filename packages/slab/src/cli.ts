@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // `@stencil-hq/slab` — the npm CLI. Mirrors `crates/slab-cli/src/main.rs`
-// for check | build | dump | render | gen wc | gen rust, backed by the
-// slab-wasm module (zero Rust on the host). conformance/selftest/lsp stay
+// for check | build | dump | render | gen wc | gen rust | dev, backed by
+// slab-wasm (zero Rust on the host). conformance/selftest/lsp stay
 // Rust-only.
 //
 // Flow per compile command: read the .slab (or .slir) file; for compile
@@ -13,6 +13,14 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, extname, join, resolve } from 'node:path';
+import {
+   DEV_USAGE,
+   type DevBuildResult,
+   type DevOptions,
+   DevUsageError,
+   parseDevArgs,
+   startDevServer,
+} from './dev.ts';
 import { wasm } from './wasm.ts';
 
 const USAGE = `\
@@ -25,6 +33,8 @@ commands:
   dump FILE.slir                           print the canonical slir-dump text
   render FILE -o OUT.{svg,png,apng,txt}    static export (see \`slab render --help\`)
   gen wc FILE -o DIR [--tag NAME] [--separate-ir]   emit a web-component module
+  dev FILE [-o DIR] [--tag NAME] [--separate-ir] [--host HOST] [--port N]
+                                            serve a live web-component preview
   gen rust FILE -o OUT.rs                  emit a typed Rust module (native client)
   drive                                    requires native slab-cli (see below)
 
@@ -378,6 +388,80 @@ function cmdGenWc(args: string[]): void {
    );
 }
 
+async function cmdDev(args: string[]): Promise<void> {
+   let options: DevOptions;
+   try {
+      options = parseDevArgs(args);
+   } catch (error) {
+      if (error instanceof DevUsageError) usageErr(error.message);
+      throw error;
+   }
+
+   const stem =
+      options.file
+         .replace(/\.[^.]+$/, '')
+         .split(/[\\/]/)
+         .pop() ?? 'slab';
+   const generate = (): DevBuildResult => {
+      const src = readFileSync(options.file, 'utf8');
+      const baseDir = dirname(options.file);
+      const assetsJson = assetsJsonFor(src, baseDir);
+      const optsJson = JSON.stringify({
+         tag: options.tag,
+         separateIr: options.separateIr,
+         stem,
+         sourceName: options.file,
+      });
+      let resultJson: string;
+      try {
+         resultJson = wasm().gen_wc(src, optsJson, assetsJson);
+      } catch (error) {
+         let message = String(error);
+         try {
+            const diagnostics = JSON.parse(message) as Diag[];
+            if (Array.isArray(diagnostics)) {
+               message = diagnostics.map((diagnostic) => diagnostic.formatted).join('\n');
+            }
+         } catch {
+            // Keep a non-diagnostic WASM error unchanged.
+         }
+         throw new Error(message);
+      }
+      const result = JSON.parse(resultJson) as {
+         files: { name: string; b64?: string; text?: string }[];
+         diagnostics: Diag[];
+      };
+      return {
+         files: result.files.map((file) => ({
+            name: file.name,
+            bytes: file.b64
+               ? Buffer.from(file.b64, 'base64')
+               : Buffer.from(file.text ?? '', 'utf8'),
+            text: file.text,
+         })),
+         diagnostics: result.diagnostics.map((diagnostic) => diagnostic.formatted),
+         hasErrors: result.diagnostics.some((diagnostic) => diagnostic.level === 'error'),
+      };
+   };
+
+   const session = await startDevServer(options, generate);
+   process.stdout.write(`${session.url}\n`);
+   let stopping = false;
+   const stop = (): void => {
+      if (stopping) return;
+      stopping = true;
+      void session.close().then(
+         () => process.exit(0),
+         (error) => {
+            process.stderr.write(`error: ${String(error)}\n`);
+            process.exit(1);
+         },
+      );
+   };
+   process.once('SIGINT', stop);
+   process.once('SIGTERM', stop);
+}
+
 function cmdGenRust(args: string[]): void {
    let file: string | undefined;
    let out: string | undefined;
@@ -442,6 +526,7 @@ if (help) {
       dump: DUMP_USAGE,
       render: RENDER_USAGE,
       gen: GEN_USAGE,
+      dev: DEV_USAGE,
       drive: DRIVE_USAGE,
    }[cmd];
    if (usage !== undefined) {
@@ -461,6 +546,9 @@ switch (cmd) {
       break;
    case 'render':
       cmdRender(rest);
+      break;
+   case 'dev':
+      await cmdDev(rest);
       break;
    case 'gen':
       if (rest[0] === 'wc') cmdGenWc(rest.slice(1));

@@ -27,6 +27,8 @@ slab build FILE -o OUT.slir                  compile to SLIR
 slab dump FILE.slir                          print the canonical slir-dump text
 slab render FILE -o OUT.{svg,png,apng,txt}   static export
 slab gen wc FILE -o DIR [--tag NAME]         emit a web component and its runtime/WASM sidecars
+slab dev FILE [-o DIR] [--tag NAME] [--separate-ir] [--host HOST] [--port N]
+                                                serve a live web-component preview
 slab gen rust FILE -o OUT.rs                 emit a typed Rust module
 slab drive                                    requires the native slab-cli
 ```
@@ -37,6 +39,21 @@ slab drive                                    requires the native slab-cli
 Interactive/drive commands (`slab drive`, the SDP server used by
 `@stencil-hq/dslab`) live in the native CLI only: install with
 `cargo install --git https://github.com/stencil-hq/slab slab-cli`.
+
+## Live development
+
+```sh
+slab dev doc.slab --port 3000
+```
+
+`dev` generates the same web component as `gen wc`, serves a built-in preview,
+and watches the source directory recursively. The default output directory is
+`doc.dev`, and the default address is `http://127.0.0.1:3000/`. Use `--port 0`
+to select an available port.
+
+After a valid edit, `dev` rebuilds and reloads connected previews. A compile
+failure keeps the last valid component available and shows the latest
+diagnostics in the preview. The server recovers after the next valid edit.
 
 ## Use in a page
 
