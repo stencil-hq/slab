@@ -89,11 +89,11 @@ pub struct SignalMeta {
 	pub key:         String,
 	/// Full drag-source key for Drop, otherwise empty.
 	pub src_key:     String,
-	/// Innermost drag-source item key for Drop, otherwise empty.
+	/// Innermost drag-source item key for `Drop`, otherwise empty.
 	pub src_item:    String,
-	/// Whether DragEnd represents abnormal termination.
+	/// Whether `DragEnd` represents abnormal termination.
 	pub cancelled:   bool,
-	/// Whether DragEnd delivered Drop to an eligible target.
+	/// Whether `DragEnd` delivered `Drop` to an eligible target.
 	pub dropped:     bool,
 	/// Deepest hit-target key on pointer-derived signals, otherwise empty.
 	pub hit_key:     String,
@@ -207,16 +207,16 @@ impl Default for Doc {
 
 impl Doc {
 	/// Create an instance initialized from the embedded document.
-	pub fn new() -> Doc {
+	pub fn new() -> Self {
 		let (doc, imgs) = slab_slir::decode_doc(SLIR).expect("embedded SLIR");
 		let mut inst = kframe::inst_shell();
 		inst.doc = doc;
 		kframe::inst_init(&mut inst);
-		Doc { inst, imgs }
+		Self { inst, imgs }
 	}
 
 	/// Whether the embedded document decoded successfully.
-	pub fn ok(&self) -> bool {
+	pub const fn ok(&self) -> bool {
 		self.inst.ok
 	}
 
@@ -233,7 +233,7 @@ impl Doc {
 	/// Drop generated list reconciliation snapshots after an external document
 	/// reload. Call this when a host-mounted `RequestPump` reports `reloaded ==
 	/// true`, before re-synchronizing typed list setters. Safe and idempotent.
-	pub fn invalidate_caches(&mut self) {}
+	pub const fn invalidate_caches(&mut self) {}
 
 	/// Read one token resolved through the active theme, with base fallback.
 	pub fn get_token(&self, path: &str) -> Option<kframe::TokenValue<'_>> {

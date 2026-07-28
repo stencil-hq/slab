@@ -1,9 +1,11 @@
-//! `slab-native --demo settings`: the 10-settings document in a winit window
-//! (buttons fire signals to stdout, the field edits through the kernel with
-//! IME, the `rows` hole mounts a child kernel instance), plus the
-//! `--headless-frame` offscreen smoke hook.
+//! `slab-native --demo settings` opens the 10-settings document in a winit
+//! window.
+//!
+//! Buttons fire signals to stdout, the field edits through the kernel with IME,
+//! and the `rows` hole mounts a child kernel instance. `--headless-frame`
+//! provides an offscreen smoke hook.
 
-use std::{path::PathBuf, sync::Arc, time::Instant};
+use std::{fmt::Write as _, path::PathBuf, sync::Arc, time::Instant};
 
 use slab_kernel::{
 	dispatch as kdispatch,
@@ -93,10 +95,12 @@ fn rows_slir() -> Result<Vec<u8>, String> {
 	let mut src = String::from("col w=fill h=fill scroll clip bg=#171C26 pad=4 gap=2 {\n");
 	for (i, label) in labels.iter().enumerate() {
 		let tone = tones[i % tones.len()];
-		src.push_str(&format!(
+		writeln!(
+			src,
 			"  row pad=6,12 gap=8 align=center h=28 radius=6 {{\n    rect w=8 h=8 radius=4 \
-			 bg={tone}\n    text \"{label}\" size=12 color=#E8EEF6 nowrap\n  }}\n"
-		));
+			 bg={tone}\n    text \"{label}\" size=12 color=#E8EEF6 nowrap\n  }}"
+		)
+		.expect("writing to a String is infallible");
 	}
 	src.push('}');
 	let opts = slab_compile::Options {

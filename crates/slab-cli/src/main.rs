@@ -126,7 +126,7 @@ struct Parsed {
 /// Tiny flag parser: known value-flags are consumed, unknown flags rejected.
 fn parse_args(args: &[String], value_flags: &[&str]) -> Result<Parsed, String> {
 	let mut p = Parsed { file: None, out: None, embed_assets: true };
-	let mut it = args.iter().peekable();
+	let mut it = args.iter();
 	while let Some(a) = it.next() {
 		match a.as_str() {
 			"-o" | "--out" => {
@@ -174,7 +174,9 @@ pub(crate) fn compile_file(
 	};
 	let opts = slab_compile::Options {
 		embed_assets,
-		base_dir: path.parent().unwrap_or(Path::new(".")).to_path_buf(),
+		base_dir: path
+			.parent()
+			.map_or_else(|| Path::new(".").to_path_buf(), Path::to_path_buf),
 		assets: None,
 		sources: None,
 		fonts: std::collections::HashMap::new(),
@@ -238,7 +240,9 @@ fn cmd_fmt(args: &[String]) -> ExitCode {
 	for f in &files {
 		if f == "-" {
 			let mut src = String::new();
-			if let Err(e) = std::io::Read::read_to_string(&mut std::io::stdin().lock(), &mut src) {
+			let stdin = std::io::stdin();
+			let mut stdin = stdin.lock();
+			if let Err(e) = std::io::Read::read_to_string(&mut stdin, &mut src) {
 				eprintln!("error: cannot read stdin: {e}");
 				return ExitCode::from(2);
 			}

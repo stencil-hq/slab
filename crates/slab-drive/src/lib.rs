@@ -356,7 +356,10 @@ impl Session {
 			self.env.coarse,
 		);
 		let fr = frame::inst_frame(&mut inst, 0.0);
-		let base_dir = path.parent().unwrap_or(Path::new(".")).to_path_buf();
+		let base_dir = path
+			.parent()
+			.unwrap_or_else(|| Path::new("."))
+			.to_path_buf();
 		self.doc =
 			Some(LoadedDoc { path: path.to_path_buf(), base_dir, slir, inst, images, fr, fonts });
 		self.t_ms = 0.0;
@@ -441,7 +444,10 @@ impl RequestPump {
 		session.reload_policy = Some(ReloadPolicy::Deny);
 		let path = path.into();
 		session.doc = Some(LoadedDoc {
-			base_dir: path.parent().unwrap_or(Path::new(".")).to_path_buf(),
+			base_dir: path
+				.parent()
+				.unwrap_or_else(|| Path::new("."))
+				.to_path_buf(),
 			path,
 			slir,
 			inst: frame::inst_shell(),
@@ -624,7 +630,10 @@ fn compile_file(path: &Path, embed_assets: bool) -> (Option<Slir>, Diagnostics) 
 	};
 	let options = slab_compile::Options {
 		embed_assets,
-		base_dir: path.parent().unwrap_or(Path::new(".")).to_path_buf(),
+		base_dir: path
+			.parent()
+			.unwrap_or_else(|| Path::new("."))
+			.to_path_buf(),
 		assets: None,
 		sources: None,
 		fonts: std::collections::HashMap::new(),
@@ -886,9 +895,8 @@ fn handle_line_with_host_input(
 	line: &str,
 	host_input: Option<&mut HostInputHook<'_>>,
 ) -> Value {
-	let request = match serde_json::from_str::<Value>(line) {
-		Ok(request) => request,
-		Err(_) => return error_response(None, ERR_PARSE, "parse error"),
+	let Ok(request) = serde_json::from_str::<Value>(line) else {
+		return error_response(None, ERR_PARSE, "parse error");
 	};
 	let Some(object) = request.as_object() else {
 		return error_response(None, ERR_REQUEST, "request must be a JSON object");

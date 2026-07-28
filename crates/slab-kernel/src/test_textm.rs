@@ -1,6 +1,8 @@
-//! Text wrapping edge cases against a synthetic font table: 1000 units per em,
-//! mapped letters 500 units wide, spaces and NBSP 250, ellipsis 800, and a
-//! default advance of 600. At size 10, these become 5, 2.5, 8, and 6 units.
+//! Text wrapping edge cases against a synthetic font table.
+//!
+//! The table uses 1000 units per em: mapped letters are 500 units wide, spaces
+//! and NBSP 250, ellipsis 800, and default advance 600. At size 10, these
+//! become 5, 2.5, 8, and 6 units.
 
 use crate::{
 	flatten::{self, FrameOp},
@@ -236,9 +238,11 @@ fn text_instance(content: &str) -> frame::Instance {
 	inst
 }
 
-/// Verifies deterministic East-Asian-Width fallback advances for codepoints
-/// the cmap does not cover (C-16): mono-class families charge two cells for
-/// wide codepoints; vector families keep the single replacement advance.
+/// Verifies deterministic East-Asian-Width fallback advances (C-16).
+///
+/// Checks codepoints the cmap does not cover: mono-class families charge two
+/// cells for wide codepoints; vector families keep the single replacement
+/// advance.
 pub fn test_fallback_advance_eaw() {
 	let mut doc = font_doc();
 	// 日 (U+65E5) is EAW-wide and absent from the synthetic cmap.
@@ -265,9 +269,10 @@ pub fn test_fallback_advance_eaw() {
 	);
 }
 
-/// Verifies uncovered-glyph run marking on text operations (C-16): runs are
-/// half-open codepoint ranges into the op string, coalesced across adjacent
-/// uncovered clusters, and absent for fully covered strings.
+/// Verifies uncovered-glyph run marking on text operations (C-16).
+///
+/// Runs are half-open codepoint ranges into the op string, coalesced across
+/// adjacent uncovered clusters, and absent for fully covered strings.
 pub fn test_uncovered_runs_marked() {
 	let mut inst = text_instance("ab\u{2715}\u{2715}xa");
 	let output = frame::inst_frame(&mut inst, 0.0);
@@ -300,9 +305,10 @@ pub fn test_uncovered_runs_marked() {
 	assert!(output.uncovered.is_empty(), "covered frame pool stays empty");
 }
 
-/// Verifies the cumulative per-instance diagnostic set (C-17): the per-solve
-/// stream stays one-shot, while [`frame::inst_diags`] retains every note
-/// until a new document initializes.
+/// Verifies the cumulative per-instance diagnostic set (C-17).
+///
+/// The per-solve stream stays one-shot, while [`frame::inst_diags`] retains
+/// every note until a new document initializes.
 pub fn test_cumulative_diagnostics_survive_resolves() {
 	let mut inst = text_instance("a\u{2715}b");
 	let first = frame::inst_frame(&mut inst, 0.0);

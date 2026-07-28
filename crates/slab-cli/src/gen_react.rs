@@ -73,7 +73,9 @@ pub fn cmd_gen_react(args: &[String]) -> ExitCode {
 	};
 	let copts = Options {
 		embed_assets: true,
-		base_dir:     file.parent().unwrap_or(Path::new(".")).to_path_buf(),
+		base_dir:     file
+			.parent()
+			.map_or_else(|| Path::new(".").to_path_buf(), Path::to_path_buf),
 		assets:       None,
 		sources:      None,
 		fonts:        std::collections::HashMap::new(),

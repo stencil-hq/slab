@@ -1,8 +1,10 @@
-//! Resolution + expansion: scalar tokens retain active-theme identity, defs
-//! expand (recursion cap 32, prop substitution, prop-truthiness `when`
-//! folding, slot splice, multi-node splice), §15.1 keys are assigned, and
-//! runtime `when` conditions become patch specs with detached children.
-//! Layout/environment evaluation remains kernel territory.
+//! Resolution + expansion.
+//!
+//! Scalar tokens retain active-theme identity; defs expand with recursion cap
+//! 32, prop substitution, prop-truthiness `when` folding, slot splice, and
+//! multi-node splice. §15.1 keys are assigned, and runtime `when` conditions
+//! become patch specs with detached children. Layout/environment evaluation
+//! remains kernel territory.
 
 use std::{
 	cell::RefCell,
@@ -3968,8 +3970,8 @@ fn compile_list_items(
 	let schema = ctx.list_schemas[schema_row as usize].clone();
 	let mut items = Vec::with_capacity(raw_items.len());
 	for item in raw_items {
-		let mut valid = true;
-		if item.name != schema.schema {
+		let mut valid = item.name == schema.schema;
+		if !valid {
 			ctx.error(
 				"param-type",
 				format!(
@@ -3978,7 +3980,6 @@ fn compile_list_items(
 				),
 				item.line,
 			);
-			valid = false;
 		}
 		for (name, _) in &item.attrs {
 			if !schema.fields.iter().any(|field| field.name == *name) {

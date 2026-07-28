@@ -70,14 +70,18 @@ pub fn host_key(inst: &kframe::Instance, event: &dispatch::Event) -> Option<Host
 	Some(HostKey { key: event.key.clone(), mods: event.mods, focused_key, item })
 }
 
-/// Compile FILE to SLIR bytes plus its formatted §12 warnings; errors come
-/// back as the joined diagnostics. Nothing is printed: the interactive loop
-/// owns the alt screen, so callers surface diagnostics on their own terms.
+/// Compiles FILE to SLIR bytes and its formatted §12 warnings.
+///
+/// Errors come back as joined diagnostics. Nothing is printed: the interactive
+/// loop owns the alt screen, so callers surface diagnostics on their own terms.
 pub fn compile(file: &Path) -> Result<(Vec<u8>, Vec<String>), String> {
 	let src = std::fs::read_to_string(file).map_err(|e| format!("{}: {e}", file.display()))?;
 	let opts = slab_compile::Options {
 		embed_assets: true,
-		base_dir:     file.parent().unwrap_or(Path::new(".")).to_path_buf(),
+		base_dir:     file
+			.parent()
+			.unwrap_or_else(|| Path::new("."))
+			.to_path_buf(),
 		assets:       None,
 		sources:      None,
 		fonts:        std::collections::HashMap::new(),

@@ -142,15 +142,13 @@ params { rows list(Row) = [Row(chips=[Chip(label="ok")])] }
 col { each param.rows }
 "#;
 	let slir = compile_ok(source);
-	assert_eq!(
-		slir
-			.nodes
-			.kind
-			.iter()
-			.filter(|node| **node == kind::EACH)
-			.count(),
-		2
-	);
+	let each_count = slir
+		.nodes
+		.kind
+		.iter()
+		.map(|&node| usize::from(node == kind::EACH))
+		.sum::<usize>();
+	assert_eq!(each_count, 2);
 }
 
 #[test]

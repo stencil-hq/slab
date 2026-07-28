@@ -138,7 +138,7 @@ pub fn decode_doc(bytes: &[u8]) -> Result<(slab_kernel::slir::Doc, Vec<Vec<u8>>)
 	doc.img_w = std::mem::take(&mut wire.img_w);
 	doc.img_h = std::mem::take(&mut wire.img_h);
 	doc.img_format = std::mem::take(&mut wire.img_format);
-	doc.img_data = imgs.clone();
+	doc.img_data.clone_from(&imgs);
 	let token_count = doc.token_name.len();
 	if [
 		doc.token_base.len(),

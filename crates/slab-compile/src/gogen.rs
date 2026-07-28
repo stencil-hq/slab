@@ -24,11 +24,11 @@ use slab_syntax::diag::Diagnostics;
 
 use crate::Options;
 
-/// Generate the typed Go binding for a compiled `.slab` source. `src_name` is
-/// the input file path (used in the header comment and as the document name
-/// passed to `doc.open`), and `package` is the emitted Go package name.
-/// Returns the Go source (or `None` on compile failure) and the compile
-/// diagnostics.
+/// Generate the typed Go binding for a compiled `.slab` source.
+///
+/// `src_name` is the input path used in the header comment and `doc.open`;
+/// `package` is the emitted Go package name. Returns source (or `None` on
+/// compile failure) and compile diagnostics.
 pub fn generate(
 	src: &str,
 	copts: &Options,

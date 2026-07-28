@@ -341,10 +341,10 @@ fn path_bounds(doc: &Doc, runtime: Option<&RtPath>, path: i32) -> Option<[f64; 4
 		let len = usize::try_from(*doc.path_coord_len.get(p)?).ok()?;
 		doc.path_coords.get(off..off.checked_add(len)?)?
 	};
-	let mut pairs = coords.chunks_exact(2);
-	let first = pairs.next()?;
+	let (pairs, _) = coords.as_chunks::<2>();
+	let first = pairs.first()?;
 	let (mut x0, mut y0, mut x1, mut y1) = (first[0], first[1], first[0], first[1]);
-	for pair in pairs {
+	for pair in &pairs[1..] {
 		x0 = x0.min(pair[0]);
 		y0 = y0.min(pair[1]);
 		x1 = x1.max(pair[0]);
@@ -765,7 +765,7 @@ impl Renderer {
 			&layout1,
 			"vs_rect",
 			"fs_rect",
-			&[inst_layout(std::mem::size_of::<RectI>() as u64, &RECT_ATTRS)],
+			&[Some(inst_layout(std::mem::size_of::<RectI>() as u64, &RECT_ATTRS))],
 			INTERNAL_FORMAT,
 			premul_blend(),
 			wgpu::PrimitiveTopology::TriangleStrip,
@@ -777,7 +777,7 @@ impl Renderer {
 			&layout2,
 			"vs_glyph",
 			"fs_glyph",
-			&[inst_layout(std::mem::size_of::<GlyphI>() as u64, &GLYPH_ATTRS)],
+			&[Some(inst_layout(std::mem::size_of::<GlyphI>() as u64, &GLYPH_ATTRS))],
 			INTERNAL_FORMAT,
 			premul_blend(),
 			wgpu::PrimitiveTopology::TriangleStrip,
@@ -812,7 +812,7 @@ impl Renderer {
 			&layout2,
 			"vs_tex",
 			"fs_tex",
-			&[inst_layout(std::mem::size_of::<TexI>() as u64, &TEX_ATTRS)],
+			&[Some(inst_layout(std::mem::size_of::<TexI>() as u64, &TEX_ATTRS))],
 			INTERNAL_FORMAT,
 			premul_blend(),
 			wgpu::PrimitiveTopology::TriangleStrip,
@@ -824,7 +824,7 @@ impl Renderer {
 			&layout2,
 			"vs_blur",
 			"fs_blur",
-			&[inst_layout(std::mem::size_of::<BlurI>() as u64, &BLUR_ATTRS)],
+			&[Some(inst_layout(std::mem::size_of::<BlurI>() as u64, &BLUR_ATTRS))],
 			INTERNAL_FORMAT,
 			wgpu::BlendState::REPLACE,
 			wgpu::PrimitiveTopology::TriangleStrip,
@@ -836,7 +836,7 @@ impl Renderer {
 			&layout2,
 			"vs_texband",
 			"fs_texband",
-			&[inst_layout(std::mem::size_of::<TexBandI>() as u64, &TEXBAND_ATTRS)],
+			&[Some(inst_layout(std::mem::size_of::<TexBandI>() as u64, &TEXBAND_ATTRS))],
 			INTERNAL_FORMAT,
 			premul_blend(),
 			wgpu::PrimitiveTopology::TriangleStrip,
@@ -861,7 +861,7 @@ impl Renderer {
 			&layout1,
 			"vs_mask",
 			"fs_mask",
-			&[inst_layout(std::mem::size_of::<MaskI>() as u64, &MASK_ATTRS)],
+			&[Some(inst_layout(std::mem::size_of::<MaskI>() as u64, &MASK_ATTRS))],
 			INTERNAL_FORMAT,
 			mask_blend,
 			wgpu::PrimitiveTopology::TriangleStrip,
@@ -873,7 +873,7 @@ impl Renderer {
 			&layout2,
 			"vs_tilt",
 			"fs_tilt",
-			&[inst_layout(std::mem::size_of::<TiltI>() as u64, &TILT_ATTRS)],
+			&[Some(inst_layout(std::mem::size_of::<TiltI>() as u64, &TILT_ATTRS))],
 			INTERNAL_FORMAT,
 			premul_blend(),
 			wgpu::PrimitiveTopology::TriangleStrip,
@@ -1089,18 +1089,23 @@ impl Renderer {
 		match info.color_type {
 			png::ColorType::Rgba => rgba.copy_from_slice(&buf[..rgba_len]),
 			png::ColorType::Rgb => {
-				for (source, target) in buf.as_chunks::<3>().0.iter().zip(rgba.chunks_exact_mut(4)) {
+				let (source, _) = buf.as_chunks::<3>();
+				let (target, _) = rgba.as_chunks_mut::<4>();
+				for (source, target) in source.iter().zip(target) {
 					target[..3].copy_from_slice(source);
 					target[3] = 255;
 				}
 			},
 			png::ColorType::Grayscale => {
-				for (&source, target) in buf.iter().zip(rgba.chunks_exact_mut(4)) {
+				let (target, _) = rgba.as_chunks_mut::<4>();
+				for (&source, target) in buf.iter().zip(target) {
 					target.copy_from_slice(&[source, source, source, 255]);
 				}
 			},
 			png::ColorType::GrayscaleAlpha => {
-				for (source, target) in buf.as_chunks::<2>().0.iter().zip(rgba.chunks_exact_mut(4)) {
+				let (source, _) = buf.as_chunks::<2>();
+				let (target, _) = rgba.as_chunks_mut::<4>();
+				for (source, target) in source.iter().zip(target) {
 					target.copy_from_slice(&[source[0], source[0], source[0], source[1]]);
 				}
 			},
@@ -1255,7 +1260,10 @@ impl Renderer {
 		fb
 	}
 
-	#[allow(clippy::too_many_lines)]
+	#[allow(
+		clippy::too_many_lines,
+		reason = "scene-op lowering keeps shared state in one sequential traversal"
+	)]
 	fn build_layer(&mut self, fb: &mut FrameBuild, li: &LayerInput<'_>, s: f32, tw: u32, th: u32) {
 		self.sync_runtime_images(li.doc_id, li.inst);
 		self.refresh_registered_colors(li.doc_id, &li.inst.doc);
@@ -1379,8 +1387,7 @@ impl Renderer {
 					let mut stroke = [0.0f32; 4];
 					let mut stroke_grad = -1.0f32;
 					let mut hw = 0.0f32;
-					let mut soff = 0.0f32;
-					if r.stroke_kind != 0 && r.stroke_w > 0.0 {
+					let soff = if r.stroke_kind != 0 && r.stroke_w > 0.0 {
 						match r.stroke_kind {
 							1 => stroke = rgba(r.stroke, r.opacity),
 							_ => {
@@ -1398,12 +1405,14 @@ impl Renderer {
 							},
 						}
 						hw = (r.stroke_w / 2.0) as f32 * s;
-						soff = match r.stroke_align {
+						match r.stroke_align {
 							1 => -hw,
 							2 => hw,
 							_ => 0.0,
-						};
-					}
+						}
+					} else {
+						0.0
+					};
 					let use_squircle = r.smooth > 0.0 && r.radius > 0.0;
 					if use_squircle && !shadows.is_empty() {
 						self.note(
@@ -2215,7 +2224,7 @@ impl Renderer {
 				&layout,
 				"vs_tex",
 				"fs_tex",
-				&[inst_layout(std::mem::size_of::<TexI>() as u64, &TEX_ATTRS)],
+				&[Some(inst_layout(std::mem::size_of::<TexI>() as u64, &TEX_ATTRS))],
 				format,
 				wgpu::BlendState::REPLACE,
 				wgpu::PrimitiveTopology::TriangleStrip,
@@ -2970,15 +2979,12 @@ const fn premul_blend() -> wgpu::BlendState {
 	}
 }
 
-const fn inst_layout(
-	stride: u64,
-	attrs: &[wgpu::VertexAttribute],
-) -> Option<wgpu::VertexBufferLayout<'_>> {
-	Some(wgpu::VertexBufferLayout {
+const fn inst_layout(stride: u64, attrs: &[wgpu::VertexAttribute]) -> wgpu::VertexBufferLayout<'_> {
+	wgpu::VertexBufferLayout {
 		array_stride: stride,
 		step_mode:    wgpu::VertexStepMode::Instance,
 		attributes:   attrs,
-	})
+	}
 }
 
 fn make_pipeline(

@@ -16,7 +16,9 @@ fn compile(path: &Path) -> Vec<u8> {
 	let src = std::fs::read_to_string(path).expect("read example");
 	let opts = slab_compile::Options {
 		embed_assets: true,
-		base_dir:     path.parent().unwrap_or(Path::new(".")).to_path_buf(),
+		base_dir:     path
+			.parent()
+			.map_or_else(|| Path::new(".").to_path_buf(), Path::to_path_buf),
 		assets:       None,
 		sources:      None,
 		fonts:        std::collections::HashMap::new(),

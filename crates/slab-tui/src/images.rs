@@ -5,7 +5,7 @@
 //! `--images off`) simply keep the placeholder; iTerm2 uses its own OSC
 //! 1337 protocol and is treated as unsupported.
 
-use std::path::Path;
+use std::{fmt::Write as _, path::Path};
 
 use slab_kernel::{cells, flatten, slir};
 
@@ -121,7 +121,7 @@ impl Images {
 		let mut dropped: Vec<i32> = Vec::new();
 		for &(img, ..) in &self.placed {
 			if !dropped.contains(&img) {
-				buf.push_str(&format!("\x1b_Gq=2,a=d,d=i,i={}\x1b\\", img + 1));
+				write!(buf, "\x1b_Gq=2,a=d,d=i,i={}\x1b\\", img + 1).expect("writing to String");
 				dropped.push(img);
 				wrote = true;
 			}
@@ -134,12 +134,14 @@ impl Images {
 			}
 			// Kitty places at the cursor: move there, then anchor the
 			// placement scaled into the op's cell rect.
-			buf.push_str(&format!(
+			write!(
+				buf,
 				"\x1b[{};{}H\x1b_Gq=2,a=p,i={},c={cols},r={rows}\x1b\\",
 				row + 1,
 				col + 1,
 				img + 1,
-			));
+			)
+			.expect("writing to String");
 			wrote = true;
 		}
 		self.placed = desired;
@@ -163,10 +165,10 @@ fn transmit(buf: &mut String, id: i32, bytes: &[u8]) {
 	while let Some(chunk) = chunks.next() {
 		let more = u8::from(chunks.peek().is_some());
 		if first {
-			buf.push_str(&format!("\x1b_Gq=2,f=100,a=t,i={id},m={more};"));
+			write!(buf, "\x1b_Gq=2,f=100,a=t,i={id},m={more};").expect("writing to String");
 			first = false;
 		} else {
-			buf.push_str(&format!("\x1b_Gq=2,m={more};"));
+			write!(buf, "\x1b_Gq=2,m={more};").expect("writing to String");
 		}
 		buf.push_str(std::str::from_utf8(chunk).expect("base64 is ASCII"));
 		buf.push_str("\x1b\\");

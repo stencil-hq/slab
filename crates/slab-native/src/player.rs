@@ -9,7 +9,7 @@
 //! pixel probes. Queue rows mirror the document's exported `Track` def
 //! (focusable act=pick, hover/pressed/focus-visible, 140ms ease-out).
 
-use std::{path::PathBuf, sync::Arc, time::Instant};
+use std::{fmt::Write as _, path::PathBuf, sync::Arc, time::Instant};
 
 use slab_kernel::{
 	dispatch as kdispatch,
@@ -108,8 +108,9 @@ col w=fill h=fill scroll clip {
 "#,
 	);
 	for (k, t) in PLAYLIST.iter().enumerate() {
-		src.push_str(&format!(
-			"  Track key=track{} no=\"{}\" title=\"{}\" len=\"{}\"{}\n",
+		writeln!(
+			&mut src,
+			"  Track key=track{} no=\"{}\" title=\"{}\" len=\"{}\"{}",
 			k,
 			t.no,
 			t.title,
@@ -119,7 +120,8 @@ col w=fill h=fill scroll clip {
 			} else {
 				""
 			}
-		));
+		)
+		.expect("writing to a String cannot fail");
 	}
 	src.push_str("}\n");
 	src
@@ -313,12 +315,14 @@ impl PlayerCore {
 	pub fn queue_frame(&mut self, t_ms: f64) -> Frame {
 		let pending_focus = self.pending_queue_focus.take();
 		let queue = &mut self.queues[self.state.idx];
-		let mut frame = queue.frame(t_ms);
-		if let Some(key) = pending_focus
+		let frame = queue.frame(t_ms);
+		let frame = if let Some(key) = pending_focus
 			&& kframe::inst_set_focus(&mut queue.inst, &key, true)
 		{
-			frame = queue.frame(t_ms);
-		}
+			queue.frame(t_ms)
+		} else {
+			frame
+		};
 		let pending = kframe::inst_take_signals(&mut queue.inst);
 		for name in pending.sig_name {
 			println!("signal: {}", kslir::str_at(&queue.inst.doc, name));

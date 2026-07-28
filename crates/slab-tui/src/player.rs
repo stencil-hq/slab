@@ -157,7 +157,10 @@ impl PlayerApp {
 			return Ok(());
 		}
 		self.elapsed_ms += dt_ms;
-		while self.elapsed_ms >= TRACKS[self.cur].len_ms {
+		loop {
+			if self.elapsed_ms < TRACKS[self.cur].len_ms {
+				break;
+			}
 			self.elapsed_ms -= TRACKS[self.cur].len_ms;
 			if !self.looping {
 				let ix = self.next_ix();

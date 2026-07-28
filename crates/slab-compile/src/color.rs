@@ -85,15 +85,16 @@ pub fn parse_rgba(s: &str) -> Option<Rgba> {
 			let v = num_pct(p, 2.55)?;
 			rgb[i] = (v.min(255.0)) as u8;
 		}
-		let mut a = 255u8;
-		if let Some(p) = parts.get(3) {
+		let a = if let Some(p) = parts.get(3) {
 			let v = if p.ends_with('%') {
 				num_pct(p, 2.55)?
 			} else {
 				p.parse::<f64>().ok()? * 255.0
 			};
-			a = (v.round().min(255.0)) as u8;
-		}
+			(v.round().min(255.0)) as u8
+		} else {
+			255
+		};
 		return Some([rgb[0], rgb[1], rgb[2], a]);
 	}
 	if let Some(inner) = s.strip_prefix("oklch(").and_then(|r| r.strip_suffix(')')) {
@@ -109,15 +110,16 @@ pub fn parse_rgba(s: &str) -> Option<Rgba> {
 		let c: f64 = parts[1].parse().ok()?;
 		let h: f64 = parts[2].parse().ok()?;
 		let rgb = oklab_to_rgb(l, c * h.to_radians().cos(), c * h.to_radians().sin());
-		let mut a = 255u8;
-		if let Some(p) = parts.get(3) {
+		let a = if let Some(p) = parts.get(3) {
 			let v = if p.ends_with('%') {
 				num_pct(p, 2.55)?
 			} else {
 				p.parse::<f64>().ok()? * 255.0
 			};
-			a = (v.round().min(255.0)) as u8;
-		}
+			(v.round().min(255.0)) as u8
+		} else {
+			255
+		};
 		return Some([rgb[0], rgb[1], rgb[2], a]);
 	}
 	None

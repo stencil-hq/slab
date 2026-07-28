@@ -18,6 +18,7 @@
 
 use std::{
 	collections::{HashMap, HashSet},
+	fmt::Write as _,
 	path::Path,
 };
 
@@ -116,10 +117,14 @@ fn path_d_data(verbs: &[u8], coords: &[f64]) -> String {
 			values
 		};
 		match verb {
-			0 => data.push_str(&format!("M{} ", take(&mut coordinate, 2))),
-			1 => data.push_str(&format!("L{} ", take(&mut coordinate, 2))),
-			2 => data.push_str(&format!("C{} ", take(&mut coordinate, 6))),
-			3 => data.push_str(&format!("Q{} ", take(&mut coordinate, 4))),
+			0 => write!(&mut data, "M{} ", take(&mut coordinate, 2))
+				.expect("writing to String cannot fail"),
+			1 => write!(&mut data, "L{} ", take(&mut coordinate, 2))
+				.expect("writing to String cannot fail"),
+			2 => write!(&mut data, "C{} ", take(&mut coordinate, 6))
+				.expect("writing to String cannot fail"),
+			3 => write!(&mut data, "Q{} ", take(&mut coordinate, 4))
+				.expect("writing to String cannot fail"),
 			_ => data.push_str("Z "),
 		}
 	}
@@ -211,22 +216,23 @@ fn ramp_sample(gr: &GradE, t: f64) -> u32 {
 /// white keeping its alpha: a white-with-alpha ramp reads back as the
 /// paint's alpha under both luminance and alpha masking (contract §6.3).
 fn stops_markup(gr: &GradE, whiten: bool) -> String {
-	gr.stops
-		.iter()
-		.map(|&(pos, rgba)| {
-			let [r, gg, b, a] = rgba.to_le_bytes();
-			let (r, gg, b) = if whiten { (255, 255, 255) } else { (r, gg, b) };
-			let so = if a < 255 {
-				format!(" stop-opacity=\"{}\"", n(f64::from(a) / 255.0))
-			} else {
-				String::new()
-			};
-			format!(
-				"<stop offset=\"{}%\" stop-color=\"#{r:02x}{gg:02x}{b:02x}\"{so}/>",
-				n(pos * 100.0)
-			)
-		})
-		.collect()
+	let mut markup = String::new();
+	for &(pos, rgba) in &gr.stops {
+		let [r, gg, b, a] = rgba.to_le_bytes();
+		let (r, gg, b) = if whiten { (255, 255, 255) } else { (r, gg, b) };
+		let so = if a < 255 {
+			format!(" stop-opacity=\"{}\"", n(f64::from(a) / 255.0))
+		} else {
+			String::new()
+		};
+		write!(
+			&mut markup,
+			"<stop offset=\"{}%\" stop-color=\"#{r:02x}{gg:02x}{b:02x}\"{so}/>",
+			n(pos * 100.0)
+		)
+		.expect("writing to String cannot fail");
+	}
+	markup
 }
 
 /// 90-wedge conic fan (contract §6.1; SPEC chart: svg degraded): 4°
@@ -246,7 +252,8 @@ fn conic_fan(gr: &GradE, cx: f64, cy: f64, rad: f64, map: impl Fn(u32) -> Option
 		};
 		let a0 = f64::from(i).mul_add(4.0, gr.angle).to_radians();
 		let a1 = (gr.angle + f64::from(i + 1) * 4.0 + 0.25).to_radians();
-		out.push_str(&format!(
+		write!(
+			&mut out,
 			"<path d=\"M{} {} L{} {} L{} {} Z\" fill=\"{}\"/>",
 			n(cx),
 			n(cy),
@@ -255,7 +262,8 @@ fn conic_fan(gr: &GradE, cx: f64, cy: f64, rad: f64, map: impl Fn(u32) -> Option
 			n(cx + rad * a1.sin()),
 			n(cy - rad * a1.cos()),
 			hex(rgba)
-		));
+		)
+		.expect("writing to String cannot fail");
 	}
 	out
 }
@@ -323,7 +331,7 @@ struct Emitter<'a> {
 }
 
 impl Emitter<'_> {
-	fn uid(&self, defs: &[String], prefix: &str) -> String {
+	fn uid(defs: &[String], prefix: &str) -> String {
 		format!("{prefix}{}", defs.len())
 	}
 
@@ -331,7 +339,6 @@ impl Emitter<'_> {
 	/// markup mapped over the paint box; returns the `url(#…)` reference.
 	/// Conic ramps (`kind == 2`) never land here — callers fan them out.
 	fn grad_geom_def(
-		&self,
 		defs: &mut Vec<String>,
 		gr: &GradE,
 		stops: &str,
@@ -345,7 +352,7 @@ impl Emitter<'_> {
 			let (dx, dy) = (th.sin(), -th.cos());
 			let ln = (w * dx).abs() + (hh * dy).abs();
 			let (cx, cy) = (x + w / 2.0, y + hh / 2.0);
-			let gid = self.uid(defs, "lg");
+			let gid = Self::uid(defs, "lg");
 			defs.push(format!(
 				"<linearGradient id=\"{gid}\" gradientUnits=\"userSpaceOnUse\" x1=\"{}\" y1=\"{}\" \
 				 x2=\"{}\" y2=\"{}\">{stops}</linearGradient>",
@@ -356,7 +363,7 @@ impl Emitter<'_> {
 			));
 			format!("url(#{gid})")
 		} else {
-			let gid = self.uid(defs, "rg");
+			let gid = Self::uid(defs, "rg");
 			let r = w.hypot(hh) / 2.0;
 			defs.push(format!(
 				"<radialGradient id=\"{gid}\" gradientUnits=\"userSpaceOnUse\" cx=\"{}\" cy=\"{}\" \
@@ -395,7 +402,7 @@ impl Emitter<'_> {
 						.map_or_else(|| "none".into(), |&(_, rgba)| hex(rgba));
 				}
 				let stops = stops_markup(gr, false);
-				self.grad_geom_def(defs, gr, &stops, x, y, w, hh)
+				Self::grad_geom_def(defs, gr, &stops, x, y, w, hh)
 			},
 			_ => "none".into(),
 		}
@@ -424,7 +431,7 @@ impl Emitter<'_> {
 					return gr.stops.first().map(|&(_, rgba)| hex(rgba));
 				}
 				let stops = stops_markup(gr, false);
-				Some(self.grad_geom_def(defs, gr, &stops, x, y, w, hh))
+				Some(Self::grad_geom_def(defs, gr, &stops, x, y, w, hh))
 			},
 			_ => None,
 		}
@@ -434,7 +441,6 @@ impl Emitter<'_> {
 	/// box renders transparent black, so ink outside vanishes (contract
 	/// §6.3).
 	fn mask_def(
-		&self,
 		defs: &mut Vec<String>,
 		prefix: &str,
 		x: f64,
@@ -443,7 +449,7 @@ impl Emitter<'_> {
 		h: f64,
 		content: &str,
 	) -> String {
-		let mid = self.uid(defs, prefix);
+		let mid = Self::uid(defs, prefix);
 		defs.push(format!(
 			"<mask id=\"{mid}\" maskUnits=\"userSpaceOnUse\" x=\"{}\" y=\"{}\" width=\"{}\" \
 			 height=\"{}\">{content}</mask>",
@@ -490,7 +496,7 @@ impl Emitter<'_> {
 				},
 				Some(gr) => {
 					let stops = stops_markup(gr, true);
-					let url = self.grad_geom_def(defs, gr, &stops, x, y, w, hh);
+					let url = Self::grad_geom_def(defs, gr, &stops, x, y, w, hh);
 					box_rect(&url)
 				},
 				None => String::new(),
@@ -539,7 +545,7 @@ impl Emitter<'_> {
 					(!fan.is_empty()).then_some(fan)
 				} else {
 					let stops = band_stops(gr, lo, hi, last)?;
-					let url = self.grad_geom_def(defs, gr, &stops, x, y, w, hh);
+					let url = Self::grad_geom_def(defs, gr, &stops, x, y, w, hh);
 					Some(box_rect(&url))
 				}
 			},
@@ -550,13 +556,7 @@ impl Emitter<'_> {
 	/// Backdrop filter def: gaussian blur plus optional saturation and
 	/// brightness (linear RGB slope — backdrop RGB × brightness), shared by
 	/// plain and banded backdrops.
-	fn backdrop_filter(
-		&self,
-		defs: &mut Vec<String>,
-		blur: f64,
-		saturate: f64,
-		brightness: f64,
-	) -> String {
+	fn backdrop_filter(defs: &mut Vec<String>, blur: f64, saturate: f64, brightness: f64) -> String {
 		let sat = if saturate == 1.0 {
 			String::new()
 		} else {
@@ -572,7 +572,7 @@ impl Emitter<'_> {
 				 slope=\"{s}\"/></feComponentTransfer>"
 			)
 		};
-		let fid = self.uid(defs, "bf");
+		let fid = Self::uid(defs, "bf");
 		defs.push(format!(
 			"<filter id=\"{fid}\" color-interpolation-filters=\"sRGB\" x=\"-20%\" y=\"-20%\" \
 			 width=\"140%\" height=\"140%\"><feGaussianBlur \
@@ -587,8 +587,8 @@ impl Emitter<'_> {
 	/// alpha scaled by `grain_amount` and speckle size via `baseFrequency =
 	/// 0.9/size`, cropped to the node's rounded/smooth silhouette by
 	/// compositing into `SourceGraphic`.
-	fn grain_el(&self, defs: &mut Vec<String>, r: &slab_kernel::flatten::OpRect, rr: f64) -> String {
-		let fid = self.uid(defs, "gn");
+	fn grain_el(defs: &mut Vec<String>, r: &slab_kernel::flatten::OpRect, rr: f64) -> String {
+		let fid = Self::uid(defs, "gn");
 		defs.push(format!(
 			"<filter id=\"{fid}\" color-interpolation-filters=\"sRGB\"><feTurbulence \
 			 type=\"fractalNoise\" baseFrequency=\"{}\" numOctaves=\"2\" seed=\"7\" \
@@ -631,11 +631,13 @@ impl Emitter<'_> {
 		let mut below = String::new();
 		let mut above = String::new();
 		let cover = if src_alpha < 1.0 {
-			parts.push_str(&format!(
+			write!(
+				&mut parts,
 				"<feComponentTransfer in=\"SourceAlpha\" result=\"cov\"><feFuncA type=\"linear\" \
 				 slope=\"{}\"/></feComponentTransfer>",
 				n(1.0 / src_alpha.max(1.0 / 255.0))
-			));
+			)
+			.expect("writing to String cannot fail");
 			"cov"
 		} else {
 			"SourceAlpha"
@@ -645,7 +647,8 @@ impl Emitter<'_> {
 			let std = n((s.blur / 2.0).max(0.01));
 			let color = hex(s.rgba);
 			if s.inset == 0 {
-				parts.push_str(&format!(
+				write!(
+					&mut parts,
 					"<feOffset in=\"{cover}\" dx=\"{}\" dy=\"{}\" result=\"o{i}\"/><feGaussianBlur \
 					 in=\"o{i}\" stdDeviation=\"{std}\" result=\"ob{i}\"/><feFlood \
 					 flood-color=\"{color}\" result=\"of{i}\"/><feComposite in=\"of{i}\" in2=\"ob{i}\" \
@@ -653,10 +656,13 @@ impl Emitter<'_> {
 					 operator=\"out\" result=\"ok{i}\"/>",
 					n(s.x),
 					n(s.y)
-				));
-				below.push_str(&format!("<feMergeNode in=\"ok{i}\"/>"));
+				)
+				.expect("writing to String cannot fail");
+				write!(&mut below, "<feMergeNode in=\"ok{i}\"/>")
+					.expect("writing to String cannot fail");
 			} else {
-				parts.push_str(&format!(
+				write!(
+					&mut parts,
 					"<feComponentTransfer in=\"{cover}\" result=\"ia{i}\"><feFuncA type=\"table\" \
 					 tableValues=\"1 0\"/></feComponentTransfer><feOffset in=\"ia{i}\" dx=\"{}\" \
 					 dy=\"{}\" result=\"io{i}\"/><feGaussianBlur in=\"io{i}\" stdDeviation=\"{std}\" \
@@ -665,12 +671,14 @@ impl Emitter<'_> {
 					 in=\"ic{i}\" in2=\"{cover}\" operator=\"in\" result=\"is{i}\"/>",
 					n(s.x),
 					n(s.y)
-				));
-				above.push_str(&format!("<feMergeNode in=\"is{i}\"/>"));
+				)
+				.expect("writing to String cannot fail");
+				write!(&mut above, "<feMergeNode in=\"is{i}\"/>")
+					.expect("writing to String cannot fail");
 			}
 		}
 		let merge = format!("<feMerge>{below}<feMergeNode in=\"SourceGraphic\"/>{above}</feMerge>");
-		let fid = self.uid(defs, "sh");
+		let fid = Self::uid(defs, "sh");
 		defs.push(format!(
 			"<filter id=\"{fid}\" color-interpolation-filters=\"sRGB\" x=\"-60%\" y=\"-60%\" \
 			 width=\"220%\" height=\"220%\">{parts}{merge}</filter>"
@@ -679,7 +687,7 @@ impl Emitter<'_> {
 	}
 
 	/// Stroke as separate element(s) for align/sides control.
-	fn stroke_elements(&self, r: &slab_kernel::flatten::OpRect, color: &str) -> Vec<String> {
+	fn stroke_elements(r: &slab_kernel::flatten::OpRect, color: &str) -> Vec<String> {
 		let hw = r.stroke_w / 2.0;
 		let off = match r.stroke_align {
 			1 => hw,  // inside
@@ -739,7 +747,6 @@ impl Emitter<'_> {
 	}
 
 	fn placeholder(
-		&self,
 		out: &mut Vec<String>,
 		depth: usize,
 		im: &slab_kernel::flatten::OpImage,
@@ -780,7 +787,10 @@ impl Emitter<'_> {
 		));
 	}
 
-	#[allow(clippy::too_many_lines)]
+	#[allow(
+		clippy::too_many_lines,
+		reason = "the exhaustive FrameOp mapping is clearer in one dispatch function"
+	)]
 	fn run(
 		&self,
 		defs: &mut Vec<String>,
@@ -828,7 +838,7 @@ impl Emitter<'_> {
 						// shadow filter wraps the CLIPPED fan so SourceAlpha
 						// keeps the silhouette without the clip cutting the
 						// outer shadow off.
-						let cid = self.uid(defs, "fc");
+						let cid = Self::uid(defs, "fc");
 						defs.push(format!(
 							"<clipPath id=\"{cid}\">{}</clipPath>",
 							clip_shape(r.x, r.y, r.w, r.h, rr, r.smooth)
@@ -900,7 +910,7 @@ impl Emitter<'_> {
 						body.push(format!("{pad}<{tag} {}/>", attrs.join(" ")));
 					}
 					if r.grain_amount > 0.0 {
-						body.push(format!("{pad}{}", self.grain_el(defs, r, rr)));
+						body.push(format!("{pad}{}", Self::grain_el(defs, r, rr)));
 					}
 					if let Some(gr) = stroke_grad.filter(|_| conic_ring) {
 						// Conic box stroke: fan clipped to the ring between
@@ -921,7 +931,7 @@ impl Emitter<'_> {
 							dd.push(' ');
 							dd.push_str(&outline_d(r.x + inset, r.y + inset, iw, ih, ri, r.smooth));
 						}
-						let cid = self.uid(defs, "rc");
+						let cid = Self::uid(defs, "rc");
 						defs.push(format!(
 							"<clipPath id=\"{cid}\"><path d=\"{dd}\" clip-rule=\"evenodd\"/></clipPath>"
 						));
@@ -941,7 +951,7 @@ impl Emitter<'_> {
 					} else if let Some(color) = stroke
 						&& !simple
 					{
-						for el in self.stroke_elements(r, &color) {
+						for el in Self::stroke_elements(r, &color) {
 							body.push(format!("{pad}{el}"));
 						}
 					}
@@ -1014,7 +1024,7 @@ impl Emitter<'_> {
 						let el = format!("<text {}>{}</text>", attrs.join(" "), esc(&text));
 						let s = t.size;
 						let (mw, mh) = (2.0f64.mul_add(s, t.gw), 2.0f64.mul_add(s, t.gh));
-						let mid = self.mask_def(defs, "tm", t.gx - s, t.gy - s, mw, mh, &el);
+						let mid = Self::mask_def(defs, "tm", t.gx - s, t.gy - s, mw, mh, &el);
 						let fan = conic_fan(
 							gr,
 							t.gx + t.gw / 2.0,
@@ -1085,7 +1095,7 @@ impl Emitter<'_> {
 						}
 					};
 					let Some(href) = href else {
-						self.placeholder(&mut body, depth, im, src);
+						Self::placeholder(&mut body, depth, im, src);
 						if let Some(close) = anim_close.get(&idx) {
 							for _ in 0..*close {
 								depth -= 1;
@@ -1099,16 +1109,17 @@ impl Emitter<'_> {
 						2 => "none",
 						_ => "xMidYMid slice",
 					};
-					let mut clip = String::new();
-					if im.radius > 0.0 || im.fit == 0 {
-						let cid = self.uid(defs, "imc");
+					let clip = if im.radius > 0.0 || im.fit == 0 {
+						let cid = Self::uid(defs, "imc");
 						let r = im.radius.min(im.w / 2.0).min(im.h / 2.0);
 						defs.push(format!(
 							"<clipPath id=\"{cid}\">{}</clipPath>",
 							clip_shape(im.x, im.y, im.w, im.h, r, im.smooth)
 						));
-						clip = format!(" clip-path=\"url(#{cid})\"");
-					}
+						format!(" clip-path=\"url(#{cid})\"")
+					} else {
+						String::new()
+					};
 					let o = if im.opacity < 1.0 {
 						format!(" opacity=\"{}\"", n(im.opacity))
 					} else {
@@ -1185,11 +1196,8 @@ impl Emitter<'_> {
 							n(p.stroke_w)
 						);
 						if p.has_dash {
-							s.push_str(&format!(
-								" stroke-dasharray=\"{} {}\"",
-								n(p.dash_on),
-								n(p.dash_off)
-							));
+							write!(&mut s, " stroke-dasharray=\"{} {}\"", n(p.dash_on), n(p.dash_off))
+								.expect("writing to String cannot fail");
 						}
 						s
 					};
@@ -1210,7 +1218,7 @@ impl Emitter<'_> {
 					body.push(format!("{}<path {}/>", "  ".repeat(depth), attrs.join(" ")));
 					if let Some((gr, (x, y, w, h))) = conic_bg {
 						// conic path fill: fan clipped to the path silhouette
-						let cid = self.uid(defs, "fc");
+						let cid = Self::uid(defs, "fc");
 						defs.push(format!(
 							"<clipPath id=\"{cid}\"><path d=\"{data}\"{xform}/></clipPath>"
 						));
@@ -1232,7 +1240,7 @@ impl Emitter<'_> {
 						let content =
 							format!("<path d=\"{data}\"{xform} fill=\"none\" {}/>", stroke_base("#fff"));
 						let (mw, mh) = (2.0f64.mul_add(p.stroke_w, w), 2.0f64.mul_add(p.stroke_w, h));
-						let mid = self.mask_def(
+						let mid = Self::mask_def(
 							defs,
 							"pm",
 							x + p.dx - p.stroke_w,
@@ -1257,14 +1265,14 @@ impl Emitter<'_> {
 					}
 					let sub = Emitter { allow_backdrop: false, ..*self };
 					let fragment = sub.run(defs, &ops[..idx], anim_open, anim_close);
-					let cid = self.uid(defs, "bc");
+					let cid = Self::uid(defs, "bc");
 					let r = b.radius.min(b.w / 2.0).min(b.h / 2.0);
 					defs.push(format!(
 						"<clipPath id=\"{cid}\">{}</clipPath>",
 						clip_shape(b.x, b.y, b.w, b.h, r, b.smooth)
 					));
 					if b.mask_kind == 0 {
-						let fid = self.backdrop_filter(defs, b.blur, b.saturate, b.brightness);
+						let fid = Self::backdrop_filter(defs, b.blur, b.saturate, b.brightness);
 						// clip OUTSIDE the filter group: blur first, hard edge after
 						body.push(format!(
 							"{}<g clip-path=\"url(#{cid})\"><g filter=\"url(#{fid})\">",
@@ -1294,13 +1302,13 @@ impl Emitter<'_> {
 								continue;
 							};
 							let alpha = (f64::from(band) + 0.5) / 3.0;
-							let fid = self.backdrop_filter(
+							let fid = Self::backdrop_filter(
 								defs,
 								b.blur * alpha,
 								(b.saturate - 1.0).mul_add(alpha, 1.0),
 								(b.brightness - 1.0).mul_add(alpha, 1.0),
 							);
-							let mid = self.mask_def(defs, "bm", b.x, b.y, b.w, b.h, &content);
+							let mid = Self::mask_def(defs, "bm", b.x, b.y, b.w, b.h, &content);
 							body.push(format!(
 								"{}<g mask=\"url(#{mid})\"><g clip-path=\"url(#{cid})\"><g \
 								 filter=\"url(#{fid})\">",
@@ -1312,7 +1320,7 @@ impl Emitter<'_> {
 					}
 				},
 				FrameOp::ClipPush(c) => {
-					let cid = self.uid(defs, "c");
+					let cid = Self::uid(defs, "c");
 					let r = c.radius.min(c.w / 2.0).min(c.h / 2.0);
 					defs.push(format!(
 						"<clipPath id=\"{cid}\">{}</clipPath>",
@@ -1335,7 +1343,7 @@ impl Emitter<'_> {
 						attrs.push(format!("opacity=\"{}\"", n(gp.opacity)));
 					}
 					if gp.blur > 0.0 {
-						let fid = self.uid(defs, "gb");
+						let fid = Self::uid(defs, "gb");
 						defs.push(format!(
 							"<filter id=\"{fid}\" color-interpolation-filters=\"sRGB\" x=\"-40%\" \
 							 y=\"-40%\" width=\"180%\" height=\"180%\"><feGaussianBlur \
@@ -1357,7 +1365,7 @@ impl Emitter<'_> {
 							gp.mw,
 							gp.mh,
 						);
-						let mid = self.mask_def(defs, "mk", gp.mx, gp.my, gp.mw, gp.mh, &content);
+						let mid = Self::mask_def(defs, "mk", gp.mx, gp.my, gp.mw, gp.mh, &content);
 						attrs.push(format!("mask=\"url(#{mid})\""));
 					}
 					let pad = "  ".repeat(depth);
@@ -1607,13 +1615,15 @@ fn font_faces(s: &Slir, frame: &Frame, registered_fonts: &[RegisteredFont]) -> S
 				|| slab_fonts::asset(font.class, font.weight).bytes,
 				|(_, registered)| registered.bytes.as_slice(),
 			);
-		css.push_str(&format!(
+		write!(
+			&mut css,
 			"@font-face{{font-family:\"{}\";font-weight:{};src:url(data:font/ttf;base64,{}) \
 			 format(\"truetype\");}}",
 			s.str_at(font.family),
 			font.weight,
 			b64(bytes)
-		));
+		)
+		.expect("writing to String cannot fail");
 	}
 	css
 }

@@ -77,12 +77,14 @@ fn typing_into_field_emits_draft_and_renders() {
 
 /// The kernel focus-visible state drives the doc's own when-patches:
 /// tab traversal must change the rendered grid (the focus ring stroke
-/// draws box cells around the focused button, with the label overprinting
-/// the top border), with no driver-side focus painting.
+/// draws box cells around the focused button), with no driver-side focus
+/// painting. The fixture's buttons sit on 8x16 cell multiples because the
+/// tui suppresses stroke outlines lacking two fully covered rows/columns.
 #[test]
 fn tab_traversal_changes_the_grid() {
-	let one = run("examples/10-settings.slab", &["--script", "TAB"]);
-	let two = run("examples/10-settings.slab", &["--script", "TAB TAB"]);
+	let fixture = "crates/slab-tui/tests/fixtures/focus-ring.slab";
+	let one = run(fixture, &["--script", "TAB"]);
+	let two = run(fixture, &["--script", "TAB TAB"]);
 	let strip = |s: &str| {
 		s.lines()
 			.filter(|l| !l.starts_with("signals:"))
@@ -90,14 +92,17 @@ fn tab_traversal_changes_the_grid() {
 			.join("\n")
 	};
 	assert_ne!(strip(&one), strip(&two), "focus ring did not move");
-	assert!(
-		one.contains("╭─Save─╮") && one.contains("╰──────╯"),
-		"ring not on Save after one Tab:\n{one}"
-	);
-	assert!(
-		two.contains("╭─Reset─╮") && two.contains("╰───────╯"),
-		"ring not on Reset after two Tabs:\n{two}"
-	);
+	let ring_column = |dump: &str| {
+		dump.lines().find_map(|line| {
+			line
+				.char_indices()
+				.find_map(|(i, c)| (c == '╭').then_some(i))
+		})
+	};
+	// Save spans cells 1..11, Reset 15..25; the ring's top-left corner
+	// tracks the focused button.
+	assert_eq!(ring_column(&one), Some(1), "ring not on Save after one Tab:\n{one}");
+	assert_eq!(ring_column(&two), Some(15), "ring not on Reset after two Tabs:\n{two}");
 }
 
 /// Without a script, --dump-after is byte-identical to

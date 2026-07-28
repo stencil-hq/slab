@@ -1,7 +1,8 @@
-//! lyon tessellation of SLIR paths, rectangle strokes (dashed, per-side, or
-//! squircle), and squircle fills, cached as GPU vertex/index buffers.
-//! Coordinates stay in path-local logical units; the mesh vertex shader
-//! scales/offsets/rotates.
+//! Lyon tessellation of SLIR paths, rectangle strokes, and squircle fills.
+//!
+//! Rectangle strokes may be dashed, per-side, or squircles. Results are cached
+//! as GPU vertex/index buffers in path-local logical units; the mesh vertex
+//! shader scales, offsets, and rotates them.
 
 use lyon::{
 	math::{Box2D, Point, point},
@@ -349,8 +350,14 @@ impl DashState {
 		}
 		let direction = delta / length;
 		let mut at = 0.0;
-		while at < length {
-			while self.remaining <= f32::EPSILON {
+		loop {
+			if at >= length {
+				break;
+			}
+			loop {
+				if self.remaining > f32::EPSILON {
+					break;
+				}
 				self.finish(output);
 				self.paint = !self.paint;
 				self.remaining = if self.paint { self.on } else { self.off };

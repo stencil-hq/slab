@@ -27,15 +27,16 @@
 //! let frame = doc.frame(0.0);
 //! ```
 
-use std::path::Path;
+use std::{fmt::Write as _, path::Path};
 
 use proc_macro::{TokenStream, TokenTree};
 
-/// Compile a `.slab` file (relative to `CARGO_MANIFEST_DIR`) into a typed
-/// module: `include_doc!("path.slab")` names the module after the file stem;
+/// Compile a `.slab` file relative to `CARGO_MANIFEST_DIR` into a typed module.
+///
+/// `include_doc!("path.slab")` names the module after the file stem;
 /// `include_doc!(name, "path.slab")` names it explicitly. Trailing
-/// `"Family" = "font.ttf"` pairs (paths relative to `CARGO_MANIFEST_DIR`)
-/// compile that family's FONT tables from the given face.
+/// `"Family" = "font.ttf"` pairs compile that family's FONT tables from the
+/// supplied faces.
 #[proc_macro]
 pub fn include_doc(input: TokenStream) -> TokenStream {
 	let (name, path, fonts) = match parse_args(input) {
@@ -221,13 +222,14 @@ fn expand(path: &str, name: Option<&str>, fonts: &[(String, String)]) -> Result<
 			});
 		},
 	};
-	let tracked: String = tracked
-		.iter()
-		.map(|p| format!("const _: &[u8] = include_bytes!({p:?});\n"))
-		.collect();
+	let mut tracked_source = String::new();
+	for path in &tracked {
+		writeln!(tracked_source, "const _: &[u8] = include_bytes!({path:?});")
+			.expect("writing to String cannot fail");
+	}
 	// Generated code is not the caller's to lint; shield it from strict
 	// workspace lint levels (clippy::all alone leaves pedantic active).
-	Ok(format!("pub mod {name} {{\n\n{module}\n{tracked}}}\n"))
+	Ok(format!("pub mod {name} {{\n\n{module}\n{tracked_source}}}\n"))
 }
 
 #[cfg(test)]

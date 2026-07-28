@@ -110,7 +110,7 @@ fn ansi_bg_grid(dump: &str) -> Vec<Vec<u32>> {
 		}
 		let mut row = Vec::new();
 		let mut bg = NO_COLOR;
-		let mut chars = line.chars().peekable();
+		let mut chars = line.chars();
 		while let Some(c) = chars.next() {
 			if c == '\u{1b}' {
 				assert_eq!(chars.next(), Some('['), "CSI expected");

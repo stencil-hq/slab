@@ -605,9 +605,11 @@ pub fn test_context_caret_preserves_selection_only_for_inside_hit() {
 	assert!(dispatch::place_context_caret(&hit, &mut es, origin - 1.0, sc.entries[0].y,));
 }
 
-/// Builds a focusable text node whose `field=` binder lives inside a
-/// `when editing { … }` patch (condition 0 gates on state `"editing"`),
-/// with base content `"hello"` and a Change signal named `"edit-title"`.
+/// Builds a focusable text node with a conditional `field=` binder.
+///
+/// The field binder lives inside a `when editing { … }` patch (condition 0
+/// gates on state `"editing"`), with base content `"hello"` and a Change signal
+/// named `"edit-title"`.
 pub fn conditional_field_doc() -> Doc {
 	let mut doc = slir::doc_new();
 	doc.ok = true;
@@ -656,9 +658,10 @@ pub fn conditional_field_doc() -> Doc {
 	doc
 }
 
-/// Verifies that a text node with an inactive conditional `field=` binder
-/// paints as plain text: no editor clip on the ops or the scene node, while
-/// the active state keeps the field clip (T5 / C-10 regression).
+/// Verifies plain text painting for inactive conditional `field=` binders.
+///
+/// No editor clip on the ops or the scene node when inactive, while the active
+/// state keeps the field clip (T5 / C-10 regression).
 pub fn test_inactive_conditional_field_paints_plain_text() {
 	let doc = conditional_field_doc();
 	for editing in [false, true] {

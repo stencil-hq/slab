@@ -1,10 +1,11 @@
-//! CPU rasterizer: kernel `FrameOps` -> pixels via tiny-skia (research png.py
-//! port). Geometry/paints/strokes/paths/gradients render through tiny-skia;
-//! glyph outlines come from the vendored TTFs via ttf-parser (positions and
-//! advances stay kernel-owned: SLIR FONT cmap + advances); shadows, layer
-//! blur, and backdrop use the research 3-pass separable box blur with the
-//! same radius mapping (`rad = max(1, blur/2)`). PNG and APNG encode through
-//! the `png` crate (`Encoder::set_animated`).
+//! CPU rasterizer: kernel `FrameOps` -> pixels via tiny-skia.
+//!
+//! It is a research png.py port. Geometry/paints/strokes/paths/gradients render
+//! through tiny-skia; glyph outlines come from the vendored TTFs via ttf-parser
+//! (positions and advances stay kernel-owned: SLIR FONT cmap + advances).
+//! Shadows, layer blur, and backdrop use the research 3-pass separable box blur
+//! with the same radius mapping (`rad = max(1, blur/2)`). PNG and APNG encode
+//! through the `png` crate (`Encoder::set_animated`).
 //!
 //! Modern FX land as direct pixel work where tiny-skia has no primitive:
 //! conic sweeps, grain speckle, mask fades, banded progressive backdrop
@@ -694,7 +695,7 @@ impl<'a> Raster<'a> {
 		}
 	}
 
-	fn fill(&self, surf: &mut Layer, path: &Path, paint: &Paint) {
+	fn fill(surf: &mut Layer, path: &Path, paint: &Paint) {
 		surf
 			.pix
 			.fill_path(path, paint, FillRule::Winding, Transform::identity(), surf.clips.last());
@@ -703,7 +704,6 @@ impl<'a> Raster<'a> {
 	/// Drop (outset) shadow: rrect/squircle coverage blurred 3x, drawn
 	/// offset beneath.
 	fn box_shadow(
-		&self,
 		surf: &mut Layer,
 		x0: f64,
 		y0: f64,
@@ -767,7 +767,6 @@ impl<'a> Raster<'a> {
 
 	/// Inner shadow: blurred inverse coverage, clipped to the rrect/squircle.
 	fn inset_shadow(
-		&self,
 		surf: &mut Layer,
 		x0: f64,
 		y0: f64,
@@ -973,14 +972,14 @@ impl<'a> Raster<'a> {
 		}
 	}
 
-	fn draw_rect(&mut self, surf: &mut Layer, r: &OpRect) {
+	fn draw_rect(&self, surf: &mut Layer, r: &OpRect) {
 		let s = self.scale;
 		let (x0, y0) = (r.x * s, r.y * s);
 		let (x1, y1) = ((r.x + r.w) * s, (r.y + r.h) * s);
 		for i in 0..r.shadow_len.max(0) as usize {
 			let sh = &self.s.shadows[r.shadow_off as usize + i];
 			if sh.inset == 0 {
-				self.box_shadow(
+				Self::box_shadow(
 					surf,
 					x0,
 					y0,
@@ -1014,12 +1013,12 @@ impl<'a> Raster<'a> {
 		} else if let Some(paint) = self.paint(r.bg_kind, r.bg, x0, y0, x1 - x0, y1 - y0, r.opacity)
 			&& let Some(path) = shape_path(x0, y0, x1, y1, r.radius * s, r.smooth)
 		{
-			self.fill(surf, &path, &paint);
+			Self::fill(surf, &path, &paint);
 		}
 		for i in 0..r.shadow_len.max(0) as usize {
 			let sh = &self.s.shadows[r.shadow_off as usize + i];
 			if sh.inset != 0 {
-				self.inset_shadow(
+				Self::inset_shadow(
 					surf,
 					x0,
 					y0,
@@ -1367,7 +1366,7 @@ impl<'a> Raster<'a> {
 
 	/// Draw one text run: solid fill, gradient fill over the node's content
 	/// box (`gx..gh`, contract §6.7), or per-pixel conic.
-	fn draw_text(&mut self, surf: &mut Layer, t: &OpText, text: &str) {
+	fn draw_text(&self, surf: &mut Layer, t: &OpText, text: &str) {
 		let Some(path) = self.text_outline(
 			text,
 			t.font,
@@ -1398,26 +1397,18 @@ impl<'a> Raster<'a> {
 					},
 				);
 			} else if let Some(paint) = self.paint(2, t.color, gx, gy, gw, gh, t.opacity) {
-				self.fill(surf, &path, &paint);
+				Self::fill(surf, &path, &paint);
 			}
 			return;
 		}
 		let mut paint = base_paint();
 		paint.set_color(rgba8(t.color, t.opacity));
-		self.fill(surf, &path, &paint);
+		Self::fill(surf, &path, &paint);
 	}
 
 	/// Centered label with the vendored Inter regular (placeholder text; not
 	/// kernel-measured — matches the research placeholder path).
-	fn center_label(
-		&mut self,
-		surf: &mut Layer,
-		text: &str,
-		cx: f64,
-		cy: f64,
-		size_px: f64,
-		color: Color,
-	) {
+	fn center_label(surf: &mut Layer, text: &str, cx: f64, cy: f64, size_px: f64, color: Color) {
 		let a = slab_fonts::asset(slab_fonts::CLASS_SANS, 400);
 		let Ok(face) = ttf_parser::Face::parse(a.bytes, 0) else {
 			return;
@@ -1462,7 +1453,7 @@ impl<'a> Raster<'a> {
 		}
 	}
 
-	fn draw_image(&mut self, surf: &mut Layer, im: &slab_kernel::flatten::OpImage) {
+	fn draw_image(&self, surf: &mut Layer, im: &slab_kernel::flatten::OpImage) {
 		let s = self.scale;
 		let (x0, y0) = (im.x * s, im.y * s);
 		let (x1, y1) = ((im.x + im.w) * s, (im.y + im.h) * s);
@@ -1490,7 +1481,7 @@ impl<'a> Raster<'a> {
 			if let Some(path) = shape_path(x0, y0, x1, y1, im.radius * s, im.smooth) {
 				let mut paint = base_paint();
 				paint.set_color(Color::from_rgba8(201, 206, 214, 255));
-				self.fill(surf, &path, &paint);
+				Self::fill(surf, &path, &paint);
 			}
 			let mut paint = base_paint();
 			paint.set_color(Color::from_rgba8(154, 161, 171, 255));
@@ -1516,7 +1507,7 @@ impl<'a> Raster<'a> {
 				.filter(|l| !l.is_empty())
 				.unwrap_or("image");
 			let label = label.to_string();
-			self.center_label(
+			Self::center_label(
 				surf,
 				&label,
 				f64::midpoint(x0, x1),

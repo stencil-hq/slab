@@ -216,14 +216,14 @@ pub fn normalize(d: &str) -> Option<(Vec<u8>, Vec<f64>)> {
 /// Returns `(min_x, min_y, max_x, max_y)` over normalized on-curve and control
 /// points, or `None` when `coords` contains no complete point.
 pub fn bounds(coords: &[f64]) -> Option<(f64, f64, f64, f64)> {
-	let mut points = coords.chunks_exact(2);
-	let first = points.next()?;
-	let (mut min_x, mut min_y, mut max_x, mut max_y) = (first[0], first[1], first[0], first[1]);
-	for point in points {
-		min_x = min_x.min(point[0]);
-		min_y = min_y.min(point[1]);
-		max_x = max_x.max(point[0]);
-		max_y = max_y.max(point[1]);
+	let (points, _) = coords.as_chunks::<2>();
+	let ([min_x, min_y], rest) = points.split_first()?;
+	let (mut min_x, mut min_y, mut max_x, mut max_y) = (*min_x, *min_y, *min_x, *min_y);
+	for &[x, y] in rest {
+		min_x = min_x.min(x);
+		min_y = min_y.min(y);
+		max_x = max_x.max(x);
+		max_y = max_y.max(y);
 	}
 	Some((min_x, min_y, max_x, max_y))
 }

@@ -1,0 +1,11 @@
+// Keyboard focus rings on the terminal cell grid: both buttons sit on
+// 8x16 cell multiples so the tui stroke band can paint a closed box
+// (cells suppresses outlines that lack two fully covered rows/columns).
+canvas#surface w=320 h=128 bg=#10161e {
+  group#save focusable at=8,16 w=80 h=48 bg=#222A38 radius=8 {
+    when focus-visible { stroke=#4FC7E0 stroke-w=2 }
+  }
+  group#reset focusable at=120,16 w=80 h=48 bg=#222A38 radius=8 {
+    when focus-visible { stroke=#4FC7E0 stroke-w=2 }
+  }
+}

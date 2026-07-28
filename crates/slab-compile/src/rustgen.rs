@@ -1,7 +1,8 @@
-//! Typed Rust module generation for the native gpu client (moved lib-side
-//! from the CLI so the wasm build can emit the same output). Produces a
-//! single-file module embedding the SLIR and exposing a typed `Doc` wrapper
-//! over `slab_kernel::frame::Instance`.
+//! Generates typed Rust modules for the native GPU client.
+//!
+//! Moved lib-side from the CLI so the wasm build can emit the same output.
+//! Produces a single-file module embedding the SLIR and exposing a typed
+//! `Doc` wrapper over `slab_kernel::frame::Instance`.
 //!
 //! Output is deterministic. Regenerate + reformat with:
 //! `cargo run -q -p slab-cli -- gen rust FILE -o OUT.rs && cargo fmt`
@@ -12,10 +13,11 @@ use slab_slir::Slir;
 use slab_syntax::diag::Diagnostics;
 
 use crate::Options;
-/// Generate the typed Rust module for a compiled `.slab` source. `src_name`
-/// is the input file path (used only in the generated header comment).
-/// Returns the module source (or `None` on compile failure) and the compile
-/// diagnostics.
+/// Generates a typed Rust module for compiled `.slab` source.
+///
+/// `src_name` is the input file path (used only in the generated header
+/// comment). Returns the module source (or `None` on compile failure) and the
+/// compile diagnostics.
 pub fn generate(src: &str, copts: &Options, src_name: &str) -> (Option<String>, Diagnostics) {
 	let (module, diagnostics, _) = generate_with_import_paths(src, copts, src_name);
 	(module, diagnostics)
@@ -383,9 +385,9 @@ fn emit_module(slir: &Slir, bytes: &[u8], src_name: &str) -> String {
 		 u32,\n\x20   /// Host-computed click count.\n\x20   pub clicks: u32,\n\x20   /// Full key \
 		 path of the signal-emitting node.\n\x20   pub key: String,\n\x20   /// Full drag-source \
 		 key for Drop, otherwise empty.\n\x20   pub src_key: String,\n\x20   /// Innermost \
-		 drag-source item key for Drop, otherwise empty.\n\x20   pub src_item: String,\n\x20   /// \
-		 Whether DragEnd represents abnormal termination.\n\x20   pub cancelled: bool,\n\x20   /// \
-		 Whether DragEnd delivered Drop to an eligible target.\n\x20   pub dropped: bool,\n\x20   \
+		 drag-source item key for `Drop`, otherwise empty.\n\x20   pub src_item: String,\n\x20   /// \
+		 Whether `DragEnd` represents abnormal termination.\n\x20   pub cancelled: bool,\n\x20   /// \
+		 Whether `DragEnd` delivered `Drop` to an eligible target.\n\x20   pub dropped: bool,\n\x20   \
 		 /// Deepest hit-target key on pointer-derived signals, otherwise empty.\n\x20   pub \
 		 hit_key: String,\n\x20   /// Pressed key name on keyboard-driven activation, otherwise \
 		 empty.\n\x20   pub pressed_key: String,\n}\n\nimpl From<&slab_kernel::dispatch::SigMeta> \
@@ -532,12 +534,12 @@ fn emit_module(slir: &Slir, bytes: &[u8], src_name: &str) -> String {
 			 Embedded image bytes, parallel to the document image tables.\n    pub imgs: \
 			 Vec<Vec<u8>>,\n{list_cache_fields}}}\n\nimpl Default for Doc {{\n    fn default() -> \
 			 Self {{\n        Self::new()\n    }}\n}}\n\nimpl Doc {{\n\x20   /// Create an instance \
-			 initialized from the embedded document.\n\x20   pub fn new() -> Doc {{\n\x20       let \
+			 initialized from the embedded document.\n\x20   pub fn new() -> Self {{\n\x20       let \
 			 (doc, imgs) = slab_slir::decode_doc(SLIR).expect(\"embedded SLIR\");\n\x20       let \
 			 mut inst = kframe::inst_shell();\n\x20       inst.doc = doc;\n\x20       \
-			 kframe::inst_init(&mut inst);\n\x20       Doc {{\n\x20           inst,\n\x20           \
+			 kframe::inst_init(&mut inst);\n\x20       Self {{\n\x20           inst,\n\x20           \
 			 imgs,\n{list_cache_initializers}        }}\n\x20   }}\n\n\x20   /// Whether the \
-			 embedded document decoded successfully.\n\x20   pub fn ok(&self) -> bool {{\n        \
+			 embedded document decoded successfully.\n\x20   pub const fn ok(&self) -> bool {{\n        \
 			 self.inst.ok\n    }}\n\n\x20   /// Env for the gpu client (client code 1); portrait \
 			 derives from vw < vh.\n\x20   pub fn set_env(&mut self, vw: f64, vh: f64, dark: bool, \
 			 coarse: bool) {{\n\x20       kframe::inst_set_env(&mut self.inst, vw, vh, 1, dark, \
@@ -546,7 +548,7 @@ fn emit_module(slir: &Slir, bytes: &[u8], src_name: &str) -> String {
 			 {{\n\x20       kframe::inst_set_theme(&mut self.inst, name)\n\x20   }}\n\n\x20   /// \
 			 Drop generated list reconciliation snapshots after an external document reload.\n\x20   \
 			 /// Call this when a host-mounted `RequestPump` reports `reloaded == true`,\n\x20   /// \
-			 before re-synchronizing typed list setters. Safe and idempotent.\n\x20   pub fn \
+			 before re-synchronizing typed list setters. Safe and idempotent.\n\x20   pub const fn \
 			 invalidate_caches(&mut self) {{\n{cache_invalidations}    }}\n\n\x20   /// Read one \
 			 token resolved through the active theme, with base fallback.\n\x20   pub fn \
 			 get_token(&self, path: &str) -> Option<kframe::TokenValue<'_>> {{\n\x20       \
@@ -727,7 +729,7 @@ row {
 		assert!(module.contains("pub fn take_signals(&mut self)"));
 		assert_eq!(
 			module
-				.matches("pub fn invalidate_caches(&mut self)")
+				.matches("pub const fn invalidate_caches(&mut self)")
 				.count(),
 			1
 		);
@@ -794,7 +796,7 @@ col#app { col#items { each param.rows } }
 		assert!(module.contains("pub fn clear_focus(&mut self)"));
 		assert!(module.contains("pub fn focus_item(&mut self, each_key: &str, index: i32)"));
 		assert!(module.contains("pub fn focus_note(&self) -> &str"));
-		assert!(module.contains("pub fn invalidate_caches(&mut self)"));
+		assert!(module.contains("pub const fn invalidate_caches(&mut self)"));
 		assert!(module.contains("self.rows_cache = None"));
 	}
 	#[test]

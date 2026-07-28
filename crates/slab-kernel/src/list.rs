@@ -412,11 +412,11 @@ pub fn val_from_aval(d: &slir::Doc, kind: u32, ix: i32) -> Val {
 	let decoded = value::decode(d, ix);
 	let mut out = empty_val(kind);
 	match kind {
-		0 if decoded.tag == slir::T_STR => out.s = slir::str_at(d, decoded.h).to_owned(),
+		0 if decoded.tag == slir::T_STR => slir::str_at(d, decoded.h).clone_into(&mut out.s),
 		1 | 2 => out.num = decoded.num,
 		3 => out.rgba = decoded.h,
 		4 => out.num = if decoded.num == 0.0 { 0.0 } else { 1.0 },
-		5 if decoded.tag == slir::T_ENUM_SYM => out.sym = slir::str_at(d, decoded.h).to_owned(),
+		5 if decoded.tag == slir::T_ENUM_SYM => slir::str_at(d, decoded.h).clone_into(&mut out.sym),
 		_ => {},
 	}
 	out
@@ -572,8 +572,7 @@ fn add_key_lookup(s: &mut State, list: u32, item: i32, key: &str) {
 }
 
 fn remove_key_lookup(s: &mut State, list: u32, item: i32, key: &str) {
-	let mut remove_indices = false;
-	if let Some(indices) = s.lk_key_index.get_mut(&list) {
+	let remove_indices = if let Some(indices) = s.lk_key_index.get_mut(&list) {
 		let mut remove_key = false;
 		if let Some(items) = indices.get_mut(key) {
 			let mut collapse = None;
@@ -604,8 +603,10 @@ fn remove_key_lookup(s: &mut State, list: u32, item: i32, key: &str) {
 		if remove_key {
 			indices.remove(key);
 		}
-		remove_indices = indices.is_empty();
-	}
+		indices.is_empty()
+	} else {
+		false
+	};
 	if remove_indices {
 		s.lk_key_index.remove(&list);
 	}
@@ -846,11 +847,12 @@ pub fn remove_sy(s: &mut State, k: i32) {
 	let id = s.sy_id[slot];
 	let identity = (s.sy_each[slot], s.sy_tpl[slot]);
 	let key = s.sy_key[slot].clone();
-	let mut remove_identity = false;
-	if let Some(keys) = s.sy_identity.get_mut(&identity) {
+	let remove_identity = if let Some(keys) = s.sy_identity.get_mut(&identity) {
 		keys.remove(&key);
-		remove_identity = keys.is_empty();
-	}
+		keys.is_empty()
+	} else {
+		false
+	};
 	if remove_identity {
 		s.sy_identity.remove(&identity);
 	}
@@ -1049,7 +1051,7 @@ fn set_key_id(d: &slir::Doc, s: &mut State, list: u32, item_index: i32, key: &st
 	if let Some(&slot) = s.lk_slot.get(&(list, item_index)) {
 		let old_key = s.lk_key[slot].clone();
 		remove_key_lookup(s, list, item_index, &old_key);
-		s.lk_key[slot] = key.to_owned();
+		key.clone_into(&mut s.lk_key[slot]);
 		add_key_lookup(s, list, item_index, key);
 		return 1;
 	}
@@ -1272,11 +1274,12 @@ fn synthetic_identity(s: &mut State, each: u32, tpl: u32, key: &str) -> (u32, us
 		if let Some(slot) = synthetic_slot(s, id) {
 			return (id, slot);
 		}
-		let mut remove_identity = false;
-		if let Some(keys) = s.sy_identity.get_mut(&identity) {
+		let remove_identity = if let Some(keys) = s.sy_identity.get_mut(&identity) {
 			keys.remove(key);
-			remove_identity = keys.is_empty();
-		}
+			keys.is_empty()
+		} else {
+			false
+		};
 		if remove_identity {
 			s.sy_identity.remove(&identity);
 		}

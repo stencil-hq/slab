@@ -733,11 +733,12 @@ pub fn box_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &C
 	let pb = st.rs[idx(ri)].pad_b;
 	let pl = st.rs[idx(ri)].pad_l;
 	let mut pad_main = pt + pb;
-	let mut pad_cross = pl + pr;
-	if row {
+	let pad_cross = if row {
 		pad_main = pl + pr;
-		pad_cross = pt + pb;
-	}
+		pt + pb
+	} else {
+		pl + pr
+	};
 	let mut spec_main_k = st.rs[idx(ri)].h_kind;
 	let mut spec_main_v = st.rs[idx(ri)].h_v;
 	let mut spec_cross_k = st.rs[idx(ri)].w_kind;
@@ -753,8 +754,7 @@ pub fn box_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &C
 	let mut pct_main = cn.pct_h;
 	let mut has_pct_main = cn.has_ph;
 	let mut pct_cross = cn.pct_w;
-	let mut has_pct_cross = cn.has_pw;
-	if row {
+	let has_pct_cross = if row {
 		spec_main_k = st.rs[idx(ri)].w_kind;
 		spec_main_v = st.rs[idx(ri)].w_v;
 		spec_cross_k = st.rs[idx(ri)].h_kind;
@@ -770,8 +770,10 @@ pub fn box_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &C
 		pct_main = cn.pct_w;
 		has_pct_main = cn.has_pw;
 		pct_cross = cn.pct_h;
-		has_pct_cross = cn.has_ph;
-	}
+		cn.has_ph
+	} else {
+		cn.has_pw
+	};
 	let line = st.rs[idx(ri)].line;
 	let om = resolve_len(st, spec_main_k, spec_main_v, cmax_main, has_pct_main, pct_main, line);
 	let oc = resolve_len(st, spec_cross_k, spec_cross_v, cmax_cross, has_pct_cross, pct_cross, line);
@@ -813,22 +815,26 @@ pub fn box_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &C
 	if has_cross {
 		own_cross = clamp(own_cross, cmin_cross, cmax_cross, amin_cross, amax_cross);
 	}
-	let mut budget_main = cmax_main.min(amax_main);
-	if has_main {
-		budget_main = own_main;
-	}
-	let mut budget_cross = cmax_cross.min(amax_cross);
-	if has_cross {
-		budget_cross = own_cross;
-	}
-	let mut content_main = INF;
-	if budget_main != INF {
-		content_main = (0.0f64).max(budget_main - pad_main);
-	}
-	let mut content_cross = INF;
-	if budget_cross != INF {
-		content_cross = (0.0f64).max(budget_cross - pad_cross);
-	}
+	let budget_main = if has_main {
+		own_main
+	} else {
+		cmax_main.min(amax_main)
+	};
+	let budget_cross = if has_cross {
+		own_cross
+	} else {
+		cmax_cross.min(amax_cross)
+	};
+	let mut content_main = if budget_main == INF {
+		INF
+	} else {
+		(0.0f64).max(budget_main - pad_main)
+	};
+	let mut content_cross = if budget_cross == INF {
+		INF
+	} else {
+		(0.0f64).max(budget_cross - pad_cross)
+	};
 	if (st.rs[idx(ri)].flags & crate::slir::F_SCROLL) != 0u32 {
 		content_main = INF;
 	}
@@ -841,10 +847,11 @@ pub fn box_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &C
 	let virtual_metrics = crate::list::virtual_metrics(d, &st.lists, node);
 	let gap = st.rs[idx(ri)].gap;
 	let gaps = gap * (0.0f64).max(f64::from(nk.wrapping_sub(1i32)));
-	let mut remaining = INF;
-	if content_main != INF {
-		remaining = content_main - gaps;
-	}
+	let mut remaining = if content_main == INF {
+		INF
+	} else {
+		content_main - gaps
+	};
 	let mut kp: Vec<i32> = take_i32(l);
 	let mut fills: Vec<i32> = take_i32(l);
 	for _i in 0i32..(nk) {
@@ -854,27 +861,30 @@ pub fn box_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &C
 	// Percent lengths require a determinate parent axis.
 	// `(pw, ph)` are main/cross percentage bases; map them back to width/height.
 	let mut pw = 0.0f64;
-	let mut has_pw = false;
-	if has_main && (content_main != INF) {
+	let has_pw = if has_main && (content_main != INF) {
 		pw = content_main;
-		has_pw = true;
-	}
+		true
+	} else {
+		false
+	};
 	let mut ph = 0.0f64;
-	let mut has_ph = false;
-	if has_cross && (content_cross != INF) {
+	let has_ph = if has_cross && (content_cross != INF) {
 		ph = content_cross;
-		has_ph = true;
-	}
+		true
+	} else {
+		false
+	};
 	let mut cpw = ph;
 	let mut chas_pw = has_ph;
 	let mut cph = pw;
-	let mut chas_ph = has_pw;
-	if row {
+	let chas_ph = if row {
 		cpw = pw;
 		chas_pw = has_pw;
 		cph = ph;
-		chas_ph = has_ph;
-	}
+		has_ph
+	} else {
+		has_pw
+	};
 	// First measure non-fill children in document order.
 	let inh = inh_of(st, ri);
 	for i in 0i32..(nk) {
@@ -892,24 +902,26 @@ pub fn box_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &C
 				st,
 				l,
 				kids[idx(i)],
-				row,
 				(0.0f64).max(remaining),
 				content_cross,
 				cpw,
 				cph,
-				chas_pw,
-				chas_ph,
-				hug_cross_container,
-				forced.is_some(),
-				sm.v,
 				kind,
 				&inh,
-				false,
+				BoxChildMeasure {
+					row,
+					has_pct_w: chas_pw,
+					has_pct_h: chas_ph,
+					hug_cross_container,
+					fixed_main: forced.map(|_| sm.v),
+					hug_main: false,
+				},
 			);
-			let mut sz = l.p_h[idx(kp[idx(i)])];
-			if row {
-				sz = l.p_w[idx(kp[idx(i)])];
-			}
+			let sz = if row {
+				l.p_w[idx(kp[idx(i)])]
+			} else {
+				l.p_h[idx(kp[idx(i)])]
+			};
 			if remaining != INF {
 				remaining = (0.0f64).max(remaining - sz);
 			}
@@ -941,19 +953,20 @@ pub fn box_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &C
 					st,
 					l,
 					kids[idx(i)],
-					row,
 					INF,
 					content_cross,
 					cpw,
 					cph,
-					chas_pw,
-					chas_ph,
-					hug_cross_container,
-					false,
-					0.0f64,
 					kind,
 					&inh,
-					true,
+					BoxChildMeasure {
+						row,
+						has_pct_w: chas_pw,
+						has_pct_h: chas_ph,
+						hug_cross_container,
+						fixed_main: None,
+						hug_main: true,
+					},
 				);
 			}
 		} else {
@@ -969,10 +982,11 @@ pub fn box_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &C
 			for j in 0i32..(len_i32(&fills)) {
 				let i = fills[idx(j)];
 				let s = crate::style::peek_size(d, st, kids[idx(i)], row, kind, row);
-				let mut share = (leftover * s.v) / total_wt;
-				if j == len_i32(&fills).wrapping_sub(1i32) {
-					share = leftover - given;
-				}
+				let mut share = if j == len_i32(&fills).wrapping_sub(1i32) {
+					leftover - given
+				} else {
+					(leftover * s.v) / total_wt
+				};
 				share = (0.0f64).max(share);
 				given += share;
 				kp[idx(i)] = measure_in_box(
@@ -980,19 +994,20 @@ pub fn box_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &C
 					st,
 					l,
 					kids[idx(i)],
-					row,
 					0.0f64,
 					content_cross,
 					cpw,
 					cph,
-					chas_pw,
-					chas_ph,
-					hug_cross_container,
-					true,
-					share,
 					kind,
 					&inh,
-					false,
+					BoxChildMeasure {
+						row,
+						has_pct_w: chas_pw,
+						has_pct_h: chas_ph,
+						hug_cross_container,
+						fixed_main: Some(share),
+						hug_main: false,
+					},
 				);
 			}
 		}
@@ -1038,10 +1053,11 @@ pub fn box_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &C
 		let mut needed = 0.0f64;
 		for i in 0i32..(nk) {
 			if kp[idx(i)] >= 0i32 {
-				let mut c = l.p_w[idx(kp[idx(i)])];
-				if row {
-					c = l.p_h[idx(kp[idx(i)])];
-				}
+				let mut c = if row {
+					l.p_h[idx(kp[idx(i)])]
+				} else {
+					l.p_w[idx(kp[idx(i)])]
+				};
 				if want_baseline && l.p_has_base[idx(kp[idx(i)])] {
 					c += row_base - l.p_base[idx(kp[idx(i)])];
 				}
@@ -1062,11 +1078,12 @@ pub fn box_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &C
 		}
 		let sc = crate::style::peek_size(d, st, kids[idx(i)], !row, kind, row);
 		let mut cur_cross = l.p_w[idx(kp[idx(i)])];
-		let mut main_sz = l.p_h[idx(kp[idx(i)])];
-		if row {
+		let main_sz = if row {
 			cur_cross = l.p_h[idx(kp[idx(i)])];
-			main_sz = l.p_w[idx(kp[idx(i)])];
-		}
+			l.p_w[idx(kp[idx(i)])]
+		} else {
+			l.p_h[idx(kp[idx(i)])]
+		};
 		if (sc.kind == crate::style::S_FILL) && ((cur_cross - final_content_cross).abs() > EPS) {
 			kp[idx(i)] = measure_child(
 				d,
@@ -1112,10 +1129,7 @@ pub fn box_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &C
 	} else if (st.rs[idx(ri)].pack == 3u32) && (nk > 1i32) {
 		step = gap + (free / (f64::from(nk.wrapping_sub(1i32))));
 	}
-	let mut cur = pt + lead;
-	if row {
-		cur = pl + lead;
-	}
+	let mut cur = if row { pl + lead } else { pt + lead };
 	let mut virtual_item = -1;
 	let mut virtual_within = 0.0;
 	let pi = p_new(l, node, ri);
@@ -1127,10 +1141,7 @@ pub fn box_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &C
 		}
 		let ci = kp[idx(i)];
 		let cri = l.p_ri[idx(ci)];
-		let mut child_cross = l.p_w[idx(ci)];
-		if row {
-			child_cross = l.p_h[idx(ci)];
-		}
+		let child_cross = if row { l.p_h[idx(ci)] } else { l.p_w[idx(ci)] };
 		let mut a = st.rs[idx(cri)].self_align;
 		if a < 0i32 {
 			a = st.rs[idx(ri)].align;
@@ -1189,62 +1200,65 @@ pub fn box_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &C
 	pi
 }
 
+struct BoxChildMeasure {
+	row:                 bool,
+	has_pct_w:           bool,
+	has_pct_h:           bool,
+	hug_cross_container: bool,
+	fixed_main:          Option<f64>,
+	hug_main:            bool,
+}
+
 /// Measures one child inside a box container's available content area.
-pub fn measure_in_box(
+fn measure_in_box(
 	d: &Doc,
 	st: &mut St,
 	l: &mut Lay,
 	kid: u32,
-	row: bool,
 	avail_main: f64,
 	avail_cross: f64,
 	pct_w: f64,
 	pct_h: f64,
-	has_pw: bool,
-	has_ph: bool,
-	hug_cross_container: bool,
-	has_fixed_main: bool,
-	fixed_main: f64,
 	pk: u32,
 	inh: &Inh,
-	hug_main: bool,
+	options: BoxChildMeasure,
 ) -> i32 {
 	let mut hug_w = false;
 	let mut hug_h = false;
-	if hug_cross_container {
-		let sc = crate::style::peek_size(d, st, kid, !row, pk, row);
+	if options.hug_cross_container {
+		let sc = crate::style::peek_size(d, st, kid, !options.row, pk, options.row);
 		if sc.kind == crate::style::S_FILL {
-			if row {
+			if options.row {
 				hug_h = true;
 			} else {
 				hug_w = true;
 			}
 		}
 	}
-	if hug_main {
-		if row {
+	if options.hug_main {
+		if options.row {
 			hug_w = true;
 		} else {
 			hug_h = true;
 		}
 	}
-	if has_fixed_main {
+	if let Some(fixed_main) = options.fixed_main {
 		return measure_child(
 			d,
 			st,
 			l,
 			kid,
-			row,
+			options.row,
 			fixed_main,
 			fixed_main,
 			0.0f64,
 			avail_cross,
 			pct_w,
 			pct_h,
-			has_pw,
-			has_ph,
+			options.has_pct_w,
+			options.has_pct_h,
 			pk,
-			row,
+			options.row,
 			inh,
 			hug_w,
 			hug_h,
@@ -1255,17 +1269,17 @@ pub fn measure_in_box(
 		st,
 		l,
 		kid,
-		row,
+		options.row,
 		0.0f64,
 		avail_main,
 		0.0f64,
 		avail_cross,
 		pct_w,
 		pct_h,
-		has_pw,
-		has_ph,
+		options.has_pct_w,
+		options.has_pct_h,
 		pk,
-		row,
+		options.row,
 		inh,
 		hug_w,
 		hug_h,
@@ -1294,20 +1308,23 @@ pub fn wrap_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &
 	if has_w {
 		own_w = clamp(own_w, cn.min_w, cn.max_w, st.rs[idx(ri)].min_w, st.rs[idx(ri)].max_w);
 	}
-	let mut budget_w = (cn.max_w).min(st.rs[idx(ri)].max_w);
-	if has_w {
-		budget_w = own_w;
-	}
-	let mut content_w = INF;
-	if budget_w != INF {
-		content_w = (0.0f64).max((budget_w - pl) - pr);
-	}
+	let budget_w = if has_w {
+		own_w
+	} else {
+		(cn.max_w).min(st.rs[idx(ri)].max_w)
+	};
+	let content_w = if budget_w == INF {
+		INF
+	} else {
+		(0.0f64).max((budget_w - pl) - pr)
+	};
 	let mut pct_w = 0.0f64;
-	let mut has_pct = false;
-	if has_w && (content_w != INF) {
+	let has_pct = if has_w && (content_w != INF) {
 		pct_w = content_w;
-		has_pct = true;
-	}
+		true
+	} else {
+		false
+	};
 	let mut kids: Vec<u32> = take_u32(l);
 	crate::style::children(d, st, node, &mut kids);
 	let inh = inh_of(st, ri);
@@ -1319,20 +1336,18 @@ pub fn wrap_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &
 	for i in 0i32..(len_i32(&kids)) {
 		crate::style::reset_wh_patches(d, st, kids[idx(i)]);
 		let sw = crate::style::peek_size(d, st, kids[idx(i)], true, crate::slir::K_WRAP, is_row);
-		let mut hug_main = false;
-		if sw.kind == crate::style::S_FILL {
+		let hug_main = if sw.kind == crate::style::S_FILL {
 			crate::style::warn(
 				st,
 				"attr",
 				"fill width inside wrap is not supported; treating as hug",
 				d.node_line[idx(crate::list::base(&st.lists, d, kids[idx(i)]))],
 			);
-			hug_main = true;
-		}
-		let mut avail = INF;
-		if rem != INF {
-			avail = (0.0f64).max(rem);
-		}
+			true
+		} else {
+			false
+		};
+		let avail = if rem == INF { INF } else { (0.0f64).max(rem) };
 		let mut c = Cons {
 			min_w: 0.0f64,
 			max_w: avail,
@@ -1395,10 +1410,11 @@ pub fn wrap_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &
 			rem = (rem - l.p_w[idx(p)]) - gap;
 		}
 	}
-	let mut gap_cross = gap;
-	if st.rs[idx(ri)].has_gap_cross {
-		gap_cross = st.rs[idx(ri)].gap_cross;
-	}
+	let gap_cross = if st.rs[idx(ri)].has_gap_cross {
+		st.rs[idx(ri)].gap_cross
+	} else {
+		gap
+	};
 	let mut y = pt;
 	let mut max_line_w = 0.0f64;
 	let pi = p_new(l, node, ri);
@@ -1433,10 +1449,7 @@ pub fn wrap_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &
 		y = (y + line_h) + gap_cross;
 	}
 	l.p_child_len[idx(pi)] = len_i32(&l.child_pool).wrapping_sub(l.p_child_off[idx(pi)]);
-	let mut total_h = pt + pb;
-	if any {
-		total_h = (y - gap_cross) + pb;
-	}
+	let total_h = if any { (y - gap_cross) + pb } else { pt + pb };
 	if !has_w {
 		own_w = clamp(
 			(max_line_w + pl) + pr,
@@ -1455,10 +1468,7 @@ pub fn wrap_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &
 		cn.pct_h,
 		line,
 	);
-	let mut own_h = total_h;
-	if oh.has {
-		own_h = oh.v;
-	}
+	let mut own_h = if oh.has { oh.v } else { total_h };
 	own_h = clamp(own_h, cn.min_h, cn.max_h, st.rs[idx(ri)].min_h, st.rs[idx(ri)].max_h);
 	l.p_w[idx(pi)] = own_w;
 	l.p_h[idx(pi)] = own_h;
@@ -1507,14 +1517,16 @@ pub fn grid_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &
 	if has_w {
 		own_w = clamp(own_w, cn.min_w, cn.max_w, st.rs[idx(ri)].min_w, st.rs[idx(ri)].max_w);
 	}
-	let mut budget_w = (cn.max_w).min(st.rs[idx(ri)].max_w);
-	if has_w {
-		budget_w = own_w;
-	}
-	let mut content_w = INF;
-	if budget_w != INF {
-		content_w = (0.0f64).max((budget_w - pl) - pr);
-	}
+	let budget_w = if has_w {
+		own_w
+	} else {
+		(cn.max_w).min(st.rs[idx(ri)].max_w)
+	};
+	let content_w = if budget_w == INF {
+		INF
+	} else {
+		(0.0f64).max((budget_w - pl) - pr)
+	};
 	// Assign cells row-major, honoring each cell's column span.
 	let mut kids: Vec<u32> = take_u32(l);
 	crate::style::children(d, st, node, &mut kids);
@@ -1539,21 +1551,23 @@ pub fn grid_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &
 		col = (col.wrapping_add(span)).wrapping_rem(ntr);
 	}
 	let gaps_total = gap * (f64::from(ntr.wrapping_sub(1i32)));
-	let mut remaining = INF;
-	if content_w != INF {
-		remaining = content_w - gaps_total;
-	}
+	let mut remaining = if content_w == INF {
+		INF
+	} else {
+		content_w - gaps_total
+	};
 	let mut widths: Vec<f64> = take_f64(l);
 	for _t in 0i32..(ntr) {
 		widths.push(0.0f64);
 	}
 	let mut fill_idx: Vec<i32> = take_i32(l);
 	let mut pct_base = 0.0f64;
-	let mut has_pct = false;
-	if content_w != INF {
+	let has_pct = if content_w == INF {
+		false
+	} else {
 		pct_base = content_w;
-		has_pct = true;
-	}
+		true
+	};
 	for t in 0i32..(ntr) {
 		let mut w = 0.0f64;
 		// Fixed tracks consume their authored width.
@@ -1593,10 +1607,7 @@ pub fn grid_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &
 			// Hug tracks use the widest natural, non-spanning cell in the column.
 			for i in 0i32..(len_i32(&kids)) {
 				if (ccol[idx(i)] == t) && (cspan[idx(i)] == 1i32) {
-					let mut avail = INF;
-					if remaining != INF {
-						avail = remaining;
-					}
+					let avail = if remaining == INF { INF } else { remaining };
 					let c = Cons {
 						min_w:  0.0f64,
 						max_w:  avail,
@@ -1656,26 +1667,29 @@ pub fn grid_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &
 		xs.push((xs[idx(t.wrapping_sub(1i32))] + widths[idx(t.wrapping_sub(1i32))]) + gap);
 	}
 	// Measure cells row by row, then stretch fill-height cells.
-	let mut gap_cross = gap;
-	if st.rs[idx(ri)].has_gap_cross {
-		gap_cross = st.rs[idx(ri)].gap_cross;
-	}
+	let gap_cross = if st.rs[idx(ri)].has_gap_cross {
+		st.rs[idx(ri)].gap_cross
+	} else {
+		gap
+	};
 	let mut pct_w_val = 0.0f64;
-	let mut has_pct_w_val = false;
-	if has_w && (content_w != INF) {
+	let has_pct_w_val = if has_w && (content_w != INF) {
 		pct_w_val = content_w;
-		has_pct_w_val = true;
-	}
+		true
+	} else {
+		false
+	};
 	let mut kp: Vec<i32> = take_i32(l);
 	let mut y = pt;
 	let mut row_start = 0i32;
 	let mut cur_col_expected = 0i32;
 	let pi = p_new(l, node, ri);
 	for i in 0i32..(len_i32(&kids).wrapping_add(1i32)) {
-		let mut flushrow = i == (len_i32(&kids));
-		if (i < (len_i32(&kids))) && (ccol[idx(i)] < cur_col_expected) {
-			flushrow = true;
-		}
+		let flushrow = if (i < (len_i32(&kids))) && (ccol[idx(i)] < cur_col_expected) {
+			true
+		} else {
+			i == (len_i32(&kids))
+		};
 		if flushrow && (i > row_start) {
 			let mut row_h = 0.0f64;
 			for k in row_start..(i) {
@@ -1795,10 +1809,11 @@ pub fn grid_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &
 		l.child_pool.push(kp[idx(k)]);
 	}
 	l.p_child_len[idx(pi)] = len_i32(&l.child_pool).wrapping_sub(l.p_child_off[idx(pi)]);
-	let mut total_h = pt + pb;
-	if !kp.is_empty() {
-		total_h = (y - gap_cross) + pb;
-	}
+	let total_h = if kp.is_empty() {
+		pt + pb
+	} else {
+		(y - gap_cross) + pb
+	};
 	if !has_w {
 		let mut sumw = gaps_total;
 		for t in 0i32..(ntr) {
@@ -1816,10 +1831,7 @@ pub fn grid_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &
 		cn.pct_h,
 		line,
 	);
-	let mut own_h = total_h;
-	if oh.has {
-		own_h = oh.v;
-	}
+	let mut own_h = if oh.has { oh.v } else { total_h };
 	own_h = clamp(own_h, cn.min_h, cn.max_h, st.rs[idx(ri)].min_h, st.rs[idx(ri)].max_h);
 	l.p_w[idx(pi)] = own_w;
 	l.p_h[idx(pi)] = own_h;
@@ -1903,14 +1915,16 @@ pub fn stack_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: 
 	if has_h {
 		own_h = clamp(own_h, cn.min_h, cn.max_h, st.rs[idx(ri)].min_h, st.rs[idx(ri)].max_h);
 	}
-	let mut bw = ((cn.max_w).min(st.rs[idx(ri)].max_w) - pl) - pr;
-	if has_w {
-		bw = (own_w - pl) - pr;
-	}
-	let mut bh = ((cn.max_h).min(st.rs[idx(ri)].max_h) - pt) - pb;
-	if has_h {
-		bh = (own_h - pt) - pb;
-	}
+	let mut bw = if has_w {
+		(own_w - pl) - pr
+	} else {
+		((cn.max_w).min(st.rs[idx(ri)].max_w) - pl) - pr
+	};
+	let mut bh = if has_h {
+		(own_h - pt) - pb
+	} else {
+		((cn.max_h).min(st.rs[idx(ri)].max_h) - pt) - pb
+	};
 	if bw != INF {
 		bw = (0.0f64).max(bw);
 	}
@@ -1918,17 +1932,19 @@ pub fn stack_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: 
 		bh = (0.0f64).max(bh);
 	}
 	let mut pcw = 0.0f64;
-	let mut has_pcw = false;
-	if has_w && (bw != INF) {
+	let has_pcw = if has_w && (bw != INF) {
 		pcw = bw;
-		has_pcw = true;
-	}
+		true
+	} else {
+		false
+	};
 	let mut pch = 0.0f64;
-	let mut has_pch = false;
-	if has_h && (bh != INF) {
+	let has_pch = if has_h && (bh != INF) {
 		pch = bh;
-		has_pch = true;
-	}
+		true
+	} else {
+		false
+	};
 	let mut kids: Vec<u32> = take_u32(l);
 	crate::style::children(d, st, node, &mut kids);
 	let mut kp: Vec<i32> = take_i32(l);
@@ -2042,14 +2058,8 @@ pub fn canvas_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn:
 	if has_h {
 		own_h = clamp(own_h, cn.min_h, cn.max_h, st.rs[idx(ri)].min_h, st.rs[idx(ri)].max_h);
 	}
-	let mut cw = INF;
-	if has_w {
-		cw = (own_w - pl) - pr;
-	}
-	let mut ch = INF;
-	if has_h {
-		ch = (own_h - pt) - pb;
-	}
+	let cw = if has_w { (own_w - pl) - pr } else { INF };
+	let ch = if has_h { (own_h - pt) - pb } else { INF };
 	let mut kids: Vec<u32> = take_u32(l);
 	crate::style::children(d, st, node, &mut kids);
 	let mut kp: Vec<i32> = take_i32(l);
@@ -2059,42 +2069,46 @@ pub fn canvas_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn:
 		// determine its constraints.
 		let at = crate::style::attr_val(d, st, kids[idx(i)], crate::slir::A_AT);
 		let mut ax = 0.0f64;
-		let mut ay = 0.0f64;
-		if crate::style::is_tuple_v(at.tag) {
+		let ay = if crate::style::is_tuple_v(at.tag) {
 			ax = crate::style::tup_at(d, st, &at, 0i32);
-			ay = crate::style::tup_at(d, st, &at, 1i32);
-		}
+			crate::style::tup_at(d, st, &at, 1i32)
+		} else {
+			0.0f64
+		};
 		let anchor = crate::style::align_code(&crate::style::attr_enum_ref(
 			d,
 			st,
 			kids[idx(i)],
 			crate::slir::A_ANCHOR,
 		));
-		let mut mw = INF;
-		if cw != INF {
-			mw = (0.0f64).max(cw - ax);
-		}
-		let mut mh = INF;
-		if ch != INF {
-			mh = (0.0f64).max(ch - ay);
-		}
-		// Anchored children measure against the full canvas.
-		if anchor >= 0i32 {
-			mw = cw;
-			mh = ch;
-		}
+		let mw = if anchor >= 0i32 {
+			cw
+		} else if cw == INF {
+			INF
+		} else {
+			(0.0f64).max(cw - ax)
+		};
+		let mh = if anchor >= 0i32 {
+			ch
+		} else if ch == INF {
+			INF
+		} else {
+			(0.0f64).max(ch - ay)
+		};
 		let mut pcw = 0.0f64;
-		let mut has_pcw = false;
-		if cw != INF {
+		let has_pcw = if cw == INF {
+			false
+		} else {
 			pcw = cw;
-			has_pcw = true;
-		}
+			true
+		};
 		let mut pch = 0.0f64;
-		let mut has_pch = false;
-		if ch != INF {
+		let has_pch = if ch == INF {
+			false
+		} else {
 			pch = ch;
-			has_pch = true;
-		}
+			true
+		};
 		let c = Cons {
 			min_w:  0.0f64,
 			max_w:  mw,
@@ -2120,11 +2134,12 @@ pub fn canvas_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn:
 		);
 		let cri = l.p_ri[idx(p)];
 		let mut fx = 0.0f64;
-		let mut fy = 0.0f64;
-		if (anchor >= 0i32) && crate::style::is_nine(anchor) {
+		let fy = if (anchor >= 0i32) && crate::style::is_nine(anchor) {
 			fx = crate::style::nine_fx(anchor);
-			fy = crate::style::nine_fy(anchor);
-		}
+			crate::style::nine_fy(anchor)
+		} else {
+			0.0f64
+		};
 		l.p_x[idx(p)] = fx.mul_add(-l.p_w[idx(p)], pl + ax) + st.rs[idx(cri)].offset_x;
 		l.p_y[idx(p)] = fy.mul_add(-l.p_h[idx(p)], pt + ay) + st.rs[idx(cri)].offset_y;
 		kp.push(p);
@@ -2186,16 +2201,18 @@ pub fn text_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &
 	if has_h {
 		own_h = clamp(own_h, cn.min_h, cn.max_h, st.rs[idx(ri)].min_h, st.rs[idx(ri)].max_h);
 	}
-	let mut avail_w = ((cn.max_w).min(st.rs[idx(ri)].max_w) - pl) - pr;
-	if has_w {
-		avail_w = (own_w - pl) - pr;
-	}
+	let avail_w = if has_w {
+		(own_w - pl) - pr
+	} else {
+		((cn.max_w).min(st.rs[idx(ri)].max_w) - pl) - pr
+	};
 	let mut max_lines = -1i32;
 	let lh = crate::textm::line_h(st.rs[idx(ri)].size, st.rs[idx(ri)].leading);
-	let mut budget_h = (cn.max_h).min(st.rs[idx(ri)].max_h);
-	if has_h {
-		budget_h = own_h;
-	}
+	let budget_h = if has_h {
+		own_h
+	} else {
+		(cn.max_h).min(st.rs[idx(ri)].max_h)
+	};
 	if budget_h != INF {
 		max_lines = truncate_i32((1.0f64).max(((((budget_h - pt) - pb) + EPS) / lh).floor()));
 	}
@@ -2294,26 +2311,28 @@ pub fn text_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &
 		);
 	}
 	let pi = p_new(l, node, ri);
-	let mut w = own_w;
-	if !has_w {
-		w = clamp(
+	let w = if has_w {
+		own_w
+	} else {
+		clamp(
 			(l.tls[idx(ti)].w + pl) + pr,
 			cn.min_w,
 			cn.max_w,
 			st.rs[idx(ri)].min_w,
 			st.rs[idx(ri)].max_w,
-		);
-	}
-	let mut h = own_h;
-	if !has_h {
-		h = clamp(
+		)
+	};
+	let h = if has_h {
+		own_h
+	} else {
+		clamp(
 			(l.tls[idx(ti)].h + pt) + pb,
 			cn.min_h,
 			cn.max_h,
 			st.rs[idx(ri)].min_h,
 			st.rs[idx(ri)].max_h,
-		);
-	}
+		)
+	};
 	l.p_w[idx(pi)] = w;
 	l.p_h[idx(pi)] = h;
 	l.p_base[idx(pi)] = pt + l.tls[idx(ti)].ascent;
@@ -2449,10 +2468,11 @@ pub fn para_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &
 	if has_w {
 		own_w = clamp(own_w, cn.min_w, cn.max_w, st.rs[idx(ri)].min_w, st.rs[idx(ri)].max_w);
 	}
-	let mut avail = ((cn.max_w).min(st.rs[idx(ri)].max_w) - pl) - pr;
-	if has_w {
-		avail = (own_w - pl) - pr;
-	}
+	let avail = if has_w {
+		(own_w - pl) - pr
+	} else {
+		((cn.max_w).min(st.rs[idx(ri)].max_w) - pl) - pr
+	};
 	let flags = st.rs[idx(ri)].flags;
 	let nowrap = flags & crate::slir::F_NOWRAP != 0;
 	let ellipsis = flags & crate::slir::F_ELLIPSIS != 0;
@@ -2627,9 +2647,6 @@ pub fn para_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &
 				for _s in 0i32..(eff) {
 					l.para_chars.push(32u32);
 				}
-				for k in (w_a[idx(i)])..(w_b[idx(i)]) {
-					l.para_chars.push(l.para_chars[idx(k)]);
-				}
 			} else {
 				let gw = (f64::from(eff))
 					* crate::textm::char_w(
@@ -2649,9 +2666,9 @@ pub fn para_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &
 				seg_open = true;
 				seg_sri = sri;
 				seg_start = len_i32(&l.para_chars);
-				for k in (w_a[idx(i)])..(w_b[idx(i)]) {
-					l.para_chars.push(l.para_chars[idx(k)]);
-				}
+			}
+			for k in (w_a[idx(i)])..(w_b[idx(i)]) {
+				l.para_chars.push(l.para_chars[idx(k)]);
 			}
 		}
 		if seg_open {
@@ -2667,21 +2684,23 @@ pub fn para_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &
 		);
 		let so = l.pl_seg_off[idx(len_i32(&l.pl_seg_off).wrapping_sub(1i32))];
 		let sn = l.pl_seg_len[idx(len_i32(&l.pl_seg_len).wrapping_sub(1i32))];
-		let mut line_w = 0.0f64;
-		if sn > 0i32 {
-			line_w = l.seg_x[idx(so.wrapping_add(sn).wrapping_sub(1i32))]
-				+ l.seg_w[idx(so.wrapping_add(sn).wrapping_sub(1i32))];
-		}
+		let line_w = if sn > 0i32 {
+			l.seg_x[idx(so.wrapping_add(sn).wrapping_sub(1i32))]
+				+ l.seg_w[idx(so.wrapping_add(sn).wrapping_sub(1i32))]
+		} else {
+			0.0f64
+		};
 		l.pl_w.push(line_w);
 		max_w = max_w.max(line_w);
 		total_h += lh;
 	}
 	l.para_line_len.push(nl_used);
 	l.p_para[idx(pi)] = len_i32(&l.para_line_off).wrapping_sub(1i32);
-	let mut w = own_w;
-	if !has_w {
-		w = clamp((max_w + pl) + pr, cn.min_w, cn.max_w, st.rs[idx(ri)].min_w, st.rs[idx(ri)].max_w);
-	}
+	let w = if has_w {
+		own_w
+	} else {
+		clamp((max_w + pl) + pr, cn.min_w, cn.max_w, st.rs[idx(ri)].min_w, st.rs[idx(ri)].max_w)
+	};
 	let oh = resolve_len(
 		st,
 		st.rs[idx(ri)].h_kind,
@@ -2691,10 +2710,7 @@ pub fn para_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &
 		cn.pct_h,
 		line,
 	);
-	let mut h = (total_h + pt) + pb;
-	if oh.has {
-		h = oh.v;
-	}
+	let mut h = if oh.has { oh.v } else { (total_h + pt) + pb };
 	h = clamp(h, cn.min_h, cn.max_h, st.rs[idx(ri)].min_h, st.rs[idx(ri)].max_h);
 	l.p_w[idx(pi)] = w;
 	l.p_h[idx(pi)] = h;

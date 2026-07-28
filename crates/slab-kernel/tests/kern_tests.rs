@@ -2,7 +2,7 @@ macro_rules! kernel_tests {
     ($($name:ident => $test:path;)*) => {
         $(
             #[test]
-            #[allow(non_snake_case)]
+            #[allow(non_snake_case, reason = "test names mirror their module paths")]
             fn $name() {
                 $test();
             }

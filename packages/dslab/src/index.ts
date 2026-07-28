@@ -608,7 +608,11 @@ export class DriveClient {
    }
 
    /** Binds the client to custom newline-delimited SDP streams. */
-   static fromStreams(input: Readable, output: Writable, options?: DriveClientOptions): DriveClient {
+   static fromStreams(
+      input: Readable,
+      output: Writable,
+      options?: DriveClientOptions,
+   ): DriveClient {
       return new DriveClient(input, output, options);
    }
 

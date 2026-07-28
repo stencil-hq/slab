@@ -1,9 +1,11 @@
-//! `gen react` — the full `gen wc` file set plus a typed React wrapper
-//! (`<stem>.tsx`). The wrapper registers the custom elements via a
-//! side-effect import of the generated module, declares props/detail types
-//! locally, applies params as element properties through a typed interface,
-//! and wires signal handlers as `CustomEvent` listeners. React itself is the
-//! consumer's dependency; nothing here adds a package.
+//! React wrapper generator built on the custom-element generator.
+//!
+//! `gen react` emits the full `gen wc` file set plus a typed `<stem>.tsx`
+//! wrapper. The wrapper registers custom elements through a side-effect import
+//! of the generated module, declares props/detail types locally, applies params
+//! as element properties through a typed interface, and wires signal handlers
+//! as `CustomEvent` listeners. React itself is the consumer's dependency; this
+//! module adds no package.
 //!
 //! Outputs (deterministic, byte-stable across runs): everything
 //! [`crate::wc::generate`] emits, plus `<stem>.tsx`.

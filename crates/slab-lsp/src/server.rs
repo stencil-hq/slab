@@ -1,10 +1,12 @@
-//! Single-threaded LSP server; `handle(msg)` returns the outgoing messages
-//! (response and/or notifications), so the whole protocol is testable
-//! in-memory. Positions are UTF-16 code units per LSP; internal columns are
-//! `char` indices.
+//! Single-threaded LSP server; `handle(msg)` returns outgoing responses and
+//! notifications.
+//!
+//! The protocol is testable in-memory. Positions are UTF-16 code units per LSP;
+//! internal columns are `char` indices.
 
 use std::{
 	collections::{HashMap, HashSet},
+	fmt::Write as _,
 	path::{Component, Path, PathBuf},
 };
 
@@ -55,7 +57,7 @@ const fn severity(level: Level) -> i64 {
 
 /// `#rrggbb`, or `#rrggbbaa` when alpha < 255.
 fn rgba_hex(c: Rgba) -> String {
-	if c[3] >= 255 {
+	if c[3] == u8::MAX {
 		format!("#{:02x}{:02x}{:02x}", c[0], c[1], c[2])
 	} else {
 		format!("#{:02x}{:02x}{:02x}{:02x}", c[0], c[1], c[2], c[3])
@@ -98,7 +100,7 @@ fn path_uri(path: &Path) -> String {
 		if byte.is_ascii_alphanumeric() || matches!(byte, b'/' | b':' | b'-' | b'_' | b'.' | b'~') {
 			encoded.push(char::from(byte));
 		} else {
-			encoded.push_str(&format!("%{byte:02X}"));
+			write!(&mut encoded, "%{byte:02X}").expect("writing to String cannot fail");
 		}
 	}
 	format!("file://{encoded}")
@@ -185,7 +187,7 @@ impl Server {
 		let params = msg.get("params").cloned().unwrap_or_else(|| json!({}));
 		if let Some(mid) = mid {
 			// request
-			let known = self.is_known(&method);
+			let known = Self::is_known(&method);
 			if !known {
 				return vec![json!({"jsonrpc": "2.0", "id": mid, "error":
                     {"code": -32601, "message": format!("method not found: {method}")}})];
@@ -199,13 +201,13 @@ impl Server {
 				},
 				Err(e) => {
 					// never crash the loop on a bad request
-					let detail = panic_msg(&e);
+					let detail = panic_msg(e.as_ref());
 					vec![json!({"jsonrpc": "2.0", "id": mid, "error":
                         {"code": -32603, "message": format!("internal error: {detail}")}})]
 				},
 			}
 		} else {
-			if !self.is_known(&method) {
+			if !Self::is_known(&method) {
 				return Vec::new(); // unknown notification: ignore per spec
 			}
 			let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -218,7 +220,7 @@ impl Server {
 		}
 	}
 
-	fn is_known(&self, method: &str) -> bool {
+	fn is_known(method: &str) -> bool {
 		matches!(
 			method,
 			"initialize"
@@ -243,7 +245,7 @@ impl Server {
 	/// Returns (request result, notifications).
 	fn dispatch(&mut self, method: &str, p: &Value) -> (Value, Vec<Value>) {
 		match method {
-			"initialize" => (self.initialize(), Vec::new()),
+			"initialize" => (Self::initialize(), Vec::new()),
 			"shutdown" => {
 				self.shutdown = true;
 				(Value::Null, Vec::new())
@@ -261,7 +263,7 @@ impl Server {
 			"textDocument/definition" => (self.definition(p), Vec::new()),
 			"textDocument/documentSymbol" => (self.document_symbol(p), Vec::new()),
 			"textDocument/documentColor" => (self.document_color(p), Vec::new()),
-			"textDocument/colorPresentation" => (self.color_presentation(p), Vec::new()),
+			"textDocument/colorPresentation" => (Self::color_presentation(p), Vec::new()),
 			"textDocument/formatting" => (self.formatting(p), Vec::new()),
 			"slab/preview" => (self.preview(p), Vec::new()),
 			// initialized, didSave, $/cancelRequest
@@ -270,7 +272,7 @@ impl Server {
 	}
 
 	// -- lifecycle
-	fn initialize(&self) -> Value {
+	fn initialize() -> Value {
 		json!({
 			 "capabilities": {
 				  "textDocumentSync": {"openClose": true, "change": 2}, // 2 = Incremental
@@ -379,8 +381,7 @@ impl Server {
 			let lines = self
 				.index
 				.get(&owner)
-				.map(|index| index.lines.as_slice())
-				.unwrap_or(&[]);
+				.map_or(&[] as &[String], |index| index.lines.as_slice());
 			grouped.entry(owner).or_default().push(json!({
 				 "range": diag_range(lines, diagnostic.line),
 				 "severity": severity(diagnostic.level),
@@ -571,7 +572,7 @@ impl Server {
 		path.is_file().then(|| path_uri(&path))
 	}
 
-	fn import_path_items(&self, uri: &str, prefix: &str) -> Option<Vec<Value>> {
+	fn import_path_items(uri: &str, prefix: &str) -> Option<Vec<Value>> {
 		let trimmed = prefix.trim_start();
 		let after_keyword = trimmed.strip_prefix("import")?;
 		if !after_keyword.starts_with(char::is_whitespace) {
@@ -629,7 +630,7 @@ impl Server {
 		let uri = p["textDocument"]["uri"].as_str().unwrap_or_default();
 		let text = &index.lines[line];
 		let prefix_raw: String = text.chars().take(col).collect();
-		if let Some(items) = self.import_path_items(uri, &prefix_raw) {
+		if let Some(items) = Self::import_path_items(uri, &prefix_raw) {
 			return Value::Array(items);
 		}
 		let prefix = mask_strings(&prefix_raw);
@@ -701,8 +702,7 @@ impl Server {
 			let lines = self
 				.index
 				.get(&owner)
-				.map(|index| index.lines.as_slice())
-				.unwrap_or(&[]);
+				.map_or(&[] as &[String], |index| index.lines.as_slice());
 			return json!({"uri": owner, "range": rng(lines, 0, 0, 0)});
 		}
 
@@ -825,7 +825,7 @@ impl Server {
 		)
 	}
 
-	fn color_presentation(&self, p: &Value) -> Value {
+	fn color_presentation(p: &Value) -> Value {
 		let c = &p["color"];
 		let chan = |k: &str| -> u8 {
 			let v = (c[k].as_f64().unwrap_or(0.0) * 255.0).round();
@@ -859,7 +859,7 @@ impl Server {
 
 	// -- live preview (custom request)
 	/// Render the in-memory buffer to SVG: `slab/preview` custom request.
-	fn preview(&mut self, p: &Value) -> Value {
+	fn preview(&self, p: &Value) -> Value {
 		let uri = p["uri"].as_str().unwrap_or_default();
 		let src = self.docs.get(uri).cloned().unwrap_or_default();
 		let width = match p.get("width").and_then(Value::as_f64) {

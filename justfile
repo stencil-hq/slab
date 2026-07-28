@@ -4,8 +4,10 @@
 # by snapshotting each committed output before rebuilding it
 gen:
     cargo run -q -p xtask -- gen-caps
+    rustfmt --edition 2024 crates/slab-kernel/src/caps.rs
     cargo run -q -p xtask -- support-md
     cargo run -q -p xtask -- gen-proto
+    rustfmt --edition 2024 crates/slab-slir/src/pb.rs
     cd tree-sitter-slab && bun x tree-sitter generate
     # Kernel WASM bindings + bundled web runtime are untracked build outputs,
     # but slab-compile embeds slab-runtime.js via include_str!, so they must

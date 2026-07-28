@@ -255,10 +255,12 @@ pub fn render(source: &str, opts_json: &str, assets_json: &str) -> Result<String
 	render_with_sources(source, opts_json, assets_json, "{}")
 }
 
-/// Render a `.slab` source to SVG/PNG/APNG/TUI. `opts_json` shape:
-/// `{kind, client?, theme?, width, height, scale, t, dur, fps, states, env,
-/// sets, plain}`. `assets_json` = `{"<src>": "<base64>"}`. Returns
-/// `{file:{name, b64?|text?}, notes, summary}` as JSON.
+/// Render a `.slab` source to SVG, PNG, APNG, or TUI output.
+///
+/// `opts_json` has shape `{kind, client?, theme?, width, height, scale, t,
+/// dur, fps, states, env, sets, plain}`. `assets_json` is
+/// `{"<src>": "<base64>"}`. Returns `{file:{name, b64?|text?}, notes,
+/// summary}` as JSON.
 #[wasm_bindgen]
 pub fn render_with_sources(
 	source: &str,

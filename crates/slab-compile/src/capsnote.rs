@@ -7,8 +7,10 @@
 use slab_kernel::{capability, caps, flatten::Frame, slir::Doc};
 
 /// One-time capability notes for `slab render`: unsupported features plus
-/// degraded text keyframes. `skip` holds codes a driver already surfaced, so
-/// nothing reports twice. The CLI prints these strings; wasm returns them.
+/// degraded text keyframes.
+///
+/// `skip` holds codes a driver already surfaced, so nothing reports twice.
+/// The CLI prints these strings; wasm returns them.
 pub fn render_notes(doc: &Doc, fr: &Frame, client: u32, skip: &[String]) -> Vec<String> {
 	let client_index = usize::try_from(client).expect("client index exceeds usize");
 	let mut out = Vec::new();

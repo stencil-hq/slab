@@ -221,7 +221,10 @@ pub fn cmd_render(args: &[String]) -> ExitCode {
 fn run(a: &Args) -> Result<(), String> {
 	let kind = kind_of(a.out.as_deref(), a.client.as_deref())?;
 	let src = std::fs::read_to_string(&a.file).map_err(|e| format!("{}: {e}", a.file.display()))?;
-	let base_dir = a.file.parent().unwrap_or(Path::new(".")).to_path_buf();
+	let base_dir = a
+		.file
+		.parent()
+		.map_or_else(|| PathBuf::from("."), Path::to_path_buf);
 	let opts = Options {
 		embed_assets: true,
 		base_dir:     base_dir.clone(),

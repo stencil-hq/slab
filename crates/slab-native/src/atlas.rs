@@ -1,7 +1,8 @@
-//! A8 glyph atlas rasterized from runtime-registered or bundled fallback
-//! faces. Glyph ids and pen positions come EXCLUSIVELY from kernel
-//! `text_glyphs`; this module only turns (font, gid, px) into a shelf-packed
-//! alpha bitmap.
+//! A8 glyph atlas.
+//!
+//! Rasterized from runtime-registered or bundled fallback faces. Glyph ids and
+//! pen positions come EXCLUSIVELY from kernel `text_glyphs`; this module only
+//! turns (font, gid, px) into a shelf-packed alpha bitmap.
 
 use std::collections::HashMap;
 

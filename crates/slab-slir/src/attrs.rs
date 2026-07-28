@@ -1,6 +1,8 @@
-//! Attribute-name -> u16 id table. This table is normative: `spec/SLIR.md`
-//! mirrors it and `slab_kernel::slir` must match. Ids 39–44 and 89 include
-//! compiler/kernel channels; id 90 extends the authorable attribute set.
+//! Attribute-name -> u16 id table.
+//!
+//! This table is normative: `spec/SLIR.md` mirrors it and `slab_kernel::slir`
+//! must match. Ids 39–44 and 89 include compiler/kernel channels; id 90 extends
+//! the authorable attribute set.
 
 macro_rules! attr_table {
     ($( $const:ident = $id:literal, $name:literal; )*) => {

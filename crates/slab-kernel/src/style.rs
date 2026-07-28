@@ -2782,10 +2782,11 @@ pub fn peek_size(
 			dv = 1.0f64;
 		}
 	}
-	let mut attr = crate::slir::A_H;
-	if axis_w {
-		attr = crate::slir::A_W;
-	}
+	let attr = if axis_w {
+		crate::slir::A_W
+	} else {
+		crate::slir::A_H
+	};
 	crate::style::size_of(&crate::style::attr_val(d, st, node, attr), dk, dv)
 }
 

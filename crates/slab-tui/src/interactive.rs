@@ -6,6 +6,7 @@
 //! `--examples` gallery mode — swaps documents on Ctrl-N/Ctrl-P.
 
 use std::{
+	fmt::Write as _,
 	io::Write,
 	path::PathBuf,
 	time::{Duration, Instant},
@@ -165,14 +166,10 @@ impl Painter {
 				continue;
 			}
 			if self.truecolor {
-				self.buf.push_str(&format!(
-					";{base};2;{};{};{}",
-					(c >> 16) & 0xff,
-					(c >> 8) & 0xff,
-					c & 0xff
-				));
+				write!(self.buf, ";{base};2;{};{};{}", (c >> 16) & 0xff, (c >> 8) & 0xff, c & 0xff)
+					.expect("writing to String cannot fail");
 			} else {
-				self.buf.push_str(&format!(";{base};5;{}", x256(c)));
+				write!(self.buf, ";{base};5;{}", x256(c)).expect("writing to String cannot fail");
 			}
 		}
 		self.buf.push('m');
@@ -221,7 +218,8 @@ impl Painter {
 					continue;
 				}
 				if self.cur_pos != Some((r, c)) {
-					self.buf.push_str(&format!("\x1b[{};{}H", r + 1, c + 1));
+					write!(self.buf, "\x1b[{};{}H", r + 1, c + 1)
+						.expect("writing to String cannot fail");
 				}
 				self.sgr(fg, bg, g.flags[ix] & cells::CF_STRIKE != 0);
 				if g.cl[ix].is_empty() {
@@ -245,9 +243,8 @@ impl Painter {
 		let mut line: String = text.chars().take(usize::from(cols)).collect();
 		let pad = usize::from(cols).saturating_sub(line.chars().count());
 		line.extend(std::iter::repeat_n(' ', pad));
-		self
-			.buf
-			.push_str(&format!("\x1b[{row};1H\x1b[0;2m{line}\x1b[0m"));
+		write!(self.buf, "\x1b[{row};1H\x1b[0;2m{line}\x1b[0m")
+			.expect("writing to String cannot fail");
 		self.cur_fg = cells::NO_COLOR;
 		self.cur_bg = cells::NO_COLOR;
 		self.cur_pos = None;

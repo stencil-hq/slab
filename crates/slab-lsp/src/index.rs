@@ -1,8 +1,10 @@
-//! Per-document index: located tokens, definitions, token tree, symbols,
-//! color swatches, and a block map for completion context. A direct port of
-//! the research `_Indexer`: a lightweight structural walk over the shared
-//! lexer's token stream, with columns recovered by line scanning (the lexer
-//! keeps line numbers only). All columns are `char` indices into the line.
+//! Per-document index for tokens, definitions, and completion context.
+//!
+//! It stores located tokens, token trees, symbols, color swatches, and a block
+//! map. This direct port of the research `_Indexer` performs a lightweight
+//! structural walk over the shared lexer's token stream, recovering columns by
+//! line scanning because the lexer keeps line numbers only. All columns are
+//! `char` indices into the line.
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -617,12 +619,11 @@ impl Indexer {
 				let value = fmt_toks(&vals.iter().collect::<Vec<_>>());
 				let mut p: Vec<String> = path.to_vec();
 				p.push(name.text.clone());
-				self.ix.token_paths.entry(p.join(".")).or_insert((
-					value.clone(),
-					name.line,
-					name.col,
-					name.end,
-				));
+				self
+					.ix
+					.token_paths
+					.entry(p.join("."))
+					.or_insert_with(|| (value.clone(), name.line, name.col, name.end));
 				if !matches!(tree.get(&name.text), Some(TNode::Group(_))) {
 					tree.insert(name.text.clone(), TNode::Leaf(value.clone()));
 				}
@@ -686,7 +687,7 @@ impl Indexer {
 				.ix
 				.param_paths
 				.entry(path)
-				.or_insert((value.clone(), name.line, name.col, name.end));
+				.or_insert_with(|| (value.clone(), name.line, name.col, name.end));
 			let mut sym = Sym::new(name.text.clone(), 13, name.line, name.col, name.end);
 			sym.detail = value;
 			syms.push(sym);

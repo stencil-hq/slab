@@ -104,8 +104,8 @@ fn parse(args: &[String]) -> Result<Args, String> {
 			"--app" => a.app = Some(val("--app")?),
 			"--images" => {
 				let v = val("--images")?;
-				a.images =
-					images::Mode::parse(&v).ok_or(format!("bad --images '{v}' (auto|on|off)"))?;
+				a.images = images::Mode::parse(&v)
+					.ok_or_else(|| format!("bad --images '{v}' (auto|on|off)"))?;
 			},
 			"--env" => a.env.extend(val("--env")?.split(',').map(str::to_string)),
 			"--theme" => a.theme = Some(val("--theme")?),
@@ -144,8 +144,7 @@ fn documents(a: &Args) -> Result<(Vec<PathBuf>, usize), String> {
 		Some(p) if p.is_dir() => p.to_path_buf(),
 		Some(p) if p.is_file() => p
 			.parent()
-			.unwrap_or(std::path::Path::new("."))
-			.to_path_buf(),
+			.map_or_else(|| PathBuf::from("."), |path| path.to_path_buf()),
 		Some(p) => return Err(format!("{}: no such file or directory", p.display())),
 		None => PathBuf::from("examples"),
 	};
@@ -221,7 +220,7 @@ fn session(
 				warnings.push(w);
 			}
 		}
-		let base_dir = file.parent().unwrap_or(std::path::Path::new("."));
+		let base_dir = file.parent().unwrap_or_else(|| std::path::Path::new("."));
 		let imgpaint = images::Images::new(a.images, &doc.inst.doc, &doc.images, base_dir);
 		let ui = interactive::Ui {
 			fps: a.fps,

@@ -8,6 +8,8 @@
 //! With `--app player`, signals feed the `PlayerApp` and `TICK:ms` advances
 //! its play clock along with the frame clock.
 
+use std::fmt::Write as _;
+
 use slab_kernel::{cells, dispatch, frame as kframe};
 
 use crate::{app, player::PlayerApp};
@@ -199,7 +201,7 @@ pub fn run(
 		if list.is_empty() {
 			out.push_str("signals:\n");
 		} else {
-			out.push_str(&format!("signals: {}\n", list.join(" ")));
+			let _ = writeln!(out, "signals: {}", list.join(" "));
 		}
 	}
 	Ok(out)

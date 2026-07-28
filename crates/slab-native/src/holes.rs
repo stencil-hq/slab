@@ -9,10 +9,11 @@ use slab_kernel::{
 	frame::{self as kframe, Instance},
 };
 
-/// `FrameOp` provider for one hole. The renderer composites the returned
-/// frame translated into the hole rect and clipped to it; `instance()`
-/// exposes the backing kernel instance for `text_glyphs` and doc resources
-/// (fonts, gradients, paths).
+/// Provides frame content for a hole.
+///
+/// The renderer composites its frame translated into the hole rect and clipped
+/// to it. `instance()` exposes the backing kernel instance for `text_glyphs`
+/// and document resources (fonts, gradients, paths).
 pub trait HoleContent {
 	/// Hole viewport size changed (logical units) or env flags flipped.
 	fn resize(&mut self, w: f64, h: f64, dark: bool, coarse: bool);

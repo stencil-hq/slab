@@ -1,6 +1,8 @@
-//! `slab gen wc` support: compile one `export`ed def as a standalone SLIR
-//! document, its props promoted to params (SPEC §13: exported defs replace
-//! 0.5's stringly `children()` injection for dynamic lists).
+//! `slab gen wc` support for standalone exported definitions.
+//!
+//! It compiles one `export`ed def as a standalone SLIR document, with its
+//! props promoted to params (SPEC §13: exported defs replace 0.5's stringly
+//! `children()` injection for dynamic lists).
 //!
 //! Prop-type inference walks the def BODY's direct use sites:
 //! - text content of a `text`/`span`/`para` builtin, or a Text-valued attribute

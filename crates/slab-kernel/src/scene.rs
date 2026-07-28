@@ -134,8 +134,10 @@ pub fn focusables(sc: &Scene, out: &mut Vec<u32>) {
 }
 
 /// Reports whether an entry has nonempty painted geometry after non-scroll
-/// ancestor clips. Scroll viewports are ignored so off-screen content can
-/// remain in the focus ring and be revealed by keyboard traversal.
+/// ancestor clips.
+///
+/// Scroll viewports are ignored so off-screen content can remain in the focus
+/// ring and be revealed by keyboard traversal.
 pub fn focus_painted(sc: &Scene, index: usize) -> bool {
 	let Some(entry) = sc.entries.get(index) else {
 		return true;

@@ -1,8 +1,9 @@
-//! Text measurement using only the SLIR font tables; host metrics never enter
-//! the calculation. Wrapping follows the original `VectorMetrics` behavior:
-//! spaces split words (including empty words), non-breaking spaces remain
-//! glued, overlong words hard-break, and ellipsis truncation strips trailing
-//! whitespace. These details are part of the conformance contract.
+//! Text measurement using only SLIR font tables without host metrics.
+//!
+//! Wrapping follows the original `VectorMetrics` behavior: spaces split words
+//! (including empty words), non-breaking spaces remain glued, overlong words
+//! hard-break, and ellipsis truncation strips trailing whitespace. These
+//! details are part of the conformance contract.
 //!
 //! Advances come from the selected font table as
 //! `advance(glyph) * size / units_per_em + tracking`, with the default advance

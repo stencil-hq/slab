@@ -1,5 +1,5 @@
 {
-   "$schema": "https://biomejs.dev/schemas/2.0.0/schema.json",
+   "$schema": "https://biomejs.dev/schemas/2.5.5/schema.json",
    "formatter": {
       "enabled": true,
       "indentStyle": "space",
@@ -14,7 +14,7 @@
    "linter": {
       "enabled": true,
       "rules": {
-         "recommended": true,
+         "preset": "recommended",
          "style": {
             "useNamingConvention": "off"
          },
@@ -24,6 +24,16 @@
       }
    },
    "files": {
-      "includes": ["clients/**", "tools/**", "packages/**", "scripts/**", "site/**", "!**/dist/**", "!**/wasm/**", "!**/.venv/**", "!packages/slab/bin/**"]
+      "includes": [
+         "clients/**",
+         "tools/**",
+         "packages/**",
+         "scripts/**",
+         "site/**",
+         "!**/dist",
+         "!**/wasm",
+         "!**/.venv",
+         "!packages/slab/bin"
+      ]
    }
 }

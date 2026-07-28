@@ -285,9 +285,11 @@ pub fn test_hairlines_and_borders() {
 }
 
 /// Verifies that a stroked clip container re-asserts its outline after its
-/// children paint: an opaque fill flush with the box wipes the border glyphs
-/// (the stroke band is sub-cell), and the matching clip pop refills exactly
-/// the vacated ring cells while glyphs children drew on the ring survive.
+/// children paint.
+///
+/// An opaque fill flush with the box wipes the border glyphs (the stroke band
+/// is sub-cell), and the matching clip pop refills exactly the vacated ring
+/// cells while glyphs children drew on the ring survive.
 pub fn test_clip_outline_reassert() {
 	let doc = slir::doc_new();
 	let card = || {

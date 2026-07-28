@@ -54,7 +54,9 @@ pub const V_CUBIC: u8 = 2;
 pub const V_CLOSE: u8 = 4;
 
 /// Builds the squircle outline for a `w × h` box with uniform `radius` and
-/// Figma-style corner smoothing `smooth` (0..1), origin at the box top-left,
+/// smoothing.
+///
+/// Corner smoothing is Figma-style `smooth` (0..1), origin at the box top-left,
 /// clockwise. Returns document-encoded path data: verbs `0` move, `1` line,
 /// `2` cubic, `4` close, with coordinates in layout units.
 ///

@@ -24,8 +24,9 @@ const fn empty_value(kind: u32) -> ParamValue {
 	ParamValue { kind, num: 0.0, s: String::new(), rgba: 0, sym: String::new() }
 }
 
-/// Coerce the scalar spelling shared by CLI `--set` and SDP `param.set`,
-/// preserving the historical text/number/percentage/color/bool/enum rules.
+/// Coerce the scalar spelling shared by CLI `--set` and SDP `param.set`.
+///
+/// This preserves the historical text/number/percentage/color/bool/enum rules.
 /// Percentages accept `60` or `"60%"` and are unclamped: `pct` is the generic
 /// parent-relative percentage type, so values above 100% stay legitimate.
 pub fn coerce_scalar(kind: u32, raw: &str) -> Result<ParamValue, String> {
@@ -79,13 +80,13 @@ fn default_field_value(doc: &Doc, field: usize) -> ParamValue {
 	match kind {
 		0 => {
 			if decoded.tag == kslir::T_STR {
-				value.s = kslir::str_at(doc, decoded.h).to_owned();
+				value.s.clone_from(&doc.strs[decoded.h as usize]);
 			}
 		},
 		1 | 2 | 4 => value.num = decoded.num,
 		3 => value.rgba = decoded.h,
 		5 if decoded.tag == kslir::T_ENUM_SYM => {
-			value.sym = kslir::str_at(doc, decoded.h).to_owned();
+			value.sym.clone_from(&doc.strs[decoded.h as usize]);
 		},
 		_ => {},
 	}

@@ -1,8 +1,10 @@
-//! Web-component generation (moved lib-side from the CLI so the wasm build
-//! can emit the same `gen wc` outputs). Produces a self-contained browser ES
-//! module per document plus the shared minified web client and single Rust
-//! kernel compiled to WASM, bundled once by `just gen` and baked into the
-//! binary (so `gen wc` is relocatable and bun-free at run time).
+//! Web-component generation.
+//!
+//! Moved lib-side from the CLI so the wasm build can emit the same `gen wc`
+//! outputs. Produces a self-contained browser ES module per document plus the
+//! shared minified web client and single Rust kernel compiled to WASM, bundled
+//! once by `just gen` and baked into the binary (so `gen wc` is relocatable and
+//! bun-free at run time).
 //!
 //! Outputs (deterministic, byte-stable across runs):
 //! - `<stem>.js`  — plain browser ES module; imports `./slab-runtime.js`.
@@ -831,10 +833,12 @@ fn emit_dts(docs: &[DocSpec]) -> String {
 	m
 }
 
-/// The shared minified web client, bundled into `gen/web-runtime/slab-runtime.js`
-/// by `just web-runtime` (untracked; rebuild it before compiling this crate).
-/// `include_str!` keeps this a text sidecar and bakes it into the binary so
-/// `gen wc` needs no bun on PATH.
+/// The shared minified web client.
+///
+/// Bundled into `gen/web-runtime/slab-runtime.js` by `just web-runtime`
+/// (untracked; rebuild it before compiling this crate). `include_str!` keeps
+/// this a text sidecar and bakes it into the binary so `gen wc` needs no bun on
+/// PATH.
 pub const RUNTIME: &str =
 	include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../gen/web-runtime/slab-runtime.js"));
 
@@ -966,11 +970,12 @@ pub(crate) fn files_of(docs: &[DocSpec], w: &WcOptions, stem: &str) -> Vec<WcFil
 	files
 }
 
-/// Generate the full `gen wc` file set for a `.slab` source. `stem` is the
-/// output basename (the CLI passes the input file stem). Every successful set
-/// includes the text `slab-runtime.js` and binary `wasm/slab_kernel_bg.wasm`
-/// sidecars, plus `.slir` blobs under `--separate-ir`; the file list is `None`
-/// on compile failure.
+/// Generate the full `gen wc` file set for a `.slab` source.
+///
+/// `stem` is the output basename (the CLI passes the input file stem). Every
+/// successful set includes the text `slab-runtime.js` and binary
+/// `wasm/slab_kernel_bg.wasm` sidecars, plus `.slir` blobs under
+/// `--separate-ir`; the file list is `None` on compile failure.
 pub fn generate(
 	src: &str,
 	copts: &Options,

@@ -103,10 +103,12 @@ pub struct RenderOpts {
 	pub registered_fonts: Vec<RegisteredFont>,
 }
 
-/// Render output. `text` is true for the TUI kind (UTF-8 cells in `bytes`);
-/// otherwise `bytes` is binary (SVG/PNG/APNG). `notes` carries the one-time
-/// capability + tui-grid notes the front end prints to stderr; `summary` is
-/// the `({}x{}u …)` dimension annotation.
+/// Render output.
+///
+/// `text` is true for the TUI kind (UTF-8 cells in `bytes`); otherwise `bytes`
+/// is binary (SVG/PNG/APNG). `notes` carries the one-time capability + tui-grid
+/// notes the front end prints to stderr; `summary` is the `({}x{}u …)`
+/// dimension annotation.
 #[derive(Debug, Clone)]
 pub struct RenderOut {
 	pub bytes:   Vec<u8>,

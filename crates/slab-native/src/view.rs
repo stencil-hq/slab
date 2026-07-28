@@ -1,8 +1,10 @@
-//! `slab-native FILE.slab` — generic document viewer: compile the source
-//! in-process (assets resolve against the file's directory), hand SLIR to
-//! the kernel, and drive the same winit/wgpu loop as the demos. Signals
-//! print to stdout; holes render empty (hole content is app territory —
-//! mount a child instance like `--demo settings` does when you need one).
+//! Generic `slab-native FILE.slab` document viewer.
+//!
+//! Compiles the source in-process (assets resolve against the file's
+//! directory), hands SLIR to the kernel, and drives the same winit/wgpu loop as
+//! the demos. Signals print to stdout; holes render empty (hole content is app
+//! territory — mount a child instance like `--demo settings` does when you need
+//! one).
 //!
 //! # Window chrome contract (`--undecorated`)
 //! Borderless windows flip the document-global state `undecorated` on, so a
@@ -178,7 +180,10 @@ pub fn act_signal(doc: &Doc, node: u32) -> Option<&str> {
 /// work.
 pub fn run(path: &Path, opts: demo::Opts) -> Result<(), String> {
 	let src = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
-	let base = path.parent().unwrap_or(Path::new(".")).to_path_buf();
+	let base = path
+		.parent()
+		.unwrap_or_else(|| Path::new("."))
+		.to_path_buf();
 	let name = path
 		.file_stem()
 		.and_then(|s| s.to_str())

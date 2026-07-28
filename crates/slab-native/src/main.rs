@@ -36,7 +36,7 @@ fn main() -> ExitCode {
 	let mut file: Option<String> = None;
 	let mut opts = demo::Opts::default();
 	let mut size_set = (false, false);
-	let mut it = args.iter().peekable();
+	let mut it = args.iter();
 	let err = |m: String| -> ExitCode {
 		eprintln!("error: {m}");
 		eprint!("{USAGE}");

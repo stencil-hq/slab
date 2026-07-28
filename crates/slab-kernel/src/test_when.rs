@@ -169,7 +169,8 @@ pub fn test_theme_cond() {
 		!when::eval_cond(&doc, 12, 0, &env, &states, &param_values, 0.0, 0.0),
 		"base is not dusk"
 	);
-	env.theme = "dusk".to_owned();
+	env.theme.clear();
+	env.theme.push_str("dusk");
 	assert!(when::eval_cond(&doc, 12, 0, &env, &states, &param_values, 0.0, 0.0), "dusk matches");
 }
 
