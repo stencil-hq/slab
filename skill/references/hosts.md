@@ -216,7 +216,9 @@ Signals are the document's only app outputs. Bind them directly on an authored
 node or in a `when` patch on that same node. Conditional signal names are
 registered statically and dispatch only while their branch is active.
 - `act=NAME`: Activate (trigger 0), ordinary keyboard/pointer activation.
-- `field=NAME`, `submit=NAME`: Change (1) / Submit (2), committed text.
+- `field=NAME`, `submit=NAME`: Change (1) / Submit (2), committed text. A
+  rich-field Change also carries the parallel runs payload (web
+  `detail.runs`, native `Effects.sig_runs`).
 - `cancel=NAME`: Cancel (14), on escape-blur of that field, with the retained
   buffer text; requires `field=` and the `escape-blur` flag.
 - `press=NAME`: Press (3), primary pointer-down before capture.
@@ -331,8 +333,8 @@ Add `drag-ghost` only with `drag=` to duplicate the source subtree at the
 pointer while preserving its grab offset. The kernel paints it at opacity
 0.72 above ordinary ops and excludes it from scene, hit testing, and a11y.
 Do not implement a parallel host ghost. Web signals remain bubbling, composed
-`CustomEvent`s with `detail={item,meta[,text]}`; generated Rust uses one shared
-`SignalMeta` on every `Signal` variant.
+`CustomEvent`s with `detail={item,meta[,text][,runs]}`; generated Rust uses
+one shared `SignalMeta` on every `Signal` variant.
 
 ## Exported defs
 
@@ -493,6 +495,13 @@ mounted, in first-occurrence order, queryable at any time (an intermediate
 clean solve never consumes it; SLIR swaps reset it). Late-attaching consumers
 read `diagnostics` for history and `lastFrame?.diagnostics` for the current
 solve.
+
+The element also emits `slab-range-edit` (bubbling, composed) when an active
+cross-field range defers an edit to the host; its detail is the complete
+`RangeEdit` request, and rich-field Change events carry parsed `detail.runs`.
+Both `SlabRangeEditDetail` and the `FieldRun`/`FieldRuns`/`RangeEdit`/
+`RangeEndpoint` types are exported from `@stencil-hq/wslab`. See the Editing
+sections below for the full contract.
 
 Deferred conditional subtrees require an explicit settlement boundary. Reveal,
 settle, then focus/seed using only typed APIs:
@@ -695,6 +704,11 @@ emitted signals to its model. Use `slab_drive::serve` for a blocking NDJSON
 loop and `RequestPump` from a window or terminal event loop. The complete
 framing, addressing, method, callback, and reload contract is normative in
 [`spec/SDP.md`](../../spec/SDP.md).
+
+SDP mirrors the field editing surface: `field.caret.get/set`,
+`field.runs.get/set`, `field.style.toggle`, and `field.range.get/clear` use
+the same canonical keys and payloads as the Instance API, and `input.event`
+accepts optional composition `clauses`.
 
 Parameter writes keep deferred-solve semantics. A transition starts at the
 first solve that observes the changed value. For a settled snapshot, use
@@ -1022,6 +1036,28 @@ fn inst_set_divider(i: &mut Instance, key: &str, extent: f64) -> bool
 fn inst_get_divider(i: &Instance, key: &str) -> f64
 fn inst_set_field_text(i: &mut Instance, key: &str, text: &str) -> bool
 fn inst_field_text(i: &Instance, key: &str) -> Option<String>
+
+fn inst_set_caret(i: &mut Instance, key: &str, caret: i32, anchor: i32) -> bool
+fn inst_set_caret_goal(i: &mut Instance, key: &str, caret: i32, anchor: i32,
+                       goal_x: f64) -> bool
+fn inst_get_caret(i: &Instance, key: &str) -> Option<CaretState>
+fn inst_field_runs(i: &Instance, key: &str) -> Option<FieldRuns>
+fn inst_set_field_runs(i: &mut Instance, key: &str, runs: &FieldRuns) -> bool
+fn inst_toggle_style(i: &mut Instance, key: &str, style: u32) -> bool
+fn inst_get_range(i: &Instance) -> Option<(FieldLocator, FieldLocator)>
+fn inst_clear_range(i: &mut Instance) -> bool
+fn inst_snapshot_fields(i: &Instance, locators: &[&str]) -> Option<FieldSnapshot>
+fn inst_commit_fields(i: &mut Instance, locators: &[&str]) -> bool
+fn inst_restore_fields(i: &mut Instance, snapshot: &FieldSnapshot) -> bool
+
+struct CaretState { caret: i32, anchor: i32, composing: bool, goal_x: f64 }
+struct FieldRun { style: u32, start: i32, end: i32 } // 0 bold | 1 italic |
+                                          // 2 underline | 3 strike | 4 code
+struct FieldRuns { revision: u64, runs: Vec<FieldRun> }
+struct FieldLocator { key: String, offset: i32 }
+struct FieldSnapshotEntry { locator: String, text: String, runs: FieldRuns,
+                            caret: i32, anchor: i32, goal_x: f64 }
+struct FieldSnapshot { fields: Vec<FieldSnapshotEntry> }
 fn inst_focus(i: &Instance) -> u32
 fn inst_clear_focus(i: &mut Instance) -> bool
 fn inst_focus_note(i: &Instance) -> &str
@@ -1033,14 +1069,27 @@ Root-list `path=""`, scroll `axis`, and Event `clicks` are required; old
 pathless/axisless shapes have no compatibility overload. Setters are total,
 atomic, and dirty only on an actual change. `inst_set_field_text` returns
 `false` for unknown or non-field keys. It works while focused or blurred,
-resets composition, selection, and undo/redo, places the caret at the end,
-synchronizes a same-named Text param, and queues Change for
-`inst_take_signals`.
+resets composition, selection, and undo/redo, clears existing rich spans,
+places the caret at the end, synchronizes a same-named Text param, and queues
+Change for `inst_take_signals`. Rich hosts replace text first, then call
+`inst_set_field_runs`, which swaps all five span sets as one undo step without
+touching text (offsets clamp to bounds and grapheme boundaries; unknown styles
+or reversed ranges reject atomically; the supplied revision is informational).
+`inst_toggle_style` acts only on a non-empty selection: fully covered removes,
+any partial coverage adds and normalizes. `inst_set_caret` focuses a painted
+field with a hidden ring and installs a directed selection;
+`inst_set_caret_goal` first picks the visual line for `caret`, then snaps to
+the nearest shaped stop at `goal_x` — use it to carry the visual column across
+block boundaries. Snapshot/commit/restore are the structural-transaction triad
+(see Editing below); capture is pure, commit empties both history directions
+as a hard boundary, and restore is all-or-nothing.
 
 ```rust
 struct Event {
   etype: u32, x: f64, y: f64, dx: f64, dy: f64,
-  button: u32, clicks: u32, key: String, text: String, mods: u32,
+  button: u32, clicks: u32, key: String, text: String,
+  clauses: Vec<(i32, i32)>, // composition-update preedit clause ranges
+  mods: u32,
 }
 struct SigMeta {
   x: f64, y: f64, dx: f64, dy: f64, drag_dx: f64, drag_dy: f64,
@@ -1050,13 +1099,21 @@ struct SigMeta {
   cancelled: bool, dropped: bool,
 }
 struct ScrollChange { key: String, axis: u32, off: f64 }
+struct RangeEndpoint { key: String, offset: i32 }
+struct RangeEdit {
+  kind: u32, // 0 text | 1 paste | 2 cut | 3 Backspace |
+             // 4 Delete | 5 composition | 6 copy
+  anchor: RangeEndpoint, head: RangeEndpoint, text: String,
+}
 struct Effects {
   repaint: bool,
   sig_name: Vec<u32>,       // document STRS refs
   sig_text: Vec<String>,
+  sig_runs: Vec<String>,    // rich-field {"rev":N,"runs":[...]} JSON; else ""
   sig_item: Vec<String>,
-  sig_meta: Vec<SigMeta>,   // all four arrays have equal length
+  sig_meta: Vec<SigMeta>,   // all five arrays have equal length
   scrolls: Vec<ScrollChange>,
+  range_edit: Option<RangeEdit>,
   has_caret: bool, caret_x: f64, caret_y: f64, caret_w: f64, caret_h: f64,
   has_ime: bool, ime_x: f64, ime_y: f64, ime_w: f64, ime_h: f64,
   cursor: u32, focus: u32,
@@ -1068,10 +1125,16 @@ struct Effects {
 `focus=0xFFFFFFFF` means none; honor caret/IME rectangles only when their
 `has_*` flag is true.
 The WASM `KInst` mirrors these as snake-case methods (`set_field_text`,
-`field_text`, `focus`, `param_json`, `set_list_len`, `img_register`,
-`set_scroll`, `reveal_item`, `each_window_json`, …). Its exact event call is
-`dispatch_json(type,x,y,dx,dy,button,key,text,modifiers,clicks)`; the returned
-JSON contains the complete Effects shape.
+`field_text`, `set_caret`, `get_caret_json`, `field_runs_json`,
+`set_field_runs_json`, `toggle_style`, `get_range_json`, `clear_range`,
+`focus`, `param_json`, `set_list_len`, `img_register`, `set_scroll`,
+`reveal_item`, `each_window_json`, …). Caret JSON maps the native negative
+`goal_x` sentinel to null; runs JSON uses the Change payload
+`{"rev":u64,"runs":[{"style","start","end"}]}`; range JSON is null or
+`{"anchor":{"key","offset"},"head":{"key","offset"}}`. Its exact event call is
+`dispatch_json(type,x,y,dx,dy,button,key,text,modifiers,clicks,clauses_json)`
+where the trailing optional argument is a `[[start,end],...]` JSON array of
+composition clauses; the returned JSON contains the complete Effects shape.
 
 ## Dispatch model
 
@@ -1089,8 +1152,25 @@ double/triple); web uses `PointerEvent.detail`. A native counter should match
 the reference window: same button, at most 500ms, and at most 4u from the
 previous down.
 
+For `composition-update`, `text` is the preedit and `clauses` is the ordered
+list of `(start, end)` codepoint ranges within it (IME clause segmentation).
+Empty or single-entry metadata means one whole-preedit clause — the required
+fallback for hosts without clause support; multi-clause ranges clamp to the
+preedit bounds. The marked text is an overlay at the caret, never committed
+buffer content; each non-empty clause paints its own font-derived underline,
+and composition end clears clause state before committing through the normal
+splice. JSON traces and SDP `input.event` spell it as
+`{"type":"composition-update","text":"…","clauses":[[start,end],...]}` with
+`clauses` optional; malformed clause metadata degrades atomically to an empty
+list rather than rejecting the event.
+
 Primary (`button=0`) down fires `press`, arms the deepest `drag`, captures,
-and focuses. Secondary (`button=2`) down fires `context` without press/focus.
+and focuses. On an editable field it also places the active caret at the
+shaped hit position; a plain down collapses that field's local selection,
+Shift preserves the fixed end, and Shift into a different field forms a
+cross-field range (see Editing). Secondary (`button=2`) down fires `context`
+without press/focus effects; on an editable focusable field it applies
+pointer-grade focus and preserves a selection containing the hit caret.
 A bound down with `clicks >= 2` fires `dblclick` and suppresses later
 Activate. Forward
 each move's event-local `dx/dy`; the kernel routes PointerMove, computes
@@ -1367,3 +1447,100 @@ For a `when`-gated field, first make its controlling param true and await
 `whenSettled()` again, then `setFocus` and `setFieldText`. Immediate field or
 focus writes before the first settlement return `false` because the key is not
 yet retained.
+
+### Rich fields (styled runs)
+
+A field retains five independent inline span sets beside its committed
+string: bold, italic, underline, strike, and code (style codes `0..4`).
+Offsets are codepoint offsets on grapheme boundaries; each set normalizes to
+sorted, disjoint, non-empty half-open ranges. Code runs use the document's
+monospace family plus the node's `code-color`/`code-bg` paints; the other
+four keep the node's resolved paints. Editing splices keep spans attached the
+way editors expect: typing immediately after a bold range stays bold, typing
+immediately before it does not. Caret, selection, and wrapping still use the
+single shaped layout across span boundaries.
+
+- `inst_toggle_style` / KInst `toggle_style` / SDP `field.style.toggle`
+  toggles one style over the current non-empty selection as one undo step
+  (empty selection is a deliberate no-op — the kernel never expands to a
+  word).
+- `inst_field_runs` / `inst_set_field_runs` (KInst `field_runs_json` /
+  `set_field_runs_json`, SDP `field.runs.get/set`) read and atomically
+  replace all five sets without touching text.
+- Text stays the compatibility value: Change carries the full text in
+  `sig_text` and the parallel `sig_runs` JSON
+  `{"rev":N,"runs":[{"style","start","end"}]}` (style-major, ascending). The
+  web element parses it into the signal's `detail.runs`.
+- Every committed local text-or-span change, including undo/redo, increments
+  the field's monotonic `revision`; a same-named Text-param reset is host
+  reconciliation — it clears spans with the replacement text but neither
+  emits Change nor increments the revision. Remember the revision of your own
+  write and ignore the echoed Change payload carrying it, while accepting
+  later revisions.
+- Block-split round trip: read text + runs, split every crossing range at the
+  boundary and rebase the right half, write each field's string, then each
+  half's runs — reading both fields returns those normalized spans exactly.
+
+### Cross-field ranges (block editors)
+
+One field per block, blocks from a keyed `list(Def)`, selection across blocks
+through the kernel's single range primitive. The retained range is two
+endpoints of `(escaped canonical full field key, codepoint offset)` — stable
+list-item identity, never node IDs or scene indices — re-resolved on every
+dispatch and solve, so keyed reorder changes direction without changing
+identity; a genuinely unresolvable key invalidates the range.
+
+- Shift-primary-down in another field forms the range directly: the focused
+  editor's fixed anchor stays the logical anchor, the hit field takes focus
+  and the head. Endpoint fields paint partial selection bands, materialized
+  fields strictly between paint full-text bands; a de-windowed virtual
+  endpoint stays queryable but paints nothing. Whole-row Notion-style tint is
+  host state paint, not a kernel op.
+- Shift+arrow at a field boundary bubbles unconsumed; the host picks the
+  adjacent block and calls `inst_set_caret` there — an edge-anchored caret
+  with an opposite-edge selection composes the two local selections into the
+  same cross-field range.
+- `inst_get_range` / KInst `get_range_json` / SDP `field.range.get` return
+  `(anchor, head)`; `inst_clear_range` / `clear_range` / `field.range.clear`
+  drop only the range metadata, keeping every field's local EditState.
+- While a range is active, field-local mutation is forbidden. Text, paste,
+  cut, Backspace, Delete, copy, and composition instead emit one pre-mutation
+  `Effects.range_edit` `{kind, anchor, head, text}` (kinds: 0 text, 1 paste,
+  2 cut, 3 Backspace, 4 Delete, 5 composition, 6 copy; `text` empty for
+  deletion/cut/copy). Field bytes, local selections, and the range stay
+  unchanged until the host applies the edit atomically to its block model and
+  pushes list/field state back. The web element re-emits it as a bubbling,
+  composed `slab-range-edit` CustomEvent whose detail is the full `RangeEdit`.
+- Invalidation is exact: plain pointer-down, blur/close, any other focus
+  move, an endpoint text replacement through the host API or a synced param,
+  or an unmodified caret command that moves an endpoint removes the range;
+  Shift movement inside the head field only updates the head offset.
+
+### Structural field transactions
+
+The kernel owns field state, never host block structure, so Enter-split,
+Backspace-merge, and range edits need the snapshot/commit/restore triad for
+one atomic structure-plus-fields undo entry:
+
+1. `inst_snapshot_fields(locators)` — pure, all-or-nothing capture of every
+   affected pre-mutation field: canonical locator, text, normalized runs,
+   caret/anchor, goal-x, revision. IME preedit is not committed state and is
+   not captured.
+2. Attempt the host structure mutation and write resulting strings, runs, and
+   carets into the instance. On abort, drop the snapshot — local undo is
+   untouched.
+3. `inst_commit_fields(locators)` for every affected field still bound
+   (including new split fields; removed fields need not be listed) — empties
+   undo and redo for all of them as the hard history boundary — then push one
+   host undo entry `{structure_delta, field_snapshot}`.
+4. Host undo reverts `structure_delta` first (so every captured locator
+   resolves again), then `inst_restore_fields(snapshot)` — preflighted and
+   all-or-nothing; it restores text/runs/selection/goal-x/revision exactly,
+   clears composition and any cross-field range, syncs Text params, emits
+   Change for changed content, and leaves both history directions empty.
+
+Ctrl/Meta-Z at the restored baseline is a kernel no-op that bubbles, so a
+bound `keys=z` shortcut can invoke the host's next structural undo. Restore
+adopts the captured revision — the one exception to monotonic revisions.
+The snapshot's JSON form is plain data with no kernel handles (schema in
+`spec/FRAME.md`).

@@ -148,10 +148,35 @@ constants. Human-authored probes MAY use unique ids and id-rooted suffixes.
 | `param.get` | `{name}` | Returns the live kernel `{value}`. |
 | `field.set` | `{key,text}` | Returns `{ok:true,changed}`; a key that is not a field is a `-32000` error. |
 | `field.get` | `{key}` | Returns committed edit text or resolved initial content; same non-field error. |
+| `field.caret.get` | `{key}` | Returns `{caret,anchor,goal_x,composing}`; `goal_x` is null when no vertical goal is active. |
+| `field.caret.set` | `{key,caret,anchor,goal_x?}` | Sets a directed selection; null or omitted `goal_x` resets the goal. Returns `{ok:true,changed:true}`. |
+| `field.runs.get` | `{key}` | Returns canonical rich runs as `{rev,runs:[{style,start,end}]}`. |
+| `field.runs.set` | `{key,rev,runs:[{style,start,end}]}` | Atomically replaces rich runs and returns `{ok:true,changed}`. |
+| `field.style.toggle` | `{key,style}` | Toggles style `0..4` over the current selection and returns `{ok:true,changed}`. |
+| `field.range.get` | none | Returns `{range:{anchor:{key,offset},head:{key,offset}}}` or `{range:null}`. |
+| `field.range.clear` | none | Clears cross-field metadata and returns `{ok:true,changed}`. |
 | `state.set` | `{name,on}` | Sets a global runtime state. |
 | `state.node` | `{key,name,on}` | Sets state on one resolved node. |
 | `focus.get` | none | `{focus,key,visible}`; `slir::NONE` represents no focus. |
 | `focus.set` | `{key,visible?}` | Moves focus; `visible` defaults to true. |
+
+Caret offsets and rich-run endpoints are signed codepoint offsets clamped by
+the kernel to grapheme boundaries. Caret direction is preserved: `caret` is
+the active endpoint and `anchor` is fixed. A finite nonnegative `goal_x`
+selects and retains the shaped stop used by vertical movement. `composing` is
+query-only and reports active IME composition.
+
+The rich-run wire schema is exactly the Change signal `runs` schema:
+`{"rev":u64,"runs":[{"style":u32,"start":i32,"end":i32}]}`. Styles are
+`0 bold | 1 italic | 2 underline | 3 strike | 4 code`; ranges are half-open.
+The supplied revision is informational and a changed write increments the
+field's local revision. A malformed run, caret, or style payload rejects only
+that request with `-32602`; decoding is atomic. Unknown/non-field locators and
+unavailable caret targets use `-32000`.
+
+Range endpoints use canonical `FieldLocator` objects
+`{"key":string,"offset":i32}`. Keys include escaped stable list-item identity,
+matching `inst_get_range` in FRAME.md.
 
 A successful standalone load preserves the desired environment, registered
 fonts, and valid named theme, but creates a fresh instance: params, lists,
@@ -225,7 +250,7 @@ centering happens in the uncovered region (SPEC.md §15.5 is normative).
 | `scene.find` | `{text}` | Case-sensitive scene-ordered text matches. |
 | `frame.dump` | none | Canonical conformance frame JSON. |
 | `frame.summary` | none | Canonical focus, edit, and scroll summary. |
-| `input.event` | one trace event | Dispatches a validated kernel event. |
+| `input.event` | `{type,...,text?,clauses?}` trace event | Dispatches a validated kernel event; composition clauses use optional `[[start,end],...]` codepoint pairs. |
 | `input.pointer` | `{type:"move"|"down"|"up",x,y,button?,clicks?,mods?}` | Dispatches one pointer event. |
 | `input.click` | `{key,...}` or `{x,y,...}` | Dispatches move, down, and up and merges their effects. |
 | `input.wheel` | `{x,y,dx?,dy,mods?}` | Dispatches one wheel event. |
@@ -237,9 +262,20 @@ centering happens in the uncovered region (SPEC.md §15.5 is normative).
 | `render.cells` | `{plain?,caret?,path?}` | UTF-8 terminal cells, dimensions, and notes. |
 | `render.apng` | `{dur?,fps?,scale?,path?}` | Deterministic APNG, frame count, and advanced clock. |
 
+For `type:"composition-update"`, `text` is the preedit and optional `clauses`
+is an ordered JSON array of two-element signed-integer codepoint ranges:
+`[[start,end],...]`. Omission, an empty array, or any malformed clause payload
+degrades to no metadata, which FRAME.md defines as one whole-preedit clause;
+malformed clauses do not reject the SDP request.
+
 Modifiers are `shift`, `alt`, `ctrl`, and `meta`. Input success returns
 `{effects,t}`. Effects contain repaint, ordered signals and metadata, changed
-scroll offsets, caret and IME rectangles, cursor, and focus. Signal metadata
+scroll offsets, caret and IME rectangles, cursor, and focus. A rich-field
+Change signal additionally contains `runs` in the exact `{rev,runs}` schema
+defined above. A deferred cross-field edit additionally contains
+`range_edit:{kind,anchor,head,text}` with the canonical endpoint objects
+defined above; kind values are `0 text | 1 paste | 2 cut | 3 Backspace |
+4 Delete | 5 composition | 6 copy`. Signal metadata
 `key` is always the emitter node path; pointer-derived signals additionally
 carry `hit_key` (the deepest hit-target canonical key) and keyboard-driven
 activations carry `pressed_key` (the key name). Both fields are omitted when

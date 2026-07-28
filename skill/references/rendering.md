@@ -30,15 +30,17 @@ slir-dump text.
 
 ## Frame ops
 
-`Frame { width, height, ops, scene, strings, paths_rt }` uses absolute logical
-coordinates and is already sampled at `t`; there are no animation ops.
+`Frame { width, height, ops, scene, strings, uncovered, glyphs, paths_rt }`
+uses absolute logical coordinates and is already sampled at `t`; there are no
+animation ops.
 
 ```rust
 struct Frame {
   width: f64, height: f64, ops: Vec<FrameOp>, scene: Vec<SceneNode>,
-  strings: Vec<String>, paths_rt: Vec<RtPath>,
-  diagnostics: Vec<FrameDiagnostic>,
+  strings: Vec<String>, uncovered: Vec<u32>, glyphs: Vec<FrameGlyph>,
+  paths_rt: Vec<RtPath>, diagnostics: Vec<FrameDiagnostic>,
 }
+struct FrameGlyph { font: i32, gid: u32, cluster: i32, x: f64, y: f64, size: f64 }
 struct RtPath { verbs: Vec<u8>, coords: Vec<f64> }
 // Retained scene also carries main/cross scroll geometry and the complete
 // role/name/state/relation/value/live accessibility contract.
@@ -46,7 +48,8 @@ struct RtPath { verbs: Vec<u8>, coords: Vec<f64> }
 
 ```
 Rect      {node x y w h radius; bg/stroke; dash/shadows; opacity; smooth; grain}
-Text      {node x y_baseline string-ref measured-w font size weight tracking color strike}
+Text      {node x y_baseline string-ref measured-w font size weight tracking color
+           strike italic underline(+offset,thickness) rtl glyph-run uncovered-run}
 Image     {node x y w h img fit radius opacity smooth}        // unified image index
 PathDraw  {node dx dy path bg stroke stroke-w dash opacity}   // signed path ref
 ClipPush {x y w h radius smooth} / ClipPop
@@ -62,9 +65,17 @@ Every paint op carries its node id. `PathDraw.path >= 0` indexes the document
 PATH table; a negative value indexes `paths_rt[!path]`, whose entry is
 `RtPath { verbs, coords }`. Runtime entry zero is therefore `-1`.
 Scale/rotate/tilt/group/clip stacks are balanced.
-`strike` paints a line-through over the kernel-provided `measured-w`; it never
-changes text layout. `diagnostics` carries current layout findings and one-shot
-runtime notes such as `glyph-missing`.
+`strike` and `underline` paint decorations over the kernel-provided
+`measured-w` (underline offset/thickness come from the font); `italic` means
+select or synthesize an oblique face. None of them changes text layout.
+`rtl` marks right-to-left glyph order; each Text op addresses its positioned
+glyphs (`Frame.glyphs`) and uncovered-glyph codepoint runs
+(`Frame.uncovered`) by offset/len — fallback painters draw exactly the
+uncovered slices inside kernel-charged advances. Field selection bands,
+cross-field range bands, rich-field `code-bg` runs, and per-clause IME
+underlines all arrive as ordinary kernel-emitted ops in paint order; drivers
+never synthesize them. `diagnostics` carries current layout findings and
+one-shot runtime notes such as `glyph-missing`.
 
 `drag-ghost` introduces no driver API or semantic node. While active, flatten
 appends a 0.72-opacity duplicate of the resolved source subtree at the cursor,

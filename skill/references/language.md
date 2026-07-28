@@ -268,10 +268,13 @@ the last line with `…`. A `para nowrap ellipsis` is one composite line across
 all spans; the ellipsis inherits the last retained span's style.
 `align-text=start|center|end`. Inheritance
 whitelist (the ONLY inheritance in Slab): `color family size weight
-leading tracking strike`. `leading` = line-height multiplier (default 1.4);
-`tracking` = letter-spacing in u after every glyph. `strike` is a boolean,
-defaults to false, and bare `strike` means true; it changes paint only, never
-measurement, wrapping, or line height.
+leading tracking strike italic underline`. `leading` = line-height multiplier
+(default 1.4); `tracking` = letter-spacing in u after every glyph. `strike`,
+`italic`, and `underline` are booleans (default false; the bare flag means
+true). `strike` and `underline` are paint-only decorations — underline offset
+and thickness come from the selected font — and `italic` selects or
+synthesizes an oblique face; none of them changes measurement, wrapping, or
+line height.
 
 For host-supplied rich text, put `each` directly inside `para` and make its
 exported schema body exactly one `span`:
@@ -292,7 +295,8 @@ para { each param.runs }
 Any other run-template body is `each-span`. Runs participate in one paragraph
 layout; do not render them as separate `text` nodes.
 Bind run props directly to span content, `color`, `size`, `weight`, `family`,
-`tracking`, and `strike`; the whole run list reflows as one paragraph.
+`tracking`, `strike`, `italic`, and `underline`; the whole run list reflows as
+one paragraph.
 
 Conditional display strings are host-computed: project state into a text param
 or list field (`"✓"`, `"due in 3m"`, timer captions) rather than looking for a

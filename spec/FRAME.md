@@ -65,7 +65,8 @@ fn inst_set_focus(i: &mut Instance, key: &str, visible: bool) -> bool
     // otherwise non-focusable. visible selects the keyboard-grade ring. This
     // explicit API does not reveal; use inst_reveal or inst_focus_item.
 fn inst_clear_focus(i: &mut Instance) -> bool
-    // Clear focus while retaining EditState; true only when state changed.
+    // Clear focus and any cross-field range while retaining EditState; true
+    // when either retained interaction state changed.
 fn inst_focus_note(i: &Instance) -> &str
     // Actionable explanation of the last failed focus/focus_item request.
     // A successful focus or clear request resets it.
@@ -77,6 +78,56 @@ fn inst_set_field_text(i: &mut Instance, key: &str, text: &str) -> bool
 fn inst_field_text(i: &Instance, key: &str) -> Option<String>
     // Committed EditState text, or resolved content before first bind.
     // None = unknown key or a node without field=.
+struct FieldRun { style: u32, start: i32, end: i32 }
+    // style: 0 bold | 1 italic | 2 underline | 3 strike | 4 code.
+    // start/end are a non-empty half-open codepoint range on grapheme
+    // boundaries.
+struct FieldRuns { revision: u64, runs: Vec<FieldRun> }
+fn inst_field_runs(i: &Instance, key: &str) -> Option<FieldRuns>
+    // Return style-major, sorted, disjoint normalized runs and the field's
+    // monotonic local revision. An unbound field is revision 0 with no runs.
+fn inst_set_field_runs(i: &mut Instance, key: &str, runs: &FieldRuns) -> bool
+    // Replace all five span sets without touching text, as one undo step.
+    // Clamp offsets to bounds and nearest grapheme boundaries. Reject unknown
+    // styles or reversed ranges atomically; normalize overlap and adjacency.
+    // The supplied revision is informational and is not adopted.
+struct FieldSnapshotEntry {
+    locator: String, text: String, runs: FieldRuns,
+    caret: i32, anchor: i32, goal_x: f64,
+}
+struct FieldSnapshot { fields: Vec<FieldSnapshotEntry> }
+fn inst_snapshot_fields(i: &Instance,
+                        locators: &[&str]) -> Option<FieldSnapshot>
+    // Resolve every locator using the ordinary field-key rules, require every
+    // target to have a bound EditState, and return entries in caller order with
+    // escaped canonical full locators. Unknown, non-field, unbound, or
+    // duplicate targets reject the whole capture. Capture is pure: success and
+    // failure leave text, composition, selection, and both histories untouched,
+    // so an aborted host transaction requires no rollback.
+fn inst_commit_fields(i: &mut Instance, locators: &[&str]) -> bool
+    // Commit a successfully applied host structural mutation. Resolve every
+    // currently retained affected field before changing any history, then
+    // empty undo and redo for all of them. false writes no partial barrier.
+    // Removed fields need not be listed because they retain no EditState.
+fn inst_restore_fields(i: &mut Instance,
+                       snapshot: &FieldSnapshot) -> bool
+    // Resolve and validate every entry before changing any field. Every
+    // locator must still resolve to a field and duplicate targets are invalid;
+    // false is all-or-nothing, with no partial restore, signal, or repaint.
+    // Restore committed text, normalized runs, caret/anchor, goal_x, and the
+    // captured revision exactly; clear active composition and cross-field
+    // range state; synchronize bound Text params; queue Change for changed
+    // content/runs; and request relayout/repaint. Reset both local history
+    // directions to empty: the restored state is the new field baseline.
+
+    // The derived JSON shape is deterministic and contains no kernel handles:
+    // {"fields":[{"locator":"#root/#block","text":"hello",
+    //   "runs":{"revision":7,"runs":[{"style":0,"start":0,"end":5}]},
+    //   "caret":5,"anchor":5,"goal_x":-1.0}]}
+fn inst_toggle_style(i: &mut Instance, key: &str, style: u32) -> bool
+    // Toggle over the current non-empty selection as one undo step. Fully
+    // covered means remove; otherwise add and normalize. Empty selection is a
+    // deliberate no-op: the kernel does not infer or expand to a word.
 struct CaretState { caret: i32, anchor: i32, composing: bool, goal_x: f64 }
     // caret is the active selection end; anchor is the fixed end. Both are
     // codepoint offsets at grapheme-cluster boundaries in committed text.
@@ -99,6 +150,18 @@ fn inst_set_caret_goal(i: &mut Instance, key: &str, caret: i32,
 fn inst_get_caret(i: &Instance, key: &str) -> Option<CaretState>
     // Return caret, anchor, composing, and goal_x for the target's EditState.
     // None = unknown/non-field key or no EditState (before first focus/write).
+struct FieldLocator { key: String, offset: i32 }
+    // One endpoint field's escaped canonical full key and grapheme-boundary
+    // committed-text codepoint offset. The key includes stable list-item
+    // identity and is never a retained raw node or scene index.
+fn inst_get_range(i: &Instance) -> Option<(FieldLocator, FieldLocator)>
+    // Return (fixed anchor, active head) for the retained cross-field range.
+    // Keys survive keyed reorder and virtual de-materialization; a permanently
+    // unresolvable endpoint invalidates the range. None means field-local or
+    // collapsed selection.
+fn inst_clear_range(i: &mut Instance) -> bool
+    // Clear only cross-field metadata, retaining every field EditState and its
+    // local selection. true only when a range existed.
 fn inst_focus(i: &Instance) -> u32
     // Current focused node; 0xFFFFFFFF means no focus.
 fn inst_param_json(i: &Instance, name: &str) -> Option<String>
@@ -180,24 +243,44 @@ fn text_glyphs(i: &Instance, fr: &Frame, op: i32) -> Vec<GlyphPos>
 
 ### Browser and Node WebAssembly surface
 
-`KInst` is the wasm-bindgen owner of a decoded and initialized Rust
-`Instance`. Its constructor accepts SLIR bytes and returns an error if Rust
-cannot decode them. The bridge mirrors the native contract with
-JavaScript-safe arguments. List methods (`list_len`, `set_list_len`,
-`set_list_key`, `set_list_field`) include `path`; `set_scroll` and `get_scroll`
-include `axis`. It also exposes `reveal`, `reveal_item`, `focus_item`,
-`each_window_json`, `set_divider`, `get_divider`, `img_register`,
-`img_unregister`, `image_info_json`, and unified-index `image_data`, plus
-`clear_focus` and `focus_note` alongside the existing environment, parameter,
-state, focus, theme, font, and hole methods.
+Instance editing APIs are available at both public host boundaries. SDP exposes
+`field.caret.get/set`, `field.runs.get/set`, `field.style.toggle`, and
+`field.range.get/clear`; SDP.md defines their strict request schemas and
+protocol errors.
+
+`KInst` is the wasm-bindgen owner of a decoded and initialized Rust `Instance`.
+Its constructor accepts SLIR bytes and returns an error if Rust cannot decode
+them. The field bridge exposes `set_caret` and `get_caret_json`,
+`field_runs_json` and `set_field_runs_json`, `toggle_style`,
+`get_range_json`, and `clear_range`. Caret JSON maps the native negative
+`goal_x` sentinel to null. Runs JSON uses the exact Change payload
+`{"rev":u64,"runs":[{"style":u32,"start":i32,"end":i32}]}`; malformed JSON
+rejects `set_field_runs_json` without mutation. Range JSON is either null or
+`{"anchor":{"key","offset"},"head":{"key","offset"}}` with canonical
+`FieldLocator` keys.
+
+The bridge otherwise mirrors the native contract with JavaScript-safe
+arguments. List methods (`list_len`, `set_list_len`, `set_list_key`,
+`set_list_field`) include `path`; `set_scroll` and `get_scroll` include `axis`.
+It also exposes `reveal`, `reveal_item`, `focus_item`, `each_window_json`,
+`set_divider`, `get_divider`, `img_register`, `img_unregister`,
+`image_info_json`, and unified-index `image_data`, plus `clear_focus` and
+`focus_note` alongside the existing environment, parameter, state, focus,
+theme, font, and hole methods.
 
 Cold structured results cross the boundary as JSON: `holes_json`,
 `dispatch_json`, `caret_effects_json`, `statics_json`, `scene_json`,
-`chain_json`, and active-theme `get_token_json`; retained-scene queries use
-`hit_contains`. `dispatch_json` takes
+`chain_json`, field/caret/range queries, and active-theme `get_token_json`;
+retained-scene queries use `hit_contains`. `dispatch_json` takes
 all ten `Event` fields as flat arguments and returns the complete `Effects`
 object described below. In `scene_json`, accessibility references are resolved
 to strings rather than exposing the native scene-string pool.
+
+The WASM `EffectSnapshot` preserves `sig_runs` as JSON strings parallel to
+`sig_name` and preserves an optional structured `range_edit`. The web adapter
+parses non-empty `sig_runs` into each named signal event's `detail.runs` and
+emits a bubbling, composed `slab-range-edit` event whose detail is the complete
+`RangeEdit`; hosts apply that request atomically to their block model.
 
 The paint hot path is `frame(t_ms) -> FrameBuf`, not frame JSON. `FrameBuf`
 provides an operation-tag/payload `u32s()` stream, an `f64s()` stream beginning
@@ -344,6 +427,7 @@ struct Event {
     clicks: u32,
     key: String,
     text: String,
+    clauses: Vec<(i32, i32)>,
     mods: u32,
 }
 ```
@@ -363,8 +447,20 @@ struct Event {
   multi-click and drives Dblclick.
 - `key` is the host named key (`"Tab"`, `"Enter"`, `" "`, `"ArrowLeft"`,
   `"Backspace"`, `"Home"`, `"End"`, `"a"`, …), not a document STRS reference.
-  `text` carries text, paste, and composition payloads.
+  `text` carries text, paste, and composition payloads. For
+  `composition-update`, `clauses` is the ordered list of `(start, end)`
+  codepoint-offset ranges within `text`. Empty and single-entry lists mean one
+  whole-preedit clause, providing the required fallback for hosts without
+  clause support. Multi-clause ranges are clamped to the preedit bounds.
 - `mods` bitset: 1 shift | 2 alt | 4 ctrl | 8 meta.
+
+JSON trace and SDP `input.event` ingress spells a composition update as
+`{"type":"composition-update","text":"…","clauses":[[start,end],...]}`;
+`clauses` is optional. Malformed clause metadata degrades atomically to an
+empty list rather than rejecting the event. The WASM `dispatch_json` and
+`dispatch_dump_json` methods expose the same optional data as their trailing
+`clauses_json` string argument, whose value is the JSON array above; omitted or
+malformed JSON likewise means an empty list.
 
 Dispatch is kernel-owned: no capture/bubble (the kernel routes internally and
 reports Effects); pointer capture lasts from pointer-down until release;
@@ -413,6 +509,17 @@ Signal trigger codes (SPEC §13) are `0 Activate`, `1 Change`, `2 Submit`,
 `14 Cancel` (`13` is the internal typed-`keys=` activation discriminator).
 `sig_text` carries committed text for Change/Submit, the retained buffer for
 Cancel, and the canonical final extent for Resize; other triggers use `""`.
+`sig_runs` is parallel to `sig_text`. For a field Change it is one compact JSON
+object string with this exact schema (object keys and run keys are emitted in
+the shown order):
+
+```json
+{"rev":3,"runs":[{"style":0,"start":1,"end":4}]}
+```
+
+The schema is `{"rev": u64, "runs": [{"style": u32, "start": i32,
+"end": i32}, ...]}`. Runs are style-major (`0` through `4`), then ascending
+range order. Non-field signals carry `""`.
 Every signal carries the innermost synthetic item key of its emitting node
 (or `""`) and the `SigMeta` below.
 
@@ -425,8 +532,18 @@ active IME composition keeps kernel priority.
 and undo/redo, places the caret at the end, synchronizes a same-named Text
 param, and queues Change in Effects when the value changes. Normal field
 mutations also synchronize that parameter. Item-key change discards retained
-edit identity. Backspace/Delete delete grapheme clusters; Ctrl/Meta/Alt word
-deletion and Ctrl-K/U kills use the visual line; Ctrl/Meta-Z and
+edit identity.
+Rich spans live beside, not inside, the string field value. Every committed
+local text splice, style toggle/write, undo, or redo increments a monotonic
+`revision`; text and spans restore atomically on undo/redo but the revision
+itself never rolls back. A same-named Text-param reset is host synchronization,
+so it clears spans with the replacement text but neither emits Change nor
+increments revision. A host can remember the revision from its own last write
+and ignore a returned Change payload with that revision, while accepting later
+revisions. `inst_set_field_text` clears existing spans; rich hosts replace text
+and then call `inst_set_field_runs`.
+Backspace/Delete delete grapheme clusters; Ctrl/Meta/Alt word deletion and
+Ctrl-K/U kills use the visual line; Ctrl/Meta-Z and
 Ctrl/Meta-Shift-Z traverse bounded grouped
 undo/redo. Multiline ArrowUp/Down and Home/End use visual-line source offsets
 from the retained TextLayout with goal-x preservation. Enter inserts or
@@ -434,6 +551,11 @@ submits by SPEC §15.6's modifier/flag matrix. Text, paste, cut, kill, word
 delete, undo/redo, and composition all flow through the same committed-change
 path. Single-line display text owns horizontal scroll; multiline caret follow
 may adjust the nearest scroll ancestor.
+Composition update text remains an uncommitted marked overlay: it does not
+enter the field buffer or rich spans. Flattening emits one font-derived
+underline segment per non-empty clause on each intersected visual line;
+composition end clears the clause overlay before committing through the normal
+text-and-span splice path. Caret and IME candidate rectangles are unchanged.
 
 `inst_set_caret` focuses a painted field with a hidden focus ring, cancels
 uncommitted composition without changing committed text, installs the directed
@@ -444,6 +566,18 @@ goal for vertical movement, and keeps a collapsed selection collapsed at the
 resolved position. This permits a host to carry the visual target across block
 boundaries. `inst_get_caret` reports the directed selection, composition state,
 and goal only after an EditState exists.
+
+Cross-field range endpoints retain escaped canonical full keys, including
+stable list-item identity, rather than node IDs or scene indices. Shift-primary
+down across fields creates the range directly. After a boundary key bubbles,
+an edge-anchored `inst_set_caret` on the next field composes the source and
+destination local selections. `inst_get_range` returns `(anchor, head)` even
+when a virtual window temporarily de-materializes an endpoint. Every dispatch
+and solve resolves the keys afresh: keyed reorder changes range direction and
+paint order, a de-windowed endpoint emits no band, and a genuinely missing key
+invalidates the range. Flatten paints partial endpoint bands and full-text
+bands for materialized middle fields. Whole-row tint remains host state paint,
+not a kernel Frame op.
 
 Secondary pointer-down emits Context with pointer metadata and never presses
 or arms drag. On an editable focusable field, it applies pointer-grade focus.
@@ -472,13 +606,23 @@ struct SigMeta {
   dropped: bool,
 }
 struct ScrollChange { key: String, axis: u32, off: f64 }
+struct RangeEndpoint { key: String, offset: i32 }
+struct RangeEdit {
+  kind: u32, // 0 text | 1 paste | 2 cut | 3 Backspace |
+             // 4 Delete | 5 composition | 6 copy
+  anchor: RangeEndpoint,
+  head: RangeEndpoint,
+  text: String,
+}
 struct Effects {
   repaint: bool,         // document state changed; next inst_frame re-solves
   sig_name: Vec<u32>,    // document STRS refs
   sig_text: Vec<String>, // committed text/extent where defined; else ""
+  sig_runs: Vec<String>,// rich-field {"rev":N,"runs":[...]}; else ""
   sig_item: Vec<String>, // innermost list item key; "" for a real node
   sig_meta: Vec<SigMeta>,
   scrolls: Vec<ScrollChange>,
+  range_edit: Option<RangeEdit>,
   has_caret: bool, caret_x: f64, caret_y: f64, caret_w: f64, caret_h: f64,
   has_ime: bool, ime_x: f64, ime_y: f64, ime_w: f64, ime_h: f64,
   cursor: u32,           // 0 default | 1 pointer | 2 text |
@@ -487,7 +631,36 @@ struct Effects {
 }
 ```
 
-`sig_name`, `sig_text`, `sig_item`, and `sig_meta` always have equal length
+`range_edit` is a pre-mutation request for the host-owned block model. With an
+active cross-field range, text, paste, cut, Backspace, Delete, composition, and
+copy dispatch here instead of touching the focused field. The endpoints use
+the same stable locators as `inst_get_range`; replacement text is empty for
+deletion/cut/copy. All field bytes and range state remain unchanged until the
+host atomically applies the structural edit and pushes its list/field updates
+back to the instance.
+Structural undo is a **host transaction** because the kernel never owns the
+host's block list or list parameters. Before Enter-split, Backspace-merge, or
+another structural edit, the host purely calls `inst_snapshot_fields` for every
+affected pre-mutation field. It then attempts its structure mutation and writes
+the resulting field text/runs/carets. If that attempt aborts, the snapshot is
+dropped and ordinary local undo remains byte-for-byte intact. If it succeeds,
+the host calls `inst_commit_fields` for every affected field that remains bound
+(including newly created fields), then pushes exactly one host undo entry
+`{ structure_delta, field_snapshot }`.
+
+Host undo applies `structure_delta` first, so every captured canonical locator
+exists again, and only then calls `inst_restore_fields`. If any locator cannot
+be resolved after the structure revert, restore returns `false` without
+restoring a subset. Commit is the hard field-history boundary: field-local
+Ctrl/Meta-Z cannot enter pre-transaction history. Restore discards intervening
+history again and makes the restored state a fresh baseline with empty undo and
+redo stacks. Ctrl/Meta-Z at that baseline is a kernel no-op, so normal boundary
+fall-through can deliver a bound `keys=z` signal to the host's structural undo
+handler. Composition preedit is not snapshot data; restore always clears it.
+The host must use the snapshot/commit/restore triad with its own
+structure-delta stack rather than coordinating independent field undo commands.
+
+`sig_name`, `sig_text`, `sig_runs`, `sig_item`, and `sig_meta` always have equal length
 and matching order. `SigMeta.key` is ALWAYS the full key path of the emitting
 node, for every trigger and origin. Pointer-derived signals also carry
 `hit_key`, the full key of the deepest hit-target node under the pointer;

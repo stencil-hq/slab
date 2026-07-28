@@ -567,6 +567,8 @@ Small closed set; everything else is composition.
 | `transition` | any node | `transition=dur[,easing][,delay]` — ease this node's `when`-state patches (§14) |
 | `opacity` | any | 0–1. Composites as a **group**: children blend first, then fade as one layer |
 | `color` | text | text color **or gradient paint** — gradient text maps the paint over the text node's content box (all lines share one box). **Inherits** |
+| `code-color` | `field=` text | optional inline-code text color or gradient paint (default: resolved `color`); applies only to code style runs and does not inherit |
+| `code-bg` | `field=` text | optional inline-code background paint (default none); paints each code run's advance by its visual line height, beneath selection and glyphs, and does not inherit |
 | `family` | text | authored family name. **Inherits**; runtime registration may provide its actual face (§11.1) |
 | `size`, `weight`, `leading`, `tracking` | text | font metrics. **Inherit** (leading = line-height multiplier, default 1.4; tracking = letter-spacing in u, after every glyph) |
 | `strike` | text | boolean line-through decoration (default `false`). **Inherits**; bare `strike` means `true` |
@@ -1663,8 +1665,11 @@ Authored `Space` is canonicalized to the event key `" "`. Unknown names produce
 
 - Primary pointer-down (`button=0`) first fires the deepest enabled `press=`
   binding in the hit path, then captures the nearest focusable node (or the
-  raw target), sets `pressed`, and applies pointer-grade focus. Hover
-  enter/leave still follows the whole uncaptured hit path.
+  raw target), sets `pressed`, and applies pointer-grade focus. On an editable
+  field it also places the active caret at the shaped hit position. A plain
+  down collapses that field's local selection; Shift preserves the fixed end
+  and may form a cross-field range as specified in §15.6. Hover enter/leave
+  still follows the whole uncaptured hit path.
 - Secondary pointer-down (`button=2`) fires the deepest enabled `context=`
   binding with pointer metadata. It never presses or arms drag. On an editable
   focusable field, it applies pointer-grade focus and preserves the current
@@ -1802,9 +1807,16 @@ unless they carry the `multiline` flag.
   horizontal viewport offset, vertical goal-x, and bounded undo/redo history.
 - `text` and paste insert committed text. Dispatch maps CR/LF codepoints to
   spaces before a single-line insertion; multiline fields preserve them.
-  Composition events manage an inline IME run plus the `composing` node state.
-  Every committed mutation, including undo/redo, fires Change with the full
-  restored text; caret-only moves only repaint.
+  Composition updates carry ordered codepoint ranges for IME preedit clauses.
+  The marked text is an overlay at the caret, not committed buffer content:
+  each clamped non-empty clause paints its own font-derived underline and
+  committed rich spans are only display-shifted around it. Empty or
+  single-entry clause metadata degrades to one whole-preedit underline.
+  Composition end clears all clause state before committing text through the
+  normal span splice; composition state never appears in Change runs.
+  Composition also controls the `composing` node state. Every committed
+  mutation, including undo/redo, fires Change with the full restored text;
+  caret-only moves only repaint.
 - Enter routing is exact: multiline without `submit=` inserts a newline for
   plain, Shift-, or Alt-Enter; multiline with `submit=` submits on unmodified
   Enter while Shift- or Alt-Enter inserts a newline; single-line with
@@ -1829,6 +1841,167 @@ unless they carry the `multiline` flag.
   selection command, mutation-kind transition, or insertion ending in
   whitespace starts another group. Paste, cut, word deletion, and kills
   always start a group. Any new edit clears redo.
+
+#### Cross-field ranges
+
+The kernel exposes one minimal range primitive so a host-owned block editor
+can compose text selection across separately bound fields without moving its
+document model into the kernel. `DState` retains either no cross-field range or
+two endpoints `(canonical full field key, anchor offset)` and
+`(canonical full field key, head offset)`. Keys use the escaped scene-path and
+stable list-item identity conventions; raw node IDs and scene indices are
+never retained. Both offsets are committed-text codepoint offsets on grapheme
+boundaries.
+
+Shift-primary-down in a field different from the focused field uses the
+focused editor's fixed local anchor as the logical anchor, focuses the hit
+field, and records its hit caret as the head. In authored scene order, the
+anchor field projects from its anchor toward the facing text edge, the head
+field projects from its facing edge to the hit caret, and every editable field
+strictly between them projects its full text. Reverse ranges apply the same
+rule with start/end exchanged. These projections use each field's ordinary
+shaped selection-band geometry; the kernel does not infer block containers or
+paint a whole-row tint. A host that wants a Notion-style whole-block tint sets
+its existing row state attributes for the covered blocks.
+
+Every dispatch and solve resolves both keys against current list state and the
+fresh materialized scene. Keyed list reorder therefore changes endpoint order
+without changing endpoint identity. A temporarily de-windowed virtual-list
+endpoint remains queryable through `inst_get_range` but contributes no band;
+the materialized endpoint and any materialized logical middle fields still
+paint. Truncation or another mutation that makes either stable key genuinely
+unresolvable invalidates the range.
+
+Shift+arrow that reaches a field boundary remains an unconsumed command under
+§15.4. The host chooses the adjacent block and calls `inst_set_caret` there.
+When the previous focused editor is at the facing boundary and the destination
+selection is non-empty with its anchor at the opposite facing edge,
+`inst_set_caret` composes those two local selections into the same cross-field
+range. This preserves the source field's partial band while focus and the
+active caret move to the destination. `inst_get_range` returns the two
+canonical keyed locators; `inst_clear_range` removes only the cross-field
+metadata and retains the fields' ordinary EditStates.
+
+While a cross-field range is active, field-local mutation is forbidden because
+the kernel cannot split, merge, or delete host-owned blocks. Instead, text
+input, paste, cut, Backspace, Delete, copy, and composition events emit one
+pre-mutation `Effects.range_edit`:
+
+```text
+{ kind, anchor: { key, offset }, head: { key, offset }, text }
+```
+
+The endpoint keys and offsets exactly match `inst_get_range`. Kinds are text
+(0), paste (1), cut (2), Backspace (3), Delete (4), composition (5), and copy
+(6). `text` is the replacement payload for text, paste, and composition and is
+empty for deletion, cut, and copy. Composition start emits an empty composition
+request; update/end carry the event text. Copy is non-destructive but is
+reported here because only the host can assemble content across blocks. These
+events leave every field buffer, local selection, and the retained range
+byte-for-byte unchanged. The host applies the request atomically to its block
+model, pushes resulting list/field state back into the instance, and then
+clears or naturally invalidates the range.
+
+
+Invalidation is exact: a pointer-down without Shift, window blur or close, and
+any other focus move, restoration, or explicit clear remove the cross-field
+range. Range-edit events described above do not invalidate it before the host
+applies them.
+Replacing an endpoint's field text through the host API or a synced parameter
+also removes it because the stored offset belongs to the replaced text. A plain
+field click additionally collapses that field's local selection at its hit
+caret. An unmodified local caret/selection command that moves an endpoint also
+removes the range. Shift movement within the current head field instead updates
+the retained head offset; a boundary no-op still bubbles for host composition.
+
+#### Host structural transactions
+
+The kernel owns field state but never host block structure or list parameters.
+Independent field histories therefore cannot make Enter-split,
+Backspace-merge, or a cross-field range edit atomic: replaying only one text
+buffer would diverge from the host's block list. Structural undo uses this
+ordered host protocol:
+
+1. Purely call `inst_snapshot_fields` with every affected pre-mutation field
+   locator. Capture is all-or-nothing and requires every target to resolve to a
+   bound `field=` EditState. The deterministic plain data records
+   caller-ordered canonical locators, committed text, complete normalized
+   `FieldRuns`, caret/anchor, goal-x, and current revision. IME preedit text and
+   clauses are not committed state and are not captured. Capture changes no
+   field or history state.
+2. Attempt the host structure mutation and write the resulting strings, runs,
+   and carets into the instance. If the attempt aborts, drop the snapshot;
+   ordinary field undo/redo remains byte-for-byte as it was before capture.
+3. After a successful mutation, call `inst_commit_fields` for every affected
+   field that remains bound, including new split fields. Removed fields retain
+   no EditState and need not be listed. Commit preflights every locator, then
+   empties undo and redo for all resolved targets as one hard boundary. Push one
+   entry on the **host's** undo stack:
+   `{ structure_delta, field_snapshot }`. The kernel does not infer or retain
+   `structure_delta`.
+4. To undo, first revert `structure_delta`, making every captured locator
+   resolvable again, then call `inst_restore_fields`. Restore preflights every
+   locator and payload before mutation. An unknown/non-field locator, duplicate
+   target, or invalid run payload returns `false` and restores nothing; missing
+   fields are never silently skipped, including when the capture was a
+   superset.
+
+Commit, not capture, is the hard history barrier: field-local Ctrl/Meta-Z cannot
+cross into pre-transaction history. Successful restore discards all
+intervening history too: both undo and redo are empty and the restored state is
+the fresh field baseline. Ctrl/Meta-Z at that baseline is a kernel no-op and
+follows ordinary boundary bubbling, allowing a `keys=z` binding to invoke the
+host's next structural undo. Restore also applies captured text, runs,
+selection, goal-x, and revision, clears composition and the cross-field range,
+synchronizes a same-named Text parameter, emits Change for changed
+content/runs, and requests relayout/repaint. Thus the host uses the
+snapshot/commit/restore triad for one atomic structure-plus-fields undo entry
+rather than coordinating several kernel undo commands.
+
+Transaction restore adopts the captured revision exactly; this deliberate
+rewind identifies the restored snapshot. Subsequent local text/span mutations
+resume incrementing from that value. It is the only exception to the ordinary
+monotonic local revision rule. The concrete plain JSON snapshot schema is
+defined in FRAME.md and contains no node IDs, scene indices, or other kernel
+handles.
+
+#### Styled fields
+
+Rich fields retain five independent inline span sets beside the committed
+string: **bold**, *italic*, underline, strike, and code. Code requests the
+document's monospace family. Its text uses `code-color` when authored and
+otherwise the node's resolved `color`; `code-bg` optionally paints the run
+background. The other four styles keep the node's resolved paints. Span
+offsets are codepoint offsets on grapheme boundaries.
+Each set is normalized to sorted, disjoint, non-empty half-open ranges.
+
+All text edits are one splice of `[start,end)` with replacement text. Deletion
+maps every covered span endpoint through the deleted interval; insertion shifts
+a range when it lands at the range head, extends it when it lands inside or
+exactly at the tail, and shifts later ranges. Thus typing immediately after
+bold text remains bold, while typing immediately before it does not. Layout
+cuts the field at every span boundary, shapes each segment into the field's one
+`TextLayout`, and emits segment TEXT ops with weight 700, italic, font-derived
+underline, strike, or monospace-family overrides as applicable. Caret,
+selection, wrapping, and total advance continue to use the shaped layout's
+cluster geometry across those boundaries.
+
+`inst_toggle_style` is selection-only. An empty selection is a no-op. A fully
+covered selection removes that style; any partial coverage adds the whole
+selection and normalizes it. A toggle or complete run replacement is one undo
+step. Undo/redo snapshots restore committed text and all five span sets
+together. Outside transaction restore, the field's monotonic revision
+increments for every committed local text-or-span change, including undo/redo;
+a host Text-param reset is reconciliation and does not increment it.
+
+Text remains the field's compatibility value. Runs use the parallel
+`FieldRuns` channel and Change's `sig_runs` JSON payload defined in FRAME.md.
+The lossless block-split round trip is: read text plus runs, split every
+crossing range at the block boundary and rebase the right half, write each
+field's string, then write each half's runs. Reading both fields returns those
+normalized spans exactly. Hosts may use the revision in Change to ignore their
+own echoed write without discarding a later kernel edit.
+
 - Caret and IME geometry is line-aware and describes the LAST solve:
   x is the visual-line prefix width minus the field's horizontal edit scroll;
   y is the line origin; h is that line's height; w is 1. Hosts refresh it
@@ -1837,12 +2010,13 @@ unless they carry the `multiline` flag.
   the values into two `num` params consumed by an overlay child
   (`at=param.pop-x,param.pop-y`, §13.1), and toggles a bool param — no
   kernel positioning API is needed.
-- The focused field paints its non-empty selection as a half-alpha band of
-  its resolved text color (alpha `0x80`): one solid rect per visual line,
-  emitted before the glyphs inside the field clip. Selection therefore
-  exists only on interactive clients — a static render never has focus, so
-  no selection op is ever emitted there (svg/png stay `none (cap-edit)` in
-  the support chart).
+- A focused field's non-empty local selection and every projected field of a
+  cross-field range paint as half-alpha bands of their resolved text color
+  (alpha `0x80`). The kernel emits one solid rect per coalesced visual band,
+  before glyphs inside each field clip; bidi text may require multiple bands
+  on one visual line. A fresh static export has neither focus nor cross-field
+  range, so it emits no selection ops (svg/png stay `none (cap-edit)` in the
+  support chart).
 - A single-line field clips its display text and horizontally scrolls it to
   keep the caret inside an 8u content-box inset, clamped at zero.
   Multiline fields do not horizontally scroll; after a mutation or caret

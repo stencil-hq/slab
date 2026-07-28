@@ -1,6 +1,6 @@
 ---
 name: slab
-description: "Writing, editing, and rendering Slab documents (.slab) — the declarative design language for app screens, posters, terminal UIs, and interactive components. Use when authoring or modifying .slab files, rendering via the slab CLI (`bunx @stencil-hq/slab` or `slab-cli`: svg/png/apng/tui), bundling via Vite/Bun plugins (`@stencil-hq/slab/vite`, `@stencil-hq/slab/bun`), embedding via generated web components (`slab gen wc`), typed React components (`slab gen react`), typed Rust modules (`slab gen rust`), `include_doc!` proc-macros, or Ratatui widgets (`slab-ratatui`), declaring the typed host surface (params, list/each, holes, signals, themes), working on the conformance corpus, or debugging Slab diagnostics and layout."
+description: "Writing, editing, and rendering Slab documents (.slab) — the declarative design language for app screens, posters, terminal UIs, and interactive components. Use when authoring or modifying .slab files, rendering via the slab CLI (`bunx @stencil-hq/slab` or `slab-cli`: svg/png/apng/tui), bundling via Vite/Bun plugins (`@stencil-hq/slab/vite`, `@stencil-hq/slab/bun`), embedding via generated web components (`slab gen wc`), typed React components (`slab gen react`), typed Rust modules (`slab gen rust`), typed Go modules (`slab gen go`), `include_doc!` proc-macros, or Ratatui widgets (`slab-ratatui`), declaring the typed host surface (params, list/each, holes, signals, themes, rich-field runs), building rich-text or block editors on kernel fields, working on the conformance corpus, or debugging Slab diagnostics and layout."
 ---
 
 # Slab
@@ -61,8 +61,9 @@ bunx @stencil-hq/slab check doc.slab      # ALWAYS run after editing
 Output kind infers from the extension (`.svg .png .apng .txt`); `--client tui`
 with no `-o` prints cells to stdout. `check` validates the main document and
 each `export` definition through its standalone path. Code generators produce
-typed web components (`slab gen wc`), React wrappers (`slab gen react`), or
-Rust modules (`slab gen rust`). In this repo the native CLI is
+typed web components (`slab gen wc`), React wrappers (`slab gen react`),
+Rust modules (`slab gen rust`), or Go modules (`slab gen go`). In this repo
+the native CLI is
 `cargo run -p slab-cli --` (adds `fmt`, `conformance`, `lsp`, and
 `--font`).
 
@@ -83,10 +84,10 @@ bunfig — use `bun add @stencil-hq/slab` then `./node_modules/.bin/slab`.
   everything hugs.
 - **Style**: `bg stroke stroke-w stroke-align stroke-sides stroke-dash radius
   smooth shadow blur backdrop backdrop-mask grain mask opacity color family
-  size weight leading tracking strike style= align-text rotate scale tilt fit pad
-  gap animate transition scrollbar scrollbar-w scrollbar-fg scrollbar-bg` —
-  closed set, nothing else. `current` is icon-declaration paint, not a
-  general color token.
+  size weight leading tracking strike italic underline code-color code-bg
+  style= align-text rotate scale tilt fit pad gap animate transition
+  scrollbar scrollbar-w scrollbar-fg scrollbar-bg` — closed set, nothing
+  else. `current` is icon-declaration paint, not a general color token.
 - **Flags/modes**: `clip bleed scroll nowrap ellipsis inert focusable
   multiline drag-ghost`; use `drag-ghost` only with `drag=`, and use
   `scroll=cross|both`, `sticky`, and `each … virtual item-extent=N` only in
@@ -104,7 +105,8 @@ bunfig — use `bun add @stencil-hq/slab` then `./node_modules/.bin/slab`.
   nested templates use `each child_prop`. Macro expansion has no arithmetic.
 - **Host surface** (typed, compiler-checked): scalar params, recursive lists,
   holes, runtime image registration, signals, keyed scroll/divider/reveal
-  APIs, and the retained scene. There is NO tree injection or selector API.
+  APIs, field caret/runs/range editing, and the retained scene. There is NO
+  tree injection or selector API.
 
 ## Rules that prevent 90% of mistakes
 
@@ -136,9 +138,10 @@ bunfig — use `bun add @stencil-hq/slab` then `./node_modules/.bin/slab`.
     resolved embedded family. Fix the named source; never silence by guessing
     coordinates. `cap-*` names a declared client degradation.
 12. Keep policy in the host: Slab owns layout, gesture mechanics and optional
-    drag ghosts, focus, scrolling, scene export, and shipped web/native
-    accessibility adapters. The host owns app state, popover dismissal, and
-    focus traps.
+    drag ghosts, focus, scrolling, text editing (caret, selection, rich runs,
+    IME, bounded undo), scene export, and shipped web/native accessibility
+    adapters. The host owns app state, block structure, popover dismissal,
+    and focus traps.
 13. Treat `spec/SPEC.md` as normative and `spec/FRAME.md` as the exact host
     ABI. Skill references are procedural guidance, not replacement specs.
 
@@ -149,6 +152,13 @@ bunfig — use `bun add @stencil-hq/slab` then `./node_modules/.bin/slab`.
   under a main-axis scrolling `row`/`col`; use `revealItem` for navigation.
 - Use `para { each param.runs }` for host-supplied rich text; make the run
   schema body exactly one `span`.
+- Use `field=` text nodes for editing: the kernel owns caret, selection,
+  wrapping, IME, and bounded undo. Rich text keeps five inline span sets
+  (bold/italic/underline/strike/code) beside the string via the field-runs
+  API; toggle styles over the selection; `code-color`/`code-bg` paint code
+  runs. For a block editor keep one field per block: Shift-click forms a
+  cross-field range, edits arrive as one pre-mutation `range_edit` request,
+  and structural undo uses the snapshot/commit/restore field transaction.
 - Use `path d=param.route` (inside `canvas`) for runtime geometry. Declare
   reusable static `icon` assets at top level and tint them through `current`.
 - Use `img src=param.name` plus host image registration for runtime pixels;
@@ -180,8 +190,9 @@ bunfig — use `bun add @stencil-hq/slab` then `./node_modules/.bin/slab`.
   interaction states/drag ghosts, and motion. Read when styling effects,
   icons, interactions, or animation.
 - **references/hosts.md** — recursive/virtual lists, runtime images, pointer
-  and drag signals with `SignalMeta`, generated web/Rust bindings, the exact
-  clean-cutover Instance APIs, scroll/reveal/divider state, popovers, and
+  and drag signals with `SignalMeta`, generated web/Rust/Go bindings, the
+  exact clean-cutover Instance APIs, scroll/reveal/divider state, popovers,
+  rich-field runs and caret/range editing, host structural transactions, and
   framework accessibility adapters. Read when building an interactive or
   data-driven app.
 - **references/rendering.md** — SLIR → kernel → Frame, runtime path/image and
@@ -195,4 +206,6 @@ references — `examples/10-settings.slab` is the canonical interactive app
 (params, signal buttons, kernel-edited field, hole);
 `examples/12-tracklist.slab` shows `list`/`each`, themes, and scrollbars;
 `examples/01-settings.slab` and `06-jcard.slab` are the visual-quality bar
-for static documents. Live playground: https://stencil-hq.github.io/slab/
+for static documents; `bench/slate/doc/editor.slab` is the block-editor
+reference (one field per block, rich runs, cross-field ranges). Live
+playground: https://stencil-hq.github.io/slab/
