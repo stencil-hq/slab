@@ -483,11 +483,21 @@ document-space scene rect. `gravity` has twelve values:
 `below-start|below-center|below-end`, `above-start|above-center|above-end`,
 `left-start|left-center|left-end`, and
 `right-start|right-center|right-end`; the default is `below-start`.
-`collide=auto` (the default) flips to the opposite side when the preferred
-main direction overflows the root viewport, then slides the overlay along
-its alignment axis into that viewport. `collide=none` preserves the
-preferred placement. Authored `offset=x,y` is applied after collision
-handling.
+`collide=auto` (the default) resolves placement in a fixed, normative order:
+
+1. place at the preferred gravity position;
+2. if the preferred **main direction** overflows the root viewport, flip to
+   the opposite side (below ↔ above, left ↔ right);
+3. if the **alignment axis** overflows the viewport, flip the alignment
+   between start and end when the flipped position fits — this keeps the
+   overlay visually attached to its anchor (center alignments have no flip);
+4. otherwise slide the overlay along its alignment axis into the viewport.
+
+`collide=none` preserves the preferred placement. Authored `offset=x,y` is
+applied after collision handling. On the tui client the resolved overlay
+origin additionally snaps to the nearest 8×16 cell boundary so overlay
+borders land on whole cells instead of melting into neighbouring content
+rows.
 
 Placement is recomputed on every solve from painted geometry, so anchors
 inside scrolling containers track their current position. If the key is not

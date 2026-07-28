@@ -563,7 +563,7 @@ SceneNode { node, parent_ix (scene index, -1 root), kind (SLIR kind),
             checked, expanded, selected, active_descendant, controls,
             value_now, value_min, value_max, value_text,
             modal, live, live_atomic, level, pos_in_set, set_size,
-            disabled, focused }
+            disabled, focused, editable }
 ```
 
 `OpText.strike` defaults to false. When true, the renderer paints one
@@ -628,7 +628,9 @@ fonts. Frame JSON dumps carry the resolved ranges as an optional
 - `value_now`, `value_min`, `value_max`, `level`, `pos_in_set`, and `set_size`
   are `Option<f64>`; WASM and canonical frame JSON emit `null` when absent.
   `disabled` is the resolved per-node `disabled` state and `focused` is exact
-  kernel focus ownership for this frame.
+  kernel focus ownership for this frame. `editable` is true for a text leaf
+  whose `field=` binder is active this frame (conditional binders flip it);
+  adapters derive textbox semantics from it without host boilerplate.
 
 ## Text metrics (normative for goldens)
 
@@ -764,8 +766,10 @@ whitespace and canonical key order:
   "content_cross","role","label","desc","checked","expanded","selected",
   "active_descendant","controls","value_now","value_min","value_max",
   "value_text","modal","live","live_atomic","level","pos_in_set","set_size",
-  "disabled","focused"}`. String semantics are numeric `St::scene_strs` refs
-  and optional-state enums retain the native codes above; optional numbers are
+  "disabled","focused"}`, then append `"editable":true` iff the entry is an
+  active kernel-editable field (conditional, so pre-editable goldens stay
+  stable). String semantics are numeric `St::scene_strs` refs and
+  optional-state enums retain the native codes above; optional numbers are
   numeric or `null`.
 - diags use `{"code","line","msg"}` in emission order.
 - numbers via `value.fmt3`: round-half-even to 3 decimals by integer math,

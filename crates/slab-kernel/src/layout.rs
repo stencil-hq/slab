@@ -4128,6 +4128,30 @@ mod attachment_tests {
     }
 
     #[test]
+    fn tui_client_snaps_anchored_overlay_origins_to_the_cell_grid() {
+        // A fractional scroll offset drops the anchor off the 8x16 cell grid;
+        // on the tui client the overlay origin snaps back to whole cells so
+        // its borders align with content rows (T9/C-13).
+        let (d, mut st, base, popup) = attachment_fixture(22.5);
+        let mut web = base.clone();
+        place_attached(&d, &st, &mut web, 0, 200.0, 120.0);
+        assert_eq!(
+            (web.p_x[popup], web.p_y[popup]),
+            (10.0, 47.5),
+            "non-tui clients keep exact fractional placement"
+        );
+
+        st.env.client = crate::when::CLIENT_TUI;
+        let mut tui = base;
+        place_attached(&d, &st, &mut tui, 0, 200.0, 120.0);
+        assert_eq!(
+            (tui.p_x[popup], tui.p_y[popup]),
+            (8.0, 48.0),
+            "tui placement snaps the overlay origin to 8x16 cells"
+        );
+    }
+
+    #[test]
     fn suppression_is_final_before_sticky_anchor_geometry() {
         let (mut d, mut st, mut l, popup) = attachment_fixture(80.0);
         d.node_kind[1] = slir::K_STACK;

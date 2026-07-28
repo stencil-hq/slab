@@ -2841,6 +2841,7 @@ version = "0.1.0"
 dependencies = [
  "png",
  "rustc-hash 2.1.3",
+ "slab-slir",
 ]
 
 [[package]]
