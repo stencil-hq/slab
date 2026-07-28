@@ -1,5 +1,4 @@
-//! Grapheme-cluster boundaries for combining marks, ZWJ emoji sequences,
-//! regional-indicator flag pairs, CRLF, and variation selectors.
+//! UAX #29 extended grapheme-cluster boundary tests.
 
 use crate::graphemes;
 
@@ -16,6 +15,27 @@ pub fn test_combining_mark_clusters() {
 	assert_eq!(boundaries.len(), 4, "aeb bounds count");
 	assert_eq!(boundaries, [0, 1, 3, 4], "aeb bounds");
 }
+/// Checks that conjoining Hangul jamo form one cluster in codepoint offsets.
+pub fn test_hangul_jamo_is_one_cluster() {
+	let mut boundaries = Vec::new();
+	bounds_of("x\u{1100}\u{1161}\u{11A8}y", &mut boundaries);
+	assert_eq!(boundaries, [0, 1, 4, 5], "Hangul L+V+T cluster");
+	assert_eq!(graphemes::prev_boundary(&boundaries, 4), 1, "backspace target");
+}
+
+/// Checks that a Devanagari conjunct and its spacing mark stay indivisible.
+pub fn test_devanagari_akshara_is_one_cluster() {
+	let mut boundaries = Vec::new();
+	bounds_of("क्षि", &mut boundaries);
+	assert_eq!(boundaries, [0, 4], "Devanagari consonant conjunct plus vowel sign");
+}
+
+/// Checks that a Prepend-class character joins the following base.
+pub fn test_prepend_joins_following_base() {
+	let mut boundaries = Vec::new();
+	bounds_of("\u{600}A", &mut boundaries);
+	assert_eq!(boundaries, [0, 2], "Arabic number sign prepends to base");
+}
 
 /// Checks that a family joined by ZWJ characters is one cluster.
 pub fn test_zwj_family_is_one_cluster() {
@@ -25,6 +45,12 @@ pub fn test_zwj_family_is_one_cluster() {
 	assert_eq!(boundaries.len(), 4, "family bounds count");
 	assert_eq!(boundaries, [0, 1, 6, 7], "family bounds");
 }
+/// Checks that GB11 only joins ZWJ sequences with extended pictographs.
+pub fn test_zwj_between_non_pictographs_does_not_glue() {
+	let mut boundaries = Vec::new();
+	bounds_of("a\u{200D}b", &mut boundaries);
+	assert_eq!(boundaries, [0, 2, 3], "ZWJ attaches left but does not glue right");
+}
 
 /// Checks that regional indicators form pairs rather than one long cluster.
 pub fn test_flag_pairs_split_in_twos() {
@@ -33,6 +59,15 @@ pub fn test_flag_pairs_split_in_twos() {
 	bounds_of("🇩🇪🇫🇷", &mut boundaries);
 	assert_eq!(boundaries.len(), 3, "flag bounds count");
 	assert_eq!(boundaries, [0, 2, 4], "flag pair split");
+}
+/// Checks that ASCII and Latin codepoint boundaries remain unchanged.
+pub fn test_ascii_and_latin_boundaries() {
+	let mut boundaries = Vec::new();
+	bounds_of("café", &mut boundaries);
+	assert_eq!(boundaries, [0, 1, 2, 3, 4], "precomposed Latin");
+
+	bounds_of("plain ASCII", &mut boundaries);
+	assert_eq!(boundaries, (0..=11).collect::<Vec<_>>(), "ASCII boundaries");
 }
 
 /// Checks that CRLF is treated as one grapheme cluster.

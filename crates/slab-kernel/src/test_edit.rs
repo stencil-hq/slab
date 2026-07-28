@@ -24,6 +24,14 @@ pub fn test_caret_respects_clusters() {
 	assert_eq!(es.caret, 0, "caret at 0");
 }
 
+/// Verifies backspace removes an entire conjoining Hangul jamo cluster.
+pub fn test_backspace_removes_hangul_jamo_cluster() {
+	let mut es = edit::es_new(1, "x\u{1100}\u{1161}\u{11A8}");
+	assert!(edit::backspace(&mut es), "backspace changes text");
+	assert_eq!(edit::text_str(&es), "x", "Hangul cluster removed whole");
+	assert_eq!(es.caret, 1, "caret lands before cluster");
+}
+
 /// Verifies that a family emoji joined with ZWJs is one caret stop.
 pub fn test_zwj_emoji_is_one_stop() {
 	// x + family ZWJ sequence + y
@@ -63,6 +71,94 @@ pub fn test_selection_and_words() {
 	assert_eq!((edit::sel_lo(&es), edit::sel_hi(&es)), (6, 17), "selection to end");
 	assert!(edit::insert(&mut es, "!"), "insert replaces selection");
 	assert_eq!(edit::text_str(&es), "hello !");
+}
+
+/// Verifies punctuation is a non-word span between UAX #29 Latin word starts.
+pub fn test_unicode_word_punctuation_deletion() {
+	let punctuated = "hello, world";
+	assert_eq!(edit::word_prev(punctuated, 12), 7, "backward stop is the start of world");
+	assert_eq!(
+		edit::word_prev(punctuated, 7),
+		0,
+		"comma and space are skipped before the preceding word"
+	);
+	assert_eq!(edit::word_next(punctuated, 0), 7, "forward stop skips comma and space");
+	assert_eq!(edit::word_next(punctuated, 7), 12, "the final fallback stop is text end");
+
+	let mut deleted = edit::es_new(1, punctuated);
+	assert!(edit::word_back(&mut deleted), "first backward deletion changes text");
+	assert_eq!(deleted.text, "hello, ", "first deletion removes only world");
+	assert_eq!(deleted.caret, 7, "caret lands at the UAX word start");
+	assert!(edit::word_back(&mut deleted), "second backward deletion changes text");
+	assert_eq!(
+		deleted.text, "",
+		"second deletion removes hello together with its trailing non-word span"
+	);
+}
+
+/// Verifies Japanese word motion observes UAX #29 ideograph and
+/// script-transition boundaries.
+pub fn test_unicode_word_japanese_motion() {
+	let mut japanese = edit::es_new(2, "日本語rust");
+	edit::move_caret(&mut japanese, -1, false, true);
+	assert_eq!(japanese.caret, 3, "Latin script transition is a backward word stop");
+	edit::move_caret(&mut japanese, -1, false, true);
+	assert_eq!(japanese.caret, 2, "UAX #29 separates adjacent ideographs");
+	edit::home(&mut japanese, false);
+	edit::move_caret(&mut japanese, 1, false, true);
+	assert_eq!(japanese.caret, 1, "forward motion stops after the first ideograph");
+	edit::move_caret(&mut japanese, 1, false, true);
+	assert_eq!(japanese.caret, 2, "forward ideograph stops remain monotone");
+	edit::move_caret(&mut japanese, 1, false, true);
+	assert_eq!(japanese.caret, 3, "forward motion reaches the Latin script transition");
+}
+
+/// Verifies forward word deletion at text end remains an inert, ungrouped
+/// no-op.
+pub fn test_word_forward_delete_at_end_is_noop() {
+	let mut at_end = edit::es_new(3, "done");
+	assert!(!edit::word_forward(&mut at_end), "forward deletion at text end is a no-op");
+	assert_eq!((at_end.text.as_str(), at_end.caret, at_end.anchor), ("done", 4, 4));
+	assert!(at_end.u_text.is_empty(), "a no-op does not open an undo group");
+	assert_eq!(at_end.last_kind, edit::MUT_NONE, "a no-op does not alter coalescing");
+}
+
+/// Verifies non-breaking and ideographic spaces end typing undo groups.
+pub fn test_unicode_whitespace_breaks_undo_groups() {
+	for separator in ['\u{a0}', '\u{3000}'] {
+		let mut utf8 = [0; 4];
+		let separator_text = separator.encode_utf8(&mut utf8);
+		assert!(edit::ends_whitespace(separator_text));
+		let mut spaced = edit::es_new(4, "");
+		edit::insert(&mut spaced, "a");
+		edit::insert(&mut spaced, separator_text);
+		edit::insert(&mut spaced, "b");
+		assert!(edit::undo(&mut spaced), "undo removes text after Unicode whitespace");
+		assert_eq!(
+			spaced.text,
+			format!("a{separator}"),
+			"Unicode whitespace ends the preceding undo group"
+		);
+		assert!(edit::undo(&mut spaced), "the preceding typing group remains undoable");
+		assert!(spaced.text.is_empty(), "second undo removes the preceding group");
+	}
+}
+
+/// Verifies bidi word motion is panic-free and monotone in logical order.
+pub fn test_bidi_word_motion_is_logically_monotone() {
+	let bidi = "abc אבג, ده xyz";
+	let end = crate::rt::str_len(bidi);
+	let mut logical = 0;
+	while logical < end {
+		let next = edit::word_next(bidi, logical);
+		assert!(next > logical && next <= end, "forward bidi motion is logically monotone");
+		logical = next;
+	}
+	while logical > 0 {
+		let previous = edit::word_prev(bidi, logical);
+		assert!(previous >= 0 && previous < logical, "backward bidi motion is logically monotone");
+		logical = previous;
+	}
 }
 
 /// Verifies that the editing core preserves inserted newlines.
@@ -548,6 +644,118 @@ pub fn test_field_text_and_focus_queries() {
 	assert_eq!(frame::inst_focus(&inst), 0);
 	assert!(frame::inst_set_focus(&mut inst, "", false));
 	assert_eq!(frame::inst_focus(&inst), slir::NONE);
+}
+
+/// Verifies caret placement focuses a blurred field and drives Backspace.
+pub fn test_host_caret_position_drives_backspace_and_focus() {
+	let mut inst = host_field_instance();
+	assert!(frame::inst_set_field_text(&mut inst, "field-key", "abcd"));
+	assert_eq!(frame::inst_focus(&inst), slir::NONE, "text replacement does not focus");
+
+	assert!(frame::inst_set_caret(&mut inst, "field-key", 2, 2));
+	assert_eq!(frame::inst_focus(&inst), 0, "caret placement focuses a blurred field");
+	frame::inst_dispatch(&mut inst, &host_field_event(dispatch::E_KEY_DOWN, "Backspace", ""));
+	assert_eq!(
+		frame::inst_field_text(&inst, "field-key").as_deref(),
+		Some("acd"),
+		"Backspace deletes immediately before the host-positioned caret"
+	);
+}
+
+/// Verifies the host API preserves the active and fixed selection ends.
+pub fn test_host_caret_selection_direction() {
+	let mut inst = host_field_instance();
+	assert!(frame::inst_set_field_text(&mut inst, "field-key", "abcd"));
+	assert!(frame::inst_set_caret(&mut inst, "field-key", 3, 1));
+	assert_eq!(
+		frame::inst_get_caret(&inst, "field-key"),
+		Some(frame::CaretState { caret: 3, anchor: 1, composing: false, goal_x: -1.0 }),
+		"selection direction is retained"
+	);
+}
+
+/// Verifies a vertical goal can cross from one multiline field to another.
+pub fn test_host_caret_goal_crosses_fields_at_visual_x() {
+	let mut field_a = host_field_instance();
+	field_a.doc.node_flags[0] = slir::F_FOCUSABLE | slir::F_MULTILINE;
+	assert!(frame::inst_set_field_text(&mut field_a, "field-key", "abcd\nx"));
+	let layout_a = text_layout("abcd\nx", 1000.0);
+	let layout_a_index = i32::try_from(field_a.lay.tls.len()).expect("too many text layouts");
+	field_a.lay.tls.push(std::rc::Rc::new(layout_a));
+	field_a.lay.p_node.push(0);
+	field_a.lay.p_tl.push(layout_a_index);
+	assert!(frame::inst_set_caret(&mut field_a, "field-key", 3, 3));
+	frame::inst_dispatch(&mut field_a, &host_field_event(dispatch::E_KEY_DOWN, "ArrowDown", ""));
+	let source = frame::inst_get_caret(&field_a, "field-key").expect("source field is bound");
+	assert_eq!(source.caret, 6, "source short line clamps the caret to its end");
+	assert_eq!(source.goal_x, 15.0, "source retains the original visual x");
+
+	let mut field_b = host_field_instance();
+	field_b.doc.node_flags[0] = slir::F_FOCUSABLE | slir::F_MULTILINE;
+	assert!(frame::inst_set_field_text(&mut field_b, "field-key", "abcdef\nx"));
+	let layout_b = text_layout("abcdef\nx", 1000.0);
+	let expected_x = textm::caret_x(&layout_b, 0, 3);
+	let layout_b_index = i32::try_from(field_b.lay.tls.len()).expect("too many text layouts");
+	field_b.lay.tls.push(std::rc::Rc::new(layout_b));
+	field_b.lay.p_node.push(0);
+	field_b.lay.p_tl.push(layout_b_index);
+	assert!(frame::inst_set_caret_goal(&mut field_b, "field-key", 0, 0, source.goal_x,));
+	let destination =
+		frame::inst_get_caret(&field_b, "field-key").expect("destination field is bound");
+	assert_eq!(destination.caret, 3, "goal resolves on the destination's first visual line");
+	assert_eq!(destination.anchor, 3, "collapsed selection follows the resolved caret");
+	assert_eq!(destination.goal_x, source.goal_x, "goal survives the cross-field transfer");
+	assert_eq!(
+		textm::caret_x(
+			&field_b.lay.tls[usize::try_from(layout_b_index).expect("negative layout index")],
+			0,
+			destination.caret,
+		),
+		expected_x,
+		"destination caret lands at the source visual x"
+	);
+}
+
+/// Verifies interior and out-of-range offsets clamp to valid caret stops.
+pub fn test_host_caret_clamps_to_grapheme_boundaries() {
+	let mut inst = host_field_instance();
+	assert!(frame::inst_set_field_text(&mut inst, "field-key", "ae\u{301}b"));
+	assert!(frame::inst_set_caret(&mut inst, "field-key", 2, i32::MAX));
+	assert_eq!(
+		frame::inst_get_caret(&inst, "field-key"),
+		Some(frame::CaretState { caret: 1, anchor: 4, composing: false, goal_x: -1.0 }),
+		"interior and out-of-range offsets clamp to cluster boundaries and text bounds"
+	);
+}
+
+/// Verifies caret placement cancels uncommitted composition.
+pub fn test_host_caret_cancels_composition() {
+	let mut inst = host_field_instance();
+	assert!(frame::inst_set_focus(&mut inst, "field-key", false));
+	let edit_index = usize::try_from(dispatch::ed_ix(&inst.ds, 0)).expect("field is bound");
+	edit::composition_update(&mut inst.ds.ed[edit_index], "pending");
+	style::set_node_state(&inst.doc, &mut inst.st, 0, "composing", true);
+
+	assert!(frame::inst_set_caret(&mut inst, "field-key", 0, 0));
+	assert_eq!(
+		frame::inst_get_caret(&inst, "field-key"),
+		Some(frame::CaretState { caret: 0, anchor: 0, composing: false, goal_x: -1.0 }),
+		"caret placement cancels active composition"
+	);
+}
+
+/// Verifies unbound and non-field nodes have no host-readable caret.
+pub fn test_get_caret_rejects_unbound_and_non_field() {
+	let inst = host_field_instance();
+	assert_eq!(frame::inst_get_caret(&inst, "field-key"), None, "unbound field has no caret");
+
+	let mut non_field = host_field_instance();
+	non_field.doc.sign_trigger.clear();
+	non_field.doc.sign_name.clear();
+	non_field.doc.sign_node.clear();
+	assert_eq!(frame::inst_get_caret(&non_field, "field-key"), None);
+	assert!(!frame::inst_set_caret(&mut non_field, "field-key", 0, 0));
+	assert_eq!(frame::inst_focus(&non_field), slir::NONE, "rejection does not focus");
 }
 
 /// Verifies scalar and list parameters serialize from current kernel state.

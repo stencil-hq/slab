@@ -33,6 +33,8 @@ kernel_tests! {
 	 test_ease__test_ease_out => slab_kernel::test_ease::test_ease_out;
 	 test_ease__test_linear => slab_kernel::test_ease::test_linear;
 
+	 test_edit__test_backspace_removes_hangul_jamo_cluster => slab_kernel::test_edit::test_backspace_removes_hangul_jamo_cluster;
+	 test_edit__test_bidi_word_motion_is_logically_monotone => slab_kernel::test_edit::test_bidi_word_motion_is_logically_monotone;
 	 test_edit__test_caret_respects_clusters => slab_kernel::test_edit::test_caret_respects_clusters;
 	 test_edit__test_coalesced_undo_and_redo_invalidation => slab_kernel::test_edit::test_coalesced_undo_and_redo_invalidation;
 	 test_edit__test_collapse_selection_on_move => slab_kernel::test_edit::test_collapse_selection_on_move;
@@ -43,6 +45,12 @@ kernel_tests! {
 	 test_edit__test_field_set_blurred_reseed_then_focus => slab_kernel::test_edit::test_field_set_blurred_reseed_then_focus;
 	 test_edit__test_field_set_submit_clear_then_type => slab_kernel::test_edit::test_field_set_submit_clear_then_type;
 	 test_edit__test_field_text_and_focus_queries => slab_kernel::test_edit::test_field_text_and_focus_queries;
+	 test_edit__test_get_caret_rejects_unbound_and_non_field => slab_kernel::test_edit::test_get_caret_rejects_unbound_and_non_field;
+	 test_edit__test_host_caret_cancels_composition => slab_kernel::test_edit::test_host_caret_cancels_composition;
+	 test_edit__test_host_caret_clamps_to_grapheme_boundaries => slab_kernel::test_edit::test_host_caret_clamps_to_grapheme_boundaries;
+	 test_edit__test_host_caret_goal_crosses_fields_at_visual_x => slab_kernel::test_edit::test_host_caret_goal_crosses_fields_at_visual_x;
+	 test_edit__test_host_caret_position_drives_backspace_and_focus => slab_kernel::test_edit::test_host_caret_position_drives_backspace_and_focus;
+	 test_edit__test_host_caret_selection_direction => slab_kernel::test_edit::test_host_caret_selection_direction;
 	 test_edit__test_host_focus_binds_field_and_rejects_inert => slab_kernel::test_edit::test_host_focus_binds_field_and_rejects_inert;
 	 test_edit__test_insert_preserves_newlines => slab_kernel::test_edit::test_insert_preserves_newlines;
 	 test_edit__test_inactive_conditional_field_paints_plain_text => slab_kernel::test_edit::test_inactive_conditional_field_paints_plain_text;
@@ -53,7 +61,11 @@ kernel_tests! {
 	 test_edit__test_selection_and_words => slab_kernel::test_edit::test_selection_and_words;
 	 test_edit__test_selection_bands_for_wrapped_two_lines => slab_kernel::test_edit::test_selection_bands_for_wrapped_two_lines;
 	 test_edit__test_source_line_maps_and_layout_lookup => slab_kernel::test_edit::test_source_line_maps_and_layout_lookup;
+	 test_edit__test_unicode_whitespace_breaks_undo_groups => slab_kernel::test_edit::test_unicode_whitespace_breaks_undo_groups;
+	 test_edit__test_unicode_word_japanese_motion => slab_kernel::test_edit::test_unicode_word_japanese_motion;
+	 test_edit__test_unicode_word_punctuation_deletion => slab_kernel::test_edit::test_unicode_word_punctuation_deletion;
 	 test_edit__test_visual_goal_x_survives_short_line => slab_kernel::test_edit::test_visual_goal_x_survives_short_line;
+	 test_edit__test_word_forward_delete_at_end_is_noop => slab_kernel::test_edit::test_word_forward_delete_at_end_is_noop;
 	 test_edit__test_zwj_emoji_is_one_stop => slab_kernel::test_edit::test_zwj_emoji_is_one_stop;
 
 	 test_divider__test_disabled_nodes_reject_host_focus_and_tab => slab_kernel::test_divider::test_disabled_nodes_reject_host_focus_and_tab;
@@ -75,12 +87,17 @@ kernel_tests! {
 	 test_font_register__test_runtime_font_register_overrides_matching_family => slab_kernel::test_font_register::test_runtime_font_register_overrides_matching_family;
 
 	 test_graphemes__test_boundary_navigation => slab_kernel::test_graphemes::test_boundary_navigation;
+	 test_graphemes__test_ascii_and_latin_boundaries => slab_kernel::test_graphemes::test_ascii_and_latin_boundaries;
 	 test_graphemes__test_combining_mark_clusters => slab_kernel::test_graphemes::test_combining_mark_clusters;
 	 test_graphemes__test_crlf_is_one_cluster => slab_kernel::test_graphemes::test_crlf_is_one_cluster;
 	 test_graphemes__test_empty_text => slab_kernel::test_graphemes::test_empty_text;
+	 test_graphemes__test_devanagari_akshara_is_one_cluster => slab_kernel::test_graphemes::test_devanagari_akshara_is_one_cluster;
 	 test_graphemes__test_flag_pairs_split_in_twos => slab_kernel::test_graphemes::test_flag_pairs_split_in_twos;
+	 test_graphemes__test_hangul_jamo_is_one_cluster => slab_kernel::test_graphemes::test_hangul_jamo_is_one_cluster;
+	 test_graphemes__test_prepend_joins_following_base => slab_kernel::test_graphemes::test_prepend_joins_following_base;
 	 test_graphemes__test_variation_selector_attaches => slab_kernel::test_graphemes::test_variation_selector_attaches;
 	 test_graphemes__test_zwj_family_is_one_cluster => slab_kernel::test_graphemes::test_zwj_family_is_one_cluster;
+	 test_graphemes__test_zwj_between_non_pictographs_does_not_glue => slab_kernel::test_graphemes::test_zwj_between_non_pictographs_does_not_glue;
 
 	 test_gesture__test_double_click_suppresses_activate => slab_kernel::test_gesture::test_double_click_suppresses_activate;
 	 test_gesture__test_blur_and_close_emit_cancelled_drag_end_once => slab_kernel::test_gesture::test_blur_and_close_emit_cancelled_drag_end_once;
@@ -151,8 +168,12 @@ kernel_tests! {
 	 test_motion__test_tuple_lerp_elementwise => slab_kernel::test_motion::test_tuple_lerp_elementwise;
 	 test_motion__test_value_transition_tweens_param_writes => slab_kernel::test_motion::test_value_transition_tweens_param_writes;
 
+	 test_multiline__test_boundary_noop_bubbles_to_ancestor_keys => slab_kernel::test_multiline::test_boundary_noop_bubbles_to_ancestor_keys;
 	 test_multiline__test_caret_geometry_honors_padding_and_alignment => slab_kernel::test_multiline::test_caret_geometry_honors_padding_and_alignment;
 	 test_multiline__test_enter_matrix_and_submit_payload => slab_kernel::test_multiline::test_enter_matrix_and_submit_payload;
+	 test_multiline__test_enter_submit_does_not_bubble => slab_kernel::test_multiline::test_enter_submit_does_not_bubble;
+	 test_multiline__test_field_keys_preempt_plain_only => slab_kernel::test_multiline::test_field_keys_preempt_plain_only;
+	 test_multiline__test_modified_printable_bubbles_with_mods => slab_kernel::test_multiline::test_modified_printable_bubbles_with_mods;
 	 test_multiline__test_fresh_wrapped_layout_scroll_follow_settles => slab_kernel::test_multiline::test_fresh_wrapped_layout_scroll_follow_settles;
 	 test_multiline__test_horizontal_and_ancestor_scroll_follow => slab_kernel::test_multiline::test_horizontal_and_ancestor_scroll_follow;
 	 test_multiline__test_kills_undo_and_redo => slab_kernel::test_multiline::test_kills_undo_and_redo;
@@ -174,6 +195,11 @@ kernel_tests! {
 	 test_textm__test_nowrap_clipped_no_ellipsis => slab_kernel::test_textm::test_nowrap_clipped_no_ellipsis;
 	 test_textm__test_nowrap_ellipsis => slab_kernel::test_textm::test_nowrap_ellipsis;
 	 test_textm__test_wrap_basic => slab_kernel::test_textm::test_wrap_basic;
+	 test_textm__test_wrap_cjk_kinsoku => slab_kernel::test_textm::test_wrap_cjk_kinsoku;
+	 test_textm__test_wrap_mixed_cjk_latin => slab_kernel::test_textm::test_wrap_mixed_cjk_latin;
+	 test_textm__test_wrap_nbsp_overlong_glue => slab_kernel::test_textm::test_wrap_nbsp_overlong_glue;
+	 test_textm__test_wrap_overlong_latin_url => slab_kernel::test_textm::test_wrap_overlong_latin_url;
+	 test_textm__test_wrap_thai_grapheme_fallback => slab_kernel::test_textm::test_wrap_thai_grapheme_fallback;
 	 test_textm__test_wrap_nbsp_glue => slab_kernel::test_textm::test_wrap_nbsp_glue;
 	 test_textm__test_uncovered_runs_marked => slab_kernel::test_textm::test_uncovered_runs_marked;
 

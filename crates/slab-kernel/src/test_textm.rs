@@ -104,6 +104,66 @@ pub fn test_hard_break_long_word() {
 	assert_eq!(line_str(&layout, 1), "aa", "chunk 2");
 	assert_eq!(line_str(&layout, 2), "a", "chunk 3");
 }
+/// Checks CJK opportunities while preserving kinsoku-prohibited punctuation.
+pub fn test_wrap_cjk_kinsoku() {
+	let doc = font_doc();
+	let text = "天地。玄黄、宇宙」洪荒！開闢）以前";
+	let layout = measure(&doc, text, 12.0, true, false, -1);
+	assert!(layout.ls.len() > 1, "CJK paragraph wraps");
+	let lines: Vec<String> = (0..i32::try_from(layout.ls.len()).expect("line count fits i32"))
+		.map(|line| line_str(&layout, line))
+		.collect();
+	assert_eq!(lines.concat(), text, "wrapping preserves CJK text");
+	for line in lines.iter().skip(1) {
+		assert!(
+			!line.starts_with(['。', '、', '」', '！', '）']),
+			"closing punctuation must not open a line: {line:?}"
+		);
+	}
+}
+
+/// Checks that CJK and Latin runs use their respective wrapping behavior.
+pub fn test_wrap_mixed_cjk_latin() {
+	let doc = font_doc();
+	let layout = measure(&doc, "ab天地cd", 12.0, true, false, -1);
+	let lines: Vec<String> = (0..i32::try_from(layout.ls.len()).expect("line count fits i32"))
+		.map(|line| line_str(&layout, line))
+		.collect();
+	assert_eq!(lines, ["ab", "天地", "cd"], "mixed break classes wrap greedily");
+}
+
+/// Checks that GL-class nonbreaking space remains attached even when over
+/// width.
+pub fn test_wrap_nbsp_overlong_glue() {
+	let doc = font_doc();
+	let layout = measure(&doc, "a b c", 12.0, true, false, -1);
+	assert_eq!(line_str(&layout, 0), "a b", "no fallback break around NBSP");
+	assert_eq!(line_str(&layout, 1), "c", "following ASCII word wraps normally");
+}
+
+/// Checks that an overlong ASCII URL retains legacy grapheme hard breaks.
+pub fn test_wrap_overlong_latin_url() {
+	let doc = font_doc();
+	let text = "https://example.test";
+	let layout = measure(&doc, text, 12.0, true, false, -1);
+	let joined: String = (0..i32::try_from(layout.ls.len()).expect("line count fits i32"))
+		.map(|line| line_str(&layout, line))
+		.collect();
+	assert_eq!(joined, text, "hard breaks preserve every URL cluster");
+	assert!(layout.ls.len() > 1, "overlong URL wraps");
+}
+
+/// Checks SA-class fallback without dictionary segmentation or stalled scans.
+pub fn test_wrap_thai_grapheme_fallback() {
+	let doc = font_doc();
+	let text = "ภาษาไทย";
+	let layout = measure(&doc, text, 12.0, true, false, -1);
+	let joined: String = (0..i32::try_from(layout.ls.len()).expect("line count fits i32"))
+		.map(|line| line_str(&layout, line))
+		.collect();
+	assert_eq!(joined, text, "Thai fallback preserves clusters");
+	assert!(layout.ls.len() > 1, "Thai zero-opportunity run wraps");
+}
 
 /// Checks clipping and ellipsis insertion when wrapping is disabled.
 pub fn test_nowrap_ellipsis() {
