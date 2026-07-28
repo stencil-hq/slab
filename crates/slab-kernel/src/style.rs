@@ -91,7 +91,7 @@ pub struct St {
 	base_attr_values: Vec<[i32; ATTR_COUNT]>,
 	effective_attr_node: u32,
 	effective_attr_values: [i32; ATTR_COUNT],
-	font_selection: FxHashMap<(u32, u32), i32>,
+	font_selection: Vec<Vec<(u32, i32)>>,
 	family_index: FxHashMap<String, u32>,
 	/// Authored nodes with an activate signal, indexed by document node.
 	activate_node: Vec<bool>,
@@ -180,7 +180,7 @@ pub fn st_new() -> crate::style::St {
 		base_attr_values: vec![],
 		effective_attr_node: crate::slir::NONE,
 		effective_attr_values: [-1; ATTR_COUNT],
-		font_selection: FxHashMap::default(),
+		font_selection: vec![],
 		family_index: FxHashMap::default(),
 		activate_node: vec![],
 		kw_codes: vec![],
@@ -2229,11 +2229,19 @@ fn cached_family(d: &crate::slir::Doc, st: &mut crate::style::St, name: &str) ->
 }
 
 fn cached_font(d: &crate::slir::Doc, st: &mut crate::style::St, family: u32, weight: u32) -> i32 {
-	if let Some(&font) = st.font_selection.get(&(family, weight)) {
-		return font;
+	let family = index_u32(family);
+	if st.font_selection.len() <= family {
+		st.font_selection.resize_with(family + 1, Vec::new);
 	}
-	let font = crate::slir::font_select(d, family, weight);
-	st.font_selection.insert((family, weight), font);
+	if let Some((_, font)) = st.font_selection[family]
+		.iter()
+		.find(|&&(cached_weight, _)| cached_weight == weight)
+	{
+		return *font;
+	}
+	let font =
+		crate::slir::font_select(d, u32::try_from(family).expect("family index exceeds u32"), weight);
+	st.font_selection[family].push((weight, font));
 	font
 }
 
