@@ -1,8 +1,9 @@
-//! Builds the host-agnostic ABI module and publishes it to the Go and Python
-//! clients.
+//! Builds the host-agnostic ABI module and publishes it to the Go, Python, and
+//! Swift clients.
 //!
-//! Both clients embed the same bytes, gzip-compressed to keep the generated
-//! artifact near two megabytes instead of five, and decompress once at load.
+//! Go and Python embed deterministic gzip bytes. Swift embeds the raw module
+//! because WasmKit accepts uncompressed bytes and Foundation has no portable
+//! gzip decoder.
 
 use std::{
 	error::Error,
@@ -11,11 +12,14 @@ use std::{
 	process::Command,
 };
 
-/// Client copies of the compressed module, relative to the repo root.
-const TARGETS: &[&str] =
+/// Compressed client copies, relative to the repository root.
+const COMPRESSED_TARGETS: &[&str] =
 	&["clients/go/slab/slab_abi.wasm.gz", "packages/pyslab/src/slab/slab_abi.wasm.gz"];
 
-/// Builds `slab_abi.wasm` and writes the compressed copies both clients embed.
+/// Raw client copies, relative to the repository root.
+const RAW_TARGETS: &[&str] = &["clients/swift/Sources/Slab/Resources/slab_abi.wasm"];
+
+/// Builds `slab_abi.wasm` and writes every client copy.
 pub fn run(root: &Path) -> Result<(), Box<dyn Error>> {
 	run_command(Command::new("cargo").current_dir(root).args([
 		"build",
@@ -32,19 +36,26 @@ pub fn run(root: &Path) -> Result<(), Box<dyn Error>> {
 		return Err(format!("ABI build did not produce {}", wasm.display()).into());
 	}
 	let packed = gzip(&wasm)?;
-
-	for target in TARGETS {
+	let module = fs::read(&wasm)?;
+	for target in COMPRESSED_TARGETS {
 		let path: PathBuf = root.join(target);
 		if let Some(parent) = path.parent() {
 			fs::create_dir_all(parent)?;
 		}
 		fs::write(&path, &packed)?;
 	}
+	for target in RAW_TARGETS {
+		let path: PathBuf = root.join(target);
+		if let Some(parent) = path.parent() {
+			fs::create_dir_all(parent)?;
+		}
+		fs::write(&path, &module)?;
+	}
 	eprintln!(
 		"abi-wasm: {} bytes -> {} gzipped, published to {} clients",
-		fs::metadata(&wasm)?.len(),
+		module.len(),
 		packed.len(),
-		TARGETS.len()
+		COMPRESSED_TARGETS.len() + RAW_TARGETS.len()
 	);
 	Ok(())
 }

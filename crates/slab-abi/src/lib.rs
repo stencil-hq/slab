@@ -166,6 +166,33 @@ pub unsafe extern "C" fn slab_request(handle: u32, ptr: *const u8, len: usize) -
 		None => block(UNKNOWN_SESSION.as_bytes()),
 	}
 }
+/// Solves one GPU frame and returns its length-prefixed binary packet.
+///
+/// Returns null for an unknown session, a session without a document, or an
+/// allocation failure. Release a successful block with [`slab_free`].
+#[unsafe(no_mangle)]
+pub extern "C" fn slab_frame(handle: u32) -> *mut u8 {
+	let packet =
+		SESSIONS.with_borrow_mut(|registry| registry.live.get_mut(&handle).and_then(Server::gpu_frame));
+	packet.map_or(std::ptr::null_mut(), |packet| block(&packet))
+}
+
+/// Returns one length-prefixed retained GPU resource packet.
+///
+/// Resource kinds are `0 gradient | 1 path | 2 font | 3 image | 4 shadow`.
+/// Returns null for unknown sessions, kinds, indices, or allocation failure.
+/// Release a successful block with [`slab_free`].
+#[unsafe(no_mangle)]
+pub extern "C" fn slab_resource(handle: u32, kind: u32, index: u32) -> *mut u8 {
+	let packet = SESSIONS.with_borrow(|registry| {
+		registry
+			.live
+			.get(&handle)
+			.and_then(|server| server.gpu_resource(kind, index))
+	});
+	packet.map_or(std::ptr::null_mut(), |packet| block(&packet))
+}
+
 
 /// Layout for a host-visible block, or `None` when unusable.
 ///

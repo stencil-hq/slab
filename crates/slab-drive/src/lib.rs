@@ -129,6 +129,7 @@
 //! | slab drive examples/10-settings.slab
 //! ```
 
+mod gpu_abi;
 mod wire;
 use std::{
 	io::{self, BufRead, BufReader, Write},
@@ -249,6 +250,7 @@ struct Session {
 	fonts:            Vec<(String, PathBuf)>,
 	env:              EnvSpec,
 	doc:              Option<LoadedDoc>,
+	doc_generation:   u32,
 	t_ms:             f64,
 	quit:             bool,
 	pending_effects:  Vec<Effects>,
@@ -273,6 +275,7 @@ impl Session {
 			fonts,
 			env,
 			doc: None,
+			doc_generation: 0,
 			t_ms: 0.0,
 			quit: false,
 			pending_effects: Vec::new(),
@@ -362,6 +365,7 @@ impl Session {
 			.to_path_buf();
 		self.doc =
 			Some(LoadedDoc { path: path.to_path_buf(), base_dir, slir, inst, images, fr, fonts });
+		self.doc_generation = self.doc_generation.wrapping_add(1).max(1);
 		self.t_ms = 0.0;
 		self.reload_succeeded = true;
 
@@ -441,6 +445,7 @@ impl RequestPump {
 		};
 		let mut session = Session::new(env, Vec::new());
 		session.capture_effects = true;
+		session.doc_generation = 1;
 		session.reload_policy = Some(ReloadPolicy::Deny);
 		let path = path.into();
 		session.doc = Some(LoadedDoc {
@@ -611,6 +616,27 @@ impl Server {
 	pub fn request(&mut self, line: &str) -> String {
 		let response = handle_line(&mut self.session, line);
 		serde_json::to_string(&response).expect("SDP responses serialize")
+	}
+
+	/// Solves and encodes one compact binary frame for a GPU host.
+	///
+	/// The packet mirrors `slab_kernel::frame_buf::FrameBuf` without JSON or
+	/// base64 and lists every referenced retained resource plus its generation.
+	pub fn gpu_frame(&mut self) -> Option<Vec<u8>> {
+		let time = self.session.t_ms;
+		let document = self.session.doc_generation;
+		let doc = self.session.doc.as_mut()?;
+		doc.fr = frame::inst_frame(&mut doc.inst, time);
+		Some(gpu_abi::frame_packet(&doc.inst, &doc.fr, document))
+	}
+
+	/// Encodes one retained resource referenced by [`Self::gpu_frame`].
+	///
+	/// Resource kinds are `0 gradient | 1 path | 2 font | 3 image | 4 shadow`.
+	/// Unknown kinds and indices return `None`.
+	pub fn gpu_resource(&self, kind: u32, index: u32) -> Option<Vec<u8>> {
+		let doc = self.session.doc.as_ref()?;
+		gpu_abi::resource_packet(&doc.slir, &doc.inst, &doc.fonts, kind, index)
 	}
 
 	/// Whether `protocol.quit` has ended the session.

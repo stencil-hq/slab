@@ -21,6 +21,7 @@ pub mod dumpjson;
 pub mod ease;
 pub mod edit;
 pub mod flatten;
+pub mod frame_buf;
 pub mod focus;
 pub mod frame;
 pub mod graphemes;

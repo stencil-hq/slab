@@ -15,5 +15,8 @@ node_modules
 /clients/web/wasm
 /clients/go/slab/slab_abi.wasm.gz
 /packages/pyslab/src/slab/slab_abi.wasm.gz
+/clients/swift/Sources/Slab/Resources/slab_abi.wasm
 /gen/web-runtime
 /packages/dslab/dist
+
+clients/swift/.build/
