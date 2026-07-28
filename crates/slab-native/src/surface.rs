@@ -32,4 +32,4 @@ pub fn enable_transactional_presents(surface: &wgpu::Surface<'_>) {
 
 /// Transactional presents are a macOS `CAMetalLayer` concern; no-op elsewhere.
 #[cfg(not(target_os = "macos"))]
-pub fn enable_transactional_presents(_surface: &wgpu::Surface<'_>) {}
+pub const fn enable_transactional_presents(_surface: &wgpu::Surface<'_>) {}
