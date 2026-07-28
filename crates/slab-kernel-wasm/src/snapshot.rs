@@ -150,24 +150,27 @@ struct ScrollChangeSnapshot<'a> {
 
 #[derive(Serialize)]
 struct EffectSnapshot<'a> {
-	repaint:   bool,
-	sig_name:  &'a [u32],
-	sig_text:  &'a [String],
-	sig_item:  &'a [String],
-	has_caret: bool,
-	caret_x:   f64,
-	caret_y:   f64,
-	caret_w:   f64,
-	caret_h:   f64,
-	has_ime:   bool,
-	ime_x:     f64,
-	ime_y:     f64,
-	ime_w:     f64,
-	ime_h:     f64,
-	cursor:    u32,
-	focus:     u32,
-	sig_meta:  Vec<SigMetaSnapshot<'a>>,
-	scrolls:   Vec<ScrollChangeSnapshot<'a>>,
+	repaint:    bool,
+	sig_name:   &'a [u32],
+	sig_text:   &'a [String],
+	sig_item:   &'a [String],
+	sig_runs:   &'a [String],
+	#[serde(skip_serializing_if = "Option::is_none")]
+	range_edit: Option<&'a slab_kernel::dispatch::RangeEdit>,
+	has_caret:  bool,
+	caret_x:    f64,
+	caret_y:    f64,
+	caret_w:    f64,
+	caret_h:    f64,
+	has_ime:    bool,
+	ime_x:      f64,
+	ime_y:      f64,
+	ime_w:      f64,
+	ime_h:      f64,
+	cursor:     u32,
+	focus:      u32,
+	sig_meta:   Vec<SigMetaSnapshot<'a>>,
+	scrolls:    Vec<ScrollChangeSnapshot<'a>>,
 }
 
 #[derive(Serialize)]
@@ -381,6 +384,8 @@ pub fn effects_json(effects: &Effects) -> String {
 		sig_name: &effects.sig_name,
 		sig_text: &effects.sig_text,
 		sig_item: &effects.sig_item,
+		sig_runs: &effects.sig_runs,
+		range_edit: effects.range_edit.as_ref(),
 		has_caret: effects.has_caret,
 		caret_x: effects.caret_x,
 		caret_y: effects.caret_y,
@@ -620,4 +625,38 @@ const fn signed(value: u32) -> i32 {
 
 fn to_json(value: &impl Serialize) -> String {
 	serde_json::to_string(value).expect("kernel snapshot contains finite serializable values")
+}
+
+#[cfg(test)]
+mod tests {
+	use slab_kernel::dispatch::{RANGE_EDIT_TEXT, RangeEdit, RangeEndpoint, effects_new};
+
+	use super::*;
+
+	#[test]
+	fn effects_json_keeps_rich_runs_and_cross_field_text_edit() {
+		let mut effects = effects_new();
+		effects
+			.sig_runs
+			.push(r#"{"rev":7,"runs":[{"style":0,"start":1,"end":3}]}"#.to_owned());
+		effects.range_edit = Some(RangeEdit {
+			kind:   RANGE_EDIT_TEXT,
+			anchor: RangeEndpoint { key: "list@0/#title".to_owned(), offset: 2 },
+			head:   RangeEndpoint { key: "list@1/#title".to_owned(), offset: 4 },
+			text:   "inserted".to_owned(),
+		});
+
+		let value: serde_json::Value =
+			serde_json::from_str(&effects_json(&effects)).expect("effects JSON");
+		assert_eq!(value["sig_runs"][0], r#"{"rev":7,"runs":[{"style":0,"start":1,"end":3}]}"#);
+		assert_eq!(
+			value["range_edit"],
+			serde_json::json!({
+				"kind": RANGE_EDIT_TEXT,
+				"anchor": {"key": "list@0/#title", "offset": 2},
+				"head": {"key": "list@1/#title", "offset": 4},
+				"text": "inserted",
+			})
+		);
+	}
 }

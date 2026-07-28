@@ -132,6 +132,56 @@ pub struct CaretState {
 	/// Desired visual caret x, or a negative sentinel when none is active.
 	pub goal_x:    f64,
 }
+/// One endpoint of a cross-field text range.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct FieldLocator {
+	/// Canonical full key of the endpoint field.
+	pub key:    String,
+	/// Grapheme-boundary codepoint offset in committed text.
+	pub offset: i32,
+}
+
+/// One normalized inline-style range in a rich field.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+pub struct FieldRun {
+	/// `0` bold, `1` italic, `2` underline, `3` strike, or `4` code.
+	pub style: u32,
+	/// Inclusive grapheme-boundary codepoint offset.
+	pub start: i32,
+	/// Exclusive grapheme-boundary codepoint offset.
+	pub end:   i32,
+}
+
+/// Host-facing rich-field spans and their monotonic local revision.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct FieldRuns {
+	pub revision: u64,
+	pub runs:     Vec<FieldRun>,
+}
+/// One field captured in a host-owned structural transaction.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct FieldSnapshotEntry {
+	/// Escaped canonical full field key.
+	pub locator: String,
+	/// Committed text; active preedit text is deliberately excluded.
+	pub text:    String,
+	/// Full normalized style runs and the captured local revision.
+	pub runs:    FieldRuns,
+	/// Active selection end, as a grapheme-boundary codepoint offset.
+	pub caret:   i32,
+	/// Fixed selection end, as a grapheme-boundary codepoint offset.
+	pub anchor:  i32,
+	/// Desired visual caret x, or a negative sentinel when none is active.
+	pub goal_x:  f64,
+}
+
+/// Deterministic plain-data capture of fields in one host transaction.
+///
+/// Entries retain caller order and always use canonical locators.
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct FieldSnapshot {
+	pub fields: Vec<FieldSnapshotEntry>,
+}
 
 /// One resolved public token value.
 ///
@@ -730,6 +780,10 @@ pub fn inst_set_focus(i: &mut Instance, key: &str, visible: bool) -> bool {
 		);
 		return false;
 	}
+	let range_changed = i.ds.fs.focus != node && dispatch::clear_range(&mut i.ds);
+	if range_changed {
+		i.dirty = true;
+	}
 	i.focus_note.clear();
 	if focus::set_focus(&i.doc, &mut i.st, &mut i.ds.fs, node, visible) {
 		i.dirty = true;
@@ -761,12 +815,23 @@ pub fn inst_set_field_text(i: &mut Instance, key: &str, text: &str) -> bool {
 		return false;
 	}
 
+	let canonical = scene::key_of(&i.doc, &i.st.lists, node);
+	let resets_endpoint = i
+		.ds
+		.range
+		.as_ref()
+		.is_some_and(|range| range.anchor_key == canonical || range.head_key == canonical);
+	if resets_endpoint && dispatch::clear_range(&mut i.ds) {
+		i.dirty = true;
+	}
 	let edit_index = dispatch::ed_ix(&i.ds, node);
-	let (previous, display_changed) = if edit_index >= 0 {
+	let (previous, spans_changed, previous_revision, display_changed) = if edit_index >= 0 {
 		let index = usize::try_from(edit_index).expect("negative edit index");
 		let state = &i.ds.ed[index];
 		(
 			edit::text_str(state),
+			!state.spans.is_empty(),
+			state.revision,
 			edit::display_str(state) != text
 				|| state.caret != crate::rt::str_len(text)
 				|| state.anchor != state.caret,
@@ -774,11 +839,13 @@ pub fn inst_set_field_text(i: &mut Instance, key: &str, text: &str) -> bool {
 	} else {
 		let content = style::content_str(&i.doc, &i.st, node);
 		let changed = content != text;
-		(content, changed)
+		(content, false, 0, changed)
 	};
 	let text_changed = previous != text;
-
-	let replacement = edit::es_new(node, text);
+	let mut replacement = edit::es_new(node, text);
+	if text_changed || spans_changed {
+		replacement.revision = previous_revision.wrapping_add(1);
+	}
 	if edit_index >= 0 {
 		let index = usize::try_from(edit_index).expect("negative edit index");
 		i.ds.ed[index] = replacement;
@@ -795,10 +862,10 @@ pub fn inst_set_field_text(i: &mut Instance, key: &str, text: &str) -> bool {
 		style::field_set(&mut i.st, node, text);
 	}
 	let param_changed = dispatch::sync_bound_text_param(&i.doc, &mut i.st, node, text);
-	if text_changed || param_changed {
+	if text_changed || spans_changed || param_changed {
 		dispatch::queue_field_change(&i.doc, &i.st, &mut i.ds, node, text);
 	}
-	if display_changed || param_changed || composing_changed || scroll_changed {
+	if display_changed || spans_changed || param_changed || composing_changed || scroll_changed {
 		i.dirty = true;
 	}
 	true
@@ -820,6 +887,249 @@ pub fn inst_field_text(i: &Instance, key: &str) -> Option<String> {
 	}
 }
 
+fn collect_field_runs(state: &edit::EditState) -> FieldRuns {
+	let mut boundaries = Vec::new();
+	graphemes::boundaries(&state.text, &mut boundaries);
+	let mut spans = state.spans.clone();
+	let mut runs = Vec::new();
+	for style in 0..=edit::STYLE_CODE {
+		let ranges = spans.get_mut(style).expect("known style");
+		for (start, end) in &mut ranges.0 {
+			*start = clamp_caret_offset(&boundaries, *start);
+			*end = clamp_caret_offset(&boundaries, *end);
+		}
+		ranges.normalize();
+		for &(start, end) in &ranges.0 {
+			runs.push(FieldRun { style, start, end });
+		}
+	}
+	FieldRuns { revision: state.revision, runs }
+}
+
+/// Returns normalized inline-style runs for a keyed field.
+///
+/// An unbound field has revision zero and no runs. Unknown and non-field keys
+/// return `None`.
+pub fn inst_field_runs(i: &Instance, key: &str) -> Option<FieldRuns> {
+	let node = scene::node_by_key(&i.doc, &i.st.lists, key);
+	if node == slir::NONE || dispatch::sig_of(&i.doc, &i.st, node, dispatch::TR_CHANGE) < 0 {
+		return None;
+	}
+	let edit_index = dispatch::ed_ix(&i.ds, node);
+	if edit_index < 0 {
+		return Some(FieldRuns::default());
+	}
+	Some(collect_field_runs(&i.ds.ed[usize::try_from(edit_index).expect("negative edit index")]))
+}
+
+fn spans_from_field_runs(text: &str, runs: &FieldRuns) -> Option<edit::InlineSpans> {
+	if runs
+		.runs
+		.iter()
+		.any(|run| run.style > edit::STYLE_CODE || run.start > run.end)
+	{
+		return None;
+	}
+	let mut boundaries = Vec::new();
+	graphemes::boundaries(text, &mut boundaries);
+	let mut spans = edit::InlineSpans::default();
+	for run in &runs.runs {
+		let start = clamp_caret_offset(&boundaries, run.start);
+		let end = clamp_caret_offset(&boundaries, run.end);
+		if start < end {
+			spans
+				.get_mut(run.style)
+				.expect("validated style")
+				.0
+				.push((start, end));
+		}
+	}
+	for style in 0..=edit::STYLE_CODE {
+		spans.get_mut(style).expect("known style").normalize();
+	}
+	Some(spans)
+}
+
+fn bound_field_nodes(i: &Instance, locators: &[&str]) -> Option<Vec<u32>> {
+	let mut nodes = Vec::with_capacity(locators.len());
+	let mut seen = BTreeSet::new();
+	for &locator in locators {
+		let node = scene::node_by_key(&i.doc, &i.st.lists, locator);
+		if node == slir::NONE || dispatch::sig_of(&i.doc, &i.st, node, dispatch::TR_CHANGE) < 0 {
+			return None;
+		}
+		let edit_index = dispatch::ed_ix(&i.ds, node);
+		if edit_index < 0 {
+			return None;
+		}
+		let canonical = scene::key_of(&i.doc, &i.st.lists, node);
+		if !seen.insert(canonical) {
+			return None;
+		}
+		nodes.push(node);
+	}
+	Some(nodes)
+}
+
+/// Purely captures bound fields for one host-owned structural transaction.
+///
+/// Unknown, non-field, unbound, or duplicate locators reject the whole capture.
+/// No field or history state changes, so an aborted host transaction needs no
+/// rollback.
+pub fn inst_snapshot_fields(i: &Instance, locators: &[&str]) -> Option<FieldSnapshot> {
+	let nodes = bound_field_nodes(i, locators)?;
+	let mut fields = Vec::with_capacity(nodes.len());
+	for node in nodes {
+		let edit_index =
+			usize::try_from(dispatch::ed_ix(&i.ds, node)).expect("validated bound field");
+		let state = &i.ds.ed[edit_index];
+		fields.push(FieldSnapshotEntry {
+			locator: scene::key_of(&i.doc, &i.st.lists, node),
+			text:    edit::text_str(state),
+			runs:    collect_field_runs(state),
+			caret:   state.caret,
+			anchor:  state.anchor,
+			goal_x:  state.goal_x,
+		});
+	}
+	Some(FieldSnapshot { fields })
+}
+
+/// Commits a successful host structural mutation as a hard history barrier.
+///
+/// Every locator is validated before any history changes. On success, local
+/// undo and redo are emptied for every affected bound field.
+pub fn inst_commit_fields(i: &mut Instance, locators: &[&str]) -> bool {
+	let Some(nodes) = bound_field_nodes(i, locators) else {
+		return false;
+	};
+	for node in nodes {
+		let edit_index =
+			usize::try_from(dispatch::ed_ix(&i.ds, node)).expect("validated bound field");
+		edit::reset_history(&mut i.ds.ed[edit_index]);
+	}
+	true
+}
+
+/// Atomically restores every field in a host-owned structural snapshot.
+///
+/// Every locator must resolve to a field before any mutation occurs; a missing,
+/// non-field, or duplicate target returns `false` and leaves the instance
+/// unchanged. Each restored field becomes a fresh local baseline with empty
+/// undo and redo history. Captured
+/// revisions are adopted exactly, active composition is cleared, and the
+/// instance is marked for relayout and repaint.
+pub fn inst_restore_fields(i: &mut Instance, snapshot: &FieldSnapshot) -> bool {
+	let mut resolved = Vec::with_capacity(snapshot.fields.len());
+	let mut seen = BTreeSet::new();
+	for field in &snapshot.fields {
+		let node = scene::node_by_key(&i.doc, &i.st.lists, &field.locator);
+		if node == slir::NONE || dispatch::sig_of(&i.doc, &i.st, node, dispatch::TR_CHANGE) < 0 {
+			return false;
+		}
+		let canonical = scene::key_of(&i.doc, &i.st.lists, node);
+		if !seen.insert(canonical) || !field.goal_x.is_finite() {
+			return false;
+		}
+		let Some(spans) = spans_from_field_runs(&field.text, &field.runs) else {
+			return false;
+		};
+		let mut boundaries = Vec::new();
+		graphemes::boundaries(&field.text, &mut boundaries);
+		resolved.push((
+			node,
+			spans,
+			clamp_caret_offset(&boundaries, field.caret),
+			clamp_caret_offset(&boundaries, field.anchor),
+		));
+	}
+
+	if dispatch::clear_range(&mut i.ds) {
+		i.dirty = true;
+	}
+	for (field, (node, spans, caret, anchor)) in snapshot.fields.iter().zip(resolved) {
+		dispatch::ensure_edit(&i.doc, &mut i.st, &mut i.ds, node);
+		let edit_index =
+			usize::try_from(dispatch::ed_ix(&i.ds, node)).expect("restored field was bound");
+		let state = &i.ds.ed[edit_index];
+		let text_changed = state.text != field.text;
+		let spans_changed = state.spans != spans;
+		let display_changed = edit::display_str(state) != field.text;
+		edit::restore_baseline(
+			&mut i.ds.ed[edit_index],
+			field.text.clone(),
+			spans,
+			caret,
+			anchor,
+			field.goal_x,
+			field.runs.revision,
+		);
+		let composing_changed = style::set_node_state(&i.doc, &mut i.st, node, "composing", false);
+		if display_changed {
+			style::field_set(&mut i.st, node, &field.text);
+		}
+		let param_changed = dispatch::sync_bound_text_param(&i.doc, &mut i.st, node, &field.text);
+		if text_changed || spans_changed || param_changed {
+			dispatch::queue_field_change(&i.doc, &i.st, &mut i.ds, node, &field.text);
+		}
+		if display_changed || spans_changed || param_changed || composing_changed {
+			i.dirty = true;
+		}
+	}
+	i.dirty = true;
+	true
+}
+
+/// Replaces all inline-style runs for a keyed field as one undo step.
+///
+/// Offsets clamp to text bounds and nearest grapheme boundaries exactly like
+/// [`inst_set_caret`]. Reversed ranges or unknown style identifiers reject the
+/// whole write. The payload revision is informational and is not adopted;
+/// a changed local span set increments the field's own revision.
+pub fn inst_set_field_runs(i: &mut Instance, key: &str, runs: &FieldRuns) -> bool {
+	let node = scene::node_by_key(&i.doc, &i.st.lists, key);
+	if node == slir::NONE || dispatch::sig_of(&i.doc, &i.st, node, dispatch::TR_CHANGE) < 0 {
+		return false;
+	}
+	dispatch::ensure_edit(&i.doc, &mut i.st, &mut i.ds, node);
+	let edit_index = usize::try_from(dispatch::ed_ix(&i.ds, node)).expect("field edit was bound");
+	let Some(spans) = spans_from_field_runs(&i.ds.ed[edit_index].text, runs) else {
+		return false;
+	};
+	if !edit::replace_spans(&mut i.ds.ed[edit_index], spans) {
+		return true;
+	}
+	let text = edit::text_str(&i.ds.ed[edit_index]);
+	dispatch::queue_field_change(&i.doc, &i.st, &mut i.ds, node, &text);
+	i.dirty = true;
+	true
+}
+
+/// Toggles one inline style over the field's current non-empty selection.
+///
+/// Empty selections are a deliberate no-op; this API never expands to a word.
+pub fn inst_toggle_style(i: &mut Instance, key: &str, style: u32) -> bool {
+	if style > edit::STYLE_CODE {
+		return false;
+	}
+	let node = scene::node_by_key(&i.doc, &i.st.lists, key);
+	if node == slir::NONE || dispatch::sig_of(&i.doc, &i.st, node, dispatch::TR_CHANGE) < 0 {
+		return false;
+	}
+	let edit_index = dispatch::ed_ix(&i.ds, node);
+	if edit_index < 0 {
+		return false;
+	}
+	let index = usize::try_from(edit_index).expect("negative edit index");
+	if !edit::toggle_style(&mut i.ds.ed[index], style) {
+		return false;
+	}
+	let text = edit::text_str(&i.ds.ed[index]);
+	dispatch::queue_field_change(&i.doc, &i.st, &mut i.ds, node, &text);
+	i.dirty = true;
+	true
+}
+
 fn clamp_caret_offset(boundaries: &[i32], offset: i32) -> i32 {
 	let end = boundaries.last().copied().unwrap_or(0);
 	let offset = offset.clamp(0, end);
@@ -835,6 +1145,15 @@ fn clamp_caret_offset(boundaries: &[i32], offset: i32) -> i32 {
 			}
 		},
 	}
+}
+
+fn field_scene_order(i: &Instance, node: u32) -> Option<u32> {
+	i.sc
+		.entries
+		.iter()
+		.filter(|entry| entry.node == node)
+		.map(|entry| entry.authored_order)
+		.min()
 }
 
 /// Focuses a keyed field and sets its selection.
@@ -888,6 +1207,33 @@ fn inst_set_caret_inner(
 	} else {
 		None
 	};
+	let previous_focus = i.ds.fs.focus;
+	let previous_range = i.ds.range.clone();
+	let source = (previous_focus != slir::NONE && previous_focus != node)
+		.then(|| {
+			let source_index = dispatch::ed_ix(&i.ds, previous_focus);
+			(source_index >= 0).then(|| {
+				let source_index = usize::try_from(source_index).expect("negative edit index");
+				let source_state = &i.ds.ed[source_index];
+				let (anchor_key, anchor_offset) = previous_range
+					.as_ref()
+					.filter(|range| {
+						scene::node_by_key(&i.doc, &i.st.lists, &range.head_key) == previous_focus
+					})
+					.map_or_else(
+						|| (scene::key_of(&i.doc, &i.st.lists, previous_focus), source_state.anchor),
+						|range| (range.anchor_key.clone(), range.anchor_offset),
+					);
+				(
+					anchor_key,
+					anchor_offset,
+					previous_focus,
+					source_state.caret,
+					crate::rt::str_len(&source_state.text),
+				)
+			})
+		})
+		.flatten();
 	if !inst_set_focus(i, key, false) {
 		return false;
 	}
@@ -916,9 +1262,62 @@ fn inst_set_caret_inner(
 		style::set_node_state(&i.doc, &mut i.st, node, "composing", false);
 		style::field_set(&mut i.st, node, &i.ds.ed[index].text);
 	}
-	i.ds.ed[index].caret = caret;
-	i.ds.ed[index].anchor = anchor;
+	edit::set_selection(&mut i.ds.ed[index], caret, anchor);
 	i.ds.ed[index].goal_x = goal_x.unwrap_or(-1.0);
+	let mut range_set = false;
+	if let Some(range) = previous_range
+		.as_ref()
+		.filter(|range| scene::node_by_key(&i.doc, &i.st.lists, &range.head_key) == node)
+	{
+		let anchor_node = scene::node_by_key(&i.doc, &i.st.lists, &range.anchor_key);
+		if let (Some(anchor_order), Some(head_order)) =
+			(field_scene_order(i, anchor_node), field_scene_order(i, node))
+		{
+			let head_end = crate::rt::str_len(&i.ds.ed[index].text);
+			let expected_anchor = if anchor_order < head_order {
+				0
+			} else {
+				head_end
+			};
+			if anchor == expected_anchor {
+				range_set = dispatch::set_range(
+					&i.doc,
+					&i.st,
+					&i.sc,
+					&mut i.ds,
+					&range.anchor_key,
+					range.anchor_offset,
+					node,
+					caret,
+				);
+			}
+		}
+	} else if let Some((anchor_key, anchor_offset, source_node, source_caret, source_end)) = source
+		&& let (Some(source_order), Some(head_order)) =
+			(field_scene_order(i, source_node), field_scene_order(i, node))
+	{
+		let head_end = crate::rt::str_len(&i.ds.ed[index].text);
+		let (expected_source, expected_anchor) = if source_order < head_order {
+			(source_end, 0)
+		} else {
+			(0, head_end)
+		};
+		if source_caret == expected_source && anchor == expected_anchor {
+			range_set = dispatch::set_range(
+				&i.doc,
+				&i.st,
+				&i.sc,
+				&mut i.ds,
+				&anchor_key,
+				anchor_offset,
+				node,
+				caret,
+			);
+		}
+	}
+	if !range_set {
+		dispatch::clear_range(&mut i.ds);
+	}
 	i.dirty = true;
 	true
 }
@@ -945,6 +1344,29 @@ pub fn inst_get_caret(i: &Instance, key: &str) -> Option<CaretState> {
 		composing: state.composing,
 		goal_x:    state.goal_x,
 	})
+}
+
+/// Returns the active cross-field range as canonical keyed locators.
+pub fn inst_get_range(i: &Instance) -> Option<(FieldLocator, FieldLocator)> {
+	let range = i.ds.range.as_ref()?;
+	if scene::node_by_key(&i.doc, &i.st.lists, &range.anchor_key) == slir::NONE
+		|| scene::node_by_key(&i.doc, &i.st.lists, &range.head_key) == slir::NONE
+	{
+		return None;
+	}
+	Some((
+		FieldLocator { key: range.anchor_key.clone(), offset: range.anchor_offset },
+		FieldLocator { key: range.head_key.clone(), offset: range.head_offset },
+	))
+}
+
+/// Clears cross-field selection metadata while retaining field-local editors.
+pub fn inst_clear_range(i: &mut Instance) -> bool {
+	let changed = dispatch::clear_range(&mut i.ds);
+	if changed {
+		i.dirty = true;
+	}
+	changed
 }
 
 /// Returns the focused node, or [`slir::NONE`] when focus is clear.
@@ -1571,8 +1993,64 @@ pub fn solve_frame(i: &mut Instance, t_ms: f64, with_motion: bool) -> Frame {
 }
 
 fn solve_frame_into(i: &mut Instance, t_ms: f64, with_motion: bool, frame: &mut Frame) {
+	if dispatch::validate_range(&i.doc, &i.st, &mut i.ds) {
+		i.dirty = true;
+	}
 	solve_layout(i, t_ms, with_motion);
 	flatten::flatten_into(&i.doc, &i.st, &i.lay, &i.ds, &i.ms, i.root_pi, frame);
+}
+
+fn sync_layout_spans(i: &mut Instance) {
+	let mut index = i.lay.rich_node.len();
+	while index > 0 {
+		index -= 1;
+		if !i.ds.ed_node.contains(&i.lay.rich_node[index]) {
+			i.lay.rich_node.swap_remove(index);
+			i.lay.rich_spans.swap_remove(index);
+			i.lay.rich_revision.swap_remove(index);
+			i.lay.rich_compose.swap_remove(index);
+			i.lay.rich_caret.swap_remove(index);
+		}
+	}
+	for (node, state) in i.ds.ed_node.iter().copied().zip(&i.ds.ed) {
+		let compose = if state.composing {
+			crate::rt::str_len(&state.compose)
+		} else {
+			0
+		};
+		let caret = if state.composing { state.caret } else { -1 };
+		let rich_index = i
+			.lay
+			.rich_node
+			.iter()
+			.position(|candidate| *candidate == node);
+		if let Some(index) = rich_index {
+			if i.lay.rich_revision[index] == state.revision
+				&& i.lay.rich_compose[index] == compose
+				&& i.lay.rich_caret[index] == caret
+			{
+				continue;
+			}
+			i.lay.rich_spans[index] = if state.composing {
+				edit::display_spans(state)
+			} else {
+				state.spans.clone()
+			};
+			i.lay.rich_revision[index] = state.revision;
+			i.lay.rich_compose[index] = compose;
+			i.lay.rich_caret[index] = caret;
+		} else {
+			i.lay.rich_node.push(node);
+			i.lay.rich_spans.push(if state.composing {
+				edit::display_spans(state)
+			} else {
+				state.spans.clone()
+			});
+			i.lay.rich_revision.push(state.revision);
+			i.lay.rich_compose.push(compose);
+			i.lay.rich_caret.push(caret);
+		}
+	}
 }
 
 fn solve_layout(i: &mut Instance, t_ms: f64, with_motion: bool) {
@@ -1585,6 +2063,7 @@ fn solve_layout(i: &mut Instance, t_ms: f64, with_motion: bool) {
 	if with_motion {
 		motion::apply(&i.doc, &mut i.st, &mut i.ms, t_ms);
 	}
+	sync_layout_spans(i);
 	let viewport_width = i.st.env.vw;
 	let viewport_height = i.st.env.vh;
 	i.root_pi = layout::solve(
@@ -1724,6 +2203,9 @@ fn write_frame(i: &mut Instance, t_ms: f64, frame: &mut Frame, retain_clean: boo
 		return true;
 	}
 
+	if dispatch::validate_range(&i.doc, &i.st, &mut i.ds) {
+		i.dirty = true;
+	}
 	let has_motion = !i.doc.bind_node.is_empty() || !i.doc.trans_node.is_empty();
 	let needs_solve = i.dirty || !i.solved || i.ms.active || has_motion && t_ms != i.last_t;
 	if !needs_solve {
@@ -1772,6 +2254,7 @@ fn write_frame(i: &mut Instance, t_ms: f64, frame: &mut Frame, retain_clean: boo
 		&& focus::restore(&i.doc, &mut i.st, &i.sc, &mut i.ds.fs)
 	{
 		i.dirty = true;
+		dispatch::clear_range(&mut i.ds);
 	}
 	focus::refresh(&i.doc, &i.st, &i.sc, &mut i.ds.fs);
 	finish_frame_diagnostics(i, frame);
