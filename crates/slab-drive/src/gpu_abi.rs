@@ -2,10 +2,13 @@
 
 use slab_compile::render::RegisteredFont;
 use slab_kernel::{
+	dispatch::Effects,
 	flatten::{Frame, FrameOp},
 	frame,
-	frame_buf::FrameBuf,
 	frame::Instance,
+	frame_buf::FrameBuf,
+	scene,
+	slir as kernel_slir,
 };
 use slab_slir::Slir;
 
@@ -25,6 +28,7 @@ const SECTION_UNCOVERED: u32 = 4;
 const SECTION_RUNTIME_PATHS: u32 = 5;
 const SECTION_DIAGNOSTICS: u32 = 6;
 const SECTION_RESOURCES: u32 = 7;
+const SECTION_EFFECTS: u32 = 8;
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 struct ResourceRef {
@@ -33,7 +37,7 @@ struct ResourceRef {
 	generation: u32,
 }
 
-pub fn frame_packet(inst: &Instance, frame: &Frame, document: u32) -> Vec<u8> {
+pub fn frame_packet(inst: &Instance, frame: &Frame, effects: &Effects, document: u32) -> Vec<u8> {
 	let encoded = FrameBuf::encode_ref(frame, inst.dirty, inst.ms.active);
 	let resources = frame_resources(inst, frame);
 	let mut writer = Writer::with_capacity(
@@ -43,7 +47,7 @@ pub fn frame_packet(inst: &Instance, frame: &Frame, document: u32) -> Vec<u8> {
 	writer.u32(FRAME_VERSION);
 	writer.u32(u32::from(encoded.dirty) | (u32::from(encoded.motion_active) << 1));
 	writer.u32(document);
-	writer.u32(7);
+	writer.u32(8);
 
 	writer.section(SECTION_U32S, |writer| {
 		writer.count(encoded.u32s.len());
@@ -96,6 +100,7 @@ pub fn frame_packet(inst: &Instance, frame: &Frame, document: u32) -> Vec<u8> {
 			writer.u32(resource.generation);
 		}
 	});
+	writer.section(SECTION_EFFECTS, |writer| write_effects(writer, inst, effects));
 
 	writer.finish()
 }
@@ -248,6 +253,57 @@ fn push_resource(resources: &mut Vec<ResourceRef>, kind: u32, index: u32, genera
 	let resource = ResourceRef { kind, index, generation };
 	if !resources.contains(&resource) {
 		resources.push(resource);
+	}
+}
+
+fn write_effects(writer: &mut Writer, inst: &Instance, effects: &Effects) {
+	let flags = u32::from(effects.repaint)
+		| (u32::from(effects.has_caret) << 1)
+		| (u32::from(effects.has_ime) << 2);
+	writer.u32(flags);
+	writer.u32(effects.cursor);
+	if effects.focus == kernel_slir::NONE {
+		writer.string("");
+	} else {
+		writer.string(&scene::key_of(inst.doc(), &inst.st.lists, effects.focus));
+	}
+	for value in [
+		effects.caret_x,
+		effects.caret_y,
+		effects.caret_w,
+		effects.caret_h,
+		effects.ime_x,
+		effects.ime_y,
+		effects.ime_w,
+		effects.ime_h,
+	] {
+		writer.f64(value);
+	}
+	writer.count(effects.sig_name.len());
+	for (index, name) in effects.sig_name.iter().copied().enumerate() {
+		let meta = &effects.sig_meta[index];
+		writer.string(kernel_slir::str_at(inst.doc(), name));
+		writer.string(&effects.sig_text[index]);
+		writer.string(&effects.sig_item[index]);
+		for value in [meta.x, meta.y, meta.dx, meta.dy, meta.drag_dx, meta.drag_dy] {
+			writer.f64(value);
+		}
+		writer.u32(meta.mods);
+		writer.u32(meta.button);
+		writer.u32(meta.clicks);
+		writer.string(&meta.key);
+		writer.string(&meta.hit_key);
+		writer.string(&meta.pressed_key);
+		writer.string(&meta.src_key);
+		writer.string(&meta.src_item);
+		writer.u32(u32::from(meta.cancelled));
+		writer.u32(u32::from(meta.dropped));
+	}
+	writer.count(effects.scrolls.len());
+	for scroll in &effects.scrolls {
+		writer.string(&scroll.key);
+		writer.u32(scroll.axis);
+		writer.f64(scroll.off);
 	}
 }
 

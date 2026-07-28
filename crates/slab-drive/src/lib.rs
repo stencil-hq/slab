@@ -618,16 +618,21 @@ impl Server {
 		serde_json::to_string(&response).expect("SDP responses serialize")
 	}
 
-	/// Solves and encodes one compact binary frame for a GPU host.
+	/// Solves at `t_ms` and encodes one compact binary frame for a GPU host.
 	///
 	/// The packet mirrors `slab_kernel::frame_buf::FrameBuf` without JSON or
-	/// base64 and lists every referenced retained resource plus its generation.
-	pub fn gpu_frame(&mut self) -> Option<Vec<u8>> {
-		let time = self.session.t_ms;
+	/// base64, lists every referenced retained resource plus its generation,
+	/// and carries effects emitted while the solve settles gesture state.
+	pub fn gpu_frame(&mut self, t_ms: f64) -> Option<Vec<u8>> {
+		if !t_ms.is_finite() {
+			return None;
+		}
+		self.session.t_ms = t_ms;
 		let document = self.session.doc_generation;
 		let doc = self.session.doc.as_mut()?;
-		doc.fr = frame::inst_frame(&mut doc.inst, time);
-		Some(gpu_abi::frame_packet(&doc.inst, &doc.fr, document))
+		doc.fr = frame::inst_frame(&mut doc.inst, t_ms);
+		let effects = frame::inst_take_signals(&mut doc.inst);
+		Some(gpu_abi::frame_packet(&doc.inst, &doc.fr, &effects, document))
 	}
 
 	/// Encodes one retained resource referenced by [`Self::gpu_frame`].
@@ -690,6 +695,8 @@ fn register_fonts(inst: &mut Instance, fonts: &[RegisteredFont]) {
 			i32::from(metrics.ascent),
 			i32::from(metrics.descent),
 			i32::from(metrics.line_gap),
+			i32::from(metrics.underline_position),
+			i32::from(metrics.underline_thickness),
 			u32::from(metrics.default_advance),
 			&metrics.cps,
 			&metrics.gids,
