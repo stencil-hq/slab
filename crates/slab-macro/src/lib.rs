@@ -57,9 +57,12 @@ fn compile_error(msg: &str) -> TokenStream {
         .expect("compile_error! literal always parses")
 }
 
+type ParsedArgs = (Option<String>, String, Vec<(String, String)>);
+
 /// Parse `([name,] "path" [, "Family" = "font.ttf"]... [,])` macro arguments.
-fn parse_args(input: TokenStream) -> Result<(Option<String>, String, Vec<(String, String)>), String> {
-    const USAGE: &str = "expected `include_doc!([name,] \"relative/path.slab\" [, \"Family\" = \"font.ttf\"]...)`";
+fn parse_args(input: TokenStream) -> Result<ParsedArgs, String> {
+    const USAGE: &str =
+        "expected `include_doc!([name,] \"relative/path.slab\" [, \"Family\" = \"font.ttf\"]...)`";
     let mut tokens = input.into_iter().peekable();
     let name = match tokens.peek() {
         Some(TokenTree::Ident(ident)) => {
