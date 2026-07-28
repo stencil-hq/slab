@@ -5,6 +5,7 @@
 //!
 //! Built with `wasm-bindgen --target nodejs` for the CLI and `--target web`
 //! for the playground (see `scripts/pack.ts`).
+use slab_compile::react::generate as gen_react_files;
 use slab_compile::render::{RenderKind, RenderOpts, render as render_slir};
 use slab_compile::rustgen::generate as gen_rust_src;
 use slab_compile::wc::{WcFile, WcOptions, generate as gen_wc_files};
@@ -275,6 +276,43 @@ pub fn gen_wc(source: &str, opts_json: &str, assets_json: &str) -> Result<String
     let stem = v["stem"].as_str().unwrap_or("slab");
     let copts = opts_with_assets(true, ".", assets_json);
     let (files, diags) = gen_wc_files(source, &copts, &wopts, stem);
+    let source_name = v["sourceName"].as_str().unwrap_or("slab");
+    let diags_j = diags_json(&diags, source_name);
+    let Some(files) = files else {
+        return Err(JsValue::from_str(&diags_j));
+    };
+    let files_j: Vec<serde_json::Value> = files
+        .iter()
+        .map(|WcFile { name, bytes, text }| {
+            if *text {
+                let s = String::from_utf8(bytes.clone()).unwrap_or_default();
+                serde_json::json!({ "name": name, "text": s })
+            } else {
+                serde_json::json!({ "name": name, "b64": b64_encode(bytes) })
+            }
+        })
+        .collect();
+    let result = serde_json::json!({
+        "files": files_j,
+        "diagnostics": serde_json::from_str::<serde_json::Value>(&diags_j).unwrap_or(serde_json::Value::Array(vec![])),
+    });
+    Ok(serde_json::to_string(&result).unwrap_or_else(|_| "{}".into()))
+}
+
+/// `gen react` — emit web-component files plus the typed React wrapper.
+/// `opts_json`: `{tag?, separateIr, stem}`. Returns
+/// `{files:[{name, b64?|text?}], diagnostics:[…]}`.
+#[wasm_bindgen]
+pub fn gen_react(source: &str, opts_json: &str, assets_json: &str) -> Result<String, JsValue> {
+    let v: serde_json::Value = serde_json::from_str(opts_json)
+        .map_err(|e| JsValue::from_str(&format!("bad opts: {e}")))?;
+    let wopts = WcOptions {
+        tag: v["tag"].as_str().map(String::from),
+        separate_ir: v["separateIr"].as_bool().unwrap_or(false),
+    };
+    let stem = v["stem"].as_str().unwrap_or("slab");
+    let copts = opts_with_assets(true, ".", assets_json);
+    let (files, diags) = gen_react_files(source, &copts, &wopts, stem);
     let source_name = v["sourceName"].as_str().unwrap_or("slab");
     let diags_j = diags_json(&diags, source_name);
     let Some(files) = files else {

@@ -5,6 +5,7 @@
 
 mod conformance;
 mod drive;
+mod gen_react;
 mod gen_rust;
 mod gen_wc;
 mod render;
@@ -30,6 +31,7 @@ commands:
   drive [FILE] [--port N] [--width N] [--height N]   NDJSON automation protocol (SDP)
   lsp                                      LSP server over stdio (editors)
   gen wc FILE -o DIR [--tag NAME] [--separate-ir]   emit a web-component module
+  gen react FILE -o DIR [--tag NAME]       emit a web component + typed React wrapper
   gen rust FILE -o OUT.rs                  emit a typed Rust module (native client)
 ";
 const CHECK_USAGE: &str = "\
@@ -40,6 +42,7 @@ const BUILD_USAGE: &str = "usage: slab build FILE -o OUT.slir [--no-embed-assets
 const DUMP_USAGE: &str = "usage: slab dump FILE.slir\n";
 const GEN_USAGE: &str = "\
 usage: slab gen wc FILE -o DIR [--tag NAME] [--separate-ir]
+       slab gen react FILE -o DIR [--tag NAME] [--separate-ir]
        slab gen rust FILE -o OUT.rs
 ";
 
@@ -79,13 +82,14 @@ fn main() -> ExitCode {
         }
         "gen" => match args.get(1).map(String::as_str) {
             Some("wc") => gen_wc::cmd_gen_wc(&args[2..]),
+            Some("react") => gen_react::cmd_gen_react(&args[2..]),
             Some("rust") => gen_rust::cmd_gen_rust(&args[2..]),
             Some(other) => {
                 eprintln!("error: unknown gen target '{other}'");
                 ExitCode::from(2)
             }
             None => {
-                eprintln!("error: gen needs a target (wc)");
+                eprintln!("error: gen needs a target (wc, react, rust)");
                 ExitCode::from(2)
             }
         },
