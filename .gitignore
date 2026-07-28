@@ -12,3 +12,8 @@ node_modules
 /examples/web-demo/dist
 /editors/vscode/dist
 /editors/vscode/LICENSE
+/clients/web/wasm
+/clients/go/slab/slab_abi.wasm.gz
+/packages/pyslab/src/slab/slab_abi.wasm.gz
+/gen/web-runtime
+/packages/dslab/dist

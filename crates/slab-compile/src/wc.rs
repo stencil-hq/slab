@@ -831,15 +831,16 @@ fn emit_dts(docs: &[DocSpec]) -> String {
 	m
 }
 
-/// The shared minified web client, bundled by `just gen` and committed under
-/// `gen/web-runtime/slab-runtime.js`. `include_str!` keeps this a text
-/// sidecar and bakes it into the binary so `gen wc` needs no bun on PATH.
+/// The shared minified web client, bundled into `gen/web-runtime/slab-runtime.js`
+/// by `just web-runtime` (untracked; rebuild it before compiling this crate).
+/// `include_str!` keeps this a text sidecar and bakes it into the binary so
+/// `gen wc` needs no bun on PATH.
 pub const RUNTIME: &str =
 	include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../gen/web-runtime/slab-runtime.js"));
 
 /// The single Rust kernel compiled to WASM and loaded by [`RUNTIME`] from its
-/// published relative URL. These committed bytes are emitted as a binary
-/// sidecar rather than base64-inlined into JavaScript.
+/// published relative URL. These bytes are emitted as a binary sidecar rather
+/// than base64-inlined into JavaScript.
 ///
 /// This embeds the one wasm-bindgen output under `clients/web/wasm/` that the
 /// `@stencil-hq/wslab` package also ships; `gen wc` never gets a second copy.

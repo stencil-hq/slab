@@ -1,7 +1,7 @@
 //! Builds the host-agnostic ABI module and publishes it to the Go and Python
 //! clients.
 //!
-//! Both clients embed the same bytes, gzip-compressed to keep the checked-in
+//! Both clients embed the same bytes, gzip-compressed to keep the generated
 //! artifact near two megabytes instead of five, and decompress once at load.
 
 use std::{

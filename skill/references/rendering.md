@@ -259,10 +259,11 @@ loop: `bun install`, `just gen` (regenerate derived artifacts), `just ci`
 - `crates/slab-cli`, `slab-tui`, `slab-native`, `slab-lsp`, `slab-wasm` —
   drivers and tools.
 - `clients/web` — `@stencil-hq/wslab` web runtime (SlabElement, DOM
-  painter, WASM glue + the one committed `slab_kernel_bg.wasm`).
-  `packages/slab` — `@stencil-hq/slab` npm CLI.
-- `gen/web-runtime` — committed `slab-runtime.js` bundle embedded in
-  `gen wc` output; `just gen` refreshes, CI fails on drift.
+  painter, WASM glue + the one `slab_kernel_bg.wasm`, built untracked by
+  `just web-runtime`). `packages/slab` — `@stencil-hq/slab` npm CLI.
+- `gen/web-runtime` — untracked `slab-runtime.js` bundle embedded in
+  `gen wc` output; `just web-runtime` (or `just gen`) rebuilds it, and
+  cargo cannot compile `slab-compile` without it.
 - `spec/` — SPEC.md (normative), SLIR.md, FRAME.md, support.toml.
 - `examples/`, `conformance/`, `site/` (playground), `assets/fonts/`
   (vendored Inter + JetBrains Mono, OFL).

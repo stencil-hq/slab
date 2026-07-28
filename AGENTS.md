@@ -162,15 +162,21 @@ Aim for optimal code by default; these are guidelines, not hard gates.
 
 ### Generated artifacts
 
-Do not hand-edit generated output. Edit its input, run `just gen`, and include
-all resulting intentional updates. Important derived targets include
+Do not hand-edit generated output. Edit its input and run `just gen`.
+Committed derived targets — include all resulting intentional updates:
 `crates/slab-kernel/src/caps.rs`, `crates/slab-slir/src/pb.rs`,
-`tree-sitter-slab/src/`, `clients/web/wasm/` (the only committed kernel WASM),
-`gen/web-runtime/slab-runtime.js`, generated native modules under
-`crates/slab-native/src/`, the embedded ABI modules
-`clients/go/slab/slab_abi.wasm.gz` and
-`packages/pyslab/src/slab/slab_abi.wasm.gz`, and the generated Go module under
+`tree-sitter-slab/src/`, generated native modules under
+`crates/slab-native/src/`, and the generated Go module under
 `clients/go/gen/`.
+
+Untracked build outputs (gitignored, rebuilt by `just gen` or on demand by the
+`web-runtime`/`abi-wasm` recipes): `clients/web/wasm/` (the only kernel WASM),
+`gen/web-runtime/slab-runtime.js` (a `cargo` build input — `slab-compile`
+embeds it via `include_str!`, so it must exist before any cargo build of
+`slab-compile` or its dependents), the embedded ABI modules
+`clients/go/slab/slab_abi.wasm.gz` and
+`packages/pyslab/src/slab/slab_abi.wasm.gz`, and `packages/dslab/dist/`. CI
+builds all of them; none are committed.
 
 `spec/support.toml` drives capability tables; `spec/slir.proto` drives generated
 bindings. Changes to either require regeneration and freshness verification.
