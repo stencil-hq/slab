@@ -26,6 +26,7 @@ use slab_kernel::{
 	cells::rgba_lerp,
 	flatten::{Frame, FrameOp},
 	graphemes,
+	slir::{self, Doc},
 };
 use slab_slir::{GradE, Slir};
 
@@ -323,6 +324,7 @@ fn coords_bbox(coords: &[f64]) -> Option<(f64, f64, f64, f64)> {
 
 struct Emitter<'a> {
 	s:              &'a Slir,
+	doc:            &'a Doc,
 	images:         &'a [Vec<u8>],
 	runtime_images: &'a [crate::render::RuntimeImage<'a>],
 	frame:          &'a Frame,
@@ -965,27 +967,18 @@ impl Emitter<'_> {
 					let text: String = source_text
 						.chars()
 						.map(|character| {
-							let covered = t.font >= 0
-								&& self.s.fonts.get(t.font as usize).is_some_and(|font| {
-									font
-										.cmap
-										.binary_search_by_key(&u32::from(character), |&(codepoint, _)| {
-											codepoint
-										})
-										.is_ok()
-								});
-							if covered || graphemes::is_glyph_modifier(u32::from(character)) {
+							let codepoint = u32::from(character);
+							let covered = font_covers(self.doc, t.font, codepoint);
+							if covered || graphemes::is_glyph_modifier(codepoint) {
 								character
 							} else {
 								'\u{00A0}'
 							}
 						})
 						.collect();
-					let fam = match self.s.fonts.get(t.font.max(0) as usize) {
-						Some(f) if t.font >= 0 => {
-							format!("{}, {FALLBACK}", self.s.str_at(f.family))
-						},
-						_ => FALLBACK.into(),
+					let fam = match font_family(self.doc, t.font) {
+						Some(family) => format!("{family}, {FALLBACK}"),
+						None => FALLBACK.into(),
 					};
 					let grad = (t.color_kind == 2)
 						.then(|| self.s.grads.get(t.color as usize))
@@ -1602,42 +1595,43 @@ fn css_keyframes(s: &Slir, used: &[usize]) -> String {
 	rules.join("\n")
 }
 
+/// Family name of one live-document FONT table, or `None` for a text op with
+/// no resolved font.
+fn font_family(doc: &Doc, font: i32) -> Option<&str> {
+	let font = usize::try_from(font).ok()?;
+	let family = *doc.font_family.get(font)?;
+	Some(doc.strs.get(family as usize).map_or("", String::as_str))
+}
+
+/// Whether the live-document FONT table for `font` maps `codepoint`.
+fn font_covers(doc: &Doc, font: i32, codepoint: u32) -> bool {
+	usize::try_from(font).is_ok_and(|index| index < doc.font_cmap_off.len())
+		&& slir::font_gid(doc, font, codepoint) != 0
+}
+
 /// `@font-face` rules for every non-default face referenced by a Text op.
-fn font_faces(s: &Slir, frame: &Frame, registered_fonts: &[RegisteredFont]) -> String {
+fn font_faces(doc: &Doc, frame: &Frame, registered_fonts: &[RegisteredFont]) -> String {
 	let mut seen = HashSet::new();
 	let mut css = String::new();
 	for op in &frame.ops {
 		let FrameOp::Text(t) = op else {
 			continue;
 		};
-		let font_ix = t.font;
-		let Some(font) = s
-			.fonts
-			.get(font_ix.max(0) as usize)
-			.filter(|_| font_ix >= 0)
-		else {
+		let Some(family) = font_family(doc, t.font).filter(|family| !family.is_empty()) else {
 			continue;
 		};
-		if font.family == 0 || !seen.insert(font_ix) {
+		if !seen.insert(t.font) {
 			continue;
 		}
-		let bytes = registered_fonts
-			.iter()
-			.enumerate()
-			.filter(|(_, registered)| registered.name.eq_ignore_ascii_case(s.str_at(font.family)))
-			.min_by_key(|(index, registered)| {
-				(registered.metrics.weight.abs_diff(font.weight), usize::MAX - *index)
-			})
-			.map_or_else(
-				|| slab_fonts::asset(font.class, font.weight).bytes,
-				|(_, registered)| registered.bytes.as_slice(),
-			);
+		let font = usize::try_from(t.font).expect("resolved font index is nonnegative");
+		let Some(bytes) = crate::render::face_bytes(doc, font, registered_fonts) else {
+			continue;
+		};
 		write!(
 			&mut css,
-			"@font-face{{font-family:\"{}\";font-weight:{};src:url(data:font/ttf;base64,{}) \
+			"@font-face{{font-family:\"{family}\";font-weight:{};src:url(data:font/ttf;base64,{}) \
 			 format(\"truetype\");}}",
-			s.str_at(font.family),
-			font.weight,
+			doc.font_weight[font],
 			b64(bytes)
 		)
 		.expect("writing to String cannot fail");
@@ -1647,10 +1641,13 @@ fn font_faces(s: &Slir, frame: &Frame, registered_fonts: &[RegisteredFont]) -> S
 
 /// Render a solved Frame to a standalone SVG document.
 ///
+/// `doc` is the live document `frame` was solved from: its FONT table carries
+/// every face the kernel shaped against, host registrations included.
 /// `runtime_images` borrows active unified-index payloads; RGBA8 entries are
 /// encoded as embedded PNG data URLs.
 pub fn render_svg(
 	s: &Slir,
+	doc: &Doc,
 	images: &[Vec<u8>],
 	runtime_images: &[crate::render::RuntimeImage<'_>],
 	registered_fonts: &[RegisteredFont],
@@ -1670,9 +1667,9 @@ pub fn render_svg(
 		*anim_close.entry(i1).or_default() += 1;
 		used.push(bi);
 	}
-	let em = Emitter { s, images, runtime_images, frame, base_dir, allow_backdrop: true };
+	let em = Emitter { s, doc, images, runtime_images, frame, base_dir, allow_backdrop: true };
 	let body = em.run(&mut defs, &frame.ops, &anim_open, &anim_close);
-	let faces = font_faces(s, frame, registered_fonts);
+	let faces = font_faces(doc, frame, registered_fonts);
 	if !faces.is_empty() {
 		defs.insert(0, format!("<style>{faces}</style>"));
 	}

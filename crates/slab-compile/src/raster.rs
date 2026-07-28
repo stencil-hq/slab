@@ -1,8 +1,8 @@
 //! CPU rasterizer: kernel `FrameOps` -> pixels via tiny-skia.
 //!
 //! It is a research png.py port. Geometry/paints/strokes/paths/gradients render
-//! through tiny-skia; glyph outlines come from the vendored TTFs via ttf-parser
-//! (positions and advances stay kernel-owned: SLIR FONT cmap + advances).
+//! through tiny-skia; glyph outlines come from each FONT table's embedded sfnt
+//! data (positions and advances stay kernel-owned: SLIR FONT cmap + advances).
 //! Shadows, layer blur, and backdrop use the research 3-pass separable box blur
 //! with the same radius mapping (`rad = max(1, blur/2)`). PNG and APNG encode
 //! through the `png` crate (`Encoder::set_animated`).
@@ -16,7 +16,10 @@
 // signatures rather than inventing structs for one call site each.
 
 use slab_fonts;
-use slab_kernel::flatten::{Frame, FrameGlyph, FrameOp, OpRect, OpText};
+use slab_kernel::{
+	flatten::{Frame, FrameGlyph, FrameOp, OpRect, OpText},
+	slir::Doc,
+};
 use slab_slir::Slir;
 use tiny_skia::{
 	Color, FillRule, GradientStop, IntSize, LinearGradient, Mask, Paint, Path, PathBuilder, Pixmap,
@@ -546,6 +549,7 @@ fn tilt_composite(
 
 pub struct Raster<'a> {
 	s:                &'a Slir,
+	doc:              &'a Doc,
 	images:           &'a [Vec<u8>],
 	runtime_images:   &'a [crate::render::RuntimeImage<'a>],
 	registered_fonts: &'a [RegisteredFont],
@@ -596,34 +600,23 @@ impl ttf_parser::OutlineBuilder for GlyphSink {
 }
 
 impl<'a> Raster<'a> {
+	/// `doc` is the live document `frame` was solved from; its FONT table
+	/// carries every face the kernel shaped against, including host
+	/// registrations appended past the compiled ones in `s`.
 	pub const fn new(
 		s: &'a Slir,
+		doc: &'a Doc,
 		images: &'a [Vec<u8>],
 		runtime_images: &'a [crate::render::RuntimeImage<'a>],
 		registered_fonts: &'a [RegisteredFont],
 		scale: f64,
 	) -> Self {
-		Raster { s, runtime_images, images, registered_fonts, scale }
+		Raster { s, doc, runtime_images, images, registered_fonts, scale }
 	}
 
 	fn face(&self, font_ix: i32) -> Option<ttf_parser::Face<'_>> {
-		let font = self.s.fonts.get(font_ix.max(0) as usize)?;
-		let bytes = self
-			.registered_fonts
-			.iter()
-			.enumerate()
-			.filter(|(_, registered)| {
-				registered
-					.name
-					.eq_ignore_ascii_case(self.s.str_at(font.family))
-			})
-			.min_by_key(|(index, registered)| {
-				(registered.metrics.weight.abs_diff(font.weight), usize::MAX - *index)
-			})
-			.map_or_else(
-				|| slab_fonts::asset(font.class, font.weight).bytes,
-				|(_, registered)| registered.bytes.as_slice(),
-			);
+		let font = usize::try_from(font_ix.max(0)).ok()?;
+		let bytes = crate::render::face_bytes(self.doc, font, self.registered_fonts)?;
 		ttf_parser::Face::parse(bytes, 0).ok()
 	}
 
@@ -1315,13 +1308,13 @@ impl<'a> Raster<'a> {
 			if glyph.gid == 0 {
 				continue;
 			}
-			let Some(font) = self.s.fonts.get(glyph.font.max(0) as usize) else {
+			let Some(&upem) = self.doc.font_upem.get(glyph.font.max(0) as usize) else {
 				continue;
 			};
 			let Some(face) = self.face(glyph.font) else {
 				continue;
 			};
-			sink.s = (glyph.size * s / f64::from(font.upem)) as f32;
+			sink.s = (glyph.size * s / f64::from(upem)) as f32;
 			sink.dx = (glyph.x * s) as f32;
 			sink.dy = (glyph.y * s) as f32;
 			face.outline_glyph(ttf_parser::GlyphId(glyph.gid as u16), &mut sink);
@@ -1958,13 +1951,14 @@ fn decode_png(bytes: &[u8]) -> Result<Pixmap, String> {
 /// `frame`; RGBA8 entries are premultiplied directly before compositing.
 pub fn render_png(
 	s: &Slir,
+	doc: &Doc,
 	images: &[Vec<u8>],
 	runtime_images: &[crate::render::RuntimeImage<'_>],
 	registered_fonts: &[RegisteredFont],
 	frame: &Frame,
 	scale: f64,
 ) -> Result<Vec<u8>, String> {
-	let pix = Raster::new(s, images, runtime_images, registered_fonts, scale).render(frame)?;
+	let pix = Raster::new(s, doc, images, runtime_images, registered_fonts, scale).render(frame)?;
 	pix.encode_png().map_err(|e| e.to_string())
 }
 

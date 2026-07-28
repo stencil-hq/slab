@@ -8,7 +8,10 @@
 //! frame → export.
 
 use slab_fonts::RegisteredMetrics;
-use slab_kernel::{cells, frame as kframe};
+use slab_kernel::{
+	cells, frame as kframe,
+	slir::{self, Doc},
+};
 use slab_slir::Slir;
 
 /// A runtime font face supplied by the rendering host.
@@ -23,6 +26,53 @@ impl RegisteredFont {
 	pub const fn new(name: String, bytes: Vec<u8>, metrics: RegisteredMetrics) -> Self {
 		Self { name, bytes, metrics }
 	}
+}
+
+/// Resolves the sfnt bytes a static exporter must draw one FONT table with.
+///
+/// `font` indexes the live document, not the compiled SLIR: frame glyph ids
+/// carry document font indices, and host registration appends tables past the
+/// compiled ones. Returns `None` when the document has no such table.
+///
+/// The table's own embedded data wins: the kernel shaped those glyph ids
+/// against exactly those bytes, so outlines from any other face paint
+/// mojibake. Tables without embedded data fall back to a host-registered face
+/// of the same family — nearest weight, later registration breaking ties —
+/// and finally to the bundled class asset.
+pub fn face_bytes<'a>(
+	doc: &'a Doc,
+	font: usize,
+	registered: &'a [RegisteredFont],
+) -> Option<&'a [u8]> {
+	let &class = doc.font_class.get(font)?;
+	let weight = doc.font_weight[font];
+	let embedded = slir::font_data(doc, i32::try_from(font).expect("font index fits i32"));
+	if !embedded.is_empty() {
+		return Some(embedded);
+	}
+	let family = doc
+		.strs
+		.get(doc.font_family[font] as usize)
+		.map_or("", String::as_str);
+	Some(
+		registered
+			.iter()
+			.enumerate()
+			.filter(|(_, candidate)| candidate.name.eq_ignore_ascii_case(family))
+			.min_by_key(|(index, candidate)| {
+				(u32::from(candidate.metrics.weight).abs_diff(weight), usize::MAX - *index)
+			})
+			.map_or_else(
+				|| {
+					slab_fonts::asset(
+						u8::try_from(class).expect("document font class fits u8"),
+						u16::try_from(weight).expect("document font weight fits u16"),
+					)
+					.bytes
+				},
+				|(_, candidate)| candidate.bytes.as_slice(),
+			),
+	)
 }
 
 /// Borrowed runtime image payload keyed by its unified kernel image index.
@@ -202,25 +252,45 @@ pub fn render(
 		RenderKind::Svg => {
 			let dims = format!(" ({}x{}u)", fr.width, fr.height);
 			notes.extend(capsnote::render_notes(inst.doc(), &fr, client, &[]));
-			let svg =
-				crate::svg::render_svg(slir, &images, &[], &opts.registered_fonts, &fr, base_dir);
+			let svg = crate::svg::render_svg(
+				slir,
+				inst.doc(),
+				&images,
+				&[],
+				&opts.registered_fonts,
+				&fr,
+				base_dir,
+			);
 			Ok(RenderOut { bytes: svg.into_bytes(), text: false, notes, summary: dims })
 		},
 		RenderKind::Png => {
 			let dims = format!(" ({}x{}u)", fr.width, fr.height);
 			notes.extend(capsnote::render_notes(inst.doc(), &fr, client, &[]));
-			let png =
-				crate::raster::render_png(slir, &images, &[], &opts.registered_fonts, &fr, opts.scale)?;
+			let png = crate::raster::render_png(
+				slir,
+				inst.doc(),
+				&images,
+				&[],
+				&opts.registered_fonts,
+				&fr,
+				opts.scale,
+			)?;
 			Ok(RenderOut { bytes: png, text: false, notes, summary: dims })
 		},
 		RenderKind::Apng => {
 			let n = ((opts.dur * opts.fps).round() as usize).max(1);
 			let mut frames = Vec::with_capacity(n);
-			let mut raster =
-				crate::raster::Raster::new(slir, &images, &[], &opts.registered_fonts, opts.scale);
 			for i in 0..n {
 				let t = i as f64 * 1000.0 / opts.fps;
 				let f = kframe::inst_frame(&mut inst, t);
+				let mut raster = crate::raster::Raster::new(
+					slir,
+					inst.doc(),
+					&images,
+					&[],
+					&opts.registered_fonts,
+					opts.scale,
+				);
 				frames.push(raster.render(&f)?);
 			}
 			let apng = crate::raster::encode_apng(&frames, opts.fps, 0)?;

@@ -2431,6 +2431,7 @@ fn render_png(session: &mut Session, object: &Map<String, Value>) -> ProtocolRes
 	let runtime_images = runtime_images(&doc.inst, &doc.fr);
 	let bytes = slab_compile::raster::render_png(
 		&doc.slir,
+		doc.inst.doc(),
 		&doc.images,
 		&runtime_images,
 		&doc.fonts,
@@ -2469,6 +2470,7 @@ fn render_svg(session: &mut Session, object: &Map<String, Value>) -> ProtocolRes
 	let runtime_images = runtime_images(&doc.inst, &doc.fr);
 	let svg = slab_compile::svg::render_svg(
 		&doc.slir,
+		doc.inst.doc(),
 		&doc.images,
 		&runtime_images,
 		&doc.fonts,
@@ -2573,8 +2575,14 @@ fn render_apng(session: &mut Session, object: &Map<String, Value>) -> ProtocolRe
 			let t_ms = start + f64::from(index) * 1000.0 / fps;
 			let current = frame::inst_frame(inst, t_ms);
 			let runtime_images = runtime_images(inst, &current);
-			let mut raster =
-				slab_compile::raster::Raster::new(slir, images, &runtime_images, fonts, scale);
+			let mut raster = slab_compile::raster::Raster::new(
+				slir,
+				inst.doc(),
+				images,
+				&runtime_images,
+				fonts,
+				scale,
+			);
 			rendered.push(raster.render(&current).map_err(domain)?);
 			last_t = t_ms;
 			last_frame = Some(current);
@@ -2720,6 +2728,48 @@ text#field param.draft field=draft size=14 w=200 nowrap
 			pump.request(&mut instance, r#"{"id":2,"method":"input.text","params":{"text":"!"}}"#);
 		assert_eq!(response.effects.len(), 1);
 		assert!(!response.effects[0].sig_name.is_empty());
+	}
+
+	/// A host-mounted pump renders the caller's live document, whose FONT
+	/// table outgrows the compiled SLIR as soon as the host registers a face.
+	/// The pump itself registers nothing, so the exporters must read the
+	/// document rather than fall back to a bundled asset.
+	#[test]
+	fn renders_host_registered_font_tables() {
+		let (slir, mut instance, images) =
+			compile_live(r#"text "AB" family="Test Face" size=24 w=200 nowrap"#);
+		let bytes = slab_fonts::asset(slab_fonts::CLASS_MONO, 400).bytes;
+		let metrics = slab_fonts::parse_metrics(bytes).expect("bundled mono parses");
+		let registered = frame::inst_font_register(
+			&mut instance,
+			"Test Face",
+			u32::from(metrics.weight),
+			u32::from(metrics.upem),
+			i32::from(metrics.ascent),
+			i32::from(metrics.descent),
+			i32::from(metrics.line_gap),
+			i32::from(metrics.underline_position),
+			i32::from(metrics.underline_thickness),
+			u32::from(metrics.default_advance),
+			bytes,
+			&metrics.cps,
+			&metrics.gids,
+			&metrics.advances,
+		);
+		assert!(registered >= 0, "runtime registration appends a FONT table");
+		let mut pump = RequestPump::new("test.slab", slir, images);
+		let response = pump.request(&mut instance, r#"{"method":"render.svg","params":{}}"#);
+		let svg = result(&response)["data"]
+			.as_str()
+			.expect("inline SVG payload");
+		assert!(
+			svg.contains(">AB</text>"),
+			"covered codepoints stay literal instead of collapsing to NBSP: {svg}"
+		);
+		assert!(
+			svg.contains("@font-face{font-family:\"Test Face\""),
+			"the registered face is embedded for the family the frame paints: {svg}"
+		);
 	}
 
 	#[test]

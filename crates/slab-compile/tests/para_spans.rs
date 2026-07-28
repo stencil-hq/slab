@@ -406,8 +406,15 @@ fn svg_emits_strike_only_for_true_runs() {
 	let (mut instance, _) = slab_slir::instance(&bytes).expect("decode fixture");
 	frame::inst_set_env(&mut instance, 200.0, 60.0, 0, false, false);
 	let rendered = frame::inst_frame(&mut instance, 0.0);
-	let svg =
-		slab_compile::svg::render_svg(&slir, &[], &[], &[], &rendered, std::path::Path::new("."));
+	let svg = slab_compile::svg::render_svg(
+		&slir,
+		instance.doc(),
+		&[],
+		&[],
+		&[],
+		&rendered,
+		std::path::Path::new("."),
+	);
 	assert_eq!(svg.matches("text-decoration=\"line-through\"").count(), 1);
 	assert!(svg.contains(">done</text>"));
 	assert!(svg.contains(">open</text>"));

@@ -917,7 +917,7 @@ impl Server {
 			diags.push(json!({"level": "warning", "code": inst.st.diag_code[k],
                 "msg": inst.st.diag_msg[k], "line": inst.st.diag_line[k]}));
 		}
-		let svg = slab_compile::svg::render_svg(&slir, &images, &[], &[], &fr, &base_dir);
+		let svg = slab_compile::svg::render_svg(&slir, inst.doc(), &images, &[], &[], &fr, &base_dir);
 		json!({"svg": svg, "width": fr.width, "height": fr.height, "diags": diags})
 	}
 }

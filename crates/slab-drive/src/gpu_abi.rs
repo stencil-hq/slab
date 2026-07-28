@@ -142,21 +142,15 @@ pub fn resource_packet(
 			0
 		},
 		RESOURCE_FONT => {
-			let font = slir.fonts.get(usize::try_from(index).ok()?)?;
-			let family = slir.str_at(font.family);
-			let bytes = fonts
-				.iter()
-				.enumerate()
-				.filter(|(_, registered)| registered.name.eq_ignore_ascii_case(family))
-				.min_by_key(|(registered_index, registered)| {
-					(registered.metrics.weight.abs_diff(font.weight), usize::MAX - *registered_index)
-				})
-				.map_or_else(
-					|| slab_fonts::asset(font.class, font.weight).bytes,
-					|(_, registered)| registered.bytes.as_slice(),
-				);
-			writer.u32(u32::from(font.class));
-			writer.u32(u32::from(font.weight));
+			let doc = inst.doc();
+			let font = usize::try_from(index).ok()?;
+			let bytes = slab_compile::render::face_bytes(doc, font, fonts)?;
+			let family = doc
+				.strs
+				.get(doc.font_family[font] as usize)
+				.map_or("", String::as_str);
+			writer.u32(doc.font_class[font]);
+			writer.u32(doc.font_weight[font]);
 			writer.string(family);
 			writer.count(bytes.len());
 			writer.bytes(bytes);
