@@ -56,6 +56,8 @@ pub fn decode_doc(bytes: &[u8]) -> Result<(slab_kernel::slir::Doc, Vec<Vec<u8>>)
 	doc.font_descent = std::mem::take(&mut wire.font_descent);
 	doc.font_line_gap = std::mem::take(&mut wire.font_line_gap);
 	doc.font_default_adv = std::mem::take(&mut wire.font_default_adv);
+	doc.font_underline_position = std::mem::take(&mut wire.font_underline_position);
+	doc.font_underline_thickness = std::mem::take(&mut wire.font_underline_thickness);
 	doc.font_cmap_off = std::mem::take(&mut wire.font_cmap_off);
 	doc.font_cmap_len = std::mem::take(&mut wire.font_cmap_len);
 	doc.font_cmap_cp = std::mem::take(&mut wire.font_cmap_cp);
@@ -139,6 +141,26 @@ pub fn decode_doc(bytes: &[u8]) -> Result<(slab_kernel::slir::Doc, Vec<Vec<u8>>)
 	doc.img_h = std::mem::take(&mut wire.img_h);
 	doc.img_format = std::mem::take(&mut wire.img_format);
 	doc.img_data.clone_from(&imgs);
+	let font_count = doc.font_upem.len();
+	if doc.font_underline_position.is_empty() {
+		doc.font_underline_position.extend(
+			doc.font_upem
+				.iter()
+				.map(|upem| -(i32::try_from(*upem / 10).expect("font upem fits i32"))),
+		);
+	}
+	if doc.font_underline_thickness.is_empty() {
+		doc.font_underline_thickness.extend(
+			doc.font_upem
+				.iter()
+				.map(|upem| i32::try_from((*upem / 20).max(1)).expect("font upem fits i32")),
+		);
+	}
+	if doc.font_underline_position.len() != font_count
+		|| doc.font_underline_thickness.len() != font_count
+	{
+		return Err("font underline metrics: parallel arrays have mismatched lengths".into());
+	}
 	let token_count = doc.token_name.len();
 	if [
 		doc.token_base.len(),

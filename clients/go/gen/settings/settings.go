@@ -16,10 +16,10 @@ import (
 // SourceName is the document name reported to the session when [New] installs [SLIR].
 const SourceName = "examples/10-settings.slab"
 
-// slirBase64 is the compiled SLIR document (22001 bytes) in standard base64. Base64
+// slirBase64 is the compiled SLIR document (22016 bytes) in standard base64. Base64
 // keeps the generated file compact and byte-for-byte reproducible across runs.
 const slirBase64 = "" +
-	"U0xJUgIAAADGpQJYCAEaABoHIzEwMTQxQhoIY29sb3IuYmcBExg3MUMyNhoLCRM0cGFuZWwaByMw" +
+	"U0xJUgIAAADkpQJYCAEaABoHIzEwMTQxQhoIY29sb3IuYmcBExg3MUMyNhoLCRM0cGFuZWwaByMw" +
 	"QzEwMTgRFjxpbnNldBoHI0U4RUVGNhoJCSwsaW5rGgcjOEE5N0E4ERQEbXUBKBw0RkM3RTAaDAko" +
 	"JGFjY2VudBoJI0YFAQwxQRoKCRkobGluZRoFY29sQDAFaghAMC8JDQASBQcJDRgvdGV4dEAwShQA" +
 	"iDEaIHNsYWIgYXBwbGljYXRpb24gcnVudGltZSDigJQgMS4wEVcYcm93QDAaBgGIDGVyGhcJXwUV" +
@@ -404,7 +404,8 @@ const slirBase64 = "" +
 	"BVA2AQAA6koUAAjyAxsOWIoQDw8QERkZBQ44ijwoKjEQ+gMbOhU7GR8gBSEiGQVoMjM0GTUwMQWa" +
 	"BQU0KCszLaIFBQAAAAQEqgUFEr2JALIFEAgAALoNCCDCBQUAAQIDA8oOL4+gAQAA2gUDAgwN4gUD" +
 	"Jycn2gYBMeIGAQ/qBgUXHyMrLPIGBQUHCQ0N+gYBVGgBApIIEwIEBggKDA4CCAoICAgMCAYOBA6a" +
-	"CBMBUkQEBQYADhIODg4pDgIGAQaiCBM28QAFAQCqUhYAVMIIEwEDBQcJCw0AAAAAAAAAAAAAAAA="
+	"CBMBUkQEBQYADhIODg4pDgIGAQaiCBM28QAFAQCqUhYAJMIIEwEDBQcJCw0FJQ0BENIIFKT9FsyK" +
+	"CP8BtRUKGNoIBIwBrQE="
 
 // SLIR is the compiled SLIR document this package installs, decoded once at
 // package initialization. The slice is shared, so callers must not modify it.

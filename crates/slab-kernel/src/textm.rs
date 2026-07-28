@@ -194,6 +194,32 @@ pub fn ascent(d: &Doc, f: i32, size: f64, leading: f64) -> f64 {
 	asc + (line_height - (asc - desc)) / 2.0
 }
 
+/// Returns underline offset below the baseline and thickness in layout units.
+pub fn underline_geometry(d: &Doc, font: i32, size: f64) -> (f64, f64) {
+	if font < 0 {
+		return (size / 10.0, size / 16.0);
+	}
+	let index = usize::try_from(font).expect("nonnegative font index");
+	let upem = f64::from(d.font_upem[index]);
+	if upem <= 0.0 {
+		return (size / 10.0, size / 16.0);
+	}
+	(
+		-f64::from(d.font_underline_position.get(index).copied().unwrap_or(-(d.font_upem[index] as i32 / 10)))
+			* size
+			/ upem,
+		f64::from(
+			d.font_underline_thickness
+				.get(index)
+				.copied()
+				.unwrap_or((d.font_upem[index] as i32 / 20).max(1)),
+		)
+		.abs()
+			* size
+			/ upem,
+	)
+}
+
 /// Returns whether ellipsis truncation may strip this codepoint.
 pub const fn is_strippable(cp: u32) -> bool {
 	matches!(cp, 32 | 9 | 10 | 13 | NBSP)

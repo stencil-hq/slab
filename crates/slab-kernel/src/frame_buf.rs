@@ -111,6 +111,8 @@ impl FrameBuf {
 						u32::from(text.strike),
 						signed_word(text.uncov_off),
 						signed_word(text.uncov_len),
+						u32::from(text.italic),
+						u32::from(text.underline),
 					]);
 					f64s.extend([
 						text.x,
@@ -123,6 +125,8 @@ impl FrameBuf {
 						text.gy,
 						text.gw,
 						text.gh,
+						text.underline_offset,
+						text.underline_thickness,
 					]);
 				},
 				FrameOp::Image(image) => {

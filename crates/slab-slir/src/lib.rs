@@ -213,6 +213,10 @@ pub struct FontE {
 	pub descent:         i16,
 	pub line_gap:        i16,
 	pub default_advance: u16,
+	/// Underline center relative to the baseline in font coordinates.
+	pub underline_position: i16,
+	/// Recommended underline thickness in font units.
+	pub underline_thickness: i16,
 	/// (codepoint, glyph id), sorted by codepoint.
 	pub cmap:            Vec<(u32, u16)>,
 	/// Advance widths in font units, parallel to `cmap`.

@@ -1355,7 +1355,8 @@ fn apply_attr_concrete(ctx: &mut Ctx, sink: &mut Sink, key: &str, rv: &RVal, lin
 					sink.set(at::attr_id(key).expect("text attribute id is defined"), tv);
 				}
 			},
-			"expanded" | "selected" | "modal" | "live-atomic" | "strike" => {
+			"expanded" | "selected" | "modal" | "live-atomic" | "strike" | "italic"
+			| "underline" => {
 				if let Some(tv) = expect_prop_ty(ctx, *field, &[ParamType::Bool], line, key) {
 					sink.set(at::attr_id(key).expect("boolean attribute id is defined"), tv);
 				}
@@ -2004,14 +2005,14 @@ fn apply_attr_concrete(ctx: &mut Ctx, sink: &mut Sink, key: &str, rv: &RVal, lin
 			},
 			_ => ctx.error("ref", "live expects off|polite|assertive text".into(), line),
 		},
-		"strike" => {
+		"strike" | "italic" | "underline" => {
 			let value = match rv {
 				RVal::Kw(value) if value == "false" => Some(TVal::Num(0.0)),
 				RVal::Kw(value) if value == "true" => Some(TVal::Num(1.0)),
 				RVal::Param(ix) => expect_param_ty(ctx, *ix, &[ParamType::Bool], line, key),
 				RVal::Prop(field) => expect_prop_ty(ctx, *field, &[ParamType::Bool], line, key),
 				_ => {
-					let msg = format!("strike expects a boolean, got {}", rval_desc(rv));
+					let msg = format!("{key} expects a boolean, got {}", rval_desc(rv));
 					match param_remedy(ctx, rv) {
 						Some(remedy) => ctx.error_with("ref", msg, line, remedy),
 						None => ctx.error("ref", msg, line),
@@ -2020,7 +2021,7 @@ fn apply_attr_concrete(ctx: &mut Ctx, sink: &mut Sink, key: &str, rv: &RVal, lin
 				},
 			};
 			if let Some(value) = value {
-				sink.set(at::STRIKE, value);
+				sink.set(at::attr_id(key).expect("text boolean attribute id is defined"), value);
 			}
 		},
 		"size" | "leading" | "tracking" => {
@@ -2053,7 +2054,7 @@ fn apply_attr_concrete(ctx: &mut Ctx, sink: &mut Sink, key: &str, rv: &RVal, lin
 				}
 			},
 			RVal::Num(weight) => {
-				sink.set(at::WEIGHT, TVal::Num(slab_fonts::snap_weight(*weight) as f64));
+				sink.set(at::WEIGHT, TVal::Num(f64::from(slab_fonts::normalize_weight(*weight))));
 			},
 			_ => ctx.error("ref", "weight expects a number".into(), line),
 		},
@@ -2447,7 +2448,7 @@ fn collect_list_default_font_candidates(
 			}
 			for field in weight_fields {
 				if let Some(TVal::Num(weight)) = item.values.get(*field as usize) {
-					weights.insert(slab_fonts::snap_weight(*weight));
+					weights.insert(slab_fonts::normalize_weight(*weight));
 				}
 			}
 		}
@@ -2490,7 +2491,7 @@ fn collect_dynamic_font_candidates(ctx: &mut Ctx, schema_row: u32, template: &[C
 			if let Some(ListFieldInfo { default: TVal::Num(weight), .. }) =
 				schema.fields.get(*field as usize)
 			{
-				weights.insert(slab_fonts::snap_weight(*weight));
+				weights.insert(slab_fonts::normalize_weight(*weight));
 			}
 		}
 	}
@@ -3240,9 +3241,7 @@ fn expand_builtin(
 		hole: None,
 	};
 	for f in &a.flags {
-		if f == "strike" {
-			sink.set(at::STRIKE, TVal::Num(1.0));
-		} else {
+		if !apply_bare_text_attr(&mut sink, f) {
 			node.flags |= flag_bit(f);
 		}
 	}
@@ -3304,9 +3303,7 @@ fn expand_builtin(
 						apply_attr(ctx, &mut sink, k, &rv, w.line);
 					}
 					for f in &w.flags {
-						if f == "strike" {
-							sink.set(at::STRIKE, TVal::Num(1.0));
-						} else {
+						if !apply_bare_text_attr(&mut sink, f) {
 							node.flags |= flag_bit(f);
 						}
 					}
@@ -3403,9 +3400,7 @@ fn expand_builtin(
 					}
 					let mut flag_mask = psink.flag_mask;
 					for f in &w.flags {
-						if f == "strike" {
-							psink.set(at::STRIKE, TVal::Num(1.0));
-						} else {
+						if !apply_bare_text_attr(&mut psink, f) {
 							flag_mask |= flag_bit(f);
 						}
 					}
@@ -3796,6 +3791,17 @@ fn register_signal(ctx: &mut Ctx, name: String, trigger: u8, line: u32) {
 		ctx.warn("dup-signal", msg, line);
 	}
 	ctx.signals.push((name, trigger, line));
+}
+
+fn apply_bare_text_attr(sink: &mut Sink, name: &str) -> bool {
+	let id = match name {
+		"strike" => at::STRIKE,
+		"italic" => at::ITALIC,
+		"underline" => at::UNDERLINE,
+		_ => return false,
+	};
+	sink.set(id, TVal::Num(1.0));
+	true
 }
 
 fn flag_bit(name: &str) -> u16 {

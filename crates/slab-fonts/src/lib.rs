@@ -54,26 +54,21 @@ pub fn classify_family(family: &str) -> u8 {
 	}
 }
 
-/// Snap an authored weight to the nearest vendored weight; ties round up.
-pub fn snap_weight(w: f64) -> u16 {
-	let mut best = 400u16;
-	let mut best_d = f64::INFINITY;
-	for &cand in &[400u16, 500, 600, 700] {
-		let d = (w - f64::from(cand)).abs();
-		if d < best_d || (d == best_d && cand > best) {
-			best = cand;
-			best_d = d;
-		}
+/// Normalizes a CSS-compatible numeric weight while preserving its authored axis value.
+pub fn normalize_weight(weight: f64) -> u16 {
+	if !weight.is_finite() {
+		return 400;
 	}
-	best
+	weight.round().clamp(1.0, 1000.0) as u16
 }
 
-/// Finds a bundled fallback face by class and snapped weight.
+/// Finds the nearest bundled fallback face for a class and free numeric weight.
 pub fn asset(class: u8, weight: u16) -> &'static FontAsset {
 	FONT_ASSETS
 		.iter()
-		.find(|a| a.class == class && a.weight == weight)
-		.expect("weight already snapped to a vendored weight")
+		.filter(|asset| asset.class == class)
+		.min_by_key(|asset| (asset.weight.abs_diff(weight), std::cmp::Reverse(asset.weight)))
+		.expect("every fallback font class has a bundled face")
 }
 
 /// Metrics and complete Unicode cmap extracted from a font file.
@@ -85,6 +80,10 @@ pub struct RegisteredMetrics {
 	pub descent:         i16,
 	pub line_gap:        i16,
 	pub default_advance: u16,
+	/// Underline center relative to the baseline in font coordinates.
+	pub underline_position: i16,
+	/// Recommended underline thickness in font units.
+	pub underline_thickness: i16,
 	/// Sorted Unicode codepoints.
 	pub cps:             Vec<u32>,
 	/// Glyph IDs parallel to `cps`.
@@ -106,6 +105,10 @@ pub fn parse_metrics(bytes: &[u8]) -> Option<RegisteredMetrics> {
 		.and_then(|gid| face.glyph_hor_advance(gid))
 		.unwrap_or(upem / 2);
 	let default_advance = if notdef != 0 { notdef } else { space };
+	let underline = face.underline_metrics().unwrap_or(ttf_parser::LineMetrics {
+		position:  -(i16::try_from(upem / 10).expect("units per em fits i16")),
+		thickness: i16::try_from((upem / 20).max(1)).expect("units per em fits i16"),
+	});
 
 	let mut cmap = BTreeMap::new();
 	let tables = face.tables();
@@ -142,6 +145,8 @@ pub fn parse_metrics(bytes: &[u8]) -> Option<RegisteredMetrics> {
 		descent: face.descender(),
 		line_gap: face.line_gap(),
 		default_advance,
+		underline_position: underline.position,
+		underline_thickness: underline.thickness,
 		cps,
 		gids,
 		advances,

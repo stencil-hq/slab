@@ -235,7 +235,7 @@ pub fn dump(s: &Slir) -> String {
 		let _ = writeln!(
 			o,
 			"  {i} family={:?} class={} weight={} upem={} ascent={} descent={} line_gap={} \
-			 default_advance={}",
+			 default_advance={} underline_position={} underline_thickness={}",
 			s.str_at(f.family),
 			if f.class == 0 { "sans" } else { "mono" },
 			f.weight,
@@ -243,7 +243,9 @@ pub fn dump(s: &Slir) -> String {
 			f.ascent,
 			f.descent,
 			f.line_gap,
-			f.default_advance
+			f.default_advance,
+			f.underline_position,
+			f.underline_thickness
 		);
 		let mut line = String::from("    cmap");
 		for (j, &(cp, gid)) in f.cmap.iter().enumerate() {

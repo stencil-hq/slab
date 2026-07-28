@@ -518,9 +518,12 @@ mod tests {
 	}
 
 	#[test]
-	fn strike_keeps_bare_and_boolean_forms() {
-		let src = "col{\ntext \"done\" strike\ntext \"open\" strike = false\n}\n";
-		assert_eq!(format(src), "col {\n  text \"done\" strike\n  text \"open\" strike=false\n}\n");
+	fn text_decorations_keep_bare_and_boolean_forms() {
+		let src = "col{\ntext \"done\" strike italic underline\ntext \"open\" strike = false italic=false underline = false\n}\n";
+		assert_eq!(
+			format(src),
+			"col {\n  text \"done\" strike italic underline\n  text \"open\" strike=false italic=false underline=false\n}\n"
+		);
 	}
 
 	#[test]

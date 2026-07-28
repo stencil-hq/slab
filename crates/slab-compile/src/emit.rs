@@ -53,7 +53,7 @@ fn token_tval(value: &RVal) -> Option<TVal> {
 		_ => None,
 	}
 }
-/// Collects authored family names and snapped weights from an attribute run.
+/// Collects authored family names and exact numeric weights from an attribute run.
 fn collect_font_attrs(
 	attrs: &[AttrE],
 	families: &mut BTreeSet<String>,
@@ -65,7 +65,7 @@ fn collect_font_attrs(
 				families.insert(family.clone());
 			},
 			(at::WEIGHT, TVal::Num(weight)) => {
-				weights.insert(font_assets::snap_weight(*weight));
+				weights.insert(font_assets::normalize_weight(*weight));
 			},
 			_ => {},
 		}
@@ -141,7 +141,7 @@ fn weight_from_attrs(
 		.rev()
 		.find(|attr| attr.id == at::WEIGHT)
 		.map_or(inherited, |attr| {
-			resolve_num_value(&attr.val, ex, schema).map(font_assets::snap_weight)
+			resolve_num_value(&attr.val, ex, schema).map(font_assets::normalize_weight)
 		})
 }
 
@@ -277,7 +277,7 @@ fn collect_resolved_font_attrs(
 		} else if attr.id == at::WEIGHT
 			&& let Some(weight) = resolve_num_value(&attr.val, ex, schema)
 		{
-			weights.insert(font_assets::snap_weight(weight));
+			weights.insert(font_assets::normalize_weight(weight));
 		}
 	}
 }

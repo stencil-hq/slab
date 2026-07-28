@@ -144,6 +144,8 @@ export function decodeFrame(frame: FrameBuf): Frame {
                      strike: u32('Text.strike') !== 0,
                      uncov_off: signedWord(u32('Text.uncov_off')),
                      uncov_len: u32('Text.uncov_len'),
+                     italic: u32('Text.italic') !== 0,
+                     underline: u32('Text.underline') !== 0,
                      x: f64('Text.x'),
                      y_baseline: f64('Text.y_baseline'),
                      measured_w: f64('Text.measured_w'),
@@ -154,6 +156,8 @@ export function decodeFrame(frame: FrameBuf): Frame {
                      gy: f64('Text.gy'),
                      gw: f64('Text.gw'),
                      gh: f64('Text.gh'),
+                     underline_offset: f64('Text.underline_offset'),
+                     underline_thickness: f64('Text.underline_thickness'),
                   },
                });
                break;

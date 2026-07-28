@@ -854,13 +854,22 @@ export class SlabElement extends HTMLElement {
          metrics.ascent,
          metrics.descent,
          metrics.lineGap,
+         metrics.underlinePosition,
+         metrics.underlineThickness,
          metrics.defaultAdvance,
          metrics.cps,
          metrics.gids,
          metrics.advs,
       );
       if (table < 0) return;
+      statics.font_class[table] = face.family.toLowerCase().includes('mono') ? 1 : 0;
+      statics.font_weight[table] = metrics.weight;
+      statics.font_upem[table] = metrics.upem;
+      statics.font_ascent[table] = metrics.ascent;
+      statics.font_descent[table] = metrics.descent;
       statics.font_default_adv[table] = metrics.defaultAdvance;
+      statics.font_underline_position[table] = metrics.underlinePosition;
+      statics.font_underline_thickness[table] = metrics.underlineThickness;
       statics.font_cmap_off[table] = statics.font_cmap_cp.length;
       statics.font_cmap_len[table] = metrics.cps.length;
       for (const codepoint of metrics.cps) statics.font_cmap_cp.push(codepoint);

@@ -70,6 +70,8 @@ impl NativeDocument {
 			i32::from(metrics.ascent),
 			i32::from(metrics.descent),
 			i32::from(metrics.line_gap),
+			i32::from(metrics.underline_position),
+			i32::from(metrics.underline_thickness),
 			u32::from(metrics.default_advance),
 			&metrics.cps,
 			&gids,

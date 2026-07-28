@@ -305,11 +305,17 @@ pub const A_ANIMATE: u32 = 89u32;
 /// Inherited boolean text strike-through style.
 pub const A_STRIKE: u32 = 90u32;
 
+/// Inherited boolean italic text style.
+pub const A_ITALIC: u32 = 92u32;
+
+/// Inherited boolean underline text decoration.
+pub const A_UNDERLINE: u32 = 93u32;
+
 /// Field cancel binder channel fired on escape-blur.
 pub const A_CANCEL: u32 = 91u32;
 
 /// Total number of normative SLIR attributes (highest attribute ID + 1).
-pub const ATTR_COUNT: usize = (A_CANCEL as usize) + 1;
+pub const ATTR_COUNT: usize = (A_UNDERLINE as usize) + 1;
 
 /// Parameter types stored in [`Doc::parm_type`] and host parameter values.
 pub const PARAM_TEXT: u32 = 0u32;
@@ -387,6 +393,8 @@ pub struct Doc {
 	// FONT pool.
 	pub font_family:           Vec<u32>,
 	pub font_class:            Vec<u32>,
+	pub font_underline_position: Vec<i32>,
+	pub font_underline_thickness: Vec<i32>,
 	pub font_weight:           Vec<u32>,
 	pub font_upem:             Vec<u32>,
 	pub font_ascent:           Vec<i32>,

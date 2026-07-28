@@ -3,7 +3,7 @@
 //! Base attributes are overlaid by active conditional patches in document
 //! order (last wins). Parameter and list-property references resolve next.
 //! The inherited text-style whitelist includes color, family, size, weight,
-//! leading, tracking, and strike.
+//! leading, tracking, italic, underline, and strike.
 //!
 //! Runtime layers include node states maintained by dispatch, scroll offsets
 //! owned by the host and dispatch, field text overrides maintained by editing,
@@ -2097,6 +2097,8 @@ pub struct RStyle {
 	pub leading:         f64,
 	pub tracking:        f64,
 	pub strike:          bool,
+	pub italic:          bool,
+	pub underline:       bool,
 	pub color:           u32,
 	/// 1 when `color` is packed RGBA, 2 when it is a gradient handle.
 	pub color_kind:      u32,
@@ -2233,6 +2235,8 @@ pub fn build_rstyle(
 	inh_leading: f64,
 	inh_tracking: f64,
 	inh_strike: bool,
+	inh_italic: bool,
+	inh_underline: bool,
 ) -> i32 {
 	let b = prepare_attrs(d, st, node);
 	let base = index_u32(b);
@@ -2483,6 +2487,10 @@ pub fn build_rstyle(
 	st.rs[ri].tracking = crate::style::attr_num(d, st, node, crate::slir::A_TRACKING, inh_tracking);
 	st.rs[ri].strike =
 		crate::style::attr_num(d, st, node, crate::slir::A_STRIKE, f64::from(inh_strike)) != 0.0;
+	st.rs[ri].italic =
+		crate::style::attr_num(d, st, node, crate::slir::A_ITALIC, f64::from(inh_italic)) != 0.0;
+	st.rs[ri].underline =
+		crate::style::attr_num(d, st, node, crate::slir::A_UNDERLINE, f64::from(inh_underline)) != 0.0;
 	let col = crate::style::attr_val(d, st, node, crate::slir::A_COLOR);
 	if (col.tag == crate::slir::T_COLOR) || (col.tag == crate::slir::T_PAINT_SOLID) {
 		st.rs[ri].color = col.h;
@@ -2726,6 +2734,8 @@ pub fn rstyle_default(node: u32, kind: u32, line: u32) -> crate::style::RStyle {
 		leading: 1.4f64,
 		tracking: 0.0f64,
 		strike: false,
+		italic: false,
+		underline: false,
 		color: 0x111111ffu32,
 		color_kind: 1u32,
 		talign: 0u32,
@@ -2861,11 +2871,11 @@ mod attribute_cache_tests {
 			slab_slir::attrs::ATTR_COUNT,
 			"kernel ATTR_COUNT must match normative slab-slir table size"
 		);
-		let highest_id = crate::slir::A_CANCEL;
+		let highest_id = crate::slir::A_UNDERLINE;
 		assert_eq!(
 			(highest_id as usize) + 1,
 			crate::slir::ATTR_COUNT,
-			"A_CANCEL must be the highest attribute ID"
+			"A_UNDERLINE must be the highest attribute ID"
 		);
 		for &(id, name) in slab_slir::attrs::ATTRS {
 			assert!(
@@ -2877,7 +2887,7 @@ mod attribute_cache_tests {
 	}
 
 	#[test]
-	fn effective_attr_cache_resolves_highest_id_cancel() {
+	fn effective_attr_cache_resolves_highest_id_underline() {
 		let mut doc = crate::slir::doc_new();
 		doc.ok = true;
 		doc.strs.push(String::new());
@@ -2891,13 +2901,13 @@ mod attribute_cache_tests {
 		doc.node_id.push(0);
 		doc.node_line.push(1);
 
-		// Authored base attribute A_CANCEL = 91 set to value 0.
+		// Authored base attribute A_UNDERLINE = 93 set to value 0.
 		doc.attr_index.push(0);
 		doc.aval_tag.push(crate::slir::T_STR);
 		doc.aval_lo.push(1);
 		doc.aval_hi.push(0);
 		doc.aval_num.push(0.0);
-		doc.attr_id.push(crate::slir::A_CANCEL);
+		doc.attr_id.push(crate::slir::A_UNDERLINE);
 		doc.attr_val.push(0);
 		doc.attr_index.push(1);
 
@@ -2912,15 +2922,14 @@ mod attribute_cache_tests {
 		prepare_attrs(&doc, &mut st, 0);
 		assert_eq!(st.effective_attr_node, 0);
 
-		// Verify effective_attr_values cache has length ATTR_COUNT and contains 0 at
-		// index A_CANCEL (91)
-		assert_eq!(st.effective_attr_values[crate::slir::A_CANCEL as usize], 0);
+		// Verify the effective cache covers the highest canonical attribute.
+		assert_eq!(st.effective_attr_values[crate::slir::A_UNDERLINE as usize], 0);
 
 		// Query attr_ix while effective_attr_node == 0
 		assert_eq!(
-			attr_ix(&doc, &st, 0, crate::slir::A_CANCEL),
+			attr_ix(&doc, &st, 0, crate::slir::A_UNDERLINE),
 			0,
-			"attr_ix must return cached value 0 for A_CANCEL when effective_attr_node is active"
+			"attr_ix must return the cached A_UNDERLINE value for the active node"
 		);
 	}
 
@@ -2980,6 +2989,8 @@ mod attribute_cache_tests {
 			400.0,
 			1.2,
 			0.0,
+			false,
+			false,
 			false,
 		);
 		assert_eq!(

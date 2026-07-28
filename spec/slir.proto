@@ -138,4 +138,6 @@ message Doc {
   repeated uint32 token_theme_val = 135; // AVAL ref
   repeated uint32 token_base_repr = 136; // STRS ref, canonical host text
   repeated uint32 token_theme_repr = 137; // STRS ref parallel to `token_theme_val`
+  repeated int32 font_underline_position = 138;
+  repeated int32 font_underline_thickness = 139;
 }

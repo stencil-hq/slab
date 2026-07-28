@@ -1169,6 +1169,7 @@ export class Painter {
                if (el.getAttribute('class') !== cls) el.setAttribute('class', cls);
                let css = `left:${o.x - ox}px;top:${o.y_baseline - oy - asc}px;width:${o.measured_w}px;line-height:${lineH}px;font-size:${o.size}px;`;
                if (o.weight !== 400) css += `font-weight:${o.weight};`;
+               if (o.italic) css += 'font-style:italic;';
                if (o.color_kind === 2) {
                   // W5 gradient text: the paint spans the node's content box
                   // (contract §6.7), offset per line from the span's own
@@ -1179,8 +1180,12 @@ export class Painter {
                   css += `color:${rgbaCss(o.color)};`;
                }
                if (o.tracking !== 0) css += `letter-spacing:${o.tracking}px;`;
-               if (o.strike) {
-                  css += 'text-decoration-line:line-through;';
+               if (o.strike || o.underline) {
+                  const lines = `${o.strike ? 'line-through ' : ''}${o.underline ? 'underline' : ''}`;
+                  css += `text-decoration-line:${lines};`;
+                  if (o.underline) {
+                     css += `text-underline-offset:${o.underline_offset}px;text-decoration-thickness:${o.underline_thickness}px;`;
+                  }
                   if (o.color_kind === 2) {
                      const decoration = strokeCss(doc, o.color_kind, o.color);
                      if (decoration) css += `text-decoration-color:${decoration};`;

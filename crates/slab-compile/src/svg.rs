@@ -1008,8 +1008,25 @@ impl Emitter<'_> {
 						format!("font-weight=\"{}\" fill=\"{fill}\"", t.weight),
 						"xml:space=\"preserve\"".into(),
 					];
-					if t.strike {
-						attrs.push("text-decoration=\"line-through\"".into());
+					if t.italic {
+						attrs.push("font-style=\"italic\"".into());
+					}
+					if t.strike || t.underline {
+						let mut decoration = if t.strike { "line-through" } else { "" }.to_string();
+						if t.underline {
+							if !decoration.is_empty() {
+								decoration.push(' ');
+							}
+							decoration.push_str("underline");
+						}
+						attrs.push(format!("text-decoration=\"{decoration}\""));
+					}
+					if t.underline {
+						attrs.push(format!(
+							"style=\"text-underline-offset:{}px;text-decoration-thickness:{}px\"",
+							n(t.underline_offset),
+							n(t.underline_thickness)
+						));
 					}
 					if t.tracking != 0.0 {
 						attrs.push(format!("letter-spacing=\"{}\"", n(t.tracking)));

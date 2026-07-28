@@ -46,6 +46,8 @@ export interface Statics {
    font_ascent: number[];
    font_descent: number[];
    font_default_adv: number[];
+   font_underline_position: number[];
+   font_underline_thickness: number[];
    font_cmap_off: number[];
    font_cmap_len: number[];
    font_cmap_cp: number[];
@@ -265,6 +267,14 @@ export interface OpText {
    color: number;
    opacity: number;
    strike: boolean;
+   /** Whether this run uses a real or synthesized oblique face. */
+   italic: boolean;
+   /** Whether this run paints an underline. */
+   underline: boolean;
+   /** Underline center offset below the baseline in layout units. */
+   underline_offset: number;
+   /** Underline thickness in layout units. */
+   underline_thickness: number;
    /** Offset of this op's uncovered-run pairs in `Frame.uncovered`. */
    uncov_off: number;
    /** Number of uncovered runs (0 = every cluster covered by `font`). */

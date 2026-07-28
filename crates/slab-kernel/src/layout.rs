@@ -109,9 +109,14 @@ pub struct Lay {
 	pub seg_weight:     Vec<f64>,
 	pub seg_tracking:   Vec<f64>,
 	pub seg_strike:     Vec<bool>,
+	pub seg_italic:     Vec<bool>,
+	pub seg_underline:  Vec<bool>,
 	pub seg_color:      Vec<u32>,
 	/// 1 when the segment color is packed RGBA, 2 when it is a gradient handle.
 	pub seg_color_kind: Vec<u32>,
+	/// Background paint behind the segment (`0` none, `1` solid, `2` gradient).
+	pub seg_bg_kind:    Vec<u32>,
+	pub seg_bg:         Vec<u32>,
 	pub para_chars:     Vec<u32>,
 	/// Reusable measure-pass scratch buffers, taken on container entry and
 	/// returned cleared on exit; recursion depth bounds each pool's size.
@@ -161,9 +166,13 @@ pub fn lay_reset(l: &mut Lay) {
 	l.seg_size.clear();
 	l.seg_tracking.clear();
 	l.seg_strike.clear();
+	l.seg_italic.clear();
+	l.seg_underline.clear();
 	l.seg_weight.clear();
 	l.seg_color.clear();
 	l.seg_color_kind.clear();
+	l.seg_bg_kind.clear();
+	l.seg_bg.clear();
 	l.para_chars.clear();
 }
 
@@ -304,6 +313,8 @@ pub struct Inh {
 	pub leading:    f64,
 	pub tracking:   f64,
 	pub strike:     bool,
+	pub italic:     bool,
+	pub underline:  bool,
 }
 
 /// Returns the inherited text style used at the document root.
@@ -317,6 +328,8 @@ pub const fn inh_root() -> Inh {
 		leading:    1.4,
 		tracking:   0.0,
 		strike:     false,
+		italic:     false,
+		underline:  false,
 	}
 }
 
@@ -332,6 +345,8 @@ pub fn inh_of(st: &St, ri: i32) -> Inh {
 		leading:    style.leading,
 		tracking:   style.tracking,
 		strike:     style.strike,
+		italic:     style.italic,
+		underline:  style.underline,
 	}
 }
 
@@ -461,6 +476,8 @@ pub fn measure(
 		inh.leading,
 		inh.tracking,
 		inh.strike,
+		inh.italic,
+		inh.underline,
 	);
 	if swap {
 		let tk = st.rs[idx(ri)].w_kind;
@@ -2351,8 +2368,12 @@ fn truncate_para_segments(l: &mut Lay, end: usize) {
 	l.seg_weight.truncate(end);
 	l.seg_tracking.truncate(end);
 	l.seg_strike.truncate(end);
+	l.seg_italic.truncate(end);
+	l.seg_underline.truncate(end);
 	l.seg_color.truncate(end);
 	l.seg_color_kind.truncate(end);
+	l.seg_bg_kind.truncate(end);
+	l.seg_bg.truncate(end);
 }
 
 /// Rewrites the current tail line to a styled prefix plus one ellipsis.
@@ -2515,6 +2536,8 @@ pub fn para_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &
 			st.rs[idx(ri)].leading,
 			st.rs[idx(ri)].tracking,
 			st.rs[idx(ri)].strike,
+			st.rs[idx(ri)].italic,
+			st.rs[idx(ri)].underline,
 		);
 		cs.clear();
 		for cp in st.rs[idx(sri)].content.chars().map(u32::from) {
@@ -2635,8 +2658,12 @@ pub fn para_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &
 						&& style.weight == segment_style.weight
 						&& style.tracking == segment_style.tracking
 						&& style.strike == segment_style.strike
+						&& style.italic == segment_style.italic
+						&& style.underline == segment_style.underline
 						&& style.color_kind == segment_style.color_kind
-						&& style.color == segment_style.color)
+						&& style.color == segment_style.color
+						&& style.bg_kind == segment_style.bg_kind
+						&& style.bg_h == segment_style.bg_h)
 			} else {
 				false
 			};
@@ -2754,6 +2781,10 @@ pub fn close_seg(d: &Doc, st: &St, l: &mut Lay, seg_start: i32, sri: i32, x: f64
 	l.seg_color.push(st.rs[idx(sri)].color);
 	l.seg_color_kind.push(st.rs[idx(sri)].color_kind);
 	l.seg_strike.push(st.rs[idx(sri)].strike);
+	l.seg_italic.push(st.rs[idx(sri)].italic);
+	l.seg_underline.push(st.rs[idx(sri)].underline);
+	l.seg_bg_kind.push(st.rs[idx(sri)].bg_kind);
+	l.seg_bg.push(st.rs[idx(sri)].bg_h);
 }
 
 /// Measures an image while preserving its intrinsic aspect ratio.
@@ -3776,8 +3807,9 @@ mod attachment_tests {
 		let mut roots = Vec::new();
 		crate::test_list::roots(&d, &mut st, &mut roots);
 		let row = roots[0];
-		let ri =
-			style::build_rstyle(&d, &mut st, row, 255, false, 0, 1, 0, 14.0, 400.0, 1.2, 0.0, false);
+		let ri = style::build_rstyle(
+			&d, &mut st, row, 255, false, 0, 1, 0, 14.0, 400.0, 1.2, 0.0, false, false, false,
+		);
 		let rule = &st.rs[idx(ri)];
 
 		assert!(rule.has_attach);

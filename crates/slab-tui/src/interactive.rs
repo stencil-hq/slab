@@ -94,7 +94,7 @@ fn cell_changed(old: &cells::CellGrid, new: &cells::CellGrid, ix: usize) -> bool
 		|| old.cl[ix] != new.cl[ix]
 		|| old_fg != new_fg
 		|| old_bg != new_bg
-		|| old.flags[ix] & cells::CF_STRIKE != new.flags[ix] & cells::CF_STRIKE
+		|| old.flags[ix] & cells::CF_TEXT_STYLE != new.flags[ix] & cells::CF_TEXT_STYLE
 }
 
 /// Nearest xterm-256 index for 0xRRGGBB (6×6×6 cube + gray ramp).
@@ -129,7 +129,7 @@ pub struct Painter {
 	cur_fg:     u32,
 	cur_bg:     u32,
 	cur_pos:    Option<(i32, i32)>, // (row, col) the terminal cursor sits at
-	cur_strike: bool,
+	cur_style: u32,
 }
 
 impl Painter {
@@ -149,17 +149,23 @@ impl Painter {
 			cur_fg: cells::NO_COLOR,
 			cur_bg: cells::NO_COLOR,
 			cur_pos: None,
-			cur_strike: false,
+			cur_style: 0,
 		}
 	}
 
-	fn sgr(&mut self, fg: u32, bg: u32, strike: bool) {
-		if fg == self.cur_fg && bg == self.cur_bg && strike == self.cur_strike {
+	fn sgr(&mut self, fg: u32, bg: u32, style: u32) {
+		if fg == self.cur_fg && bg == self.cur_bg && style == self.cur_style {
 			return;
 		}
 		self.buf.push_str("\x1b[0");
-		if strike {
-			self.buf.push_str(";9");
+		for (flag, code) in [
+			(cells::CF_ITALIC, 3),
+			(cells::CF_UNDERLINE, 4),
+			(cells::CF_STRIKE, 9),
+		] {
+			if style & flag != 0 {
+				write!(self.buf, ";{code}").expect("writing to String cannot fail");
+			}
 		}
 		for (base, c) in [(38u8, fg), (48u8, bg)] {
 			if c == cells::NO_COLOR {
@@ -175,7 +181,7 @@ impl Painter {
 		self.buf.push('m');
 		self.cur_fg = fg;
 		self.cur_bg = bg;
-		self.cur_strike = strike;
+		self.cur_style = style;
 	}
 
 	/// Paints `grid` into the buffered terminal diff.
@@ -191,7 +197,7 @@ impl Painter {
 			self.buf.push_str("\x1b[0m\x1b[2J");
 			self.cur_fg = cells::NO_COLOR;
 			self.cur_bg = cells::NO_COLOR;
-			self.cur_strike = false;
+			self.cur_style = 0;
 		}
 		self.cur_pos = None;
 		let vis_rows = g.rows.min(i32::from(rows));
@@ -221,7 +227,7 @@ impl Painter {
 					write!(self.buf, "\x1b[{};{}H", r + 1, c + 1)
 						.expect("writing to String cannot fail");
 				}
-				self.sgr(fg, bg, g.flags[ix] & cells::CF_STRIKE != 0);
+				self.sgr(fg, bg, g.flags[ix] & cells::CF_TEXT_STYLE);
 				if g.cl[ix].is_empty() {
 					self.buf.push(char::from_u32(g.ch[ix]).unwrap_or(' '));
 				} else {

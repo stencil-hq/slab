@@ -83,6 +83,15 @@ pub const CF_BG: u32 = 2;
 /// Indicates that a cell uses terminal strike-through decoration.
 pub const CF_STRIKE: u32 = 4;
 
+/// Indicates that a cell uses terminal italic decoration.
+pub const CF_ITALIC: u32 = 8;
+
+/// Indicates that a cell uses terminal underline decoration.
+pub const CF_UNDERLINE: u32 = 16;
+
+/// Mask of terminal text-style flags.
+pub const CF_TEXT_STYLE: u32 = CF_STRIKE | CF_ITALIC | CF_UNDERLINE;
+
 /// A row-major terminal cell grid and its rendering diagnostics.
 #[derive(Clone, Debug)]
 pub struct CellGrid {
@@ -331,7 +340,7 @@ fn is_clipped_in(grid: &CellGrid, column: i32, row: i32) -> bool {
 fn blank_glyph_raw(grid: &mut CellGrid, index: usize) {
 	grid.ch[index] = 32;
 	grid.cl[index].clear();
-	grid.flags[index] &= !(CF_FG | CF_STRIKE);
+	grid.flags[index] &= !(CF_FG | CF_TEXT_STYLE);
 }
 
 fn clear_wide_touching(grid: &mut CellGrid, column: i32, row: i32) {
@@ -354,7 +363,7 @@ fn clear_wide_touching(grid: &mut CellGrid, column: i32, row: i32) {
 fn put_raw(grid: &mut CellGrid, index: usize, ch: u32, fg: u32, bg: u32) {
 	grid.ch[index] = ch;
 	grid.cl[index].clear();
-	grid.flags[index] &= !(CF_FG | CF_STRIKE);
+	grid.flags[index] &= !(CF_FG | CF_TEXT_STYLE);
 	if fg != NO_COLOR {
 		grid.fg[index] = fg;
 		grid.flags[index] |= CF_FG;
@@ -906,16 +915,26 @@ pub fn draw_text(
 		} else {
 			put_cluster(grid, column, row, first, &full_cluster, foreground);
 		}
-		// Strike decoration is ink: it must honor the same clip as the glyph
-		// writes above, or a scrolled-away run leaves SGR-9 over blank cells.
+		// Decorations are ink: they must honor the same clip as the glyph
+		// writes above, or a scrolled-away run leaves SGR state over blank cells.
+		let mut decorations = 0;
 		if text_op.strike {
+			decorations |= CF_STRIKE;
+		}
+		if text_op.italic {
+			decorations |= CF_ITALIC;
+		}
+		if text_op.underline {
+			decorations |= CF_UNDERLINE;
+		}
+		if decorations != 0 {
 			let both_in = !wide || is_clipped_in(grid, column.wrapping_add(1), row);
 			if is_clipped_in(grid, column, row) && both_in {
 				if let Some(index) = cell_index(grid, column, row) {
-					grid.flags[index] |= CF_STRIKE;
+					grid.flags[index] |= decorations;
 				}
 				if wide && let Some(index) = cell_index(grid, column.wrapping_add(1), row) {
-					grid.flags[index] |= CF_STRIKE;
+					grid.flags[index] |= decorations;
 				}
 			}
 		}
@@ -1513,7 +1532,7 @@ pub fn cells_to_text(grid: &CellGrid, plain: bool) -> String {
 		} else {
 			let mut current_fg = NO_COLOR;
 			let mut current_bg = NO_COLOR;
-			let mut current_strike = false;
+			let mut current_style = 0;
 			for column in 0..grid.cols {
 				let index = index(row.wrapping_mul(grid.cols).wrapping_add(column));
 				let flags = grid.flags[index];
@@ -1527,12 +1546,14 @@ pub fn cells_to_text(grid: &CellGrid, plain: bool) -> String {
 				} else {
 					NO_COLOR
 				};
-				let strike = flags & CF_STRIKE != 0;
-				if foreground != current_fg || background != current_bg || strike != current_strike {
-					// ESC [ 0, followed by optional truecolor foreground/background.
+				let style = flags & CF_TEXT_STYLE;
+				if foreground != current_fg || background != current_bg || style != current_style {
+					// ESC [ 0, followed by optional decorations and truecolor.
 					line.extend([27, u32::from('['), u32::from('0')]);
-					if strike {
-						line.extend([u32::from(';'), u32::from('9')]);
+					for (flag, code) in [(CF_ITALIC, '3'), (CF_UNDERLINE, '4'), (CF_STRIKE, '9')] {
+						if style & flag != 0 {
+							line.extend([u32::from(';'), u32::from(code)]);
+						}
 					}
 					if foreground != NO_COLOR {
 						line.push(u32::from(';'));
@@ -1545,7 +1566,7 @@ pub fn cells_to_text(grid: &CellGrid, plain: bool) -> String {
 					line.push(u32::from('m'));
 					current_fg = foreground;
 					current_bg = background;
-					current_strike = strike;
+					current_style = style;
 				}
 				push_cell_text(
 					&mut line,
@@ -1588,7 +1609,7 @@ pub fn cells_to_text(grid: &CellGrid, plain: bool) -> String {
 /// serializes as `(no attributes)` so goldens are never empty.
 pub fn cells_attrs_text(grid: &CellGrid) -> String {
 	use std::fmt::Write as _;
-	const EMPTY: (u32, u32, bool) = (NO_COLOR, NO_COLOR, false);
+	const EMPTY: (u32, u32, u32) = (NO_COLOR, NO_COLOR, 0);
 	let mut out = String::new();
 	for row in 0..grid.rows {
 		let mut line = String::new();
@@ -1610,7 +1631,7 @@ pub fn cells_attrs_text(grid: &CellGrid) -> String {
 					} else {
 						NO_COLOR
 					},
-					flags & CF_STRIKE != 0,
+					flags & CF_TEXT_STYLE,
 				)
 			} else {
 				EMPTY
@@ -1626,8 +1647,14 @@ pub fn cells_attrs_text(grid: &CellGrid) -> String {
 				if key.1 != NO_COLOR {
 					let _ = write!(line, " bg=#{:06X}", key.1);
 				}
-				if key.2 {
+				if key.2 & CF_STRIKE != 0 {
 					line.push_str(" strike");
+				}
+				if key.2 & CF_ITALIC != 0 {
+					line.push_str(" italic");
+				}
+				if key.2 & CF_UNDERLINE != 0 {
+					line.push_str(" underline");
 				}
 				line.push(';');
 			}

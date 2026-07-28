@@ -41,6 +41,8 @@ pub fn test_runtime_font_register_overrides_matching_family() {
 		800,
 		-200,
 		0,
+		-100,
+		50,
 		900,
 		&[65],
 		&[1],

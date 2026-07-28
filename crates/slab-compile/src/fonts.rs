@@ -30,6 +30,8 @@ pub fn build_table(class: u8, weight: u16, bytes: &[u8]) -> FontE {
 		descent: metrics.descent,
 		line_gap: metrics.line_gap,
 		default_advance: metrics.default_advance,
+		underline_position: metrics.underline_position,
+		underline_thickness: metrics.underline_thickness,
 		cmap,
 		advances,
 	}

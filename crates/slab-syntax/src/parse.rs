@@ -24,6 +24,8 @@ pub const FLAGS: &[&str] = &[
 	"drag-ghost",
 	"escape-blur",
 	"strike",
+	"italic",
+	"underline",
 ];
 
 pub struct Parser<'d> {

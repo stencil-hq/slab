@@ -328,6 +328,8 @@ pub fn inst_font_register(
 	ascent: i32,
 	descent: i32,
 	line_gap: i32,
+	underline_position: i32,
+	underline_thickness: i32,
 	default_adv: u32,
 	cmap_cp: &[u32],
 	cmap_gid: &[u32],
@@ -345,6 +347,8 @@ pub fn inst_font_register(
 	i.doc.font_ascent.push(ascent);
 	i.doc.font_descent.push(descent);
 	i.doc.font_line_gap.push(line_gap);
+	i.doc.font_underline_position.push(underline_position);
+	i.doc.font_underline_thickness.push(underline_thickness);
 	i.doc.font_default_adv.push(default_adv);
 	i.doc.font_cmap_off.push(cmap_off);
 	i.doc

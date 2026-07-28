@@ -72,6 +72,14 @@ pub struct OpText {
 	pub opacity:    f64,
 	/// Whether the renderer paints a line through this text run.
 	pub strike:     bool,
+	/// Whether the renderer selects or synthesizes an oblique face.
+	pub italic:     bool,
+	/// Whether the renderer paints an underline.
+	pub underline:  bool,
+	/// Underline center offset below the baseline.
+	pub underline_offset: f64,
+	/// Underline thickness in layout units.
+	pub underline_thickness: f64,
 	/// `1` when `color` is packed RGBA, `2` when it is a gradient handle.
 	pub color_kind: u32,
 	/// Gradient box (the text node's content box); zero when `color_kind` is 1.
@@ -1124,6 +1132,8 @@ fn walk_node(
 			let string_ref = push_str_slice(fr, &text_layout.chars, start, end);
 			let measured_width = text_layout.line_w[line_index];
 			let (uncov_off, uncov_len) = push_uncovered_runs(d, fr, rule.font, string_ref);
+			let (underline_offset, underline_thickness) =
+				textm::underline_geometry(d, rule.font, rule.size);
 			let mut text_op = OpText {
 				node,
 				x: (content_width - measured_width).mul_add(alignment, x + padding_left)
@@ -1139,6 +1149,10 @@ fn walk_node(
 				color: rule.color,
 				opacity: 1.0,
 				strike: rule.strike,
+				italic: rule.italic,
+				underline: rule.underline,
+				underline_offset,
+				underline_thickness,
 				color_kind: rule.color_kind,
 				gx: 0.0,
 				gy: 0.0,
@@ -1188,6 +1202,21 @@ fn walk_node(
 				};
 				let seg_kind = l.seg_color_kind[segment_index];
 				let (uncov_off, uncov_len) = push_uncovered_runs(d, fr, font, string_ref);
+				if l.seg_bg_kind[segment_index] != 0 && l.seg_w[segment_index] > 0.0 {
+					let mut background = unstyled_rect(
+						node,
+						x + padding_left + leading + l.seg_x[segment_index],
+						baseline_y,
+						l.seg_w[segment_index],
+						l.pl_h[line_index],
+						0.0,
+					);
+					background.bg_kind = l.seg_bg_kind[segment_index];
+					background.bg = l.seg_bg[segment_index];
+					fr.ops.push(FrameOp::Rect(background));
+				}
+				let (underline_offset, underline_thickness) =
+					textm::underline_geometry(d, font, l.seg_size[segment_index]);
 				let mut text_op = OpText {
 					node,
 					x: x + padding_left + leading + l.seg_x[segment_index],
@@ -1201,6 +1230,10 @@ fn walk_node(
 					color: l.seg_color[segment_index],
 					opacity: 1.0,
 					strike: l.seg_strike[segment_index],
+					italic: l.seg_italic[segment_index],
+					underline: l.seg_underline[segment_index],
+					underline_offset,
+					underline_thickness,
 					color_kind: seg_kind,
 					gx: 0.0,
 					gy: 0.0,

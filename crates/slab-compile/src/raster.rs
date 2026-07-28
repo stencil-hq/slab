@@ -560,39 +560,40 @@ struct GlyphSink {
 	s:  f32,
 	dx: f32,
 	dy: f32,
+	skew: f32,
+}
+
+impl GlyphSink {
+	fn point(&self, x: f32, y: f32) -> (f32, f32) {
+		(
+			x.mul_add(self.s, y * self.s * self.skew + self.dx),
+			y.mul_add(-self.s, self.dy),
+		)
+	}
 }
 
 impl ttf_parser::OutlineBuilder for GlyphSink {
 	fn move_to(&mut self, x: f32, y: f32) {
-		self
-			.pb
-			.move_to(x.mul_add(self.s, self.dx), y.mul_add(-self.s, self.dy));
+		let (x, y) = self.point(x, y);
+		self.pb.move_to(x, y);
 	}
 
 	fn line_to(&mut self, x: f32, y: f32) {
-		self
-			.pb
-			.line_to(x.mul_add(self.s, self.dx), y.mul_add(-self.s, self.dy));
+		let (x, y) = self.point(x, y);
+		self.pb.line_to(x, y);
 	}
 
 	fn quad_to(&mut self, x1: f32, y1: f32, x: f32, y: f32) {
-		self.pb.quad_to(
-			x1.mul_add(self.s, self.dx),
-			y1.mul_add(-self.s, self.dy),
-			x.mul_add(self.s, self.dx),
-			y.mul_add(-self.s, self.dy),
-		);
+		let (x1, y1) = self.point(x1, y1);
+		let (x, y) = self.point(x, y);
+		self.pb.quad_to(x1, y1, x, y);
 	}
 
 	fn curve_to(&mut self, x1: f32, y1: f32, x2: f32, y2: f32, x: f32, y: f32) {
-		self.pb.cubic_to(
-			x1.mul_add(self.s, self.dx),
-			y1.mul_add(-self.s, self.dy),
-			x2.mul_add(self.s, self.dx),
-			y2.mul_add(-self.s, self.dy),
-			x.mul_add(self.s, self.dx),
-			y.mul_add(-self.s, self.dy),
-		);
+		let (x1, y1) = self.point(x1, y1);
+		let (x2, y2) = self.point(x2, y2);
+		let (x, y) = self.point(x, y);
+		self.pb.cubic_to(x1, y1, x2, y2, x, y);
 	}
 
 	fn close(&mut self) {
@@ -1307,17 +1308,8 @@ impl<'a> Raster<'a> {
 	/// SLIR FONT table (the solver's own metrics), outlines from the
 	/// matching vendored TTF. One path for the whole run so gradient text
 	/// paints with cross-glyph continuity.
-	fn text_outline(
-		&self,
-		text: &str,
-		font_ix: i32,
-		x: f64,
-		y_baseline: f64,
-		size: f64,
-		tracking: f64,
-		strike: bool,
-		measured_w: f64,
-	) -> Option<Path> {
+	fn text_outline(&self, text: &str, op: &OpText) -> Option<Path> {
+		let font_ix = op.font;
 		let doc = self.s;
 		let fe = doc
 			.fonts
@@ -1328,15 +1320,16 @@ impl<'a> Raster<'a> {
 		let advances = &fe.advances;
 		let face = self.face(font_ix)?;
 		let s = self.scale;
-		let size_px = size * s;
+		let size_px = op.size * s;
 		let scale_units = size_px / upem;
 		let mut sink = GlyphSink {
-			pb: PathBuilder::new(),
-			s:  scale_units as f32,
-			dx: 0.0,
-			dy: (y_baseline * s) as f32,
+			pb:   PathBuilder::new(),
+			s:    scale_units as f32,
+			dx:   0.0,
+			dy:   (op.y_baseline * s) as f32,
+			skew: if op.italic { 0.2 } else { 0.0 },
 		};
-		let mut pen = x * s;
+		let mut pen = op.x * s;
 		for ch in text.chars() {
 			let cp = ch as u32;
 			let ix = cmap.binary_search_by_key(&cp, |&(c, _)| c).ok();
@@ -1349,17 +1342,28 @@ impl<'a> Raster<'a> {
 				face.outline_glyph(ttf_parser::GlyphId(gid), &mut sink);
 			}
 			let adv_units = ix.map_or(default_adv, |i| advances[i] as f64);
-			pen += tracking.mul_add(s, adv_units * size_px / upem);
+			pen += op.tracking.mul_add(s, adv_units * size_px / upem);
 		}
-		if strike && measured_w > 0.0 {
-			let center = size.mul_add(-0.3, y_baseline) * s;
-			let thickness = (size * s / 16.0).max(1.0);
-			sink.pb.push_rect(tiny_skia::Rect::from_ltrb(
-				(x * s) as f32,
-				(center - thickness / 2.0) as f32,
-				((x + measured_w) * s) as f32,
-				(center + thickness / 2.0) as f32,
-			)?);
+		for (enabled, center, thickness) in [
+			(
+				op.strike,
+				op.size.mul_add(-0.3, op.y_baseline) * s,
+				(op.size * s / 16.0).max(1.0),
+			),
+			(
+				op.underline,
+				(op.y_baseline + op.underline_offset) * s,
+				(op.underline_thickness * s).max(1.0),
+			),
+		] {
+			if enabled && op.measured_w > 0.0 {
+				sink.pb.push_rect(tiny_skia::Rect::from_ltrb(
+					(op.x * s) as f32,
+					(center - thickness / 2.0) as f32,
+					((op.x + op.measured_w) * s) as f32,
+					(center + thickness / 2.0) as f32,
+				)?);
+			}
 		}
 		sink.pb.finish()
 	}
@@ -1367,16 +1371,7 @@ impl<'a> Raster<'a> {
 	/// Draw one text run: solid fill, gradient fill over the node's content
 	/// box (`gx..gh`, contract §6.7), or per-pixel conic.
 	fn draw_text(&self, surf: &mut Layer, t: &OpText, text: &str) {
-		let Some(path) = self.text_outline(
-			text,
-			t.font,
-			t.x,
-			t.y_baseline,
-			t.size,
-			t.tracking,
-			t.strike,
-			t.measured_w,
-		) else {
+		let Some(path) = self.text_outline(text, t) else {
 			return;
 		};
 		let s = self.scale;
@@ -1435,6 +1430,7 @@ impl<'a> Raster<'a> {
 						s:  (size_px / upem) as f32,
 						dx: pen as f32,
 						dy: ybase as f32,
+						skew: 0.0,
 					};
 					if face.outline_glyph(gid, &mut sink).is_some()
 						&& let Some(path) = sink.pb.finish()

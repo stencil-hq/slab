@@ -5,6 +5,8 @@ export interface FontMetrics {
    descent: number;
    lineGap: number;
    defaultAdvance: number;
+   underlinePosition: number;
+   underlineThickness: number;
    cps: Uint32Array;
    gids: Uint32Array;
    advs: Uint32Array;
@@ -157,6 +159,11 @@ export function parseFontMetrics(bytes: Uint8Array): FontMetrics | null {
          advs[i] = advance(gid) ?? (notdef !== 0 ? notdef : spaceAdvance);
       }
       const os2 = tables.get('OS/2');
+      const post = tables.get('post');
+      const underlinePosition =
+         post && post.length >= 12 ? view.getInt16(post.offset + 8) : -Math.round(upem / 10);
+      const underlineThickness =
+         post && post.length >= 12 ? view.getInt16(post.offset + 10) : Math.max(1, Math.round(upem / 20));
       return {
          weight: os2 && os2.length >= 6 ? view.getUint16(os2.offset + 4) : 400,
          upem,
@@ -164,6 +171,8 @@ export function parseFontMetrics(bytes: Uint8Array): FontMetrics | null {
          descent,
          lineGap,
          defaultAdvance: notdef !== 0 ? notdef : spaceAdvance,
+         underlinePosition,
+         underlineThickness,
          cps,
          gids,
          advs,

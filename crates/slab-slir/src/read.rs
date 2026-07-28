@@ -269,6 +269,28 @@ fn from_pb(mut doc: pb::Doc) -> Result<Slir, String> {
 	let font_descent = i16s("font_descent", std::mem::take(&mut doc.font_descent))?;
 	let font_line_gap = i16s("font_line_gap", std::mem::take(&mut doc.font_line_gap))?;
 	let font_default_adv = u16s("font_default_adv", std::mem::take(&mut doc.font_default_adv))?;
+	let mut font_underline_position = i16s(
+		"font_underline_position",
+		std::mem::take(&mut doc.font_underline_position),
+	)?;
+	let mut font_underline_thickness = i16s(
+		"font_underline_thickness",
+		std::mem::take(&mut doc.font_underline_thickness),
+	)?;
+	if font_underline_position.is_empty() {
+		font_underline_position.extend(
+			font_upem
+				.iter()
+				.map(|upem| -(i16::try_from(*upem / 10).expect("font upem fits i16"))),
+		);
+	}
+	if font_underline_thickness.is_empty() {
+		font_underline_thickness.extend(
+			font_upem
+				.iter()
+				.map(|upem| i16::try_from((*upem / 20).max(1)).expect("font upem fits i16")),
+		);
+	}
 	let font_cmap_off = nonnegative("font_cmap_off", std::mem::take(&mut doc.font_cmap_off))?;
 	let font_cmap_len = nonnegative("font_cmap_len", std::mem::take(&mut doc.font_cmap_len))?;
 	let font_cmap_cp = std::mem::take(&mut doc.font_cmap_cp);
@@ -286,6 +308,8 @@ fn from_pb(mut doc: pb::Doc) -> Result<Slir, String> {
 		font_descent.len(),
 		font_line_gap.len(),
 		font_default_adv.len(),
+		font_underline_position.len(),
+		font_underline_thickness.len(),
 		font_cmap_off.len(),
 		font_cmap_len.len(),
 	])?;
@@ -304,6 +328,8 @@ fn from_pb(mut doc: pb::Doc) -> Result<Slir, String> {
 			descent:         font_descent[index],
 			line_gap:        font_line_gap[index],
 			default_advance: font_default_adv[index],
+			underline_position: font_underline_position[index],
+			underline_thickness: font_underline_thickness[index],
 			cmap:            font_cmap_cp[cmap_range]
 				.iter()
 				.copied()
@@ -841,6 +867,8 @@ mod tests {
 				descent:         -200,
 				line_gap:        20,
 				default_advance: 600,
+				underline_position: -100,
+				underline_thickness: 50,
 				cmap:            vec![(65, 3)],
 				advances:        vec![600],
 			}],

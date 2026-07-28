@@ -192,6 +192,121 @@ col w=300 h=180 strike=param.crossed {
 }
 
 #[test]
+fn italic_and_underline_inherit_and_split_paragraph_runs() {
+	let mut instance = compile_instance(
+		r#"
+col w=300 h=140 italic underline {
+  text "inherited"
+  text "cleared" italic=false underline=false
+  para w=260 {
+    span text="styled"
+    span text=" plain" italic=false underline=false
+  }
+}
+"#,
+		300.0,
+		140.0,
+	);
+	let rendered = frame::inst_frame(&mut instance, 0.0);
+	let runs: Vec<_> = rendered
+		.ops
+		.iter()
+		.filter_map(|operation| {
+			let FrameOp::Text(text) = operation else {
+				return None;
+			};
+			Some((
+				rendered.strings[text.str_ref as usize].as_str(),
+				text.italic,
+				text.underline,
+				text.underline_offset,
+				text.underline_thickness,
+			))
+		})
+		.collect();
+	for name in ["inherited", "styled"] {
+		let run = runs.iter().find(|run| run.0 == name).expect("styled run");
+		assert!(run.1 && run.2, "{name} inherits both decorations");
+		assert!(run.3 > 0.0, "{name} has a font-derived underline offset");
+		assert!(run.4 > 0.0, "{name} has a font-derived underline thickness");
+	}
+	for name in ["cleared", "plain"] {
+		let run = runs.iter().find(|run| run.0 == name).expect("cleared run");
+		assert!(!run.1 && !run.2, "{name} clears both decorations");
+	}
+}
+
+#[test]
+fn span_background_paints_only_behind_its_measured_run() {
+	let mut instance = compile_instance(
+		r#"para w=240 h=30 {
+  span text="code" bg=#223344FF
+  span text=" prose"
+}"#,
+		240.0,
+		30.0,
+	);
+	let rendered = frame::inst_frame(&mut instance, 0.0);
+	let code = rendered
+		.ops
+		.iter()
+		.find_map(|operation| {
+			let FrameOp::Text(text) = operation else {
+				return None;
+			};
+			(rendered.strings[text.str_ref as usize] == "code").then_some(text)
+		})
+		.expect("code text run");
+	let background = rendered
+		.ops
+		.iter()
+		.find_map(|operation| {
+			let FrameOp::Rect(rect) = operation else {
+				return None;
+			};
+			(rect.bg_kind == 1 && rect.bg == 0xff44_3322).then_some(rect)
+		})
+		.unwrap_or_else(|| panic!("span background missing from {:#?}", rendered.ops));
+	assert!((background.x - code.x).abs() < 0.001);
+	assert!((background.w - code.measured_w).abs() < 0.001);
+	assert_eq!(
+		rendered
+			.ops
+			.iter()
+			.filter(|operation| matches!(operation, FrameOp::Rect(rect) if rect.bg_kind != 0))
+			.count(),
+		1,
+		"unstyled sibling emits no background"
+	);
+}
+
+#[test]
+fn authored_weight_is_preserved_without_four_weight_snapping() {
+	let source = r#"text "heavy" family="Inter" weight=800"#;
+	let (slir, diagnostics) =
+		compile(source, &Options { embed_assets: false, ..Options::default() });
+	assert!(!diagnostics.has_errors(), "{:#?}", diagnostics.0);
+	let slir = slir.expect("valid source");
+	assert!(slir.fonts.iter().any(|font| font.weight == 800));
+	let bytes = slab_slir::write(&slir);
+	let (mut instance, _) = slab_slir::instance(&bytes).expect("decode fixture");
+	frame::inst_set_env(&mut instance, 200.0, 40.0, 0, false, false);
+	let rendered = frame::inst_frame(&mut instance, 0.0);
+	let run = rendered
+		.ops
+		.iter()
+		.find_map(|operation| {
+			let FrameOp::Text(text) = operation else {
+				return None;
+			};
+			Some(text)
+		})
+		.expect("text run");
+	assert_eq!(run.weight, 800);
+	assert_eq!(instance.doc().font_weight[run.font as usize], 800);
+}
+
+#[test]
 fn nowrap_paragraph_ellipsizes_once_across_styled_spans() {
 	let mut instance = compile_instance(
 		r#"col w=320 h=80 {

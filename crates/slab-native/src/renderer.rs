@@ -1595,6 +1595,16 @@ impl Renderer {
 						color = rgba(t.color, t.opacity);
 					}
 					let px = (t.size * self.scale) as f32;
+					let mut glyph_mabcd = [mat.a, mat.b, mat.c, mat.d];
+					let mut glyph_mt = [mat.tx, mat.ty];
+					if t.italic {
+						const OBLIQUE_SHEAR: f32 = 0.2;
+						let baseline = (t.y_baseline as f32 + oy) * s;
+						glyph_mabcd[2] -= glyph_mabcd[0] * OBLIQUE_SHEAR;
+						glyph_mabcd[3] -= glyph_mabcd[1] * OBLIQUE_SHEAR;
+						glyph_mt[0] += mat.a * OBLIQUE_SHEAR * baseline;
+						glyph_mt[1] += mat.b * OBLIQUE_SHEAR * baseline;
+					}
 					let glyphs = slab_kernel::frame::text_glyphs(li.inst, li.frame, op_ix as i32);
 					for g in &glyphs {
 						if g.gid == 0 {
@@ -1618,8 +1628,8 @@ impl Renderer {
 						let gx = base_x + e.bearing[0];
 						let gy = base_y + e.bearing[1];
 						let inst = GlyphI {
-							mabcd: [mat.a, mat.b, mat.c, mat.d],
-							mtp: [mat.tx, mat.ty, gx, gy],
+							mabcd: glyph_mabcd,
+							mtp: [glyph_mt[0], glyph_mt[1], gx, gy],
 							su: [e.size[0], e.size[1], e.uv[0], e.uv[1]],
 							uc: [
 								e.uv[2],
@@ -1679,7 +1689,17 @@ impl Renderer {
 							}
 						}
 					}
-					if t.strike && t.measured_w > 0.0 {
+					for (enabled, center, logical_thickness) in [
+						(t.strike, t.size.mul_add(-0.3, t.y_baseline), t.size / 16.0),
+						(
+							t.underline,
+							t.y_baseline + t.underline_offset,
+							t.underline_thickness,
+						),
+					] {
+						if !enabled || t.measured_w <= 0.0 {
+							continue;
+						}
 						let mut fill = rgba(t.color, t.opacity);
 						let mut gradient = -1.0;
 						let mut direction = [0.0, 0.0];
@@ -1690,13 +1710,13 @@ impl Renderer {
 								doc.grad_kind[index],
 								doc.grad_angle[index],
 								t.measured_w as f32 * s,
-								(t.size / 16.0).max(1.0 / f64::from(s)) as f32 * s,
+								logical_thickness.max(1.0 / f64::from(s)) as f32 * s,
 							);
 							fill = [0.0, 0.0, 0.0, t.opacity as f32];
 						}
-						let thickness = (t.size * f64::from(s) / 16.0).max(1.0) as f32;
+						let thickness = (logical_thickness * f64::from(s)).max(1.0) as f32;
 						let cx = ((t.x + t.measured_w / 2.0) as f32 + ox) * s;
-						let cy = (t.size.mul_add(-0.3, t.y_baseline) as f32 + oy) * s;
+						let cy = (center as f32 + oy) * s;
 						fb.push_rect(clip.scissor, RectI {
 							mabcd: [mat.a, mat.b, mat.c, mat.d],
 							mtc: [mat.tx, mat.ty, cx, cy],
