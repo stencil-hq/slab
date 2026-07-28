@@ -11,8 +11,11 @@ path = "src/lib.rs"
 name = "slab-tui"
 path = "src/main.rs"
 
+[lints]
+workspace = true
+
 [dependencies]
 crossterm.workspace = true
-slab-compile = { path = "../slab-compile" }
-slab-slir = { path = "../slab-slir" }
-slab-kernel = { path = "../slab-kernel" }
+slab-compile.workspace = true
+slab-kernel.workspace = true
+slab-slir.workspace = true

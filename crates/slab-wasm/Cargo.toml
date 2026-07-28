@@ -7,11 +7,14 @@ license.workspace = true
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+[lints]
+workspace = true
+
 [dependencies]
-slab-syntax = { path = "../slab-syntax" }
-slab-slir = { path = "../slab-slir" }
-slab-compile = { path = "../slab-compile" }
-slab-kernel = { path = "../slab-kernel" }
-serde = { workspace = true }
-serde_json = { workspace = true }
-wasm-bindgen = "0.2"
+serde.workspace = true
+serde_json.workspace = true
+slab-compile.workspace = true
+slab-kernel.workspace = true
+slab-slir.workspace = true
+slab-syntax.workspace = true
+wasm-bindgen.workspace = true

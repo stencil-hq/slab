@@ -7,9 +7,12 @@ license.workspace = true
 [lib]
 proc-macro = true
 
+[lints]
+workspace = true
+
 [dependencies]
-slab-compile = { path = "../slab-compile" }
+slab-compile.workspace = true
 
 [dev-dependencies]
-slab-kernel = { path = "../slab-kernel" }
-slab-slir = { path = "../slab-slir" }
+slab-kernel.workspace = true
+slab-slir.workspace = true

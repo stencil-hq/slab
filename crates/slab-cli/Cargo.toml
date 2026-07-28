@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 default-run = "slab"
+
 [[bin]]
 name = "slab"
 path = "src/main.rs"
@@ -12,12 +13,15 @@ path = "src/main.rs"
 name = "frame"
 harness = false
 
+[lints]
+workspace = true
+
 [dependencies]
-slab-syntax = { path = "../slab-syntax" }
-slab-slir = { path = "../slab-slir" }
-slab-compile = { path = "../slab-compile" }
-slab-fonts = { path = "../slab-fonts" }
-slab-kernel = { path = "../slab-kernel" }
-slab-drive = { path = "../slab-drive" }
-slab-lsp = { path = "../slab-lsp" }
 serde_json.workspace = true
+slab-compile.workspace = true
+slab-drive.workspace = true
+slab-fonts.workspace = true
+slab-kernel.workspace = true
+slab-lsp.workspace = true
+slab-slir.workspace = true
+slab-syntax.workspace = true

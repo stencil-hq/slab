@@ -4,9 +4,12 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[lints]
+workspace = true
+
 [dependencies]
 ratatui.workspace = true
-slab-tui = { path = "../slab-tui" }
-slab-compile = { path = "../slab-compile" }
-slab-slir = { path = "../slab-slir" }
-slab-kernel = { path = "../slab-kernel" }
+slab-compile.workspace = true
+slab-kernel.workspace = true
+slab-slir.workspace = true
+slab-tui.workspace = true

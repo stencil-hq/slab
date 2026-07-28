@@ -12,23 +12,25 @@ path = "src/lib.rs"
 name = "slab-native"
 path = "src/main.rs"
 
-[dependencies]
-slab-kernel = { path = "../slab-kernel" }
-slab-compile = { path = "../slab-compile" }
-slab-slir = { path = "../slab-slir" }
-slab-drive = { path = "../slab-drive" }
-slab-fonts = { path = "../slab-fonts" }
-winit = { workspace = true }
-wgpu = { workspace = true }
-accesskit = { workspace = true }
-accesskit_winit = { workspace = true }
-ab_glyph = { workspace = true }
-lyon = { workspace = true }
-png = { workspace = true }
-bytemuck = { workspace = true }
-pollster = { workspace = true }
+[lints]
+workspace = true
 
-arboard = { version = "3.6.1", default-features = false }
+[dependencies]
+ab_glyph.workspace = true
+accesskit.workspace = true
+accesskit_winit.workspace = true
+arboard.workspace = true
+bytemuck.workspace = true
+lyon.workspace = true
+png.workspace = true
+pollster.workspace = true
+slab-compile.workspace = true
+slab-drive.workspace = true
+slab-fonts.workspace = true
+slab-kernel.workspace = true
+slab-slir.workspace = true
+wgpu.workspace = true
+winit.workspace = true
 
 [target.'cfg(unix)'.dependencies]
-signal-hook = "0.3"
+signal-hook.workspace = true

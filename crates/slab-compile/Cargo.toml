@@ -4,12 +4,15 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[lints]
+workspace = true
+
 [dependencies]
-slab-syntax = { path = "../slab-syntax" }
-slab-slir = { path = "../slab-slir" }
-serde_json = { workspace = true }
-slab-fonts = { path = "../slab-fonts" }
-ttf-parser = { workspace = true }
-slab-kernel = { path = "../slab-kernel" }
-tiny-skia = { workspace = true }
-png = { workspace = true }
+png.workspace = true
+serde_json.workspace = true
+slab-fonts.workspace = true
+slab-kernel.workspace = true
+slab-slir.workspace = true
+slab-syntax.workspace = true
+tiny-skia.workspace = true
+ttf-parser.workspace = true

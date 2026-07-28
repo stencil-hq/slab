@@ -4,9 +4,12 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[lints]
+workspace = true
+
 [dependencies]
-slab-syntax = { path = "../slab-syntax" }
-slab-slir = { path = "../slab-slir" }
-slab-compile = { path = "../slab-compile" }
-slab-kernel = { path = "../slab-kernel" }
 serde_json.workspace = true
+slab-compile.workspace = true
+slab-kernel.workspace = true
+slab-slir.workspace = true
+slab-syntax.workspace = true
