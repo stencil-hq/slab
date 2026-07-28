@@ -9,9 +9,16 @@ use crate::{
     flatten::Frame,
     list::{self, State},
     slir::{Doc, F_FOCUSABLE, F_INERT, NONE},
+    style::Semantics,
 };
+use rustc_hash::FxHashMap;
 
-/// A structure-of-arrays snapshot of the most recently flattened scene.
+/// A snapshot of the most recently flattened scene.
+///
+/// Geometry and interaction fields stay as parallel columns because hit
+/// testing and focus scans read a few of them across every entry; the
+/// accessibility block lives in per-entry [`Semantics`] rows because
+/// exporters read all of it for one entry at a time.
 #[derive(Clone, Debug, Default)]
 pub struct Scene {
     /// Document or synthetic node identifiers in scene order.
@@ -50,48 +57,19 @@ pub struct Scene {
     pub scroll_cross: Vec<f64>,
     /// Whether each entry's main axis is horizontal.
     pub is_row: Vec<bool>,
-    /// Resolved accessibility role string references.
-    pub role: Vec<u32>,
-    /// Resolved accessibility label string references.
-    pub label: Vec<u32>,
-    /// Resolved accessibility description string references.
-    pub desc: Vec<u32>,
-    /// Optional checked-state codes; 0 absent, 1 false, 2 true, 3 mixed.
-    pub checked: Vec<u32>,
-    /// Optional expanded-state codes; 0 absent, 1 false, 2 true.
-    pub expanded: Vec<u32>,
-    /// Optional selected-state codes; 0 absent, 1 false, 2 true.
-    pub selected: Vec<u32>,
-    /// Active-descendant full-key references into the instance scene string pool.
-    pub active_descendant: Vec<u32>,
-    /// Controlled-node full-key references into the instance scene string pool.
-    pub controls: Vec<u32>,
-    /// Optional current range values.
-    pub value_now: Vec<Option<f64>>,
-    /// Optional minimum range values.
-    pub value_min: Vec<Option<f64>>,
-    /// Optional maximum range values.
-    pub value_max: Vec<Option<f64>>,
-    /// Human-readable value references into the instance scene string pool.
-    pub value_text: Vec<u32>,
-    /// Optional modal-state codes; 0 absent, 1 false, 2 true.
-    pub modal: Vec<u32>,
-    /// Optional live-region codes; 0 absent, 1 off, 2 polite, 3 assertive.
-    pub live: Vec<u32>,
-    /// Optional live-region atomicity codes; 0 absent, 1 false, 2 true.
-    pub live_atomic: Vec<u32>,
-    /// Optional semantic hierarchy levels.
-    pub level: Vec<Option<f64>>,
-    /// Optional one-based positions within semantic sets.
-    pub pos_in_set: Vec<Option<f64>>,
-    /// Optional semantic set sizes, where -1 means unknown.
-    pub set_size: Vec<Option<f64>>,
+    /// Accessibility semantics rows, read row-wise by exporters.
+    pub sem: Vec<Semantics>,
     /// Whether each node is currently disabled.
     pub disabled: Vec<bool>,
     /// Whether each node currently owns kernel focus.
     pub focused: Vec<bool>,
     /// Whether each node is a text leaf with an active `field=` binder.
     pub editable: Vec<bool>,
+    /// Node-id → scene-index map rebuilt by [`load`]; empty for hand-built
+    /// scenes, which fall back to a linear scan in [`index_of`]. Synthetic
+    /// list ids are monotonic, so a map bounds memory to live entries where
+    /// a dense vector would grow to the id high-water mark.
+    index: FxHashMap<u32, i32>,
 }
 
 /// Creates an empty retained scene.
@@ -124,24 +102,7 @@ pub fn load(sc: &mut Scene, fr: &Frame) {
     sc.is_row.clear();
     sc.content_cross.clear();
     sc.scroll_cross.clear();
-    sc.role.clear();
-    sc.label.clear();
-    sc.desc.clear();
-    sc.checked.clear();
-    sc.expanded.clear();
-    sc.selected.clear();
-    sc.active_descendant.clear();
-    sc.controls.clear();
-    sc.value_now.clear();
-    sc.value_min.clear();
-    sc.value_max.clear();
-    sc.value_text.clear();
-    sc.modal.clear();
-    sc.live.clear();
-    sc.live_atomic.clear();
-    sc.level.clear();
-    sc.pos_in_set.clear();
-    sc.set_size.clear();
+    sc.sem.clear();
     sc.disabled.clear();
     sc.focused.clear();
     sc.editable.clear();
@@ -164,24 +125,7 @@ pub fn load(sc: &mut Scene, fr: &Frame) {
         sc.content_cross.push(entry.content_cross);
         sc.scroll_cross.push(entry.scroll_cross);
         sc.is_row.push(entry.is_row);
-        sc.role.push(entry.role);
-        sc.label.push(entry.label);
-        sc.desc.push(entry.desc);
-        sc.checked.push(entry.checked);
-        sc.expanded.push(entry.expanded);
-        sc.selected.push(entry.selected);
-        sc.active_descendant.push(entry.active_descendant);
-        sc.controls.push(entry.controls);
-        sc.value_now.push(entry.value_now);
-        sc.value_min.push(entry.value_min);
-        sc.value_max.push(entry.value_max);
-        sc.value_text.push(entry.value_text);
-        sc.modal.push(entry.modal);
-        sc.live.push(entry.live);
-        sc.live_atomic.push(entry.live_atomic);
-        sc.level.push(entry.level);
-        sc.pos_in_set.push(entry.pos_in_set);
-        sc.set_size.push(entry.set_size);
+        sc.sem.push(entry.sem);
         sc.disabled.push(entry.disabled);
         sc.focused.push(entry.focused);
         sc.editable.push(entry.editable);
@@ -190,6 +134,15 @@ pub fn load(sc: &mut Scene, fr: &Frame) {
     sc.authored_order.extend(0..fr.scene.len());
     sc.authored_order
         .sort_unstable_by_key(|&index| (fr.scene[index].authored_order, index));
+
+    sc.index.clear();
+    sc.index.reserve(sc.node.len());
+    for (scene_index, &node) in sc.node.iter().enumerate() {
+        // First occurrence wins, matching the previous linear-scan semantics.
+        sc.index
+            .entry(node)
+            .or_insert_with(|| i32::try_from(scene_index).expect("scene index exceeds i32"));
+    }
 }
 
 /// Returns the scene index of `node`.
@@ -197,12 +150,17 @@ pub fn load(sc: &mut Scene, fr: &Frame) {
 /// Returns `-1` when the node is absent from this frame, including a detached
 /// patch child whose condition is off or an unknown node identifier.
 pub fn index_of(sc: &Scene, node: u32) -> i32 {
-    sc.node
-        .iter()
-        .position(|candidate| *candidate == node)
-        .map_or(-1, |index| {
-            i32::try_from(index).expect("scene index exceeds i32::MAX")
-        })
+    if sc.index.is_empty() {
+        // Hand-built semantic scenes never pass through `load`; scan directly.
+        return sc
+            .node
+            .iter()
+            .position(|candidate| *candidate == node)
+            .map_or(-1, |index| {
+                i32::try_from(index).expect("scene index exceeds i32::MAX")
+            });
+    }
+    sc.index.get(&node).copied().unwrap_or(-1)
 }
 
 /// Writes the chain from the root through `ix` as scene indices.

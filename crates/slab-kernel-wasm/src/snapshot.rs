@@ -493,7 +493,7 @@ pub(crate) fn scene_json(instance: &Instance) -> String {
                 instance.doc.node_line[index_u32(base)]
             };
             let (item_pos, item_size) =
-                if scene.pos_in_set[index].is_none() && scene.set_size[index].is_none() {
+                if scene.sem[index].pos_in_set.is_none() && scene.sem[index].set_size.is_none() {
                     item_set_metadata(instance, index, node)
                 } else {
                     (None, None)
@@ -519,27 +519,27 @@ pub(crate) fn scene_json(instance: &Instance) -> String {
                 src_line,
                 scroll_cross: scene.scroll_cross[index],
                 content_cross: scene.content_cross[index],
-                role: scene_string_at(&instance.st.scene_strs, scene.role[index]),
-                label: scene_string_at(&instance.st.scene_strs, scene.label[index]),
-                desc: scene_string_at(&instance.st.scene_strs, scene.desc[index]),
-                checked: checked_snapshot(scene.checked[index]),
-                expanded: optional_bool(scene.expanded[index]),
-                selected: optional_bool(scene.selected[index]),
+                role: scene_string_at(&instance.st.scene_strs, scene.sem[index].role),
+                label: scene_string_at(&instance.st.scene_strs, scene.sem[index].label),
+                desc: scene_string_at(&instance.st.scene_strs, scene.sem[index].desc),
+                checked: checked_snapshot(scene.sem[index].checked),
+                expanded: optional_bool(scene.sem[index].expanded),
+                selected: optional_bool(scene.sem[index].selected),
                 active_descendant: scene_string_at(
                     &instance.st.scene_strs,
-                    scene.active_descendant[index],
+                    scene.sem[index].active_descendant,
                 ),
-                controls: scene_string_at(&instance.st.scene_strs, scene.controls[index]),
-                value_now: scene.value_now[index],
-                value_min: scene.value_min[index],
-                value_max: scene.value_max[index],
-                value_text: scene_string_at(&instance.st.scene_strs, scene.value_text[index]),
-                modal: optional_bool(scene.modal[index]),
-                live: live_snapshot(scene.live[index]),
-                live_atomic: optional_bool(scene.live_atomic[index]),
-                level: scene.level[index],
-                pos_in_set: scene.pos_in_set[index].or(item_pos),
-                set_size: scene.set_size[index].or(item_size),
+                controls: scene_string_at(&instance.st.scene_strs, scene.sem[index].controls),
+                value_now: scene.sem[index].value_now,
+                value_min: scene.sem[index].value_min,
+                value_max: scene.sem[index].value_max,
+                value_text: scene_string_at(&instance.st.scene_strs, scene.sem[index].value_text),
+                modal: optional_bool(scene.sem[index].modal),
+                live: live_snapshot(scene.sem[index].live),
+                live_atomic: optional_bool(scene.sem[index].live_atomic),
+                level: scene.sem[index].level,
+                pos_in_set: scene.sem[index].pos_in_set.or(item_pos),
+                set_size: scene.sem[index].set_size.or(item_size),
                 disabled: scene.disabled[index],
                 focused: scene.focused[index],
                 editable: scene.editable[index],

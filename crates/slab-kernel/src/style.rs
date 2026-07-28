@@ -1942,6 +1942,52 @@ fn gravity_of(value: &str) -> Gravity {
     }
 }
 
+/// Resolved accessibility semantics for one node.
+///
+/// Defined once and carried unchanged from [`RStyle`] through
+/// [`crate::flatten::SceneNode`] into the retained scene, where exporters
+/// (frame JSON, SDP `sem.node`, host accessibility trees) read it row-wise.
+/// Kernel hit-testing and focus paths never touch these fields.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Semantics {
+    /// Reference into [`St::scene_strs`] for the accessibility role.
+    pub role: u32,
+    /// Reference into [`St::scene_strs`] for the accessible label.
+    pub label: u32,
+    /// Reference into [`St::scene_strs`] for the accessible description.
+    pub desc: u32,
+    /// Optional checked state: 0 absent, 1 false, 2 true, 3 mixed.
+    pub checked: u32,
+    /// Optional expanded state: 0 absent, 1 false, 2 true.
+    pub expanded: u32,
+    /// Optional selected state: 0 absent, 1 false, 2 true.
+    pub selected: u32,
+    /// Scene-string reference for the active descendant's full key.
+    pub active_descendant: u32,
+    /// Scene-string reference for the controlled node's full key.
+    pub controls: u32,
+    /// Optional current range value.
+    pub value_now: Option<f64>,
+    /// Optional minimum range value.
+    pub value_min: Option<f64>,
+    /// Optional maximum range value.
+    pub value_max: Option<f64>,
+    /// Scene-string reference for a human-readable range value.
+    pub value_text: u32,
+    /// Optional modal state: 0 absent, 1 false, 2 true.
+    pub modal: u32,
+    /// Optional live-region mode: 0 absent, 1 off, 2 polite, 3 assertive.
+    pub live: u32,
+    /// Optional live-region atomicity: 0 absent, 1 false, 2 true.
+    pub live_atomic: u32,
+    /// Optional semantic hierarchy level.
+    pub level: Option<f64>,
+    /// Optional one-based position within a semantic set.
+    pub pos_in_set: Option<f64>,
+    /// Optional semantic set size; -1 means unknown.
+    pub set_size: Option<f64>,
+}
+
 /// Fully resolved style for one node.
 #[derive(Clone, Debug)]
 pub struct RStyle {
@@ -2037,42 +2083,8 @@ pub struct RStyle {
     pub color_kind: u32,
     pub talign: u32,
     pub content: String,
-    /// Reference into [`St::scene_strs`] for the accessibility role.
-    pub role: u32,
-    /// Reference into [`St::scene_strs`] for the accessible label.
-    pub label: u32,
-    /// Reference into [`St::scene_strs`] for the accessible description.
-    pub desc: u32,
-    /// Optional checked state: 0 absent, 1 false, 2 true, 3 mixed.
-    pub checked: u32,
-    /// Optional expanded state: 0 absent, 1 false, 2 true.
-    pub expanded: u32,
-    /// Optional selected state: 0 absent, 1 false, 2 true.
-    pub selected: u32,
-    /// Scene-string reference for the active descendant's full key.
-    pub active_descendant: u32,
-    /// Scene-string reference for the controlled node's full key.
-    pub controls: u32,
-    /// Optional current range value.
-    pub value_now: Option<f64>,
-    /// Optional minimum range value.
-    pub value_min: Option<f64>,
-    /// Optional maximum range value.
-    pub value_max: Option<f64>,
-    /// Scene-string reference for a human-readable range value.
-    pub value_text: u32,
-    /// Optional modal state: 0 absent, 1 false, 2 true.
-    pub modal: u32,
-    /// Optional live-region mode: 0 absent, 1 off, 2 polite, 3 assertive.
-    pub live: u32,
-    /// Optional live-region atomicity: 0 absent, 1 false, 2 true.
-    pub live_atomic: u32,
-    /// Optional semantic hierarchy level.
-    pub level: Option<f64>,
-    /// Optional one-based position within a semantic set.
-    pub pos_in_set: Option<f64>,
-    /// Optional semantic set size; -1 means unknown.
-    pub set_size: Option<f64>,
+    /// Resolved accessibility semantics copied into the scene entry.
+    pub sem: Semantics,
     pub img: i32,
     pub fit: u32,
     pub path: i32,
@@ -2506,8 +2518,7 @@ pub fn build_rstyle(
     let role = a11y_ref(d, st, node, crate::slir::A_ROLE, true);
     let label = a11y_ref(d, st, node, crate::slir::A_LABEL, false);
     let desc = a11y_ref(d, st, node, crate::slir::A_DESC, false);
-    st.rs[ri].role = role;
-    st.rs[ri].label = if label == 0 {
+    let label = if label == 0 {
         // Controls without an authored label derive their accessible name
         // from descendant text content (§15.2); adapters inherit it through
         // the ordinary scene label slot.
@@ -2526,12 +2537,6 @@ pub fn build_rstyle(
     } else {
         label
     };
-    st.rs[ri].desc = desc;
-    st.rs[ri].checked = checked_code(d, st, node);
-    st.rs[ri].expanded = semantic_bool_code(d, st, node, crate::slir::A_EXPANDED);
-    st.rs[ri].selected = semantic_bool_code(d, st, node, crate::slir::A_SELECTED);
-    st.rs[ri].active_descendant = a11y_ref(d, st, node, crate::slir::A_ACTIVE_DESCENDANT, false);
-    st.rs[ri].controls = a11y_ref(d, st, node, crate::slir::A_CONTROLS, false);
     let mut value_now = semantic_number(d, st, node, crate::slir::A_VALUE_NOW);
     let mut value_min = semantic_number(d, st, node, crate::slir::A_VALUE_MIN);
     let mut value_max = semantic_number(d, st, node, crate::slir::A_VALUE_MAX);
@@ -2551,23 +2556,35 @@ pub fn build_rstyle(
     {
         value_now = None;
     }
-    st.rs[ri].value_now = value_now;
-    st.rs[ri].value_min = value_min;
-    st.rs[ri].value_max = value_max;
-    st.rs[ri].value_text = a11y_ref(d, st, node, crate::slir::A_VALUE_TEXT, false);
-    st.rs[ri].modal = semantic_bool_code(d, st, node, crate::slir::A_MODAL);
-    st.rs[ri].live = live_code(d, st, node);
-    st.rs[ri].live_atomic = semantic_bool_code(d, st, node, crate::slir::A_LIVE_ATOMIC);
-    st.rs[ri].level = semantic_number(d, st, node, crate::slir::A_LEVEL);
-    st.rs[ri].pos_in_set = semantic_number(d, st, node, crate::slir::A_POS_IN_SET);
-    st.rs[ri].set_size = semantic_number(d, st, node, crate::slir::A_SET_SIZE);
-    if st.rs[ri]
-        .pos_in_set
-        .zip(st.rs[ri].set_size)
+    let level = semantic_number(d, st, node, crate::slir::A_LEVEL);
+    let mut pos_in_set = semantic_number(d, st, node, crate::slir::A_POS_IN_SET);
+    let set_size = semantic_number(d, st, node, crate::slir::A_SET_SIZE);
+    if pos_in_set
+        .zip(set_size)
         .is_some_and(|(position, size)| size != -1.0 && position > size)
     {
-        st.rs[ri].pos_in_set = None;
+        pos_in_set = None;
     }
+    st.rs[ri].sem = Semantics {
+        role,
+        label,
+        desc,
+        checked: checked_code(d, st, node),
+        expanded: semantic_bool_code(d, st, node, crate::slir::A_EXPANDED),
+        selected: semantic_bool_code(d, st, node, crate::slir::A_SELECTED),
+        active_descendant: a11y_ref(d, st, node, crate::slir::A_ACTIVE_DESCENDANT, false),
+        controls: a11y_ref(d, st, node, crate::slir::A_CONTROLS, false),
+        value_now,
+        value_min,
+        value_max,
+        value_text: a11y_ref(d, st, node, crate::slir::A_VALUE_TEXT, false),
+        modal: semantic_bool_code(d, st, node, crate::slir::A_MODAL),
+        live: live_code(d, st, node),
+        live_atomic: semantic_bool_code(d, st, node, crate::slir::A_LIVE_ATOMIC),
+        level,
+        pos_in_set,
+        set_size,
+    };
     // Resolve leaf-specific image, path, and grid data last.
     if kind == crate::slir::K_IMG {
         let line = st.rs[ri].line;
@@ -2643,6 +2660,10 @@ pub fn build_rstyle(
         crate::slir::A_SPAN,
         1.0,
     )));
+    // The effective-attr fast path memoizes patch selection for this node.
+    // Dispatch mutates states/lists between solves without rebuilding it, so
+    // it must not outlive this resolution; drop it before returning.
+    st.effective_attr_node = crate::slir::NONE;
     i32::try_from(ri).expect("resolved style index exceeds i32")
 }
 
@@ -2730,24 +2751,7 @@ pub fn rstyle_default(node: u32, kind: u32, line: u32) -> crate::style::RStyle {
         color_kind: 1u32,
         talign: 0u32,
         content: "".to_string(),
-        role: 0u32,
-        label: 0u32,
-        desc: 0u32,
-        checked: 0u32,
-        expanded: 0u32,
-        selected: 0u32,
-        active_descendant: 0u32,
-        controls: 0u32,
-        value_now: None,
-        value_min: None,
-        value_max: None,
-        value_text: 0u32,
-        modal: 0u32,
-        live: 0u32,
-        live_atomic: 0u32,
-        level: None,
-        pos_in_set: None,
-        set_size: None,
+        sem: Semantics::default(),
         img: (-1i32),
         fit: 0u32,
         path: crate::style::PATH_NONE,

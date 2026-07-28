@@ -88,24 +88,24 @@ pub fn uses(doc: &Doc, frame: &Frame, feature: &str) -> bool {
         "lists" => !doc.list_param.is_empty(),
         "input" | "signals" => !doc.sign_name.is_empty(),
         "a11y" => frame.scene.iter().any(|node| {
-            node.role != 0
-                || node.label != 0
-                || node.desc != 0
-                || node.checked != 0
-                || node.expanded != 0
-                || node.selected != 0
-                || node.active_descendant != 0
-                || node.controls != 0
-                || node.value_now.is_some()
-                || node.value_min.is_some()
-                || node.value_max.is_some()
-                || node.value_text != 0
-                || node.modal != 0
-                || node.live != 0
-                || node.live_atomic != 0
-                || node.level.is_some()
-                || node.pos_in_set.is_some()
-                || node.set_size.is_some()
+            node.sem.role != 0
+                || node.sem.label != 0
+                || node.sem.desc != 0
+                || node.sem.checked != 0
+                || node.sem.expanded != 0
+                || node.sem.selected != 0
+                || node.sem.active_descendant != 0
+                || node.sem.controls != 0
+                || node.sem.value_now.is_some()
+                || node.sem.value_min.is_some()
+                || node.sem.value_max.is_some()
+                || node.sem.value_text != 0
+                || node.sem.modal != 0
+                || node.sem.live != 0
+                || node.sem.live_atomic != 0
+                || node.sem.level.is_some()
+                || node.sem.pos_in_set.is_some()
+                || node.sem.set_size.is_some()
         }),
         "ime" | "text-edit" => doc.sign_trigger.contains(&1),
         "scroll" => doc

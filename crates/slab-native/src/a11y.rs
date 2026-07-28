@@ -351,7 +351,7 @@ impl Bridge {
         for (layer_index, layer) in layers.iter().enumerate() {
             for (scene_index, source) in layer.frame.scene.iter().enumerate() {
                 let id = ids_by_layer[layer_index][scene_index];
-                let role_name = scene_string(layer.instance, source.role);
+                let role_name = scene_string(layer.instance, source.sem.role);
                 let key = scene::key_of(&layer.instance.doc, &layer.instance.st.lists, source.node);
                 let inert = source.flags & slir::F_INERT != 0;
                 let enabled = !inert && !source.disabled;
@@ -424,11 +424,11 @@ impl Bridge {
 
                 let key_ids = &keys_by_layer[layer_index];
                 if let Some(target) =
-                    key_ids.get(scene_string(layer.instance, source.active_descendant))
+                    key_ids.get(scene_string(layer.instance, source.sem.active_descendant))
                 {
                     node.set_active_descendant(*target);
                 }
-                if let Some(target) = key_ids.get(scene_string(layer.instance, source.controls)) {
+                if let Some(target) = key_ids.get(scene_string(layer.instance, source.sem.controls)) {
                     node.set_controls(vec![*target]);
                 }
                 if source.focused && focusable && !found_focus {
@@ -588,62 +588,62 @@ fn apply_properties(node: &mut Node, instance: &Instance, source: &SceneNode, bo
     if source.disabled {
         node.set_disabled();
     }
-    let label = scene_string(instance, source.label);
+    let label = scene_string(instance, source.sem.label);
     if !label.is_empty() {
         node.set_label(label);
     }
-    let description = scene_string(instance, source.desc);
+    let description = scene_string(instance, source.sem.desc);
     if !description.is_empty() {
         node.set_description(description);
     }
-    match source.checked {
+    match source.sem.checked {
         1 => node.set_toggled(Toggled::False),
         2 => node.set_toggled(Toggled::True),
         3 => node.set_toggled(Toggled::Mixed),
         _ => {}
     }
-    match source.expanded {
+    match source.sem.expanded {
         1 => node.set_expanded(false),
         2 => node.set_expanded(true),
         _ => {}
     }
-    match source.selected {
+    match source.sem.selected {
         1 => node.set_selected(false),
         2 => node.set_selected(true),
         _ => {}
     }
-    if let Some(value) = source.value_now.filter(|value| value.is_finite()) {
+    if let Some(value) = source.sem.value_now.filter(|value| value.is_finite()) {
         node.set_numeric_value(value);
     }
-    if let Some(value) = source.value_min.filter(|value| value.is_finite()) {
+    if let Some(value) = source.sem.value_min.filter(|value| value.is_finite()) {
         node.set_min_numeric_value(value);
     }
-    if let Some(value) = source.value_max.filter(|value| value.is_finite()) {
+    if let Some(value) = source.sem.value_max.filter(|value| value.is_finite()) {
         node.set_max_numeric_value(value);
     }
-    let value_text = scene_string(instance, source.value_text);
+    let value_text = scene_string(instance, source.sem.value_text);
     if !value_text.is_empty() {
         node.set_value(value_text);
     }
-    if source.modal == 2 {
+    if source.sem.modal == 2 {
         node.set_modal();
     }
-    match source.live {
+    match source.sem.live {
         1 => node.set_live(Live::Off),
         2 => node.set_live(Live::Polite),
         3 => node.set_live(Live::Assertive),
         _ => {}
     }
-    if source.live_atomic == 2 {
+    if source.sem.live_atomic == 2 {
         node.set_live_atomic();
     }
-    if let Some(level) = positive_usize(source.level) {
+    if let Some(level) = positive_usize(source.sem.level) {
         node.set_level(level);
     }
-    if let Some(position) = positive_usize(source.pos_in_set) {
+    if let Some(position) = positive_usize(source.sem.pos_in_set) {
         node.set_position_in_set(position);
     }
-    if let Some(size) = positive_usize(source.set_size) {
+    if let Some(size) = positive_usize(source.sem.set_size) {
         node.set_size_of_set(size);
     }
 }
@@ -967,24 +967,7 @@ mod tests {
             content_cross: 0.0,
             is_row: false,
             src_line: 1,
-            role: 0,
-            label: 0,
-            desc: 0,
-            checked: 0,
-            expanded: 0,
-            selected: 0,
-            active_descendant: 0,
-            controls: 0,
-            value_now: None,
-            value_min: None,
-            value_max: None,
-            value_text: 0,
-            modal: 0,
-            live: 0,
-            live_atomic: 0,
-            level: None,
-            pos_in_set: None,
-            set_size: None,
+            sem: Default::default(),
             disabled: false,
             focused: false,
             editable: false,
@@ -1032,21 +1015,21 @@ mod tests {
             "mixed".to_owned(),
         ]);
         let mut source = source(0, -1, slir::K_RECT, slir::F_FOCUSABLE);
-        source.label = 1;
-        source.desc = 2;
-        source.value_text = 3;
-        source.checked = 3;
-        source.expanded = 1;
-        source.selected = 2;
-        source.modal = 2;
-        source.live = 2;
-        source.live_atomic = 2;
-        source.value_now = Some(4.0);
-        source.value_min = Some(0.0);
-        source.value_max = Some(10.0);
-        source.level = Some(2.0);
-        source.pos_in_set = Some(3.0);
-        source.set_size = Some(5.0);
+        source.sem.label = 1;
+        source.sem.desc = 2;
+        source.sem.value_text = 3;
+        source.sem.checked = 3;
+        source.sem.expanded = 1;
+        source.sem.selected = 2;
+        source.sem.modal = 2;
+        source.sem.live = 2;
+        source.sem.live_atomic = 2;
+        source.sem.value_now = Some(4.0);
+        source.sem.value_min = Some(0.0);
+        source.sem.value_max = Some(10.0);
+        source.sem.level = Some(2.0);
+        source.sem.pos_in_set = Some(3.0);
+        source.sem.set_size = Some(5.0);
         source.disabled = true;
         source.flags |= slir::F_INERT;
         let mut node = Node::new(Role::CheckBox);
@@ -1145,8 +1128,8 @@ mod tests {
         let mut instance = instance_with_keys(&["root", "child"]);
         instance.st.scene_strs.push("child".to_owned());
         let mut root_source = source(0, -1, slir::K_COL, 0);
-        root_source.active_descendant = 1;
-        root_source.controls = 1;
+        root_source.sem.active_descendant = 1;
+        root_source.sem.controls = 1;
         let mut child_source = source(1, 0, slir::K_TEXT, slir::F_FOCUSABLE);
         child_source.focused = true;
         let first = frame(vec![root_source.clone(), child_source.clone()]);

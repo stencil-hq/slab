@@ -285,24 +285,7 @@ mod wave0_api {
             is_row: false,
             src_line: 1,
             authored_order: node,
-            role: 0,
-            label: 0,
-            desc: 0,
-            checked: 0,
-            expanded: 0,
-            selected: 0,
-            active_descendant: 0,
-            controls: 0,
-            value_now: None,
-            value_min: None,
-            value_max: None,
-            value_text: 0,
-            modal: 0,
-            live: 0,
-            live_atomic: 0,
-            level: None,
-            pos_in_set: None,
-            set_size: None,
+            sem: Default::default(),
             disabled: false,
             focused: false,
             editable: false,
@@ -813,7 +796,7 @@ mod wave0_api {
             .find(|entry| entry.node == 1)
             .expect("focusable row is in the scene");
         assert_eq!(
-            instance.st.scene_strs[usize::try_from(row.label).expect("label ref fits usize")],
+            instance.st.scene_strs[usize::try_from(row.sem.label).expect("label ref fits usize")],
             "Save",
             "an unlabeled control takes its name from descendant text"
         );
@@ -822,7 +805,7 @@ mod wave0_api {
             .iter()
             .find(|entry| entry.node == 2)
             .expect("caption is in the scene");
-        assert_eq!(caption.label, 0, "non-control text derives no name");
+        assert_eq!(caption.sem.label, 0, "non-control text derives no name");
         assert!(
             caption.editable,
             "an active field binder marks the scene entry editable"

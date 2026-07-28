@@ -255,42 +255,9 @@ pub struct SceneNode {
     pub src_line: u32,
     /// Pre-order rank in the materialized authored tree, independent of paint promotion.
     pub authored_order: u32,
-    /// Reference into [`St::scene_strs`] for the resolved accessibility role.
-    pub role: u32,
-    /// Reference into [`St::scene_strs`] for the resolved accessible label.
-    pub label: u32,
-    /// Reference into [`St::scene_strs`] for the resolved accessible description.
-    pub desc: u32,
-    /// Optional checked state: 0 absent, 1 false, 2 true, 3 mixed.
-    pub checked: u32,
-    /// Optional expanded state: 0 absent, 1 false, 2 true.
-    pub expanded: u32,
-    /// Optional selected state: 0 absent, 1 false, 2 true.
-    pub selected: u32,
-    /// Scene-string reference for the active descendant's full key.
-    pub active_descendant: u32,
-    /// Scene-string reference for the controlled node's full key.
-    pub controls: u32,
-    /// Optional current range value.
-    pub value_now: Option<f64>,
-    /// Optional minimum range value.
-    pub value_min: Option<f64>,
-    /// Optional maximum range value.
-    pub value_max: Option<f64>,
-    /// Scene-string reference for the human-readable range value.
-    pub value_text: u32,
-    /// Optional modal state: 0 absent, 1 false, 2 true.
-    pub modal: u32,
-    /// Optional live-region mode: 0 absent, 1 off, 2 polite, 3 assertive.
-    pub live: u32,
-    /// Optional live-region atomicity: 0 absent, 1 false, 2 true.
-    pub live_atomic: u32,
-    /// Optional hierarchy level.
-    pub level: Option<f64>,
-    /// Optional one-based position within a set.
-    pub pos_in_set: Option<f64>,
-    /// Optional set size; -1 means unknown.
-    pub set_size: Option<f64>,
+    /// Resolved accessibility semantics, copied unchanged from the node's
+    /// [`crate::style::Semantics`] and read row-wise by exporters.
+    pub sem: crate::style::Semantics,
     /// Whether the node is currently disabled.
     pub disabled: bool,
     /// Whether the node currently owns kernel focus.
@@ -980,24 +947,7 @@ fn walk_node(
         is_row: rule.is_row,
         src_line: rule.line,
         authored_order: authored_order[pi],
-        role: rule.role,
-        label: rule.label,
-        desc: rule.desc,
-        checked: rule.checked,
-        expanded: rule.expanded,
-        selected: rule.selected,
-        active_descendant: rule.active_descendant,
-        controls: rule.controls,
-        value_now: rule.value_now,
-        value_min: rule.value_min,
-        value_max: rule.value_max,
-        value_text: rule.value_text,
-        modal: rule.modal,
-        live: rule.live,
-        live_atomic: rule.live_atomic,
-        level: rule.level,
-        pos_in_set: rule.pos_in_set,
-        set_size: rule.set_size,
+        sem: rule.sem,
         disabled: style::node_disabled(st, node),
         focused: ds.fs.focus == node,
         editable: kind == slir::K_TEXT && is_field(d, st, node),
