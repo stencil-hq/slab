@@ -33,6 +33,7 @@
          "!**/dist",
          "!**/wasm",
          "!**/.venv",
+         "!**/.build",
          "!packages/slab/bin"
       ]
    }

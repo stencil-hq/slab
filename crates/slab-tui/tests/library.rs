@@ -39,8 +39,11 @@ fn public_translation_emits_key_then_text() {
 		Event::Key(KeyEvent::new(KeyCode::Char('A'), KeyModifiers::SHIFT)),
 	);
 
-	let Translated::Events(key, Some(text)) = translated else {
+	let Translated::Events(pair) = translated else {
 		panic!("printable key must emit key and text events");
+	};
+	let (key, Some(text)) = *pair else {
+		panic!("printable key must pair key with text");
 	};
 	assert_eq!(key.etype, 4);
 	assert_eq!(key.key, "A");
@@ -61,11 +64,17 @@ fn public_translation_counts_clicks_and_tracks_move_delta() {
 		})
 	};
 
-	let Translated::Events(first, None) = translate(&mut translator, down(1)) else {
+	let Translated::Events(first) = translate(&mut translator, down(1)) else {
 		panic!("mouse down must emit one pointer event");
 	};
-	let Translated::Events(second, None) = translate(&mut translator, down(1)) else {
+	let (first, None) = *first else {
+		panic!("mouse down emits one event")
+	};
+	let Translated::Events(second) = translate(&mut translator, down(1)) else {
 		panic!("second mouse down must emit one pointer event");
+	};
+	let (second, None) = *second else {
+		panic!("second mouse down emits one event")
 	};
 	assert_eq!((first.clicks, second.clicks), (1, 2));
 
@@ -75,8 +84,11 @@ fn public_translation_counts_clicks_and_tracks_move_delta() {
 		row:       4,
 		modifiers: KeyModifiers::NONE,
 	});
-	let Translated::Events(pointer, None) = translate(&mut translator, moved) else {
+	let Translated::Events(pointer) = translate(&mut translator, moved) else {
 		panic!("mouse move must emit one pointer event");
+	};
+	let (pointer, None) = *pointer else {
+		panic!("mouse move emits one event")
 	};
 	assert_eq!((pointer.dx, pointer.dy), (16.0, 32.0));
 }

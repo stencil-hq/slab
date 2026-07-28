@@ -131,7 +131,8 @@ impl SlabState {
 			other => other.clone(),
 		};
 		match slab_tui::translate(&mut self.translator, event) {
-			Translated::Events(first, second) => {
+			Translated::Events(pair) => {
+				let (first, second) = *pair;
 				if let Some(key) = slab_tui::host_key(&self.inst, &first)
 					&& on_key(&mut self.inst, &key) == KeyHandling::Consumed
 				{

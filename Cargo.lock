@@ -3047,6 +3047,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "slate"
+version = "0.1.0"
+dependencies = [
+ "signal-hook",
+ "slab-compile",
+ "slab-kernel",
+ "slab-native",
+ "slab-slir",
+ "winit",
+]
+
+[[package]]
 name = "slotmap"
 version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

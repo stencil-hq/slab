@@ -15,6 +15,7 @@ members = [
    "crates/slab-syntax",
    "crates/slab-tui",
    "crates/slab-wasm",
+   "bench/slate",
    "crates/xtask",
 ]
 resolver = "3"

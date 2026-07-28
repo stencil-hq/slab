@@ -1,0 +1,13 @@
+[package]
+name = "slate"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+slab-kernel = { path = "../../crates/slab-kernel" }
+slab-native = { path = "../../crates/slab-native" }
+slab-compile = { path = "../../crates/slab-compile" }
+slab-slir = { path = "../../crates/slab-slir" }
+winit = { workspace = true }
+signal-hook = { workspace = true }

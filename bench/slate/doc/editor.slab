@@ -1,0 +1,188 @@
+tokens {
+  color {
+    bg #000000
+    bg_sunken #050508
+    surface1 #0A0A0C
+    surface2 #121216
+    surface3 #1A1A20
+    border_subtle #15151A
+    border #2A2A35
+    border_strong #444455
+    text #F5F5F6
+    text_secondary #A3A3AC
+    text_tertiary #63636D
+    text_disabled #3D3D45
+    accent #44CFFF
+    accent_hover #75DEFF
+    on_accent #000000
+    signal #A86AF4
+    code_bg #15151A
+    dither_cyan #44CFFF40
+    grain #FFFFFF08
+    scrollbar #FFFFFF4D
+  }
+  shadow {
+    modal 0,24,80,#000000CC
+  }
+  text {
+    ui { family "Inter"; size 13; weight 400; color color.text }
+    micro { family "Berkeley Mono"; size 11; weight 500; tracking 0.08; color color.text_tertiary }
+    title { family "Inter"; size 40; weight 800; tracking -0.016; line-height 50; color color.text }
+    h1 { family "Inter"; size 30; weight 700; tracking -0.012; line-height 39; color color.text }
+    h2 { family "Inter"; size 24; weight 700; tracking -0.008; line-height 31; color color.text }
+    h3 { family "Inter"; size 20; weight 700; tracking 0; line-height 26; color color.text }
+    p { family "Inter"; size 16; weight 400; tracking 0; line-height 26; color color.text_secondary }
+    p_mono { family "Berkeley Mono"; size 13.5; weight 400; tracking 0; line-height 21.5; color color.text }
+    quote { family "Inter"; size 16; weight 400; tracking 0; line-height 26; color color.text; style italic }
+  }
+}
+
+params {
+  pages list(Page) = []
+  active_page text = ""
+  blocks list(Block) = []
+  slash_open bool = false
+  slash_items list(MenuItem) = []
+  slash_anchor text = ""
+  ctx_open bool = false
+  ctx_items list(MenuItem) = []
+  ctx_anchor text = ""
+  sidebar_open bool = true
+  drag_over_key text = ""
+}
+def Page(title="") export {
+  row w=fill h=30 pad=4,12 align=center radius=4 act=open_page {
+    when hover { bg=color.surface1 }
+    text title style=text.ui color=color.text_secondary w=fill nowrap ellipsis
+  }
+}
+
+def MenuItem(label="") export {
+  row w=fill h=36 pad=4,12 align=center radius=4 act=slash_pick {
+    when hover { bg=color.surface2 }
+    text label style=text.ui w=fill nowrap ellipsis
+  }
+}
+def Block(label="", checked=false, text="", size=16, weight=400, leading=26, tracking=0, family="Inter", color=#F5F5F6, is_bullet=false, is_numbered=false, is_todo=false, is_quote=false, is_code=false, is_divider=false) export {
+  row w=fill key=key pad=4,0 {
+    // gutter col (w~24, opacity spring on hover)
+    col w=24 pad=4,0 align=center opacity=0 {
+      when hover { opacity=1 }
+      row w=20 h=20 align=center act=insert_below radius=4 {
+        when hover { bg=color.surface1 }
+        text "+" style=text.micro color=color.text_secondary
+      }
+      row w=20 h=20 align=center drag=block_drag drop=block_drop drag-ghost radius=4 {
+        when hover { bg=color.surface1 }
+        col gap=2 align=center {
+          row gap=2 { rect w=2 h=2 bg=color.text_secondary; rect w=2 h=2 bg=color.text_secondary }
+          row gap=2 { rect w=2 h=2 bg=color.text_secondary; rect w=2 h=2 bg=color.text_secondary }
+          row gap=2 { rect w=2 h=2 bg=color.text_secondary; rect w=2 h=2 bg=color.text_secondary }
+        }
+      }
+    }
+
+    // content
+    col w=fill pad=0,8 {
+      when is_divider {
+        row w=fill pad=12,0 {
+          rect w=fill h=1 bg=color.border_subtle
+        }
+      }
+      when !is_divider {
+        row w=fill {
+          when is_code { pad=16; radius=8; bg=color.code_bg }
+          row w=0 h=fill clip {
+            when is_bullet {
+              w=24
+              row w=24 h=fill align=center {
+                row w=6 h=6 radius=3 bg=color.text
+              }
+            }
+          }
+          row w=0 h=fill clip {
+            when is_numbered {
+              w=32
+              text label w=32 size=size weight=weight leading=leading tracking=tracking family=family color=color.text_tertiary
+            }
+          }
+          row w=0 h=fill clip {
+            when is_todo {
+              w=24
+              row w=16 h=16 radius=4 stroke-w=1 stroke=color.border_strong align=center act=toggle_checked {
+                when checked {
+                  bg=color.accent
+                  stroke=color.accent
+                  text "✓" style=text.ui color=color.on_accent
+                }
+              }
+            }
+          }
+          row w=0 h=fill clip {
+            when is_quote {
+              w=14
+              rect w=2 h=fill bg=color.border_strong
+            }
+          }
+          text text w=fill field=key field-sync=host size=size weight=weight leading=leading tracking=tracking family=family color=color italic=is_quote code-color=color.accent code-bg=color.surface2 keys=Enter:split,Backspace:merge_up,Delete:merge_down,ArrowUp:nav_up,ArrowDown:nav_down,ArrowLeft:nav_left,ArrowRight:nav_right,z:undo,y:redo
+        }
+      }
+    }
+  }
+}
+
+
+stack#app w=fill h=fill bg=color.bg clip {
+  row w=fill h=fill {
+    col#sidebar w=244 h=fill bg=color.bg stroke-w=1 stroke=color.border {
+      when !sidebar_open { w=0; min-w=0; opacity=0; inert }
+      row w=fill h=46 align=center pad=0,16 {
+        text "Pages" style=text.micro w=fill
+        row w=24 h=24 align=center radius=4 act=new_page {
+          when hover { bg=color.surface1 }
+          text "+" style=text.ui color=color.text_secondary
+        }
+      }
+      col w=fill h=fill scroll {
+        each param.pages #pages-list
+      }
+    }
+    
+    // main content
+    col w=fill h=fill {
+      row w=fill h=46 align=center pad=0,24 gap=16 {
+        row w=28 h=28 align=center radius=4 act=toggle_sidebar {
+          when hover { bg=color.surface1 }
+          text "☰" style=text.ui color=color.text_secondary
+        }
+        text param.active_page style=text.micro color=color.text_secondary w=fill
+        text "slab port" style=text.micro color=color.accent
+      }
+      
+      col w=fill h=fill scroll pad=0,0,120,0 align=center {
+        col w=fill max-w=708 pad=64,44,0,44 {
+          each param.blocks #blocks-list
+        }
+      }
+    }
+  }
+  when slash_open {
+    stack attach=param.slash_anchor pad=8 {
+      col w=300 pad=8 radius=8 bg=color.surface1 stroke-w=1 stroke=color.border_strong {
+        each param.slash_items #slash-items
+      }
+    }
+  }
+  when ctx_open {
+    stack attach=param.ctx_anchor pad=8 {
+      col w=200 pad=8 radius=8 bg=color.surface1 stroke-w=1 stroke=color.border_strong {
+        row w=fill h=36 pad=4,12 align=center radius=4 act=ctx_cut { when hover { bg=color.surface2 }; text "Cut" style=text.ui w=fill nowrap ellipsis }
+        row w=fill h=36 pad=4,12 align=center radius=4 act=ctx_copy { when hover { bg=color.surface2 }; text "Copy" style=text.ui w=fill nowrap ellipsis }
+        row w=fill h=36 pad=4,12 align=center radius=4 act=ctx_paste { when hover { bg=color.surface2 }; text "Paste" style=text.ui w=fill nowrap ellipsis }
+        row w=fill h=36 pad=4,12 align=center radius=4 act=ctx_duplicate { when hover { bg=color.surface2 }; text "Duplicate" style=text.ui w=fill nowrap ellipsis }
+        row w=fill h=36 pad=4,12 align=center radius=4 act=ctx_turn_into { when hover { bg=color.surface2 }; text "Turn Into" style=text.ui w=fill nowrap ellipsis }
+        row w=fill h=36 pad=4,12 align=center radius=4 act=ctx_delete { when hover { bg=color.surface2 }; text "Delete" style=text.ui w=fill nowrap ellipsis }
+      }
+    }
+  }
+}

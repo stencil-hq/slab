@@ -233,7 +233,6 @@ struct GlyphIn {
     @location(4) clip: vec4<f32>,
     @location(5) color: vec4<f32>, // solid rgba | (dir xy, 0, 0) for gradient ink
     @location(6) g2: vec4<f32>,    // grad box center xy | grad tag | opacity
-    @location(7) ink: vec4<f32>,   // nominal device px | reserved
 }
 
 struct GlyphVary {
@@ -245,8 +244,6 @@ struct GlyphVary {
     @location(4) pre: vec2<f32>,   // pre-transform device position
     @location(5) g2: vec4<f32>,
     @location(6) @interpolate(flat) kind: u32,
-    @location(7) @interpolate(flat) device_px: f32,
-    @location(8) @interpolate(flat) uv_rect: vec4<f32>,
 }
 
 @vertex
@@ -264,14 +261,12 @@ fn vs_glyph(@builtin(vertex_index) vi: u32, g: GlyphIn) -> GlyphVary {
     out.pre = p;
     out.g2 = g.g2;
     out.kind = u32(g.uc.w);
-    out.device_px = g.ink.x;
-    out.uv_rect = vec4(g.su.zw + vec2(0.5), g.su.zw + g.uc.xy - vec2(0.5));
     return out;
 }
 
-fn mask_tap(uv: vec2<f32>, rect: vec4<f32>) -> f32 {
+fn mask_tap(uv: vec2<f32>) -> f32 {
     let dims = vec2<f32>(textureDimensions(tex1));
-    return textureSampleLevel(tex1, samp0, clamp(uv, rect.xy, rect.zw) / dims, 0.0).r;
+    return textureSampleLevel(tex1, samp0, uv / dims, 0.0).r;
 }
 
 @fragment
@@ -295,32 +290,7 @@ fn fs_glyph(v: GlyphVary) -> @location(0) vec4<f32> {
         return out * clip_cov(v.clip_pos.xy, v.clip, v.cr);
     }
 
-    // Small grayscale glyphs lose apparent stroke weight at low DPI. Dilate
-    // coverage (never blur it) toward four nearby mask samples. The nominal
-    // device size gates the effect below 18px; light-on-dark ink gets the
-    // stronger lift, matching its greater perceived low-DPI fade.
-    const DILATE_STRENGTH: f32 = 0.42;
-    const DILATE_RADIUS: f32 = 0.75;
-    let sharp = mask_tap(v.uv, v.uv_rect);
-    var cov = sharp;
-    let small_ink = clamp((18.0 - v.device_px) / 18.0, 0.0, 1.0);
-    let lum = dot(col.rgb, vec3(0.299, 0.587, 0.114));
-    let polarity = mix(0.72, 1.0, lum);
-    let amount = min(small_ink * 1.2, 1.0) * DILATE_STRENGTH * polarity;
-    if (amount > 0.0) {
-        let d = DILATE_RADIUS;
-        let n = max(
-            max(
-                mask_tap(v.uv + vec2(d, 0.0), v.uv_rect),
-                mask_tap(v.uv - vec2(d, 0.0), v.uv_rect),
-            ),
-            max(
-                mask_tap(v.uv + vec2(0.0, d), v.uv_rect),
-                mask_tap(v.uv - vec2(0.0, d), v.uv_rect),
-            ),
-        );
-        cov = max(sharp, n * amount);
-    }
+    let cov = mask_tap(v.uv);
     let cov_alpha = cov * col.a;
     let peak = max(col.r, max(col.g, col.b));
     let alpha = srgb_enc1(peak * cov_alpha)

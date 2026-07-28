@@ -360,7 +360,7 @@ pub enum Translated {
 	/// No kernel input corresponds to this event.
 	Ignored,
 	/// Dispatches one event and an optional following text event.
-	Events(dispatch::Event, Option<dispatch::Event>),
+	Events(Box<(dispatch::Event, Option<dispatch::Event>)>),
 	/// Resizes the terminal viewport in cells.
 	Resize(u16, u16),
 	/// Requests a clean host shutdown.
@@ -409,11 +409,14 @@ impl Translator {
 					KeyCode::F(number) if number <= 24 => app::key_event(&format!("F{number}"), mods),
 					KeyCode::Char(ch) => {
 						let text = accepts_printable_text(mods).then(|| app::text_event(&ch.to_string()));
-						return Translated::Events(app::key_event(&ch.to_string(), mods), text);
+						return Translated::Events(Box::new((
+							app::key_event(&ch.to_string(), mods),
+							text,
+						)));
 					},
 					_ => return Translated::Ignored,
 				};
-				Translated::Events(key, None)
+				Translated::Events(Box::new((key, None)))
 			},
 			Event::Mouse(MouseEvent { kind, column, row, modifiers }) => {
 				let (x, y) = mouse_xy(column, row);
@@ -440,9 +443,9 @@ impl Translator {
 					event.dx = pointer_dx;
 					event.dy = pointer_dy;
 				}
-				Translated::Events(event, None)
+				Translated::Events(Box::new((event, None)))
 			},
-			Event::Paste(text) => Translated::Events(app::paste_event(&text), None),
+			Event::Paste(text) => Translated::Events(Box::new((app::paste_event(&text), None))),
 			Event::Resize(cols, rows) => Translated::Resize(cols, rows),
 			_ => Translated::Ignored,
 		}
@@ -528,7 +531,8 @@ fn handle(
 			Handled::Quit
 		},
 		Translated::Resize(cols, rows) => Handled::Resized(cols, rows),
-		Translated::Events(first, second) => {
+		Translated::Events(pair) => {
+			let (first, second) = *pair;
 			if let Some(key) = app::host_key(inst, &first)
 				&& host.on_key(inst, &key)? == app::KeyHandling::Consumed
 			{

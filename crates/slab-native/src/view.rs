@@ -332,6 +332,12 @@ pub struct NativeShell<U: 'static, H> {
 	exit_deadline:   Option<Instant>,
 }
 
+/// Reports whether a dispatch requires a redraw: the kernel effect repaints,
+/// or host signal handlers dirtied the instance while handling `effects`.
+const fn needs_redraw(eff: &kdispatch::Effects, inst: &kframe::Instance) -> bool {
+	eff.repaint || inst.dirty
+}
+
 impl<U, H> NativeShell<U, H>
 where
 	U: Send + 'static,
@@ -544,7 +550,7 @@ where
 			Some(WindowCmd::Drag) | None => {},
 		}
 		let Some(window) = &self.window else { return };
-		if eff.repaint {
+		if needs_redraw(&eff, &self.doc.inst) {
 			window.request_redraw();
 		}
 		window.set_cursor(input::cursor_icon(eff.cursor));
@@ -565,6 +571,7 @@ where
 			clicks: 0,
 			key: String::new(),
 			text: String::new(),
+			clauses: Vec::new(),
 			mods: self.mods,
 		}
 	}
@@ -944,5 +951,48 @@ where
 				event_loop.set_control_flow(ControlFlow::WaitUntil(deadline));
 			}
 		}
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	/// A signal-only key effect leaves the kernel repaint flag clear, but a
+	/// host that mutates the document inside `effects` must still redraw.
+	#[test]
+	fn redraw_follows_host_dirtied_instance() {
+		let src = "col w=200 h=100 { row#go focusable keys=F2:save w=50 h=20 { when selected { \
+		           opacity=0.5 } } }";
+		let copts = slab_compile::Options::default();
+		let (slir, _diags) = slab_compile::compile(src, &copts);
+		let bytes = slab_slir::write(&slir.expect("fixture compiles"));
+		let mut doc = NativeDocument::decode(&bytes).expect("fixture decodes");
+		let _ = kframe::inst_frame(&mut doc.inst, 0.0);
+		assert!(kframe::inst_set_focus(&mut doc.inst, "go", false), "row focuses");
+		doc.inst.dirty = false;
+
+		let ev = kdispatch::Event {
+			etype:   kdispatch::E_KEY_DOWN,
+			x:       0.0,
+			y:       0.0,
+			dx:      0.0,
+			dy:      0.0,
+			button:  0,
+			clicks:  0,
+			key:     "F2".into(),
+			text:    String::new(),
+			clauses: Vec::new(),
+			mods:    0,
+		};
+		let eff = kframe::inst_dispatch(&mut doc.inst, &ev);
+		assert_eq!(eff.sig_name.len(), 1, "F2 fires the save binding");
+		assert!(!eff.repaint, "signal-only effect does not repaint");
+		doc.inst.dirty = false;
+		assert!(!needs_redraw(&eff, &doc.inst), "clean instance stays idle");
+
+		// The host signal handler mutates the document (param/state write).
+		kframe::inst_set_state(&mut doc.inst, "selected", true);
+		assert!(needs_redraw(&eff, &doc.inst), "host-dirtied instance redraws");
 	}
 }

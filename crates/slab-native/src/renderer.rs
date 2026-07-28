@@ -5,16 +5,17 @@
 //! (fill, aligned stroke, in-shader linear/radial gradients, blurred-SDF
 //! shadows, rounded clip). Text is hinted into independent A8 mask and RGBA
 //! color atlases from kernel `text_glyphs`; quarter-pixel x/y bins preserve
-//! fractional tracking; small A8 glyphs add polarity-aware coverage dilation
-//! before the original gamma-compensated blend.
+//! fractional tracking while the original gamma-compensated blend is retained.
 //! Paths are lyon meshes tessellated at first use.
 //! GroupPush/Pop composite through pooled offscreen layers with opacity and
 //! two-pass gaussian blur; Backdrop copies the current target region, blurs
 //! it, and paints it back with a rounded mask + saturation.
 //!
 //! Everything renders into an internal `Rgba8Unorm` target (blending in sRGB
-//! byte space, matching the tiny-skia raster and the web driver), then blits
-//! to the window surface or reads back for headless PNG/probes. f64 model
+//! byte space, matching the tiny-skia raster and the web driver). At effective
+//! device scales below 1.5, that target is 2x in each dimension and is linearly
+//! downsampled; otherwise it stays at presentation size. The result then blits
+//! to the window surface or is read back for headless PNG/probes. f64 model
 //! values narrow to f32 ONLY here, at instance packing.
 
 use std::collections::{HashMap, HashSet};
@@ -68,8 +69,6 @@ struct GlyphI {
 	color: [f32; 4],
 	/// grad box center xy | grad tag | opacity
 	g2:    [f32; 4],
-	/// nominal device px | reserved
-	ink:   [f32; 4],
 }
 
 #[repr(C)]
@@ -219,9 +218,9 @@ const RECT_ATTRS: [wgpu::VertexAttribute; 9] = wgpu::vertex_attr_array![
 	 4 => Float32x4, 5 => Float32x4, 6 => Float32x4, 7 => Float32x4,
 	 8 => Float32x4
 ];
-const GLYPH_ATTRS: [wgpu::VertexAttribute; 8] = wgpu::vertex_attr_array![
+const GLYPH_ATTRS: [wgpu::VertexAttribute; 7] = wgpu::vertex_attr_array![
 	 0 => Float32x4, 1 => Float32x4, 2 => Float32x4, 3 => Float32x4,
-	 4 => Float32x4, 5 => Float32x4, 6 => Float32x4, 7 => Float32x4
+	 4 => Float32x4, 5 => Float32x4, 6 => Float32x4
 ];
 const MESH_VTX_ATTRS: [wgpu::VertexAttribute; 1] = wgpu::vertex_attr_array![0 => Float32x2];
 const MESH_INST_ATTRS: [wgpu::VertexAttribute; 5] = wgpu::vertex_attr_array![
@@ -488,25 +487,29 @@ enum Step {
 
 /// CPU-built frame: instance lists + the pass/draw step sequence.
 pub struct FrameBuild {
-	rects:  Vec<RectI>,
-	glyphs: Vec<GlyphI>,
-	meshes: Vec<MeshI>,
-	texq:   Vec<TexI>,
-	steps:  Vec<Step>,
-	tw:     u32,
-	th:     u32,
+	rects:    Vec<RectI>,
+	glyphs:   Vec<GlyphI>,
+	meshes:   Vec<MeshI>,
+	texq:     Vec<TexI>,
+	steps:    Vec<Step>,
+	tw:       u32,
+	th:       u32,
+	output_w: u32,
+	output_h: u32,
 }
 
 impl FrameBuild {
 	const fn empty() -> Self {
 		Self {
-			rects:  Vec::new(),
-			glyphs: Vec::new(),
-			meshes: Vec::new(),
-			texq:   Vec::new(),
-			steps:  Vec::new(),
-			tw:     0,
-			th:     0,
+			rects:    Vec::new(),
+			glyphs:   Vec::new(),
+			meshes:   Vec::new(),
+			texq:     Vec::new(),
+			steps:    Vec::new(),
+			tw:       0,
+			th:       0,
+			output_w: 0,
+			output_h: 0,
 		}
 	}
 
@@ -661,13 +664,17 @@ pub struct Renderer {
 	docs:             Vec<DocRes>,
 	main:             Option<(u32, u32, Target)>,
 	pool:             Vec<Target>,
+	resolved:         Option<(u32, u32, Target)>,
 	frame_spare:      Option<FrameBuild>,
 	rect_upload:      UploadBuffer,
 	glyph_upload:     UploadBuffer,
 	mesh_upload:      UploadBuffer,
 	tex_upload:       UploadBuffer,
 	notes:            HashSet<String>,
+	/// Effective device scale of the presentation target.
 	pub scale:        f64,
+	/// Internal scene-raster scale (2x `scale` while low-DPI SSAA is active).
+	raster_scale:     f64,
 }
 
 impl Renderer {
@@ -965,6 +972,7 @@ impl Renderer {
 			docs: Vec::new(),
 			main: None,
 			pool: Vec::new(),
+			resolved: None,
 			frame_spare: None,
 			rect_upload: UploadBuffer::default(),
 			glyph_upload: UploadBuffer::default(),
@@ -972,6 +980,7 @@ impl Renderer {
 			tex_upload: UploadBuffer::default(),
 			notes: HashSet::new(),
 			scale: 1.0,
+			raster_scale: 1.0,
 		}
 	}
 
@@ -1272,17 +1281,41 @@ impl Renderer {
 
 	// ------------------------------------------------------------ build ----
 
-	/// Walk kernel frames into instance lists + steps for a `tw`x`th`
-	/// device-px target at `scale` device px per logical unit.
+	/// Walk kernel frames into instance lists + steps. `tw` × `th` is the
+	/// presentation size in physical pixels and `scale` is its effective
+	/// device scale. Low-DPI frames rasterize into an internal 2x target; the
+	/// render pass downsamples them back to `tw` × `th`.
 	pub fn build(&mut self, layers: &[LayerInput<'_>], scale: f64, tw: u32, th: u32) -> FrameBuild {
+		let max_dim = self.device.limits().max_texture_dimension_2d;
+		let doubled = tw.checked_mul(2).zip(th.checked_mul(2));
+		let factor = if scale < 1.5 && doubled.is_some_and(|(w, h)| w <= max_dim && h <= max_dim) {
+			2
+		} else {
+			if scale < 1.5 && doubled.is_none_or(|(w, h)| w > max_dim || h > max_dim) {
+				self.note(
+					"cap-ssaa-size",
+					"low-DPI 2x supersampling exceeds the adapter texture-size limit; rendering at 1x",
+				);
+			}
+			1
+		};
+		let render_scale = scale * f64::from(factor);
+		let (render_w, render_h) = if factor == 2 {
+			doubled.unwrap()
+		} else {
+			(tw, th)
+		};
 		self.scale = scale;
+		self.raster_scale = render_scale;
 		self.atlas.begin_frame();
 		let mut fb = self.frame_spare.take().unwrap_or_else(FrameBuild::empty);
 		fb.clear();
-		fb.tw = tw;
-		fb.th = th;
+		fb.tw = render_w;
+		fb.th = render_h;
+		fb.output_w = tw;
+		fb.output_h = th;
 		for layer in layers {
-			self.build_layer(&mut fb, layer, scale as f32, tw, th);
+			self.build_layer(&mut fb, layer, render_scale as f32, render_w, render_h);
 		}
 		fb
 	}
@@ -1598,8 +1631,7 @@ impl Renderer {
 					} else {
 						color = rgba(t.color, t.opacity);
 					}
-					let px = (t.size * self.scale) as f32;
-					let device_px = px * mat.a.mul_add(mat.d, -mat.b * mat.c).abs().sqrt();
+					let px = (t.size * self.raster_scale) as f32;
 					let mut glyph_mabcd = [mat.a, mat.b, mat.c, mat.d];
 					let mut glyph_mt = [mat.tx, mat.ty];
 					if t.italic {
@@ -1644,7 +1676,6 @@ impl Renderer {
 							],
 							clip: clip.sdf,
 							color,
-							ink: [device_px, 0.0, 0.0, 0.0],
 							g2: tg2,
 						};
 						fb.push_glyph(clip.scissor, inst);
@@ -1998,7 +2029,7 @@ impl Renderer {
 							),
 						}
 					});
-					groups.push((g.opacity as f32, (g.blur * self.scale) as f32, mask));
+					groups.push((g.opacity as f32, (g.blur * self.raster_scale) as f32, mask));
 					fb.steps.push(Step::PushLayer);
 				},
 				FrameOp::GroupPop => {
@@ -2048,7 +2079,7 @@ impl Renderer {
 					fb.steps.push(Step::Backdrop {
 						rect: [x0, y0, x1, y1],
 						radius: b.radius as f32 * s,
-						sigma: (b.blur * self.scale) as f32,
+						sigma: (b.blur * self.raster_scale) as f32,
 						saturate: b.saturate as f32,
 						brightness: b.brightness as f32,
 						mask,
@@ -2391,6 +2422,19 @@ impl Renderer {
 			self.main = Some((tw, th, self.make_target(tw, th)));
 			self.pool.clear();
 		}
+		let supersampled = (tw, th) != (fb.output_w, fb.output_h);
+		if surface.is_none() && supersampled {
+			let (ow, oh) = (fb.output_w.max(1), fb.output_h.max(1));
+			if self
+				.resolved
+				.as_ref()
+				.is_none_or(|(w, h, _)| (*w, *h) != (ow, oh))
+			{
+				self.resolved = Some((ow, oh, self.make_target(ow, oh)));
+			}
+		} else {
+			self.resolved = None;
+		}
 		// pre-size the layer pool: max Push depth + 2 aux for blur/backdrop
 		let mut depth = 0usize;
 		let mut max_depth = 0usize;
@@ -2418,7 +2462,10 @@ impl Renderer {
 		while self.pool.len() < pool_n {
 			self.pool.push(self.make_target(tw, th));
 		}
-		if let Some(f) = surface.map(|(_, f)| f) {
+		if let Some(f) = surface
+			.map(|(_, f)| f)
+			.or_else(|| self.resolved.as_ref().map(|_| INTERNAL_FORMAT))
+		{
 			self.blit_pipeline(f);
 		}
 
@@ -2892,8 +2939,16 @@ impl Renderer {
 		// between steps, so the final flush's count is intentionally unread.
 		let _ = encoder_passes;
 
-		// final blit to the surface
-		if let Some((view, format)) = surface {
+		// Final copy. At low DPI this linear sample lands on the corner shared
+		// by each 2x2 source-texel block, producing a box downsample in the same
+		// non-sRGB `Rgba8Unorm` space used by text blending.
+		let resolve_target = surface.or_else(|| {
+			self
+				.resolved
+				.as_ref()
+				.map(|(_, _, target)| (&target.view, INTERNAL_FORMAT))
+		});
+		if let Some((view, format)) = resolve_target {
 			let blit = TexI {
 				mabcd: [1.0, 0.0, 0.0, 1.0],
 				mtc:   [0.0, 0.0, tw as f32 / 2.0, th as f32 / 2.0],
@@ -2904,7 +2959,7 @@ impl Renderer {
 			};
 			let bbuf = mkbuf(bytemuck::cast_slice(&[blit]), "blit");
 			let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-				label:                    Some("blit"),
+				label:                    Some(if supersampled { "ssaa resolve" } else { "blit" }),
 				color_attachments:        &[Some(wgpu::RenderPassColorAttachment {
 					view,
 					depth_slice: None,
@@ -2992,10 +3047,11 @@ impl Renderer {
 		pass.draw(0..4, 0..1);
 	}
 
-	/// Read the internal target back as tightly-packed RGBA8 rows
-	/// (premultiplied over the render clear color).
+	/// Read the presentation-sized internal result back as tightly-packed
+	/// RGBA8 rows (premultiplied over the render clear color). Low-DPI frames
+	/// read from the downsampled resolve target rather than the 2x scene target.
 	pub fn read_pixels(&self) -> Option<(u32, u32, Vec<u8>)> {
-		let (tw, th, target) = self.main.as_ref()?;
+		let (tw, th, target) = self.resolved.as_ref().or(self.main.as_ref())?;
 		let (tw, th) = (*tw, *th);
 		let bpr = (tw * 4).div_ceil(256) * 256;
 		let buf = self.device.create_buffer(&wgpu::BufferDescriptor {

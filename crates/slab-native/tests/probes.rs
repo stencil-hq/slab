@@ -174,9 +174,13 @@ fn probes_gpu_dashes_and_inset_shadow() {
 		&px,
 		w,
 		&[
-			Probe { x: 16, y: 65, want: [0x8a, 0x97, 0xa8], what: "rect dash on" },
+			// The 1px stroke is centered on y=66, so a true 2x box resolve
+			// gives row 65 half stroke coverage instead of the old full sample.
+			Probe { x: 16, y: 65, want: [0x4c, 0x54, 0x5f], what: "rect dash on" },
 			Probe { x: 22, y: 65, want: [0x0e, 0x11, 0x16], what: "rect dash gap" },
-			Probe { x: 20, y: 109, want: [70, 75, 82], what: "inset shadow rim" },
+			// Supersampling integrates the steep inset-shadow gradient across
+			// the whole output pixel rather than sampling only its center.
+			Probe { x: 20, y: 109, want: [67, 72, 78], what: "inset shadow rim" },
 			Probe { x: 20, y: 120, want: [0x20, 0x26, 0x2e], what: "inset shadow center" },
 		],
 		"l2-style gpu effects",
