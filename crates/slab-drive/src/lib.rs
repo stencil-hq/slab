@@ -2134,7 +2134,7 @@ fn input_event(
 	host_input: Option<&mut HostInputHook<'_>>,
 ) -> ProtocolResult {
 	validate_event(params(value))?;
-	let event = wire::build_event(value).map_err(invalid)?;
+	let event = wire::build_event(&value["params"]).map_err(invalid)?;
 	dispatch_input(session, &event, host_input)
 }
 
@@ -2451,6 +2451,8 @@ fn render_svg(session: &mut Session, object: &Map<String, Value>) -> ProtocolRes
 	let mut result = Map::new();
 	result.insert("bytes".into(), json!(byte_count(svg.as_bytes())?));
 	result.insert("notes".into(), json!(notes));
+	result.insert("dirty".into(), json!(doc.inst.dirty));
+	result.insert("motion_active".into(), json!(doc.inst.ms.active));
 	match path {
 		Some(path) => {
 			std::fs::write(&path, svg.as_bytes())

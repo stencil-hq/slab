@@ -93,6 +93,8 @@ pub struct St {
 	effective_attr_values: [i32; ATTR_COUNT],
 	font_selection: FxHashMap<(u32, u32), i32>,
 	family_index: FxHashMap<String, u32>,
+	/// Authored nodes with an activate signal, indexed by document node.
+	activate_node: Vec<bool>,
 	/// Precomputed keyword codes per string-pool entry, parallel with
 	/// `Doc::strs`.
 	kw_codes: Vec<KwCodes>,
@@ -180,6 +182,7 @@ pub fn st_new() -> crate::style::St {
 		effective_attr_values: [-1; ATTR_COUNT],
 		font_selection: FxHashMap::default(),
 		family_index: FxHashMap::default(),
+		activate_node: vec![],
 		kw_codes: vec![],
 		wh_node: vec![],
 		wh_patch: vec![],
@@ -262,6 +265,15 @@ pub fn init_params(d: &crate::slir::Doc, st: &mut crate::style::St) {
 		.extend((0..d.node_kind.len()).map(|node| authored_attr_values(d, node)));
 	st.kw_codes.clear();
 	st.kw_codes.extend(d.strs.iter().map(|s| kw_codes_of(s)));
+	st.activate_node.clear();
+	st.activate_node.resize(d.node_kind.len(), false);
+	for (&node, &trigger) in d.sign_node.iter().zip(&d.sign_trigger) {
+		if trigger == crate::dispatch::TR_ACTIVATE
+			&& let Some(activates) = st.activate_node.get_mut(index_u32(node))
+		{
+			*activates = true;
+		}
+	}
 	rebuild_aval_cache(d, st);
 	crate::list::init(d, &mut st.lists);
 	for &encoded in &d.parm_default {
@@ -2524,12 +2536,11 @@ pub fn build_rstyle(
 		// from descendant text content (§15.2); adapters inherit it through
 		// the ordinary scene label slot.
 		let base = crate::list::base(&st.lists, d, node);
-		let activates = base != crate::slir::NONE
-			&& d
-				.sign_trigger
-				.iter()
-				.enumerate()
-				.any(|(signal, &trigger)| d.sign_node[signal] == base && trigger == 0);
+		let activates = st
+			.activate_node
+			.get(index_u32(base))
+			.copied()
+			.unwrap_or(false);
 		if st.rs[ri].flags & crate::slir::F_FOCUSABLE != 0 || activates {
 			let name = crate::style::name_from_content(d, st, node);
 			intern_scene_str(st, name)
