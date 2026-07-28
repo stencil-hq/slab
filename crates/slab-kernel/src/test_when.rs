@@ -373,14 +373,7 @@ pub fn test_conditional_signal_firing() {
     let mut effects = dispatch::effects_new();
     let inactive = gated_style(&doc, false);
     assert!(
-        !dispatch::deliver_trigger(
-            &doc,
-            &inactive,
-            &mut effects,
-            0,
-            dispatch::TR_ACTIVATE,
-            String::new(),
-        ),
+        !dispatch::deliver_trigger(&doc, &inactive, &mut effects, 0, dispatch::TR_ACTIVATE, "",),
         "false condition suppresses dispatch"
     );
     let active = gated_style(&doc, true);
@@ -390,7 +383,7 @@ pub fn test_conditional_signal_firing() {
         &mut effects,
         0,
         dispatch::TR_ACTIVATE,
-        String::new(),
+        "",
     ));
     assert_eq!(effects.sig_name, [2], "true condition emits its signal");
 }

@@ -797,3 +797,90 @@ pub fn test_apply_skips_lifted_bindings() {
         "fully lifted document reports no motion"
     );
 }
+
+/// Verifies `transition=` tweens host-written param-driven attribute values
+/// under the kernel clock instead of snapping (N4/C-18).
+pub fn test_value_transition_tweens_param_writes() {
+    let mut d = slir::doc_new();
+    d.ok = true;
+    d.strs.extend([String::new(), "bar".into()]);
+    // AVAL 0: Param 0 reference; AVAL 1: the param's default of 40.
+    let param_ref = aval(&mut d, slir::T_PARAM_REF, 0, 0, 0.0);
+    let default_forty = aval(&mut d, slir::T_NUM, 0, 0, 40.0);
+    d.parm_name.push(1);
+    d.parm_type.push(slir::PARAM_NUM);
+    d.parm_default.push(default_forty);
+    d.parm_enum_off.push(0);
+    d.parm_enum_len.push(0);
+    d.parm_site_off.push(0);
+    d.parm_site_len.push(0);
+    d.node_kind.push(slir::K_RECT);
+    d.node_flags.push(0);
+    d.node_parent.push(slir::NONE);
+    d.node_first.push(slir::NONE);
+    d.node_next.push(slir::NONE);
+    d.node_key.push(0);
+    d.node_id.push(0);
+    d.node_line.push(1);
+    d.attr_index.extend([0, 1]);
+    d.attr_id.push(slir::A_W);
+    d.attr_val.push(param_ref);
+    d.trans_node.push(0);
+    d.trans_easing.push(0);
+    d.trans_dur.push(200.0);
+    d.trans_delay.push(0.0);
+
+    let mut st = style::st_new();
+    style::init_params(&d, &mut st);
+    let mut ms = motion::mst_new();
+
+    // First observation seeds the clock without tweening.
+    style::begin_solve(&d, &mut st);
+    assert!(
+        !motion::apply(&d, &mut st, &mut ms, 0.0),
+        "an unchanged value starts no transition"
+    );
+    assert_eq!(style::attr_num(&d, &st, 0, slir::A_W, 0.0), 40.0);
+
+    // A host write stamps the clock at the observing solve.
+    st.pv_num[0] = 120.0;
+    style::begin_solve(&d, &mut st);
+    assert!(
+        motion::apply(&d, &mut st, &mut ms, 1000.0),
+        "a changed value keeps motion active"
+    );
+    assert_eq!(
+        style::attr_num(&d, &st, 0, slir::A_W, 0.0),
+        40.0,
+        "the flip solve still paints the previous value"
+    );
+
+    // Halfway through the 200ms window the value blends linearly.
+    style::begin_solve(&d, &mut st);
+    assert!(motion::apply(&d, &mut st, &mut ms, 1100.0));
+    assert!(
+        (style::attr_num(&d, &st, 0, slir::A_W, 0.0) - 80.0).abs() < 1e-9,
+        "mid-flight solve paints the interpolated value"
+    );
+
+    // A second write mid-flight chains from the painted value.
+    st.pv_num[0] = 80.0;
+    style::begin_solve(&d, &mut st);
+    assert!(motion::apply(&d, &mut st, &mut ms, 1100.0));
+    assert!(
+        (style::attr_num(&d, &st, 0, slir::A_W, 0.0) - 80.0).abs() < 1e-9,
+        "re-target from the current painted value avoids jumps"
+    );
+
+    // After the window elapses the target paints and motion goes idle.
+    style::begin_solve(&d, &mut st);
+    assert!(
+        !motion::apply(&d, &mut st, &mut ms, 1400.0),
+        "a settled transition reports no motion"
+    );
+    assert_eq!(
+        style::attr_num(&d, &st, 0, slir::A_W, 0.0),
+        80.0,
+        "the settled solve paints the target"
+    );
+}

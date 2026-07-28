@@ -305,6 +305,7 @@ mod wave0_api {
             set_size: None,
             disabled: false,
             focused: false,
+            editable: false,
         }
     }
 
@@ -717,6 +718,110 @@ mod wave0_api {
             frame::inst_get_scroll(&instance, "outer", 1).abs() < 1.0e-9,
             "rotation must not misroute the displacement to outer cross x"
         );
+    }
+
+    #[test]
+    fn reveal_parks_targets_below_pinned_sticky_headers() {
+        let doc = keyed_doc(
+            &[slir::K_COL, slir::K_RECT, slir::K_RECT],
+            &[slir::F_SCROLL, slir::F_STICKY, 0],
+            &[slir::NONE, 0, 0],
+            &[1, slir::NONE, slir::NONE],
+            &[slir::NONE, 2, slir::NONE],
+            &["outer", "head", "target"],
+        );
+        let mut instance = instance(doc);
+        assert!(frame::inst_set_scroll(&mut instance, "outer", 0, 50.0));
+        let mut solved = flatten::frame_new();
+        solved.scene.push(scene_node(
+            0,
+            -1,
+            slir::K_COL,
+            0.0,
+            100.0,
+            slir::F_SCROLL,
+            400.0,
+        ));
+        solved
+            .scene
+            .push(scene_node(1, 0, slir::K_RECT, 0.0, 20.0, slir::F_STICKY, 0.0));
+        solved
+            .scene
+            .push(scene_node(2, 0, slir::K_RECT, 10.0, 20.0, 0, 0.0));
+        scene::load(&mut instance.sc, &solved);
+        instance.solved = true;
+
+        // The target's band starts under the pinned 20u header; a minimal
+        // reveal scrolls it below the header, not to the raw viewport edge.
+        assert!(frame::inst_reveal(&mut instance, "target", 0.0));
+        assert_eq!(
+            frame::inst_get_scroll(&instance, "outer", 0),
+            40.0,
+            "target parks below the pinned sticky header"
+        );
+
+        // Revealing the sticky header itself never scrolls against its own
+        // pinned position.
+        instance.dirty = false;
+        assert!(frame::inst_reveal(&mut instance, "head", 0.0));
+        assert_eq!(
+            frame::inst_get_scroll(&instance, "outer", 0),
+            40.0,
+            "a pinned sticky target needs no scroll"
+        );
+    }
+
+    #[test]
+    fn controls_without_labels_take_scene_names_from_content() {
+        let mut doc = keyed_doc(
+            &[slir::K_COL, slir::K_ROW, slir::K_TEXT],
+            &[0, slir::F_FOCUSABLE, 0],
+            &[slir::NONE, 0, 1],
+            &[1, 2, slir::NONE],
+            &[slir::NONE, slir::NONE, slir::NONE],
+            &["root", "save", "caption"],
+        );
+        let save_str = u32::try_from(doc.strs.len()).expect("fixture strings fit u32");
+        doc.strs.push("Save".into());
+        let edit_str = u32::try_from(doc.strs.len()).expect("fixture strings fit u32");
+        doc.strs.push("edit".into());
+        doc.aval_tag.push(slir::T_STR);
+        doc.aval_lo.push(save_str);
+        doc.aval_hi.push(0);
+        doc.aval_num.push(0.0);
+        doc.attr_id.push(slir::A_CONTENT);
+        doc.attr_val.push(0);
+        doc.attr_index[3] = 1;
+        // The caption also carries an always-active field binder, so its
+        // scene entry reports kernel editability.
+        doc.sign_name.push(edit_str);
+        doc.sign_node.push(2);
+        doc.sign_trigger.push(1);
+        let mut instance = instance(doc);
+        frame::inst_set_env(&mut instance, 200.0, 100.0, 0, false, false);
+        let frame_out = frame::inst_frame(&mut instance, 0.0);
+
+        let row = frame_out
+            .scene
+            .iter()
+            .find(|entry| entry.node == 1)
+            .expect("focusable row is in the scene");
+        assert_eq!(
+            instance.st.scene_strs[usize::try_from(row.label).expect("label ref fits usize")],
+            "Save",
+            "an unlabeled control takes its name from descendant text"
+        );
+        let caption = frame_out
+            .scene
+            .iter()
+            .find(|entry| entry.node == 2)
+            .expect("caption is in the scene");
+        assert_eq!(caption.label, 0, "non-control text derives no name");
+        assert!(
+            caption.editable,
+            "an active field binder marks the scene entry editable"
+        );
+        assert!(!row.editable, "containers are not editable");
     }
 
     #[test]

@@ -10,7 +10,7 @@
     "states_prev+state_age": "transition sampling inputs: solve states_prev at t=0, flip to states at t=0, then sample at state_age ms",
     "theme": "runtime theme name; defaults to the empty authored base and is applied before the first frame",
     "set": "runtime param overrides applied before the first frame; list params accept JSON arrays of schema-shaped objects",
-    "client": "renderer class driving `when` Client conditions: web|gpu|tui|svg|png; TUI cases also freeze plain `cells` output",
+    "client": "renderer class driving `when` Client conditions: web|gpu|tui|svg|png; TUI cases also freeze plain `cells` output plus an `attrs` attribute plane (expected/<name>.attrs.txt: per-row runs of explicit fg/bg/strike cell state) so SGR-only regressions are caught",
     "caps": "kind=caps cases freeze the degradation report as expected/<name>.caps.txt instead of frame.json: TUI `cells` grid diagnostics first, then one `chart <level> <feature>: <note>` line per used support.toml feature the client degrades/drops. The single slab-kernel `capability` scan is exercised natively by `slab conformance` and through WebAssembly by `bun tools/conformance-wasm.ts`; outputs must agree byte-identically. GPU-only render-time notes (e.g. cap-gradient-stroke) need a GPU and stay out of conformance; d3 asserts the chart level instead."
   },
   "cases": [
@@ -480,6 +480,15 @@
       "width": 220,
       "height": 120,
       "client": "web"
+    },
+    {
+      "name": "fx-text-strike-tui",
+      "source": "fx-text-strike",
+      "level": 3,
+      "kind": "tui",
+      "width": 220,
+      "height": 120,
+      "client": "tui"
     },
     {
       "name": "fx-para-ellipsis",

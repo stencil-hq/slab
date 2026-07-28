@@ -69,6 +69,8 @@ pub fn text_op(x: f64, y_baseline: f64, str_ref: i32, color: u32) -> OpText {
         gy: 0.0,
         gw: 0.0,
         gh: 0.0,
+        uncov_off: 0,
+        uncov_len: 0,
     }
 }
 
@@ -685,8 +687,8 @@ pub fn test_serialize() {
     coverage_frame.ops.push(FrameOp::Text(coverage_op));
     let coverage_grid = cells::cells_from_frame(&coverage_doc, &coverage_frame, 24.0, 16.0);
     assert!(
-        str_eq(&cells::cells_to_text(&coverage_grid, true), "A B\n"),
-        "missing cmap glyph keeps its cell advance but paints no terminal fallback"
+        str_eq(&cells::cells_to_text(&coverage_grid, true), "A✕B\n"),
+        "missing cmap glyph passes through raw so the terminal paints it"
     );
 
     let mut default_frame = flatten::frame_new();
@@ -708,5 +710,114 @@ pub fn test_serialize() {
     assert!(
         str_eq(&cells::cells_to_text(&default_grid, false), "D\u{1B}[0m\n"),
         "default ink emits no foreground SGR"
+    );
+}
+
+/// Verifies strike decoration honors the active clip: a struck run scrolled
+/// out of its clip must not leave SGR-9 flags over blank cells (T8/C-12).
+pub fn test_strike_decoration_clips_with_glyphs() {
+    let doc = slir::doc_new();
+    let mut frame = flatten::frame_new();
+    frame.strings.push("GONE".to_owned());
+    frame.strings.push("KEPT".to_owned());
+    // Clip covers only row 1; the struck run paints at row 0, outside it.
+    frame.ops.push(FrameOp::ClipPush(flatten::OpClip {
+        x: 0.0,
+        y: 16.0,
+        w: 64.0,
+        h: 16.0,
+        radius: 0.0,
+        smooth: 0.0,
+    }));
+    let mut outside = text_op(0.0, 12.0, 0, 0x1111_11FF);
+    outside.strike = true;
+    frame.ops.push(FrameOp::Text(outside));
+    let mut inside = text_op(0.0, 28.0, 1, 0x1111_11FF);
+    inside.strike = true;
+    frame.ops.push(FrameOp::Text(inside));
+    frame.ops.push(FrameOp::ClipPop);
+
+    let grid = cells::cells_from_frame(&doc, &frame, 64.0, 32.0);
+    for column in 0..grid.cols {
+        assert_eq!(
+            flags_at(&grid, column, 0) & cells::CF_STRIKE,
+            0,
+            "clipped-out run leaves no strike flags on blank cells"
+        );
+        assert_eq!(ch_at(&grid, column, 0), 32, "clipped-out run paints nothing");
+    }
+    for (column, expected) in "KEPT".chars().enumerate() {
+        let column = i32::try_from(column).expect("test column fits i32");
+        assert_eq!(ch_at(&grid, column, 1), u32::from(expected));
+        assert_ne!(
+            flags_at(&grid, column, 1) & cells::CF_STRIKE,
+            0,
+            "in-clip strike decoration is preserved"
+        );
+    }
+}
+
+/// Verifies stroke outlines only claim cells fully covered by the rect and
+/// degrade to a `stroke-band` note when no closed box fits (T18/C-14).
+pub fn test_stroke_outline_stays_within_cell_band() {
+    let doc = slir::doc_new();
+
+    // Cell-exact 2-row band: the box occupies exactly rows 0 and 1.
+    let mut frame = flatten::frame_new();
+    frame.ops.push(FrameOp::Rect(solid_rect(
+        0.0,
+        0.0,
+        64.0,
+        32.0,
+        0.0,
+        0,
+        0,
+        rgba(255, 170, 0, 255),
+        1,
+        false,
+    )));
+    let grid = cells::cells_from_frame(&doc, &frame, 64.0, 48.0);
+    assert_eq!(ch_at(&grid, 0, 0), 0x250C, "top-left corner in band");
+    assert_eq!(ch_at(&grid, 7, 1), 0x2518, "bottom-right corner in band");
+    for column in 0..grid.cols {
+        assert_eq!(
+            ch_at(&grid, column, 2),
+            32,
+            "no border ink below the band"
+        );
+    }
+
+    // Mid-cell band (y=24, h=32) fully covers only one row: the outline is
+    // unrepresentable without melting into shared rows, so it is suppressed
+    // and reported instead.
+    let mut shifted = flatten::frame_new();
+    shifted.ops.push(FrameOp::Rect(solid_rect(
+        0.0,
+        24.0,
+        64.0,
+        32.0,
+        0.0,
+        0,
+        0,
+        rgba(255, 170, 0, 255),
+        1,
+        false,
+    )));
+    let shifted_grid = cells::cells_from_frame(&doc, &shifted, 64.0, 80.0);
+    for row in 0..shifted_grid.rows {
+        for column in 0..shifted_grid.cols {
+            assert_eq!(
+                ch_at(&shifted_grid, column, row),
+                32,
+                "suppressed outline paints no glyphs"
+            );
+        }
+    }
+    assert!(
+        shifted_grid
+            .diag_code
+            .iter()
+            .any(|code| str_eq(code, "stroke-band")),
+        "suppressed outline emits the stroke-band note"
     );
 }

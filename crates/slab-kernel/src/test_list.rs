@@ -1138,3 +1138,37 @@ fn virtual_motion_work_tracks_current_window_and_retains_clock_state() {
     assert_eq!(motion::sp_find(&inst.ms, retained, 0), -1);
     assert_eq!(list::base(&inst.st.lists, &inst.doc, retained), slir::NONE);
 }
+
+/// Verifies edge reveals park virtual items below a pinned sticky sibling so
+/// the target band stays fully visible (T19/C-15).
+pub fn test_reveal_item_parks_below_pinned_sticky_header() {
+    let mut d = virtual_list_with_origin_doc();
+    let header = d.node_kind.len() - 1;
+    d.node_flags[header] = slir::F_STICKY;
+    let mut inst = frame::inst_shell();
+    inst.doc = d;
+    frame::inst_init(&mut inst);
+    frame::inst_set_env(&mut inst, 120.0, 100.0, 0, false, false);
+    assert!(frame::inst_set_list_len(&mut inst, 0, "", 10_000));
+    frame::inst_frame(&mut inst, 0.0);
+    frame::inst_frame(&mut inst, 0.0);
+
+    // Item 100 starts at origin 40 + 100 * 20 = 2040 in content coordinates.
+    // The sticky 30u header pins over [10, 40] of the viewport, so start
+    // alignment scrolls 40u less than the raw edge target.
+    assert!(frame::inst_reveal_item(&mut inst, "virtual", 100, 0));
+    assert_eq!(
+        frame::inst_get_scroll(&inst, "scroll", 0),
+        2000.0,
+        "start alignment clears the pinned sticky header"
+    );
+
+    // End alignment is unaffected: the bottom edge has no pinned cover.
+    assert!(frame::inst_reveal_item(&mut inst, "virtual", 100, 2));
+    frame::inst_frame(&mut inst, 1.0);
+    assert_eq!(
+        frame::inst_get_scroll(&inst, "scroll", 0),
+        1960.0,
+        "end alignment still parks the item at the viewport bottom"
+    );
+}

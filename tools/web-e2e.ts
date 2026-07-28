@@ -26,7 +26,9 @@
 //   (j) atomic list assignment renders/reflows and signals carry item identity
 //   (k) retained semantic DOM values, key identity, rotation, roving focus, click
 //   (l) omitted nested list fields atomically clear their child lists
-//   (m) typed tokens/fields/focus/settlement/diagnostics, IME, clipboard, and drag ghost
+//   (m) typed tokens/fields/focus/settlement/diagnostics (per-solve + cumulative),
+//       IME, clipboard, drag ghost, uncovered-glyph fallback paint, click-count
+//       chaining (Dblclick), and ItemKeys/itemKey composition
 //   (n) missing kernel WASM reports its URL, bundler remedy, and a visible alert
 
 import { dirname, extname, join } from 'node:path';
@@ -563,15 +565,19 @@ await page.evaluate(async () => {
       } | null;
    };
    host.id = 'web-interactions-host';
-   host.style.cssText = 'display:block;width:320px;height:180px';
+   host.style.cssText = 'display:block;width:320px;height:320px';
    const g = globalThis as DebugGlobal;
    g.__sig ??= {};
    g.__sig.menu = [];
    g.__sig.changed = [];
+   g.__sig.tapped = [];
+   g.__sig.boom = [];
    g.__sig.diagnostics = [];
-   host.addEventListener('menu', (event) => {
-      g.__sig?.menu?.push((event as CustomEvent).detail);
-   });
+   for (const name of ['menu', 'tapped', 'boom']) {
+      host.addEventListener(name, (event) => {
+         g.__sig?.[name]?.push((event as CustomEvent).detail);
+      });
+   }
    host.addEventListener('changed', (event) => {
       g.__sig?.changed?.push((event as CustomEvent).detail);
    });
@@ -701,31 +707,34 @@ const typedHostState = await page.evaluate(async () => {
       focusedKey(): string | null;
       inEditField(): boolean;
       whenSettled(): Promise<void>;
+      readonly diagnostics: readonly { code: string; line: number; msg: string }[];
       readonly lastFrame: {
          readonly diagnostics: readonly { code: string; line: number; msg: string }[];
       } | null;
    };
    await host.whenSettled();
-   const missing = host.shadowRoot?.querySelector<HTMLElement>('[data-slab-missing]');
-   const before = missing?.previousElementSibling?.getBoundingClientRect();
-   const spacer = missing?.getBoundingClientRect();
-   const after = missing?.nextElementSibling?.getBoundingClientRect();
-   const preservesMissingAdvance =
+   const uncov = host.shadowRoot?.querySelector<HTMLElement>('[data-slab-uncovered]');
+   const before = uncov?.previousElementSibling?.getBoundingClientRect();
+   const run = uncov?.getBoundingClientRect();
+   const after = uncov?.nextElementSibling?.getBoundingClientRect();
+   const preservesUncoveredAdvance =
       before !== undefined &&
-      spacer !== undefined &&
+      run !== undefined &&
       after !== undefined &&
-      spacer.width > 0 &&
-      spacer.left >= before.right - 0.5 &&
-      after.left >= spacer.right - 0.5;
+      run.width > 0 &&
+      run.left >= before.right - 0.5 &&
+      after.left >= run.right - 0.5;
+   // Cumulative diagnostics stay queryable any time after occurrence (C-17).
+   const cumulative = host.diagnostics ?? [];
    return {
       focusedKey: host.focusedKey(),
       inEditField: host.inEditField(),
       frameDiagnostics: host.lastFrame?.diagnostics ?? [],
       eventDiagnostics: (globalThis as DebugGlobal).__sig?.diagnostics ?? [],
-      preservesMissingAdvance,
-      paintsMissingGlyph: Array.from(
-         host.shadowRoot?.querySelectorAll('.slab-ops span') ?? [],
-      ).some((span) => span.textContent?.includes('◐') === true),
+      cumulativeGlyphMissing: cumulative.some((diagnostic) => diagnostic.code === 'glyph-missing'),
+      preservesUncoveredAdvance,
+      paintsUncoveredText: uncov?.textContent === '◐',
+      legacySpacers: (host.shadowRoot?.querySelector('[data-slab-missing]') ?? null) !== null,
    };
 });
 check(
@@ -748,9 +757,11 @@ check(
    JSON.stringify(typedHostState),
 );
 check(
-   '(m) web painter suppresses browser fallback, preserves advance, and emits glyph-missing',
-   !typedHostState.paintsMissingGlyph &&
-      typedHostState.preservesMissingAdvance &&
+   '(m) web painter paints uncovered runs via system fallback at the charged advance',
+   typedHostState.paintsUncoveredText &&
+      typedHostState.preservesUncoveredAdvance &&
+      !typedHostState.legacySpacers &&
+      typedHostState.cumulativeGlyphMissing &&
       typedHostState.eventDiagnostics.some(
          (detail) =>
             typeof detail === 'object' &&
@@ -819,6 +830,35 @@ check(
       imeResult.width >= 1 &&
       imeResult.height >= 1,
    JSON.stringify(imeResult),
+);
+
+// C-27/C-28: while a field is edited through the IME holder, screen readers
+// still track kernel focus: the holder drops aria-hidden and points
+// aria-activedescendant at the semantic field node, which exposes
+// role=textbox and mirrors the committed value.
+const editingSemantics = await page.evaluate((key) => {
+   const host = document.getElementById('web-interactions-host');
+   const shadow = host?.shadowRoot;
+   const ime = shadow?.querySelector<HTMLTextAreaElement>('.slab-ime');
+   const field = [...(shadow?.querySelectorAll<HTMLElement>('.slab-a11y-node') ?? [])].find(
+      (element) => element.dataset.slabKey === key,
+   );
+   return {
+      imeHidden: ime?.getAttribute('aria-hidden'),
+      activeDescendant: ime?.getAttribute('aria-activedescendant') ?? '',
+      fieldId: field?.id ?? '',
+      fieldRole: field?.getAttribute('role') ?? '',
+      fieldValue: field?.textContent ?? '',
+   };
+}, interactionKey);
+check(
+   '(m) editing keeps the AT surface live: holder unhidden, activedescendant set, textbox value mirrored',
+   editingSemantics.imeHidden === null &&
+      editingSemantics.fieldId !== '' &&
+      editingSemantics.activeDescendant === editingSemantics.fieldId &&
+      editingSemantics.fieldRole === 'textbox' &&
+      editingSemantics.fieldValue.includes('seed漢'),
+   JSON.stringify(editingSemantics),
 );
 await page.keyboard.press('ControlOrMeta+A');
 const beforeContextSelection = await page.evaluate(() => {
@@ -988,6 +1028,80 @@ check(
       Math.abs(ghostResult.dx - 72) <= 3 &&
       Math.abs(ghostResult.dy - 24) <= 3,
    JSON.stringify(ghostResult),
+);
+
+// C-03: the web driver feeds real click counts; the kernel fires Dblclick
+// once for the second click and suppresses that click's Activate.
+const dblBox = await nodeCenter('/dbl', 'web-interactions-host');
+check('(m) dblclick box located', dblBox !== null, JSON.stringify(dblBox));
+if (dblBox) {
+   await page.mouse.click(dblBox.cx, dblBox.cy);
+   await page.waitForFunction(() => ((globalThis as DebugGlobal).__sig?.tapped?.length ?? 0) === 1);
+   await page.waitForTimeout(600); // expire the click chain
+   await page.mouse.dblclick(dblBox.cx, dblBox.cy);
+   await page.waitForFunction(() => ((globalThis as DebugGlobal).__sig?.boom?.length ?? 0) >= 1);
+}
+const dblResult = await page.evaluate(() => {
+   const g = globalThis as DebugGlobal;
+   const tapped = g.__sig?.tapped ?? [];
+   const boom = g.__sig?.boom ?? [];
+   const singleMeta = (tapped[0] as { meta?: { clicks?: number } } | undefined)?.meta;
+   const boomMeta = (boom.at(-1) as { meta?: { clicks?: number } } | undefined)?.meta;
+   return {
+      tapped: tapped.length,
+      boom: boom.length,
+      singleClicks: singleMeta?.clicks,
+      boomClicks: boomMeta?.clicks,
+   };
+});
+check(
+   '(m) double-click fires Dblclick once, suppresses its Activate, and reports truthful clicks',
+   dblResult.boom === 1 &&
+      dblResult.tapped === 2 &&
+      dblResult.singleClicks === 1 &&
+      (dblResult.boomClicks ?? 0) >= 2,
+   JSON.stringify(dblResult),
+);
+
+// C-30: generated template-relative item keys compose into exact retained
+// scene keys through the exported `itemKey` join helper.
+const itemKeysResult = await page.evaluate(async () => {
+   // Dynamic import required: the generated module only exists in the served
+   // browser output, not the Bun-run harness (same pattern as the (m) setup).
+   const mod = (await import('/dist/web-interactions.js')) as {
+      itemKey(each: string, item: string | number, rel?: string): string;
+      SlabWebInteractionsElementItemKeys: Record<
+         string,
+         { each: string; item: Record<string, string> }
+      >;
+   };
+   const host = document.getElementById('web-interactions-host') as HTMLElement & {
+      sceneSnapshot(): readonly { key: string; text: string }[];
+   };
+   const rows = mod.SlabWebInteractionsElementItemKeys.rows;
+   const composedRoot = mod.itemKey(rows.each, 0);
+   const composedTitle = mod.itemKey(rows.each, 0, rows.item.title);
+   const scene = host.sceneSnapshot();
+   const title = scene.find((node) => node.key === composedTitle);
+   return {
+      each: rows.each,
+      composedTitle,
+      rootPrefixed: scene.some((node) => node.key.startsWith(`${composedRoot}/`)),
+      titleFound: title !== undefined,
+      // C-31: SceneNode.text exposes painted text for automation.
+      titleText: title?.text ?? '',
+      escaped: mod.itemKey('#e', 'a/b~c%d') === '#e~a%2Fb%7Ec%25d',
+   };
+});
+check(
+   '(m) generated ItemKeys + itemKey compose exact retained scene keys',
+   itemKeysResult.rootPrefixed && itemKeysResult.titleFound && itemKeysResult.escaped,
+   JSON.stringify(itemKeysResult),
+);
+check(
+   '(m) sceneSnapshot exposes painted text per node',
+   itemKeysResult.titleText === 'one',
+   JSON.stringify(itemKeysResult.titleText),
 );
 
 // ------------------------------------------------------------------- (n)
@@ -1193,6 +1307,9 @@ const semanticInitial = await page.evaluate(() => {
       rotatedWidth: rootRect?.width ?? 0,
       alphaTransform: alpha ? getComputedStyle(alpha).transform : 'none',
       nested: alpha !== undefined && root?.contains(alpha) === true,
+      // C-26: painted text mirrors into semantic nodes (DOM nesting
+      // aggregates it onto ancestors), so live regions can announce.
+      alphaText: alpha?.textContent ?? '',
    };
 });
 check(
@@ -1218,6 +1335,11 @@ check(
       semanticInitial.controlsTarget &&
       semanticInitial.modal === 'true',
    JSON.stringify(semanticInitial),
+);
+check(
+   '(k) semantic nodes carry painted text for live regions',
+   semanticInitial.alphaText.includes('Runtime Alpha'),
+   JSON.stringify(semanticInitial.alphaText),
 );
 check(
    '(k) semantic geometry follows rotation hierarchy',
@@ -1290,6 +1412,21 @@ await page.waitForFunction(() => {
    return active?.dataset.slabKey?.includes('~alpha/') === true;
 });
 check('(k) keyboard enters the initial semantic tab stop', true, 'alpha focused');
+
+// C-27: a pointer press on a non-edit control must land real DOM focus on the
+// focused semantic node so screen readers track kernel focus.
+const alphaCenter = await nodeCenter('~alpha/item', 'a11y-host');
+check('(k) alpha option located', alphaCenter !== null, JSON.stringify(alphaCenter));
+if (alphaCenter) await page.mouse.click(alphaCenter.cx, alphaCenter.cy);
+await page.waitForFunction(() => {
+   const host = document.getElementById('a11y-host');
+   const active = host?.shadowRoot?.activeElement as HTMLElement | null | undefined;
+   return (
+      active?.classList.contains('slab-a11y-node') === true &&
+      active.dataset.slabKey?.includes('~alpha/') === true
+   );
+});
+check('(k) pointer focus lands on the focused semantic node', true, 'alpha holds DOM focus');
 
 const emptyKeyResult = await page.evaluate(() => {
    const host = document.getElementById('a11y-host') as HTMLElement & {

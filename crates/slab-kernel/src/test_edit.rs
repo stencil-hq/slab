@@ -785,3 +785,178 @@ pub fn test_context_caret_preserves_selection_only_for_inside_hit() {
     ));
     assert_eq!((es.anchor, es.caret), (0, 0));
 }
+
+/// Builds a focusable text node whose `field=` binder lives inside a
+/// `when editing { … }` patch (condition 0 gates on state `"editing"`),
+/// with base content `"hello"` and a Change signal named `"edit-title"`.
+pub fn conditional_field_doc() -> Doc {
+    let mut doc = slir::doc_new();
+    doc.ok = true;
+    doc.strs
+        .extend(["", "editing", "edit-title", "hello"].map(str::to_owned));
+    doc.node_kind.push(slir::K_TEXT);
+    doc.node_flags.push(slir::F_NOWRAP | slir::F_FOCUSABLE);
+    doc.node_parent.push(slir::NONE);
+    doc.node_first.push(slir::NONE);
+    doc.node_next.push(slir::NONE);
+    doc.node_key.push(0);
+    doc.node_id.push(0);
+    doc.node_line.push(1);
+
+    doc.attr_index.push(0);
+    doc.aval_tag.push(slir::T_STR);
+    doc.aval_lo.push(3);
+    doc.aval_hi.push(0);
+    doc.aval_num.push(0.0);
+    doc.attr_id.push(slir::A_CONTENT);
+    doc.attr_val.push(0);
+    doc.attr_index.push(1);
+
+    doc.cond_kind.push(slir::C_STATE);
+    doc.cond_neg.push(0);
+    doc.cond_op.push(0);
+    doc.cond_num.push(0.0);
+    doc.cond_sym.push(1);
+    doc.patch_node.push(0);
+    doc.patch_cond.push(0);
+    doc.patch_attr_off.push(0);
+    doc.patch_attr_len.push(1);
+    doc.patch_child_off.push(0);
+    doc.patch_child_len.push(0);
+    let field_name = u32::try_from(doc.aval_tag.len()).expect("attr value pool fits u32");
+    doc.aval_tag.push(slir::T_STR);
+    doc.aval_lo.push(2);
+    doc.aval_hi.push(0);
+    doc.aval_num.push(0.0);
+    doc.wattr_id.push(slir::A_FIELD);
+    doc.wattr_val.push(field_name);
+
+    doc.sign_name.push(2);
+    doc.sign_node.push(0);
+    doc.sign_trigger.push(dispatch::TR_CHANGE);
+    doc
+}
+
+/// Verifies that a text node with an inactive conditional `field=` binder
+/// paints as plain text: no editor clip on the ops or the scene node, while
+/// the active state keeps the field clip (T5 / C-10 regression).
+pub fn test_inactive_conditional_field_paints_plain_text() {
+    let doc = conditional_field_doc();
+    for editing in [false, true] {
+        let mut st = style::st_new();
+        style::init_params(&doc, &mut st);
+        if editing {
+            st.states.push(1);
+        }
+        style::begin_solve(&doc, &mut st);
+        let mut lay = layout::lay_new();
+        let root = layout::solve(&doc, &mut st, &mut lay, 100.0, 100.0, true);
+        let frame = flatten::flatten(
+            &doc,
+            &st,
+            &lay,
+            &dispatch::dstate_new(),
+            &motion::mst_new(),
+            root,
+        );
+        let clips = frame
+            .ops
+            .iter()
+            .any(|op| matches!(op, flatten::FrameOp::ClipPush(_)));
+        assert_eq!(
+            clips, editing,
+            "field clip follows binder activity (editing={editing})"
+        );
+        assert_eq!(
+            frame.scene[0].flags & slir::F_CLIP != 0,
+            editing,
+            "scene clip flag follows binder activity (editing={editing})"
+        );
+        assert!(
+            frame
+                .ops
+                .iter()
+                .any(|op| matches!(op, flatten::FrameOp::Text(_))),
+            "text paints in both states (editing={editing})"
+        );
+    }
+}
+
+/// Verifies that deactivating a conditional editor drops caret, IME, and
+/// editor scroll paint while the retained edit state and focus survive
+/// (T6 / C-11 regression).
+pub fn test_deactivated_field_keeps_state_drops_editor_paint() {
+    let mut inst = frame::inst_shell();
+    inst.doc = conditional_field_doc();
+    frame::inst_init(&mut inst);
+    frame::inst_set_env(&mut inst, 500.0, 500.0, 0, false, false);
+    frame::inst_set_state(&mut inst, "editing", true);
+    frame::inst_frame(&mut inst, 0.0);
+    inst.ds.fs.focus = 0;
+    dispatch::ensure_edit(&inst.doc, &mut inst.st, &mut inst.ds, 0);
+    // Seed a stable editor scroll: the caret sits at the end of "hello", so
+    // follow-caret keeps an 8u offset (caret margin) instead of resetting it.
+    let edit_index = usize::try_from(dispatch::ed_ix(&inst.ds, 0)).expect("edit state bound");
+    inst.ds.ed[edit_index].scroll_x = 8.0;
+    style::field_scroll_set(&mut inst.st, 0, 8.0);
+    inst.dirty = true;
+    let active = frame::inst_frame(&mut inst, 1.0);
+    let text_x = |frame: &flatten::Frame| {
+        frame
+            .ops
+            .iter()
+            .find_map(|op| match op {
+                flatten::FrameOp::Text(text) => Some(text.x),
+                _ => None,
+            })
+            .expect("field paints text")
+    };
+    assert_eq!(
+        text_x(&active),
+        -8.0,
+        "active editor applies its horizontal scroll"
+    );
+    let mut effects = dispatch::effects_new();
+    dispatch::caret_effects(
+        &inst.doc,
+        &inst.st,
+        &inst.lay,
+        &inst.sc,
+        &inst.ds,
+        &mut effects,
+    );
+    assert!(effects.has_caret, "active editor reports a caret");
+
+    frame::inst_set_state(&mut inst, "editing", false);
+    let committed = frame::inst_frame(&mut inst, 2.0);
+    assert!(
+        dispatch::ed_ix(&inst.ds, 0) >= 0,
+        "retained edit state survives deactivation"
+    );
+    assert_eq!(inst.ds.fs.focus, 0, "focus stays on the committed field");
+    assert_eq!(
+        text_x(&committed),
+        0.0,
+        "committed field paints from the string start"
+    );
+    assert!(
+        !committed
+            .ops
+            .iter()
+            .any(|op| matches!(op, flatten::FrameOp::ClipPush(_))),
+        "committed field drops the editor clip"
+    );
+    let mut effects = dispatch::effects_new();
+    dispatch::caret_effects(
+        &inst.doc,
+        &inst.st,
+        &inst.lay,
+        &inst.sc,
+        &inst.ds,
+        &mut effects,
+    );
+    assert!(
+        !effects.has_caret && !effects.has_ime,
+        "committed field paints no caret and anchors no IME rectangle"
+    );
+}

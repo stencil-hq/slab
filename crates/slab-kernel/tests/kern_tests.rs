@@ -21,6 +21,8 @@ kernel_tests! {
     test_cells__test_text_and_fill_bg => slab_kernel::test_cells::test_text_and_fill_bg;
     test_cells__test_wide_grapheme_clusters => slab_kernel::test_cells::test_wide_grapheme_clusters;
     test_cells__test_wide_overwrite_cleanup => slab_kernel::test_cells::test_wide_overwrite_cleanup;
+    test_cells__test_strike_decoration_clips_with_glyphs => slab_kernel::test_cells::test_strike_decoration_clips_with_glyphs;
+    test_cells__test_stroke_outline_stays_within_cell_band => slab_kernel::test_cells::test_stroke_outline_stays_within_cell_band;
 
     test_color__test_lerp => slab_kernel::test_color::test_lerp;
     test_color__test_math_intrinsics => slab_kernel::test_color::test_math_intrinsics;
@@ -35,6 +37,7 @@ kernel_tests! {
     test_edit__test_coalesced_undo_and_redo_invalidation => slab_kernel::test_edit::test_coalesced_undo_and_redo_invalidation;
     test_edit__test_collapse_selection_on_move => slab_kernel::test_edit::test_collapse_selection_on_move;
     test_edit__test_composition_update_then_commit => slab_kernel::test_edit::test_composition_update_then_commit;
+    test_edit__test_deactivated_field_keeps_state_drops_editor_paint => slab_kernel::test_edit::test_deactivated_field_keeps_state_drops_editor_paint;
     test_edit__test_context_caret_preserves_selection_only_for_inside_hit => slab_kernel::test_edit::test_context_caret_preserves_selection_only_for_inside_hit;
     test_edit__test_field_scroll_offsets_text_and_forces_clip => slab_kernel::test_edit::test_field_scroll_offsets_text_and_forces_clip;
     test_edit__test_field_set_blurred_reseed_then_focus => slab_kernel::test_edit::test_field_set_blurred_reseed_then_focus;
@@ -42,6 +45,7 @@ kernel_tests! {
     test_edit__test_field_text_and_focus_queries => slab_kernel::test_edit::test_field_text_and_focus_queries;
     test_edit__test_host_focus_binds_field_and_rejects_inert => slab_kernel::test_edit::test_host_focus_binds_field_and_rejects_inert;
     test_edit__test_insert_preserves_newlines => slab_kernel::test_edit::test_insert_preserves_newlines;
+    test_edit__test_inactive_conditional_field_paints_plain_text => slab_kernel::test_edit::test_inactive_conditional_field_paints_plain_text;
     test_edit__test_kills_and_word_deletes => slab_kernel::test_edit::test_kills_and_word_deletes;
     test_edit__test_movement_selection_and_word_kill_break_undo_runs => slab_kernel::test_edit::test_movement_selection_and_word_kill_break_undo_runs;
     test_edit__test_overwide_field_stays_clipped_at_zero_scroll => slab_kernel::test_edit::test_overwide_field_stays_clipped_at_zero_scroll;
@@ -86,7 +90,11 @@ kernel_tests! {
     test_gesture__test_drag_release_revalidates_source => slab_kernel::test_gesture::test_drag_release_revalidates_source;
     test_gesture__test_drag_threshold_deepest_drop_and_source_metadata => slab_kernel::test_gesture::test_drag_threshold_deepest_drop_and_source_metadata;
     test_gesture__test_escape_cancels_drag_and_consumes_activation => slab_kernel::test_gesture::test_escape_cancels_drag_and_consumes_activation;
-    test_gesture__test_keyboard_activate_metadata_names_fired_key => slab_kernel::test_gesture::test_keyboard_activate_metadata_names_fired_key;
+    test_gesture__test_keyboard_activate_metadata_keeps_node_key => slab_kernel::test_gesture::test_keyboard_activate_metadata_keeps_node_key;
+    test_gesture__test_cancel_binder_fires_on_escape_blur => slab_kernel::test_gesture::test_cancel_binder_fires_on_escape_blur;
+    test_gesture__test_root_keys_map_reachable_without_focus => slab_kernel::test_gesture::test_root_keys_map_reachable_without_focus;
+    test_gesture__test_page_keys_scroll_nearest_scroll_ancestor => slab_kernel::test_gesture::test_page_keys_scroll_nearest_scroll_ancestor;
+    test_gesture__test_host_param_write_resets_idle_edit_buffer => slab_kernel::test_gesture::test_host_param_write_resets_idle_edit_buffer;
     test_gesture__test_pointer_move_delta_fallback_and_authority => slab_kernel::test_gesture::test_pointer_move_delta_fallback_and_authority;
     test_gesture__test_press_and_context_button_semantics => slab_kernel::test_gesture::test_press_and_context_button_semantics;
     test_gesture__test_pruned_drag_source_clears_surviving_drop_state => slab_kernel::test_gesture::test_pruned_drag_source_clears_surviving_drop_state;
@@ -108,6 +116,7 @@ kernel_tests! {
     test_hit__test_wheel_routes_main_and_cross_axes_independently => slab_kernel::test_hit::test_wheel_routes_main_and_cross_axes_independently;
     test_hit__test_topmost_wins_in_overlap => slab_kernel::test_hit::test_topmost_wins_in_overlap;
     test_hit__test_trig_values => slab_kernel::test_hit::test_trig_values;
+    test_hit__test_attach_overlay_traversal_and_focus_restore => slab_kernel::test_hit::test_attach_overlay_traversal_and_focus_restore;
 
     test_layout__test_hole_report_does_not_override_non_hug_or_non_hole => slab_kernel::test_layout::test_hole_report_does_not_override_non_hug_or_non_hole;
     test_layout__test_hole_size_invalid_and_equal_reports_are_noops => slab_kernel::test_layout::test_hole_size_invalid_and_equal_reports_are_noops;
@@ -125,6 +134,7 @@ kernel_tests! {
     test_list__test_virtual_list_window_extent_identity_and_focus => slab_kernel::test_list::test_virtual_list_window_extent_identity_and_focus;
     test_list__test_virtual_list_frame_settle_reveal_and_op_bound => slab_kernel::test_list::test_virtual_list_frame_settle_reveal_and_op_bound;
     test_list__test_retained_frame_update_reuses_output_and_reports_clean_frames => slab_kernel::test_list::test_retained_frame_update_reuses_output_and_reports_clean_frames;
+    test_list__test_reveal_item_parks_below_pinned_sticky_header => slab_kernel::test_list::test_reveal_item_parks_below_pinned_sticky_header;
 
     test_motion__test_apply_skips_lifted_bindings => slab_kernel::test_motion::test_apply_skips_lifted_bindings;
     test_motion__test_easing_and_cycle_modes => slab_kernel::test_motion::test_easing_and_cycle_modes;
@@ -139,6 +149,7 @@ kernel_tests! {
     test_motion__test_lifts_classification => slab_kernel::test_motion::test_lifts_classification;
     test_motion__test_rgba_swap_involution => slab_kernel::test_motion::test_rgba_swap_involution;
     test_motion__test_tuple_lerp_elementwise => slab_kernel::test_motion::test_tuple_lerp_elementwise;
+    test_motion__test_value_transition_tweens_param_writes => slab_kernel::test_motion::test_value_transition_tweens_param_writes;
 
     test_multiline__test_caret_geometry_honors_padding_and_alignment => slab_kernel::test_multiline::test_caret_geometry_honors_padding_and_alignment;
     test_multiline__test_enter_matrix_and_submit_payload => slab_kernel::test_multiline::test_enter_matrix_and_submit_payload;
@@ -150,6 +161,8 @@ kernel_tests! {
     test_multiline__test_visual_arrows_home_end_and_caret_geometry => slab_kernel::test_multiline::test_visual_arrows_home_end_and_caret_geometry;
 
     test_textm__test_default_advance => slab_kernel::test_textm::test_default_advance;
+    test_textm__test_cumulative_diagnostics_survive_resolves => slab_kernel::test_textm::test_cumulative_diagnostics_survive_resolves;
+    test_textm__test_fallback_advance_eaw => slab_kernel::test_textm::test_fallback_advance_eaw;
     test_textm__test_hard_break_long_word => slab_kernel::test_textm::test_hard_break_long_word;
     test_textm__test_hard_newline => slab_kernel::test_textm::test_hard_newline;
     test_textm__test_max_lines => slab_kernel::test_textm::test_max_lines;
@@ -159,6 +172,7 @@ kernel_tests! {
     test_textm__test_nowrap_ellipsis => slab_kernel::test_textm::test_nowrap_ellipsis;
     test_textm__test_wrap_basic => slab_kernel::test_textm::test_wrap_basic;
     test_textm__test_wrap_nbsp_glue => slab_kernel::test_textm::test_wrap_nbsp_glue;
+    test_textm__test_uncovered_runs_marked => slab_kernel::test_textm::test_uncovered_runs_marked;
 
     test_value__test_active_theme_token_lookup => slab_kernel::test_value::test_active_theme_token_lookup;
     test_value__test_f64_bits => slab_kernel::test_value::test_f64_bits;

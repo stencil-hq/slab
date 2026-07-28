@@ -88,9 +88,9 @@ pub fn fill(f: &mut Fix, text: &str, multi: bool, submit: bool, width: f64) {
         f.d.sign_node.push(0);
         f.d.sign_trigger.push(2);
     }
-    f.lay.tls.push(textm::measure_text(
+    f.lay.tls.push(std::rc::Rc::new(textm::measure_text(
         &f.d, -1, 14.0, 1.2, 0.0, text, width, multi, false, -1,
-    ));
+    )));
     f.lay.p_node.push(0);
     f.lay.p_tl.push(0);
     add_scene(&mut f.sc, 0, -1, 10.0, 20.0, width, 16.8, flags);
@@ -426,7 +426,7 @@ pub fn test_fresh_wrapped_layout_scroll_follow_settles() {
         0.0,
         "stale one-line layout does not predict wrap"
     );
-    f.lay.tls[0] = textm::measure_text(
+    f.lay.tls[0] = std::rc::Rc::new(textm::measure_text(
         &f.d,
         -1,
         14.0,
@@ -437,7 +437,7 @@ pub fn test_fresh_wrapped_layout_scroll_follow_settles() {
         true,
         false,
         -1,
-    );
+    ));
     assert!(
         dispatch::follow_caret_fresh(&f.d, &mut f.st, &f.lay, &f.sc, &mut f.ds),
         "fresh wrapped layout requests settle solve"

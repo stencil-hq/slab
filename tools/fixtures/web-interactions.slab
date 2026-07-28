@@ -1,5 +1,15 @@
-// Browser interaction fixture for IME, clipboard, context, drag ghost, and tokens.
-params { show_extra bool = false }
+// Browser interaction fixture for IME, clipboard, context, drag ghost, tokens,
+// click-count chaining, and composable each-item keys.
+params {
+  show_extra bool = false
+  rows list(RowItem) = [RowItem(label="one"), RowItem(label="two")]
+}
+
+def RowItem(label="") export {
+  row key=item w=120 h=20 {
+    text#title label size=12 color=#ffffff nowrap
+  }
+}
 
 tokens {
   color { page #112233; marker #ff00ff }
@@ -11,7 +21,7 @@ theme dusk {
   space { unit 10 }
 }
 
-col key=board w=320 h=180 gap=16 bg=color.page {
+col key=board w=320 h=320 gap=16 bg=color.page {
   text "" key=field field=changed context=menu w=240 h=36 size=16 bg=#ffffff color=#111111
   box key=source w=80 h=48 drag=drag-start drag-ghost bg=color.marker {
     para { span "drag" strike=true color=#ffffff size=14 }
@@ -19,6 +29,8 @@ col key=board w=320 h=180 gap=16 bg=color.page {
   box key=target w=80 h=48 drop=dropped bg=#226644
   text "A◐B" key=missing w=64 h=16 size=14 color=#ffffff
   box key=overflow w=400 h=1 bg=#000000
+  box key=dbl w=80 h=24 act=tapped dblclick=boom bg=#8844aa
+  each param.rows key=rows
   when show_extra {
     text "" key=deferred field=deferred w=240 h=36 size=16 bg=#ffffff color=#111111
   }

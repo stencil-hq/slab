@@ -182,7 +182,7 @@ fn signal_names(fixture: &Fixture, effects: &Effects) -> Vec<String> {
     effects
         .sig_name
         .iter()
-        .map(|&name| slir::str_at(&fixture.doc, name))
+        .map(|&name| slir::str_at(&fixture.doc, name).to_owned())
         .collect()
 }
 
@@ -220,6 +220,8 @@ pub fn test_press_and_context_button_semantics() {
             button: 0,
             clicks: 1,
             key: "root/source".into(),
+            hit_key: "root/source/child".into(),
+            pressed_key: String::new(),
             src_key: String::new(),
             src_item: String::new(),
         }]
@@ -272,27 +274,30 @@ pub fn test_press_and_context_button_semantics() {
     assert_eq!(field_context.sig_meta[0].mods, dispatch::M_ALT);
 }
 
-/// A handled double-click emits on down and suppresses that gesture's Activate.
+/// A handled multi-click emits Dblclick on down and suppresses that gesture's Activate.
 pub fn test_double_click_suppresses_activate() {
-    let mut fixture = fixture(&[
-        (SOURCE, dispatch::TR_ACTIVATE, "activate"),
-        (SOURCE, dispatch::TR_DBLCLICK, "double"),
-    ]);
-    let down = send(
-        &mut fixture,
-        &pointer(dispatch::E_POINTER_DOWN, 20.0, 20.0, 0, 2, 0),
-    );
-    assert_eq!(signal_names(&fixture, &down), ["double"]);
-    assert_eq!(down.sig_meta[0].clicks, 2);
-    assert_eq!(down.sig_meta[0].key, "root/source");
+    for clicks in [2, 3] {
+        let mut fixture = fixture(&[
+            (SOURCE, dispatch::TR_ACTIVATE, "activate"),
+            (SOURCE, dispatch::TR_DBLCLICK, "double"),
+        ]);
+        let down = send(
+            &mut fixture,
+            &pointer(dispatch::E_POINTER_DOWN, 20.0, 20.0, 0, clicks, 0),
+        );
+        assert_eq!(signal_names(&fixture, &down), ["double"]);
+        assert_eq!(down.sig_meta[0].clicks, clicks);
+        assert_eq!(down.sig_meta[0].key, "root/source");
+        assert_eq!(down.sig_meta[0].hit_key, "root/source/child");
 
-    let up = send(
-        &mut fixture,
-        &pointer(dispatch::E_POINTER_UP, 20.0, 20.0, 0, 0, 0),
-    );
-    assert!(up.sig_name.is_empty(), "Activate must be suppressed");
-    assert_eq!(fixture.dispatch.pressed, slir::NONE);
-    assert!(!fixture.dispatch.suppress_activate);
+        let up = send(
+            &mut fixture,
+            &pointer(dispatch::E_POINTER_UP, 20.0, 20.0, 0, 0, 0),
+        );
+        assert!(up.sig_name.is_empty(), "Activate must be suppressed");
+        assert_eq!(fixture.dispatch.pressed, slir::NONE);
+        assert!(!fixture.dispatch.suppress_activate);
+    }
 }
 
 /// Drag starts strictly beyond four units, targets the deepest external Drop, and cleans up.
@@ -792,13 +797,15 @@ pub fn test_pointer_move_delta_fallback_and_authority() {
     }
 }
 
-/// Keyboard Activate metadata names the fired key; pointer Activate keeps the node key.
-pub fn test_keyboard_activate_metadata_names_fired_key() {
+/// Keyboard Activate keeps the emitter node key and reports the pressed key.
+pub fn test_keyboard_activate_metadata_keeps_node_key() {
     let mut fixture = fixture(&[(SOURCE, dispatch::TR_ACTIVATE, "activate")]);
     fixture.dispatch.fs.focus = SOURCE;
     let keyboard = send(&mut fixture, &key_event("Enter"));
     assert_eq!(signal_names(&fixture, &keyboard), ["activate"]);
-    assert_eq!(keyboard.sig_meta[0].key, "Enter");
+    assert_eq!(keyboard.sig_meta[0].key, "root/source");
+    assert_eq!(keyboard.sig_meta[0].pressed_key, "Enter");
+    assert_eq!(keyboard.sig_meta[0].hit_key, "");
     assert_eq!(
         (keyboard.sig_meta[0].x, keyboard.sig_meta[0].y),
         (-1.0, -1.0)
@@ -814,4 +821,161 @@ pub fn test_keyboard_activate_metadata_names_fired_key() {
     );
     assert_eq!(signal_names(&fixture, &pointer), ["activate"]);
     assert_eq!(pointer.sig_meta[0].key, "root/source");
+    assert_eq!(pointer.sig_meta[0].pressed_key, "");
+    assert_eq!(pointer.sig_meta[0].hit_key, "root/source/child");
+}
+
+/// Escape-blur fires a `cancel=` binder with the retained committed buffer.
+pub fn test_cancel_binder_fires_on_escape_blur() {
+    let mut fx = self::fixture(&[
+        (SOURCE, dispatch::TR_CHANGE, "field-change"),
+        (SOURCE, dispatch::TR_CANCEL, "field-cancel"),
+    ]);
+    fx.doc.node_flags[usize::try_from(SOURCE).expect("node fits usize")] |= slir::F_ESCAPE_BLUR;
+    fx.dispatch.fs.focus = SOURCE;
+    dispatch::ensure_edit(&fx.doc, &mut fx.state, &mut fx.dispatch, SOURCE);
+    let mut typed = pointer(dispatch::E_TEXT, 0.0, 0.0, 0, 0, 0);
+    typed.text = "draft".into();
+    let changed = send(&mut fx, &typed);
+    assert_eq!(signal_names(&fx, &changed), ["field-change"]);
+
+    let escaped = send(&mut fx, &key_event("Escape"));
+    assert_eq!(signal_names(&fx, &escaped), ["field-cancel"]);
+    assert_eq!(escaped.sig_text, ["draft"]);
+    assert_eq!(escaped.sig_meta[0].key, "root/source");
+    assert_eq!(fx.dispatch.fs.focus, slir::NONE);
+    let edit_index =
+        usize::try_from(dispatch::ed_ix(&fx.dispatch, SOURCE)).expect("field keeps edit state");
+    assert_eq!(fx.dispatch.ed[edit_index].text, "draft");
+
+    // Without a cancel binder the escape-blur stays silent.
+    let mut silent = fixture(&[(SOURCE, dispatch::TR_CHANGE, "field-change")]);
+    silent.doc.node_flags[usize::try_from(SOURCE).expect("node fits usize")] |= slir::F_ESCAPE_BLUR;
+    silent.dispatch.fs.focus = SOURCE;
+    dispatch::ensure_edit(&silent.doc, &mut silent.state, &mut silent.dispatch, SOURCE);
+    let escaped = send(&mut silent, &key_event("Escape"));
+    assert!(escaped.sig_name.is_empty());
+    assert_eq!(silent.dispatch.fs.focus, slir::NONE);
+}
+
+/// With empty focus, key dispatch starts at the document root `keys=` map,
+/// while printable keys stay with a focused editor.
+pub fn test_root_keys_map_reachable_without_focus() {
+    let mut fx = self::fixture(&[(ROOT, dispatch::TR_ACTIVATE, "root-activate")]);
+    set_string_attr(&mut fx, ROOT, slir::A_KEYS, "F1,a");
+    assert_eq!(fx.dispatch.fs.focus, slir::NONE);
+    let fired = send(&mut fx, &key_event("F1"));
+    assert_eq!(signal_names(&fx, &fired), ["root-activate"]);
+    assert_eq!(fired.sig_meta[0].pressed_key, "F1");
+
+    // A focused editor consumes printable keys before any `keys=` map.
+    let mut editing = fixture(&[
+        (ROOT, dispatch::TR_ACTIVATE, "root-activate"),
+        (SOURCE, dispatch::TR_CHANGE, "field-change"),
+    ]);
+    set_string_attr(&mut editing, ROOT, slir::A_KEYS, "F1,a");
+    editing.dispatch.fs.focus = SOURCE;
+    dispatch::ensure_edit(
+        &editing.doc,
+        &mut editing.state,
+        &mut editing.dispatch,
+        SOURCE,
+    );
+    let printable = send(&mut editing, &key_event("a"));
+    assert!(
+        printable.sig_name.is_empty(),
+        "printable keys never leave a focused editor"
+    );
+    let function_key = send(&mut editing, &key_event("F1"));
+    assert_eq!(signal_names(&editing, &function_key), ["root-activate"]);
+}
+
+/// PageUp/PageDown/Home/End scroll the nearest scroll ancestor of focus, or
+/// the primary root scroller with empty focus, by exactly one viewport.
+pub fn test_page_keys_scroll_nearest_scroll_ancestor() {
+    let mut fixture = fixture(&[]);
+    let target_index = usize::try_from(scene::index_of(&fixture.scene, TARGET))
+        .expect("target present in test scene");
+    fixture.scene.flags[target_index] |= slir::F_SCROLL;
+    fixture.scene.content_main[target_index] = 400.0;
+    fixture.dispatch.fs.focus = TARGET_INNER;
+
+    let paged = send(&mut fixture, &key_event("PageDown"));
+    assert_eq!(paged.scrolls.len(), 1);
+    assert_eq!(paged.scrolls[0].key, "root/target");
+    assert_eq!(paged.scrolls[0].off, 80.0, "page size equals the viewport");
+
+    let ended = send(&mut fixture, &key_event("End"));
+    assert_eq!(
+        ended.scrolls[0].off, 320.0,
+        "End clamps to the content edge"
+    );
+    let homed = send(&mut fixture, &key_event("Home"));
+    assert_eq!(homed.scrolls[0].off, 0.0);
+    let upped = send(&mut fixture, &key_event("PageUp"));
+    assert!(upped.scrolls.is_empty(), "already at the top");
+
+    // Empty focus targets the primary root scroller.
+    fixture.dispatch.fs.focus = slir::NONE;
+    let paged = send(&mut fixture, &key_event("PageDown"));
+    assert_eq!(paged.scrolls[0].key, "root/target");
+    assert_eq!(paged.scrolls[0].off, 80.0);
+}
+
+/// A host write to a field-synced text param resets idle edit buffers while a
+/// composing editor keeps kernel priority.
+pub fn test_host_param_write_resets_idle_edit_buffer() {
+    let mut fixture = fixture(&[(SOURCE, dispatch::TR_CHANGE, "field-change")]);
+    let name = intern(&mut fixture.doc, "field-change");
+    fixture.doc.parm_name.push(name);
+    fixture.doc.parm_type.push(slir::PARAM_TEXT);
+    fixture.doc.parm_enum_off.push(0);
+    fixture.doc.parm_enum_len.push(0);
+    fixture.doc.parm_default.push(0);
+    style::init_params(&fixture.doc, &mut fixture.state);
+    fixture.dispatch.fs.focus = SOURCE;
+    dispatch::ensure_edit(
+        &fixture.doc,
+        &mut fixture.state,
+        &mut fixture.dispatch,
+        SOURCE,
+    );
+    let mut typed = pointer(dispatch::E_TEXT, 0.0, 0.0, 0, 0, 0);
+    typed.text = "draft".into();
+    send(&mut fixture, &typed);
+
+    assert!(dispatch::reset_synced_edits(
+        &fixture.doc,
+        &mut fixture.state,
+        &mut fixture.dispatch,
+        0,
+        "server"
+    ));
+    let edit_index = usize::try_from(dispatch::ed_ix(&fixture.dispatch, SOURCE))
+        .expect("field keeps edit state");
+    assert_eq!(fixture.dispatch.ed[edit_index].text, "server");
+    assert_eq!(fixture.dispatch.ed[edit_index].caret, 6);
+    assert!(crate::edit::undo(&mut fixture.dispatch.ed[edit_index]));
+    assert_eq!(fixture.dispatch.ed[edit_index].text, "draft");
+    assert!(crate::edit::redo(&mut fixture.dispatch.ed[edit_index]));
+    assert_eq!(fixture.dispatch.ed[edit_index].text, "server");
+
+    // Equal values are a no-op; a composing editor is never reset.
+    assert!(!dispatch::reset_synced_edits(
+        &fixture.doc,
+        &mut fixture.state,
+        &mut fixture.dispatch,
+        0,
+        "server"
+    ));
+    crate::edit::composition_update(&mut fixture.dispatch.ed[edit_index], "かん");
+    assert!(!dispatch::reset_synced_edits(
+        &fixture.doc,
+        &mut fixture.state,
+        &mut fixture.dispatch,
+        0,
+        "host"
+    ));
+    assert_eq!(fixture.dispatch.ed[edit_index].text, "server");
+    assert!(fixture.dispatch.ed[edit_index].composing);
 }

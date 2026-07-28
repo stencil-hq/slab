@@ -5,7 +5,7 @@
 
 use crate::{
     dispatch::{self, Event},
-    edit, hit, layout, list,
+    edit, focus, hit, layout, list,
     scene::{self, Scene},
     slir::{self, Doc},
     style,
@@ -258,6 +258,127 @@ pub fn test_focusables_document_order() {
         [1, 3, 7],
         "document order retains off-screen scroll descendants"
     );
+}
+
+/// `attach=` overlay subtrees traverse immediately after their anchor, and a
+/// removed overlay containing focus hands focus back to the anchor.
+pub fn test_attach_overlay_traversal_and_focus_restore() {
+    let mut d = slir::doc_new();
+    d.ok = true;
+    d.strs.extend([
+        String::new(),
+        "root".into(),
+        "root/button".into(),
+        "root/after".into(),
+        "root/overlay".into(),
+        "root/overlay/item".into(),
+        "focus".into(),
+        "focus-visible".into(),
+    ]);
+    for node in 0..5u32 {
+        d.node_kind.push(slir::K_RECT);
+        d.node_flags.push(0);
+        d.node_parent.push(match node {
+            0 => slir::NONE,
+            4 => 3,
+            _ => 0,
+        });
+        d.node_first.push(slir::NONE);
+        d.node_next.push(slir::NONE);
+        d.node_key.push(node + 1);
+        d.node_id.push(0);
+        d.node_line.push(1);
+    }
+    d.attr_index.resize(6, 0);
+    let mut st = style::st_new();
+    list::init(&d, &mut st.lists);
+
+    // The overlay is declared last in document order but attached to the button.
+    let mut sc = scene::scene_new();
+    add(&mut sc, 0, -1, 0.0, 0.0, 300.0, 100.0, 0.0, 0.0, 0);
+    add(
+        &mut sc,
+        1,
+        0,
+        0.0,
+        0.0,
+        40.0,
+        40.0,
+        0.0,
+        0.0,
+        slir::F_FOCUSABLE,
+    );
+    add(
+        &mut sc,
+        2,
+        0,
+        50.0,
+        0.0,
+        40.0,
+        40.0,
+        0.0,
+        0.0,
+        slir::F_FOCUSABLE,
+    );
+    add(&mut sc, 3, 0, 100.0, 0.0, 80.0, 80.0, 0.0, 0.0, 0);
+    add(
+        &mut sc,
+        4,
+        3,
+        104.0,
+        4.0,
+        40.0,
+        40.0,
+        0.0,
+        0.0,
+        slir::F_FOCUSABLE,
+    );
+    let mut rule = style::rstyle_default(3, slir::K_RECT, 1);
+    rule.has_attach = true;
+    rule.attach = "root/button".into();
+    st.rs.push(rule);
+
+    let mut order = Vec::new();
+    focus::traversal_order(&d, &st, &sc, &mut order);
+    assert_eq!(
+        order,
+        [1, 4, 2],
+        "overlay traverses immediately after its anchor, not in document order"
+    );
+
+    let mut fs = focus::fst_new();
+    focus::set_focus(&d, &mut st, &mut fs, 4, true);
+    focus::refresh(&d, &st, &sc, &mut fs);
+
+    // The overlay (and the focus inside it) leaves the scene.
+    let mut closed = scene::scene_new();
+    add(&mut closed, 0, -1, 0.0, 0.0, 300.0, 100.0, 0.0, 0.0, 0);
+    add(
+        &mut closed,
+        1,
+        0,
+        0.0,
+        0.0,
+        40.0,
+        40.0,
+        0.0,
+        0.0,
+        slir::F_FOCUSABLE,
+    );
+    add(
+        &mut closed,
+        2,
+        0,
+        50.0,
+        0.0,
+        40.0,
+        40.0,
+        0.0,
+        0.0,
+        slir::F_FOCUSABLE,
+    );
+    assert!(focus::restore(&d, &mut st, &closed, &mut fs));
+    assert_eq!(fs.focus, 1, "focus returns to the overlay anchor");
 }
 
 /// Verifies column and row scroll clamping against their viewports.
@@ -614,7 +735,7 @@ pub fn test_activation_key_bubbles_to_ancestor() {
         "real signal item empty"
     );
     assert_eq!(
-        effects.sig_meta[0].key, "Escape",
+        effects.sig_meta[0].pressed_key, "Escape",
         "metadata names fired key"
     );
 }

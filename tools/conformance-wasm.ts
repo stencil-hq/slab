@@ -1124,6 +1124,12 @@ function runManifestCase(bytes: Uint8Array, testCase: ManifestCase): GoldenOutpu
          name: `${testCase.name}.cells.txt`,
          payload: renderCase(bytes, testCase, (inst, time) => inst.cells_text(time)),
       });
+      // attribute plane: fg/bg/strike runs; SGR-only regressions are
+      // invisible in the plain cells golden (T15)
+      outputs.push({
+         name: `${testCase.name}.attrs.txt`,
+         payload: renderCase(bytes, testCase, (inst, time) => inst.cells_attrs(time)),
+      });
    }
    return outputs;
 }

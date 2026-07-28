@@ -219,3 +219,139 @@ pub fn test_metrics() {
     assert_eq!(layout.h, 14.0, "empty text height");
     assert_eq!(layout.w, 0.0, "empty text width");
 }
+
+/// Builds a solvable single-text-node instance around the synthetic font.
+fn text_instance(content: &str) -> frame::Instance {
+    let mut doc = font_doc();
+    doc.ok = true;
+    doc.strs.push(String::new());
+    let content_ref = u32::try_from(doc.strs.len()).expect("string pool fits u32");
+    doc.strs.push(content.to_owned());
+    doc.node_kind.push(slir::K_TEXT);
+    doc.node_flags.push(slir::F_NOWRAP);
+    doc.node_parent.push(slir::NONE);
+    doc.node_first.push(slir::NONE);
+    doc.node_next.push(slir::NONE);
+    doc.node_key.push(0);
+    doc.node_id.push(0);
+    doc.node_line.push(3);
+    doc.attr_index.push(0);
+    doc.aval_tag.push(slir::T_STR);
+    doc.aval_lo.push(content_ref);
+    doc.aval_hi.push(0);
+    doc.aval_num.push(0.0);
+    doc.attr_id.push(slir::A_CONTENT);
+    doc.attr_val.push(0);
+    doc.attr_index.push(1);
+    let mut inst = frame::inst_shell();
+    inst.doc = doc;
+    frame::inst_init(&mut inst);
+    frame::inst_set_env(&mut inst, 500.0, 500.0, 0, false, false);
+    inst
+}
+
+/// Verifies deterministic East-Asian-Width fallback advances for codepoints
+/// the cmap does not cover (C-16): mono-class families charge two cells for
+/// wide codepoints; vector families keep the single replacement advance.
+pub fn test_fallback_advance_eaw() {
+    let mut doc = font_doc();
+    // 日 (U+65E5) is EAW-wide and absent from the synthetic cmap.
+    assert_eq!(
+        textm::char_w(&doc, 0, 10.0, 0.0, 0x65E5),
+        6.0,
+        "vector families charge one replacement advance"
+    );
+    doc.font_class[0] = 1;
+    assert_eq!(
+        textm::char_w(&doc, 0, 10.0, 0.0, 0x65E5),
+        12.0,
+        "mono families charge two cells for wide uncovered codepoints"
+    );
+    assert_eq!(
+        textm::char_w(&doc, 0, 10.0, 0.0, 122),
+        6.0,
+        "mono families charge one cell for narrow uncovered codepoints"
+    );
+    assert_eq!(
+        textm::char_w(&doc, 0, 10.0, 0.0, 97),
+        5.0,
+        "covered advances ignore the family class"
+    );
+}
+
+/// Verifies uncovered-glyph run marking on text operations (C-16): runs are
+/// half-open codepoint ranges into the op string, coalesced across adjacent
+/// uncovered clusters, and absent for fully covered strings.
+pub fn test_uncovered_runs_marked() {
+    let mut inst = text_instance("ab\u{2715}\u{2715}xa");
+    let output = frame::inst_frame(&mut inst, 0.0);
+    let text = output
+        .ops
+        .iter()
+        .find_map(|op| match op {
+            FrameOp::Text(text) => Some(text),
+            _ => None,
+        })
+        .expect("text op present");
+    assert_eq!(
+        (text.uncov_off, text.uncov_len),
+        (0, 1),
+        "adjacent uncovered clusters coalesce into one run"
+    );
+    assert_eq!(
+        output.uncovered,
+        [2, 4],
+        "run bounds are codepoint offsets into the op string"
+    );
+
+    let mut covered = text_instance("abxa");
+    let output = frame::inst_frame(&mut covered, 0.0);
+    let text = output
+        .ops
+        .iter()
+        .find_map(|op| match op {
+            FrameOp::Text(text) => Some(text),
+            _ => None,
+        })
+        .expect("text op present");
+    assert_eq!(text.uncov_len, 0, "covered strings mark no runs");
+    assert!(
+        output.uncovered.is_empty(),
+        "covered frame pool stays empty"
+    );
+}
+
+/// Verifies the cumulative per-instance diagnostic set (C-17): the per-solve
+/// stream stays one-shot, while [`frame::inst_diags`] retains every note
+/// until a new document initializes.
+pub fn test_cumulative_diagnostics_survive_resolves() {
+    let mut inst = text_instance("a\u{2715}b");
+    let first = frame::inst_frame(&mut inst, 0.0);
+    assert!(
+        first
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "glyph-missing"),
+        "first solve streams the glyph note"
+    );
+    inst.dirty = true;
+    let second = frame::inst_frame(&mut inst, 1.0);
+    assert!(
+        second
+            .diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code != "glyph-missing"),
+        "intermediate solves consume the one-shot stream"
+    );
+    assert!(
+        frame::inst_diags(&inst)
+            .iter()
+            .any(|diagnostic| diagnostic.code == "glyph-missing" && diagnostic.line == 3),
+        "cumulative set stays queryable after any solve"
+    );
+    frame::inst_init(&mut inst);
+    assert!(
+        frame::inst_diags(&inst).is_empty(),
+        "new document assignment resets the cumulative set"
+    );
+}
