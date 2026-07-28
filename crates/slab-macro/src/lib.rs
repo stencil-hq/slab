@@ -215,7 +215,11 @@ fn expand(path: &str, name: Option<&str>, fonts: &[(String, String)]) -> Result<
         .iter()
         .map(|p| format!("const _: &[u8] = include_bytes!({p:?});\n"))
         .collect();
-    Ok(format!("pub mod {name} {{\n{module}\n{tracked}}}\n"))
+    // Generated code is not the caller's to lint; shield it from strict
+    // workspace lint levels (clippy::all alone leaves pedantic active).
+    Ok(format!(
+        "pub mod {name} {{\n#![allow(clippy::all, clippy::pedantic, clippy::nursery, dead_code)]\n{module}\n{tracked}}}\n"
+    ))
 }
 
 #[cfg(test)]
