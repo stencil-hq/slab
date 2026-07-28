@@ -21,7 +21,7 @@ use crate::{
     style::{self, St},
     textm,
 };
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashSet;
 use std::collections::BTreeSet;
 
 /// Mutable state for one decoded document and its most recent solve.
@@ -55,9 +55,9 @@ pub struct Instance {
     focus_note: String,
     /// Runtime glyph notes already surfaced, keyed by authored family and codepoint.
     glyph_warned: BTreeSet<(String, u32)>,
-    /// Text-op contents already scanned for glyph coverage, keyed by font index.
+    /// Codepoints already coverage-checked per font table index.
     /// Never iterated; invalidated when the font table changes.
-    glyph_scanned: FxHashMap<i32, FxHashSet<String>>,
+    glyph_scanned: Vec<FxHashSet<u32>>,
     /// Every distinct diagnostic observed since the document was assigned, in
     /// first-occurrence order. Solves append; only [`inst_init`] clears.
     diags_cum: Vec<FrameDiagnostic>,
@@ -154,7 +154,7 @@ pub fn inst_shell() -> Instance {
         root_pi: -1,
         focus_note: String::new(),
         glyph_warned: BTreeSet::new(),
-        glyph_scanned: FxHashMap::default(),
+        glyph_scanned: Vec::new(),
         diags_cum: Vec::new(),
     }
 }
@@ -228,14 +228,14 @@ fn scan_glyph_coverage(i: &mut Instance, frame: &mut Frame) {
         let Some(content) = frame.strings.get(text.str_ref as usize) else {
             continue;
         };
-        if i.glyph_scanned
-            .get(&text.font)
-            .is_some_and(|scanned| scanned.contains(content.as_str()))
-        {
-            continue;
+        if i.glyph_scanned.len() <= font {
+            i.glyph_scanned.resize_with(font + 1, FxHashSet::default);
         }
         for character in content.chars() {
             let codepoint = u32::from(character);
+            if !i.glyph_scanned[font].insert(codepoint) {
+                continue;
+            }
             if !graphemes::requires_glyph(codepoint)
                 || slir::font_gid(&i.doc, text.font, codepoint) != 0
                 || !i.glyph_warned.insert((family.to_owned(), codepoint))
@@ -256,10 +256,6 @@ fn scan_glyph_coverage(i: &mut Instance, frame: &mut Frame) {
                 ),
             });
         }
-        i.glyph_scanned
-            .entry(text.font)
-            .or_default()
-            .insert(content.clone());
     }
 }
 
