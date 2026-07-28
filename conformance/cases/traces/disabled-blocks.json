@@ -41,6 +41,6 @@
   ],
   "expect": {
     "signals": [],
-    "focus_key": "col@0/b/box@0"
+    "focus_key": "col@0/#list/r0"
   }
 }

@@ -2,22 +2,22 @@
 tokens {
   color {
     surface #102030
-    ink #f4f7fb
-    direct #36c2b4
-    state #e06c75
+    ink     #f4f7fb
+    direct  #36c2b4
+    state   #e06c75
     default #d19a66
-    arg #61afef
+    arg     #61afef
   }
 }
 
 theme dusk {
   color {
     surface #382040
-    ink #fff1d6
-    direct #f29a52
-    state #c678dd
+    ink     #fff1d6
+    direct  #f29a52
+    state   #c678dd
     default #98c379
-    arg #56b6c2
+    arg     #56b6c2
   }
 }
 

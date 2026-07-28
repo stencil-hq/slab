@@ -1,8 +1,8 @@
 ╭──────────────────────────────────────╮
-│中央駅 STATUS                         │
+│       STATUS                         │
 │                                      │
-│👍 ready 🇨🇭 Zürich                    │
+│   ready    Zürich                    │
 │                                      │
-│café · 東京 · 中文                    │
-│text presentation: 👍︎                  │
+│café ·      ·                         │
+│text presentation:                    │
 ╰──────────────────────────────────────╯

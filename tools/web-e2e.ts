@@ -706,11 +706,23 @@ const typedHostState = await page.evaluate(async () => {
       } | null;
    };
    await host.whenSettled();
+   const missing = host.shadowRoot?.querySelector<HTMLElement>('[data-slab-missing]');
+   const before = missing?.previousElementSibling?.getBoundingClientRect();
+   const spacer = missing?.getBoundingClientRect();
+   const after = missing?.nextElementSibling?.getBoundingClientRect();
+   const preservesMissingAdvance =
+      before !== undefined &&
+      spacer !== undefined &&
+      after !== undefined &&
+      spacer.width > 0 &&
+      spacer.left >= before.right - 0.5 &&
+      after.left >= spacer.right - 0.5;
    return {
       focusedKey: host.focusedKey(),
       inEditField: host.inEditField(),
       frameDiagnostics: host.lastFrame?.diagnostics ?? [],
       eventDiagnostics: (globalThis as DebugGlobal).__sig?.diagnostics ?? [],
+      preservesMissingAdvance,
       paintsMissingGlyph: Array.from(
          host.shadowRoot?.querySelectorAll('.slab-ops span') ?? [],
       ).some((span) => span.textContent?.includes('◐') === true),
@@ -736,8 +748,9 @@ check(
    JSON.stringify(typedHostState),
 );
 check(
-   '(m) web painter suppresses browser fallback and emits glyph-missing',
+   '(m) web painter suppresses browser fallback, preserves advance, and emits glyph-missing',
    !typedHostState.paintsMissingGlyph &&
+      typedHostState.preservesMissingAdvance &&
       typedHostState.eventDiagnostics.some(
          (detail) =>
             typeof detail === 'object' &&
