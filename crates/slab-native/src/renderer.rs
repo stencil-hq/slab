@@ -3,9 +3,9 @@
 //! Model (research slab-wgpu, extended): painter's-order premultiplied alpha,
 //! no depth buffer. Rects are instanced quads with an SDF fragment shader
 //! (fill, aligned stroke, in-shader linear/radial gradients, blurred-SDF
-//! shadows, rounded clip). Text is textured quads from a shared A8 atlas fed
-//! by kernel `text_glyphs`; glyph coverage blends through the gamma-corrected
-//! curve in shader.wgsl ("text gamma") to match desktop text-stack weight.
+//! shadows, rounded clip). Text is hinted into independent A8 mask and RGBA
+//! color atlases from kernel `text_glyphs`; quarter-pixel x/y bins preserve
+//! fractional tracking and the shader applies small-text smoothing.
 //! Paths are lyon meshes tessellated at first use.
 //! GroupPush/Pop composite through pooled offscreen layers with opacity and
 //! two-pass gaussian blur; Backdrop copies the current target region, blurs
@@ -28,7 +28,7 @@ use wgpu::util::DeviceExt;
 
 use crate::{
 	RegisteredFont,
-	atlas::{ATLAS, Atlas, Face},
+	atlas::{Atlas, AtlasKind, Face},
 	tess::{
 		Mesh, fill_mesh, fill_mesh_data, rect_stroke_mesh, squircle_fill_mesh, stroke_mesh,
 		stroke_mesh_data,
@@ -594,38 +594,42 @@ impl UploadBuffer {
 }
 
 pub struct Renderer {
-	pub device:   wgpu::Device,
-	pub queue:    wgpu::Queue,
-	rect_pl:      wgpu::RenderPipeline,
-	glyph_pl:     wgpu::RenderPipeline,
-	mesh_pl:      wgpu::RenderPipeline,
-	tex_pl:       wgpu::RenderPipeline,
-	blur_pl:      wgpu::RenderPipeline,
-	texband_pl:   wgpu::RenderPipeline,
-	mask_pl:      wgpu::RenderPipeline,
-	tilt_pl:      wgpu::RenderPipeline,
-	blit_pls:     HashMap<wgpu::TextureFormat, wgpu::RenderPipeline>,
-	shader:       wgpu::ShaderModule,
-	bgl_globals:  wgpu::BindGroupLayout,
-	bgl_tex:      wgpu::BindGroupLayout,
-	globals:      wgpu::Buffer,
-	globals_bg:   wgpu::BindGroup,
-	grads_buf:    wgpu::Buffer,
-	grads_cpu:    Vec<GradGpu>,
-	sampler:      wgpu::Sampler,
-	atlas:        Atlas,
-	atlas_tex:    wgpu::Texture,
-	atlas_bg:     wgpu::BindGroup,
-	docs:         Vec<DocRes>,
-	main:         Option<(u32, u32, Target)>,
-	pool:         Vec<Target>,
-	frame_spare:  Option<FrameBuild>,
-	rect_upload:  UploadBuffer,
-	glyph_upload: UploadBuffer,
-	mesh_upload:  UploadBuffer,
-	tex_upload:   UploadBuffer,
-	notes:        HashSet<String>,
-	pub scale:    f64,
+	pub device:       wgpu::Device,
+	pub queue:        wgpu::Queue,
+	rect_pl:          wgpu::RenderPipeline,
+	glyph_pl:         wgpu::RenderPipeline,
+	mesh_pl:          wgpu::RenderPipeline,
+	tex_pl:           wgpu::RenderPipeline,
+	blur_pl:          wgpu::RenderPipeline,
+	texband_pl:       wgpu::RenderPipeline,
+	mask_pl:          wgpu::RenderPipeline,
+	tilt_pl:          wgpu::RenderPipeline,
+	blit_pls:         HashMap<wgpu::TextureFormat, wgpu::RenderPipeline>,
+	shader:           wgpu::ShaderModule,
+	bgl_globals:      wgpu::BindGroupLayout,
+	bgl_tex:          wgpu::BindGroupLayout,
+	bgl_glyph:        wgpu::BindGroupLayout,
+	globals:          wgpu::Buffer,
+	globals_bg:       wgpu::BindGroup,
+	grads_buf:        wgpu::Buffer,
+	grads_cpu:        Vec<GradGpu>,
+	sampler:          wgpu::Sampler,
+	atlas:            Atlas,
+	atlas_mask_tex:   wgpu::Texture,
+	atlas_color_tex:  wgpu::Texture,
+	atlas_mask_size:  u32,
+	atlas_color_size: u32,
+	atlas_bg:         wgpu::BindGroup,
+	docs:             Vec<DocRes>,
+	main:             Option<(u32, u32, Target)>,
+	pool:             Vec<Target>,
+	frame_spare:      Option<FrameBuild>,
+	rect_upload:      UploadBuffer,
+	glyph_upload:     UploadBuffer,
+	mesh_upload:      UploadBuffer,
+	tex_upload:       UploadBuffer,
+	notes:            HashSet<String>,
+	pub scale:        f64,
 }
 
 impl Renderer {
@@ -691,7 +695,38 @@ impl Renderer {
 					count:      None,
 				},
 				wgpu::BindGroupLayoutEntry {
+					binding:    2,
+					visibility: wgpu::ShaderStages::FRAGMENT,
+					ty:         wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+					count:      None,
+				},
+			],
+		});
+		let bgl_glyph = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+			label:   Some("glyph atlases"),
+			entries: &[
+				wgpu::BindGroupLayoutEntry {
+					binding:    0,
+					visibility: wgpu::ShaderStages::FRAGMENT,
+					ty:         wgpu::BindingType::Texture {
+						sample_type:    wgpu::TextureSampleType::Float { filterable: true },
+						view_dimension: wgpu::TextureViewDimension::D2,
+						multisampled:   false,
+					},
+					count:      None,
+				},
+				wgpu::BindGroupLayoutEntry {
 					binding:    1,
+					visibility: wgpu::ShaderStages::FRAGMENT,
+					ty:         wgpu::BindingType::Texture {
+						sample_type:    wgpu::TextureSampleType::Float { filterable: true },
+						view_dimension: wgpu::TextureViewDimension::D2,
+						multisampled:   false,
+					},
+					count:      None,
+				},
+				wgpu::BindGroupLayoutEntry {
+					binding:    2,
 					visibility: wgpu::ShaderStages::FRAGMENT,
 					ty:         wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
 					count:      None,
@@ -717,44 +752,27 @@ impl Renderer {
 			address_mode_v: wgpu::AddressMode::ClampToEdge,
 			..Default::default()
 		});
-		let atlas_tex = device.create_texture(&wgpu::TextureDescriptor {
-			label:           Some("atlas"),
-			size:            wgpu::Extent3d {
-				width:                 ATLAS,
-				height:                ATLAS,
-				depth_or_array_layers: 1,
-			},
-			mip_level_count: 1,
-			sample_count:    1,
-			dimension:       wgpu::TextureDimension::D2,
-			format:          wgpu::TextureFormat::R8Unorm,
-			usage:           wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-			view_formats:    &[],
-		});
-		let atlas_view = atlas_tex.create_view(&wgpu::TextureViewDescriptor::default());
-		let atlas_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-			label:   Some("atlas"),
-			layout:  &bgl_tex,
-			entries: &[
-				wgpu::BindGroupEntry {
-					binding:  0,
-					resource: wgpu::BindingResource::TextureView(&atlas_view),
-				},
-				wgpu::BindGroupEntry {
-					binding:  1,
-					resource: wgpu::BindingResource::Sampler(&sampler),
-				},
-			],
-		});
+		let atlas = Atlas::new(device.limits().max_texture_dimension_2d);
+		let atlas_mask_size = atlas.size(AtlasKind::Mask);
+		let atlas_color_size = atlas.size(AtlasKind::Color);
+		let atlas_mask_tex = make_atlas_texture(&device, AtlasKind::Mask, atlas_mask_size);
+		let atlas_color_tex = make_atlas_texture(&device, AtlasKind::Color, atlas_color_size);
+		let atlas_bg =
+			make_atlas_bg(&device, &bgl_glyph, &atlas_color_tex, &atlas_mask_tex, &sampler);
 
 		let layout1 = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
 			label:              Some("g"),
 			bind_group_layouts: &[Some(&bgl_globals)],
 			immediate_size:     0,
 		});
-		let layout2 = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+		let layout_tex = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
 			label:              Some("gt"),
 			bind_group_layouts: &[Some(&bgl_globals), Some(&bgl_tex)],
+			immediate_size:     0,
+		});
+		let layout_glyph = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+			label:              Some("glyph"),
+			bind_group_layouts: &[Some(&bgl_globals), Some(&bgl_glyph)],
 			immediate_size:     0,
 		});
 
@@ -774,7 +792,7 @@ impl Renderer {
 			&device,
 			&shader,
 			"glyph",
-			&layout2,
+			&layout_glyph,
 			"vs_glyph",
 			"fs_glyph",
 			&[Some(inst_layout(std::mem::size_of::<GlyphI>() as u64, &GLYPH_ATTRS))],
@@ -809,7 +827,7 @@ impl Renderer {
 			&device,
 			&shader,
 			"texq",
-			&layout2,
+			&layout_tex,
 			"vs_tex",
 			"fs_tex",
 			&[Some(inst_layout(std::mem::size_of::<TexI>() as u64, &TEX_ATTRS))],
@@ -821,7 +839,7 @@ impl Renderer {
 			&device,
 			&shader,
 			"blur",
-			&layout2,
+			&layout_tex,
 			"vs_blur",
 			"fs_blur",
 			&[Some(inst_layout(std::mem::size_of::<BlurI>() as u64, &BLUR_ATTRS))],
@@ -833,7 +851,7 @@ impl Renderer {
 			&device,
 			&shader,
 			"texband",
-			&layout2,
+			&layout_tex,
 			"vs_texband",
 			"fs_texband",
 			&[Some(inst_layout(std::mem::size_of::<TexBandI>() as u64, &TEXBAND_ATTRS))],
@@ -870,7 +888,7 @@ impl Renderer {
 			&device,
 			&shader,
 			"tilt",
-			&layout2,
+			&layout_tex,
 			"vs_tilt",
 			"fs_tilt",
 			&[Some(inst_layout(std::mem::size_of::<TiltI>() as u64, &TILT_ATTRS))],
@@ -894,13 +912,17 @@ impl Renderer {
 			shader,
 			bgl_globals,
 			bgl_tex,
+			bgl_glyph,
 			globals,
 			globals_bg,
 			grads_buf,
 			grads_cpu: Vec::new(),
 			sampler,
-			atlas: Atlas::default(),
-			atlas_tex,
+			atlas,
+			atlas_mask_tex,
+			atlas_color_tex,
+			atlas_mask_size,
+			atlas_color_size,
 			atlas_bg,
 			docs: Vec::new(),
 			main: None,
@@ -1176,7 +1198,7 @@ impl Renderer {
 					resource: wgpu::BindingResource::TextureView(&view),
 				},
 				wgpu::BindGroupEntry {
-					binding:  1,
+					binding:  2,
 					resource: wgpu::BindingResource::Sampler(&self.sampler),
 				},
 			],
@@ -1250,6 +1272,7 @@ impl Renderer {
 	/// device-px target at `scale` device px per logical unit.
 	pub fn build(&mut self, layers: &[LayerInput<'_>], scale: f64, tw: u32, th: u32) -> FrameBuild {
 		self.scale = scale;
+		self.atlas.begin_frame();
 		let mut fb = self.frame_spare.take().unwrap_or_else(FrameBuild::empty);
 		fb.clear();
 		fb.tw = tw;
@@ -1266,7 +1289,7 @@ impl Renderer {
 	)]
 	fn build_layer(&mut self, fb: &mut FrameBuild, li: &LayerInput<'_>, s: f32, tw: u32, th: u32) {
 		self.sync_runtime_images(li.doc_id, li.inst);
-		self.refresh_registered_colors(li.doc_id, &li.inst.doc());
+		self.refresh_registered_colors(li.doc_id, li.inst.doc());
 		for diagnostic in &li.frame.diagnostics {
 			self.frame_note(&diagnostic.code, diagnostic.line, &diagnostic.msg);
 		}
@@ -1586,17 +1609,24 @@ impl Renderer {
 							break;
 						}
 						let pen_x = (g.x as f32 + ox) * s;
-						let (base_x, bin) = crate::atlas::subpixel(pen_x);
-						let Some(e) = self.atlas_entry(li.doc_id, g.font, g.gid, px, bin) else {
+						let pen_y = (g.y as f32 + oy) * s;
+						let (base_x, x_bin) = crate::atlas::subpixel(pen_x);
+						let (base_y, y_bin) = crate::atlas::subpixel(pen_y);
+						let Some(e) = self.atlas_entry(li.doc_id, g.font, g.gid, px, x_bin, y_bin) else {
 							continue;
 						};
 						let gx = base_x + e.bearing[0];
-						let gy = (g.y as f32 + oy).mul_add(s, e.bearing[1]).round();
+						let gy = base_y + e.bearing[1];
 						let inst = GlyphI {
 							mabcd: [mat.a, mat.b, mat.c, mat.d],
 							mtp: [mat.tx, mat.ty, gx, gy],
 							su: [e.size[0], e.size[1], e.uv[0], e.uv[1]],
-							uc: [e.uv[2], e.uv[3], clip.radius, 0.0],
+							uc: [
+								e.uv[2],
+								e.uv[3],
+								clip.radius,
+								if e.kind == AtlasKind::Color { 1.0 } else { 0.0 },
+							],
 							clip: clip.sdf,
 							color,
 							g2: tg2,
@@ -2031,11 +2061,12 @@ impl Renderer {
 		font: i32,
 		gid: u32,
 		px: f32,
-		bin: u32,
+		x_bin: u8,
+		y_bin: u8,
 	) -> Option<crate::atlas::GlyphEntry> {
 		// Take the face out to split the borrow with the atlas, then restore.
 		let face = self.docs[doc_id].fonts[font as usize].take()?;
-		let e = self.atlas.entry(doc_id, font, &face, gid, px, bin);
+		let e = self.atlas.entry(doc_id, font, &face, gid, px, x_bin, y_bin);
 		self.docs[doc_id].fonts[font as usize] = Some(face);
 		e
 	}
@@ -2164,6 +2195,7 @@ impl Renderer {
 			align: rect.stroke_align,
 			sides: rect.stroke_sides,
 			dash,
+
 			smooth: mesh_scalar_key(rect.smooth),
 		};
 		if !self.docs[doc_id].strokes.contains_key(&key) {
@@ -2171,6 +2203,64 @@ impl Renderer {
 			self.docs[doc_id].strokes.insert(key, mesh);
 		}
 		key
+	}
+
+	fn sync_atlas(&mut self) {
+		let mask_size = self.atlas.size(AtlasKind::Mask);
+		let color_size = self.atlas.size(AtlasKind::Color);
+		let mut rebind = false;
+		if mask_size != self.atlas_mask_size {
+			self.atlas_mask_tex = make_atlas_texture(&self.device, AtlasKind::Mask, mask_size);
+			self.atlas_mask_size = mask_size;
+			rebind = true;
+		}
+		if color_size != self.atlas_color_size {
+			self.atlas_color_tex = make_atlas_texture(&self.device, AtlasKind::Color, color_size);
+			self.atlas_color_size = color_size;
+			rebind = true;
+		}
+		if rebind {
+			self.atlas_bg = make_atlas_bg(
+				&self.device,
+				&self.bgl_glyph,
+				&self.atlas_color_tex,
+				&self.atlas_mask_tex,
+				&self.sampler,
+			);
+		}
+
+		for kind in [AtlasKind::Mask, AtlasKind::Color] {
+			let Some((row, rows)) = self.atlas.take_dirty(kind) else {
+				continue;
+			};
+			let size = self.atlas.size(kind);
+			let channels = kind.channels() as u32;
+			let stride = size * channels;
+			let band = (row * stride) as usize..((row + rows) * stride) as usize;
+			let texture = match kind {
+				AtlasKind::Mask => &self.atlas_mask_tex,
+				AtlasKind::Color => &self.atlas_color_tex,
+			};
+			self.queue.write_texture(
+				wgpu::TexelCopyTextureInfo {
+					texture,
+					mip_level: 0,
+					origin: wgpu::Origin3d { x: 0, y: row, z: 0 },
+					aspect: wgpu::TextureAspect::All,
+				},
+				&self.atlas.pixels(kind)[band],
+				wgpu::TexelCopyBufferLayout {
+					offset:         0,
+					bytes_per_row:  Some(stride),
+					rows_per_image: Some(rows),
+				},
+				wgpu::Extent3d {
+					width:                 size,
+					height:                rows,
+					depth_or_array_layers: 1,
+				},
+			);
+		}
 	}
 
 	// ----------------------------------------------------------- render ----
@@ -2203,7 +2293,7 @@ impl Renderer {
 					resource: wgpu::BindingResource::TextureView(&view),
 				},
 				wgpu::BindGroupEntry {
-					binding:  1,
+					binding:  2,
 					resource: wgpu::BindingResource::Sampler(&self.sampler),
 				},
 			],
@@ -2292,28 +2382,7 @@ impl Renderer {
 			0,
 			bytemuck::cast_slice(&[tw as f32, th as f32, 0.0, 0.0]),
 		);
-		if let Some((row, rows)) = self.atlas.take_dirty() {
-			let band = (row * ATLAS) as usize..((row + rows) * ATLAS) as usize;
-			self.queue.write_texture(
-				wgpu::TexelCopyTextureInfo {
-					texture:   &self.atlas_tex,
-					mip_level: 0,
-					origin:    wgpu::Origin3d { x: 0, y: row, z: 0 },
-					aspect:    wgpu::TextureAspect::All,
-				},
-				&self.atlas.pixels[band],
-				wgpu::TexelCopyBufferLayout {
-					offset:         0,
-					bytes_per_row:  Some(ATLAS),
-					rows_per_image: Some(rows),
-				},
-				wgpu::Extent3d {
-					width:                 ATLAS,
-					height:                rows,
-					depth_or_array_layers: 1,
-				},
-			);
-		}
+		self.sync_atlas();
 
 		let mkbuf = |data: &[u8], label: &str| {
 			self
@@ -2965,6 +3034,57 @@ fn image_uv(inst: &Instance, im: &slab_kernel::flatten::OpImage) -> [f32; 4] {
 	let u1 = (im.w - tx) / (iw * sx);
 	let v1 = (im.h - ty) / (ih * sy);
 	[u0 as f32, v0 as f32, (u1 - u0) as f32, (v1 - v0) as f32]
+}
+
+fn make_atlas_texture(device: &wgpu::Device, kind: AtlasKind, size: u32) -> wgpu::Texture {
+	device.create_texture(&wgpu::TextureDescriptor {
+		label:           Some(match kind {
+			AtlasKind::Mask => "glyph mask atlas",
+			AtlasKind::Color => "glyph color atlas",
+		}),
+		size:            wgpu::Extent3d {
+			width:                 size,
+			height:                size,
+			depth_or_array_layers: 1,
+		},
+		mip_level_count: 1,
+		sample_count:    1,
+		dimension:       wgpu::TextureDimension::D2,
+		format:          match kind {
+			AtlasKind::Mask => wgpu::TextureFormat::R8Unorm,
+			// Web color mode: Swash's sRGB bytes stay unmodified in a linear
+			// texture, matching browser and Slate blending.
+			AtlasKind::Color => wgpu::TextureFormat::Rgba8Unorm,
+		},
+		usage:           wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+		view_formats:    &[],
+	})
+}
+
+fn make_atlas_bg(
+	device: &wgpu::Device,
+	layout: &wgpu::BindGroupLayout,
+	color: &wgpu::Texture,
+	mask: &wgpu::Texture,
+	sampler: &wgpu::Sampler,
+) -> wgpu::BindGroup {
+	let color_view = color.create_view(&wgpu::TextureViewDescriptor::default());
+	let mask_view = mask.create_view(&wgpu::TextureViewDescriptor::default());
+	device.create_bind_group(&wgpu::BindGroupDescriptor {
+		label: Some("glyph atlases"),
+		layout,
+		entries: &[
+			wgpu::BindGroupEntry {
+				binding:  0,
+				resource: wgpu::BindingResource::TextureView(&color_view),
+			},
+			wgpu::BindGroupEntry {
+				binding:  1,
+				resource: wgpu::BindingResource::TextureView(&mask_view),
+			},
+			wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(sampler) },
+		],
+	})
 }
 
 const fn premul_blend() -> wgpu::BlendState {

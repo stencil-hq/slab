@@ -62,7 +62,7 @@ fn render_and_read(
 	fr: &Frame,
 	imgs: &[Vec<u8>],
 ) -> (u32, u32, Vec<u8>) {
-	let doc_id = renderer.register_doc(&inst.doc(), imgs, &[]);
+	let doc_id = renderer.register_doc(inst.doc(), imgs, &[]);
 	let tw = fr.width.ceil() as u32;
 	let th = fr.height.ceil() as u32;
 	let layers = [LayerInput { doc_id, inst, frame: fr, ox: 0.0, oy: 0.0, clip: None }];

@@ -112,7 +112,7 @@ pub trait ShellHost<U> {
 	fn effects(&mut self, document: &mut NativeDocument, effects: &kdispatch::Effects) {
 		for index in 0..effects.sig_name.len() {
 			let name =
-				slab_kernel::slir::str_at(&document.inst.doc(), effects.sig_name[index]).to_owned();
+				slab_kernel::slir::str_at(document.inst.doc(), effects.sig_name[index]).to_owned();
 			let text = effects.sig_text.get(index).cloned().unwrap_or_default();
 			self.signal(document, &name, &text);
 		}
@@ -283,11 +283,11 @@ fn headless_frame(doc: &mut NativeDocument, opts: &demo::Opts) -> Result<(), Str
 	eprintln!("slab-native: adapter {} ({:?})", adapter.get_info().name, adapter.get_info().backend);
 	let mut renderer = Renderer::new(device, queue);
 	kframe::inst_set_env(&mut doc.inst, opts.width, opts.height, CLIENT_GPU, opts.dark, false);
-	let doc_id = renderer.register_doc(&doc.inst.doc(), &doc.imgs, doc.registered_fonts());
+	let doc_id = renderer.register_doc(doc.inst.doc(), &doc.imgs, doc.registered_fonts());
 	let fr = kframe::inst_frame(&mut doc.inst, opts.t);
 	let pending = kframe::inst_take_signals(&mut doc.inst);
 	for name in pending.sig_name {
-		println!("signal: {}", slab_kernel::slir::str_at(&doc.inst.doc(), name));
+		println!("signal: {}", slab_kernel::slir::str_at(doc.inst.doc(), name));
 	}
 
 	let scale = opts.scale.unwrap_or(1.0);
@@ -713,7 +713,7 @@ where
 			.unwrap_or(caps.formats[0]);
 		let mut renderer = Renderer::new(device, queue);
 		self.doc_id =
-			renderer.register_doc(&self.doc.inst.doc(), &self.doc.imgs, self.doc.registered_fonts());
+			renderer.register_doc(self.doc.inst.doc(), &self.doc.imgs, self.doc.registered_fonts());
 		self.renderer = Some(renderer);
 		self.surface = Some(surface);
 		self.window = Some(window.clone());
@@ -812,7 +812,7 @@ where
 					for node in chain.iter().rev() {
 						// nearest act-bound node decides: drag region → OS
 						// move; anything else (app control) → kernel path
-						let Some(sig) = act_signal(&self.doc.inst.doc(), *node) else {
+						let Some(sig) = act_signal(self.doc.inst.doc(), *node) else {
 							continue;
 						};
 						if WindowCmd::from_signal(sig) == Some(WindowCmd::Drag)

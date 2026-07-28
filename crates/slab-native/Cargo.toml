@@ -16,19 +16,22 @@ path = "src/main.rs"
 workspace = true
 
 [dependencies]
-ab_glyph.workspace = true
+etagere.workspace = true
 accesskit.workspace = true
 accesskit_winit.workspace = true
 arboard.workspace = true
 bytemuck.workspace = true
 lyon.workspace = true
+lru.workspace = true
 png.workspace = true
 pollster.workspace = true
+rustc-hash.workspace = true
 slab-compile.workspace = true
 slab-drive.workspace = true
 slab-fonts.workspace = true
 slab-kernel.workspace = true
 slab-slir.workspace = true
+swash.workspace = true
 wgpu.workspace = true
 winit.workspace = true
 

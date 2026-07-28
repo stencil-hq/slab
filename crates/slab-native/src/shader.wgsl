@@ -1,15 +1,14 @@
 // slab-native pipelines: instanced SDF rounded rects (fill/stroke/shadow +
-// in-shader gradients + grain), A8 atlas glyphs (solid or gradient ink),
-// lyon path meshes (solid or gradient), textured quads (images, layer
-// composites, backdrops), layer-mask multiplies, banded progressive
-// backdrops, projective tilt composites, and a separable gaussian blur.
+// in-shader gradients + grain), hinted A8 and RGBA atlas glyphs, lyon path
+// meshes (solid or gradient), textured quads (images, layer composites,
+// backdrops), layer-mask multiplies, banded progressive backdrops, projective
+// tilt composites, and a separable gaussian blur.
 //
 // Coordinates: instance data is DEVICE pixels; the per-instance 2x3 affine
 // (rotation/scale about a point) maps device -> device; to_ndc flips to clip
 // space. Colors are straight-alpha sRGB bytes /255 (blending happens in sRGB
-// space, matching the tiny-skia raster and web drivers); fragments
-// premultiply. Exception: glyph coverage uses the gamma-corrected curve
-// described at "text gamma" below to match desktop text-stack weight.
+// space, matching the tiny-skia raster, Slate, and web drivers); fragments
+// premultiply.
 
 struct Globals {
     viewport: vec2<f32>,
@@ -212,20 +211,6 @@ fn fs_rect(v: RectVary) -> @location(0) vec4<f32> {
     return out * clip_cov(v.clip_pos.xy, vec4(v.dc.zw, v.c2.xy), v.dc.y);
 }
 
-// ------------------------------------------------------- text gamma ----
-//
-// The pre-slab UI drew text with glyphon's ColorMode::Web onto an sRGB
-// swapchain: sRGB-encoded ink and coverage were blended as raw numbers
-// against the linear-decoded destination, and the attachment re-encoded
-// the result. Net effect on this sRGB-byte-space target: a text fragment
-// with straight sRGB color c and coverage a must land as
-//     enc(c*a + dec(dst)*(1-a))
-// Plain coverage blending (c*a + dst*(1-a)) renders light-on-dark text
-// visibly dimmer and thinner. We emulate the old curve without knowing
-// dst: premultiplied rgb = enc(c*a) (exact over black) and alpha chosen
-// so the white-destination endpoint is exact too — in between the error
-// is negligible for UI contrast levels.
-
 fn srgb_enc1(x: f32) -> f32 {
     return select(1.055 * pow(max(x, 0.0), 1.0 / 2.4) - 0.055, 12.92 * x, x <= 0.0031308);
 }
@@ -236,14 +221,15 @@ fn srgb_enc3(x: vec3<f32>) -> vec3<f32> {
 
 // --------------------------------------------------------------- glyphs ----
 
-@group(1) @binding(0) var tex0: texture_2d<f32>;
-@group(1) @binding(1) var samp0: sampler;
+@group(1) @binding(0) var tex0: texture_2d<f32>; // RGBA color glyphs / regular textures
+@group(1) @binding(1) var tex1: texture_2d<f32>; // A8 glyph masks
+@group(1) @binding(2) var samp0: sampler;
 
 struct GlyphIn {
     @location(0) mabcd: vec4<f32>,
     @location(1) mtp: vec4<f32>,   // tx ty | quad top-left xy (device)
-    @location(2) su: vec4<f32>,    // quad size wh | uv0
-    @location(3) uc: vec4<f32>,    // uv size wh | clip radius | pad
+    @location(2) su: vec4<f32>,    // quad size wh | atlas pixel xy
+    @location(3) uc: vec4<f32>,    // atlas pixel size wh | clip radius | color flag
     @location(4) clip: vec4<f32>,
     @location(5) color: vec4<f32>, // solid rgba | (dir xy, 0, 0) for gradient ink
     @location(6) g2: vec4<f32>,    // grad box center xy | grad tag | opacity
@@ -257,6 +243,9 @@ struct GlyphVary {
     @location(3) cr: f32,
     @location(4) pre: vec2<f32>,   // pre-transform device position
     @location(5) g2: vec4<f32>,
+    @location(6) @interpolate(flat) uv_rect: vec4<f32>,
+    @location(7) @interpolate(flat) kind: u32,
+    @location(8) @interpolate(flat) ink: f32,
 }
 
 @vertex
@@ -273,25 +262,70 @@ fn vs_glyph(@builtin(vertex_index) vi: u32, g: GlyphIn) -> GlyphVary {
     out.cr = g.uc.z;
     out.pre = p;
     out.g2 = g.g2;
+    out.uv_rect = vec4(g.su.zw + vec2(0.5), g.su.zw + g.uc.xy - vec2(0.5));
+    out.kind = u32(g.uc.w);
+    // Small glyphs need disproportionate smoothing; retina-sized bitmaps are
+    // already dense enough to remain untouched.
+    out.ink = clamp((18.0 - g.su.y) / 18.0, 0.0, 1.0);
     return out;
+}
+
+fn mask_tap(uv: vec2<f32>, rect: vec4<f32>) -> f32 {
+    let dims = vec2<f32>(textureDimensions(tex1));
+    return textureSampleLevel(tex1, samp0, clamp(uv, rect.xy, rect.zw) / dims, 0.0).r;
 }
 
 @fragment
 fn fs_glyph(v: GlyphVary) -> @location(0) vec4<f32> {
-    let a = textureSample(tex0, samp0, v.uv).r;
     var col = v.color;
     if (v.g2.z >= 0.0) {
-        // gradient text (contract 6.7): ink mapped over the node content box
+        // Gradient text (contract 6.7): ink mapped over the node content box.
         let gi = u32(v.g2.z);
         col = grad_color(gi, grad_t(gi, v.pre - v.g2.xy, v.color.xy));
         col.a = col.a * v.g2.w;
     }
-    // fold ink alpha into coverage, then apply the old stack's gamma curve
-    // (see "text gamma" above): rgb exact over black, alpha exact over white.
-    let cov = a * col.a;
+
+    if (v.kind == 1u) {
+        let dims = vec2<f32>(textureDimensions(tex0));
+        let sample = textureSampleLevel(tex0, samp0, v.uv / dims, 0.0);
+        let cov = sample.a * col.a;
+        let peak = max(sample.r, max(sample.g, sample.b));
+        let alpha = srgb_enc1(peak * cov)
+            + 1.0 - srgb_enc1(1.0 - cov * (1.0 - peak));
+        let out = vec4(srgb_enc3(sample.rgb * cov), alpha);
+        return out * clip_cov(v.clip_pos.xy, v.clip, v.cr);
+    }
+
+    // CoreText-style small-text smoothing, adopted from Slate:
+    // 1. A clamped cross-shaped dilation widens thin stems without blurring
+    //    already-opaque cores or bleeding into neighboring atlas entries.
+    let sharp = mask_tap(v.uv, v.uv_rect);
+    var cov = sharp;
+    let amount = min(v.ink * 1.2, 1.0) * 0.42;
+    if (amount > 0.0) {
+        let d = 0.75;
+        let n = max(
+            max(
+                mask_tap(v.uv + vec2(d, 0.0), v.uv_rect),
+                mask_tap(v.uv - vec2(d, 0.0), v.uv_rect),
+            ),
+            max(
+                mask_tap(v.uv + vec2(0.0, d), v.uv_rect),
+                mask_tap(v.uv - vec2(0.0, d), v.uv_rect),
+            ),
+        );
+        cov = max(sharp, n * amount);
+    }
+    // 2. Stem darkening offsets the thinning of sRGB-space light-on-dark
+    //    blending, with a stronger lift for small and bright glyphs.
+    let lum = dot(col.rgb, vec3(0.299, 0.587, 0.114));
+    let k = mix(0.92, 0.76, lum) - v.ink * 0.12;
+    cov = pow(cov, max(k, 0.62));
+    let cov_alpha = cov * col.a;
     let peak = max(col.r, max(col.g, col.b));
-    let alpha = srgb_enc1(peak * cov) + 1.0 - srgb_enc1(1.0 - cov * (1.0 - peak));
-    let out = vec4(srgb_enc3(col.rgb * cov), alpha);
+    let alpha = srgb_enc1(peak * cov_alpha)
+        + 1.0 - srgb_enc1(1.0 - cov_alpha * (1.0 - peak));
+    let out = vec4(srgb_enc3(col.rgb * cov_alpha), alpha);
     return out * clip_cov(v.clip_pos.xy, v.clip, v.cr);
 }
 

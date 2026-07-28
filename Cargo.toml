@@ -198,7 +198,6 @@ xtask = { path = "crates/xtask" }
 # ──────────────────────────────────────────────────────────────────────────────
 # External Dependencies
 # ──────────────────────────────────────────────────────────────────────────────
-ab_glyph = "0.2"
 accesskit = "0.24.1"
 accesskit_winit = "0.33.2"
 anyhow = "1"
@@ -206,8 +205,10 @@ arboard = { version = "3.6.1", default-features = false }
 bytemuck = { version = "1", features = ["derive"] }
 crossterm = "0.29"
 logos = "0.16"
+etagere = "0.2"
 lyon = "1"
 png = "0.18"
+lru = { version = "0.16", default-features = false }
 pollster = "1.0"
 prost = "0.14"
 minijinja = "2"
@@ -222,5 +223,6 @@ snap = "1"
 tiny-skia = "0.12"
 ttf-parser = "0.25"
 wasm-bindgen = "0.2"
+swash = "0.2"
 wgpu = "30"
 winit = "0.30"

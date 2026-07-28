@@ -137,7 +137,7 @@ fn pixel_probes_play_circle_and_card_bg() {
 
 	let mut doc = solved_doc();
 	let fr = doc.frame(0.0);
-	let doc_id = renderer.register_doc(&doc.inst.doc(), &doc.imgs, &[]);
+	let doc_id = renderer.register_doc(doc.inst.doc(), &doc.imgs, &[]);
 	let tw = fr.width.ceil() as u32;
 	let th = fr.height.ceil() as u32;
 	let layers = [LayerInput { doc_id, inst: &doc.inst, frame: &fr, ox: 0.0, oy: 0.0, clip: None }];
@@ -278,7 +278,7 @@ fn queue_selection_preserves_keyed_focus_and_keyboard_owner() {
 	core.dispatch(&ev(kdispatch::E_POINTER_DOWN, x, y));
 	let expected_key = {
 		let instance = &core.queue().inst;
-		scene::key_of(&instance.doc(), &instance.st.lists, instance.ds.fs.focus)
+		scene::key_of(instance.doc(), &instance.st.lists, instance.ds.fs.focus)
 	};
 	assert!(!expected_key.is_empty());
 
@@ -288,7 +288,7 @@ fn queue_selection_preserves_keyed_focus_and_keyboard_owner() {
 	let _ = core.queue_frame(16.0);
 	let actual_key = {
 		let instance = &core.queue().inst;
-		scene::key_of(&instance.doc(), &instance.st.lists, instance.ds.fs.focus)
+		scene::key_of(instance.doc(), &instance.st.lists, instance.ds.fs.focus)
 	};
 	assert_eq!(actual_key, expected_key);
 
@@ -304,7 +304,7 @@ fn shuffle_hover_and_press_ease_bg() {
 	let mut doc = solved_doc();
 	let _ = doc.frame(0.0);
 	let node = slab_kernel::scene::node_by_key(
-		&doc.inst.doc(),
+		doc.inst.doc(),
 		&doc.inst.st.lists,
 		"#player/row@0/row@0/#shuffle",
 	);

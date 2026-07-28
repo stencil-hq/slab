@@ -57,7 +57,7 @@ fn undecorated_state_gates_chrome_and_signals_map() {
 	assert!(plain.ok, "SLIR decode failed: {:?}", plain.doc().errs);
 	kframe::inst_set_env(&mut plain, 640.0, 400.0, 1, false, false);
 	kframe::inst_frame(&mut plain, 0.0);
-	let bar = scene::node_by_key(&plain.doc(), &plain.st.lists, "col@0/#bar");
+	let bar = scene::node_by_key(plain.doc(), &plain.st.lists, "col@0/#bar");
 	assert_ne!(bar, slab_kernel::slir::NONE, "titlebar missing from doc tree");
 	assert!(
 		scene::index_of(&plain.sc, bar) < 0,
@@ -69,15 +69,15 @@ fn undecorated_state_gates_chrome_and_signals_map() {
 	kframe::inst_set_state(&mut inst, "undecorated", true);
 	kframe::inst_set_env(&mut inst, 640.0, 400.0, 1, false, false);
 	kframe::inst_frame(&mut inst, 0.0);
-	let bar = scene::node_by_key(&inst.doc(), &inst.st.lists, "col@0/#bar");
-	let close = scene::node_by_key(&inst.doc(), &inst.st.lists, "col@0/#bar/#close");
+	let bar = scene::node_by_key(inst.doc(), &inst.st.lists, "col@0/#bar");
+	let close = scene::node_by_key(inst.doc(), &inst.st.lists, "col@0/#bar/#close");
 	assert!(scene::index_of(&inst.sc, bar) >= 0, "no titlebar in scene");
 	assert!(scene::index_of(&inst.sc, close) >= 0, "no close control in scene");
 
 	// reserved-name mapping straight off the act= bindings
-	assert_eq!(act_signal(&inst.doc(), bar).and_then(WindowCmd::from_signal), Some(WindowCmd::Drag));
+	assert_eq!(act_signal(inst.doc(), bar).and_then(WindowCmd::from_signal), Some(WindowCmd::Drag));
 	assert_eq!(
-		act_signal(&inst.doc(), close).and_then(WindowCmd::from_signal),
+		act_signal(inst.doc(), close).and_then(WindowCmd::from_signal),
 		Some(WindowCmd::Close)
 	);
 	assert_eq!(WindowCmd::from_signal("save"), None);
@@ -105,7 +105,7 @@ fn undecorated_state_gates_chrome_and_signals_map() {
 	let nearest = chain
 		.iter()
 		.rev()
-		.find_map(|&n| act_signal(&inst.doc(), n))
+		.find_map(|&n| act_signal(inst.doc(), n))
 		.expect("no act binding on the bar press point");
 	assert_eq!(WindowCmd::from_signal(nearest), Some(WindowCmd::Drag));
 
@@ -114,7 +114,7 @@ fn undecorated_state_gates_chrome_and_signals_map() {
 	let nearest = chain
 		.iter()
 		.rev()
-		.find_map(|&n| act_signal(&inst.doc(), n))
+		.find_map(|&n| act_signal(inst.doc(), n))
 		.expect("no act binding on the close press point");
 	assert_eq!(WindowCmd::from_signal(nearest), Some(WindowCmd::Close));
 }
