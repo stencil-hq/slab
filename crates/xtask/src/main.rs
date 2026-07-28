@@ -4,8 +4,12 @@
 //! the SPEC.md platform-support chart and the generated caps tables.
 //!
 //! `gen-proto` emits the Rust protobuf bindings used by `slab-slir`.
+//!
+//! `abi-wasm` (src/abi_wasm.rs) builds the C-ABI WASM module the Go and
+//! Python clients embed.
 
 use std::path::PathBuf;
+mod abi_wasm;
 mod kernel_wasm;
 mod support;
 
@@ -16,8 +20,9 @@ fn main() -> std::process::ExitCode {
         Some("support-md") => support::cmd_support_md(),
         Some("gen-caps") => support::cmd_gen_caps(),
         Some("kernel-wasm") => command(|| kernel_wasm::run(&repo_root())),
+        Some("abi-wasm") => command(|| abi_wasm::run(&repo_root())),
         _ => {
-            eprintln!("usage: xtask gen-proto | support-md | gen-caps | kernel-wasm");
+            eprintln!("usage: xtask gen-proto | support-md | gen-caps | kernel-wasm | abi-wasm");
             std::process::ExitCode::from(2)
         }
     }

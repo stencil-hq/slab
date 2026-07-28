@@ -458,4 +458,32 @@ col#root {
             );
         }
     }
+    #[test]
+    fn grouped_parameters_use_quoted_dotted_property_keys() {
+        let source = r#"
+params editor { font_size num = 14 }
+col { rect w=param.editor.font_size }
+"#;
+        let options = WcOptions {
+            tag: None,
+            separate_ir: false,
+        };
+        let (files, diagnostics) = generate(
+            source,
+            &Options {
+                embed_assets: false,
+                ..Options::default()
+            },
+            &options,
+            "editor",
+        );
+        assert!(!diagnostics.has_errors(), "{:?}", diagnostics.0);
+        let files = files.expect("grouped parameter React wrapper");
+        let tsx = tsx_of(&files, "editor.tsx");
+
+        assert!(tsx.contains("'editor.font_size'?: number;"));
+        assert!(tsx.contains("'editor.font_size': number;"));
+        assert!(tsx.contains("el['editor.font_size'] = props['editor.font_size'];"));
+        assert!(tsx.contains("[props.theme, props['editor.font_size']]"));
+    }
 }

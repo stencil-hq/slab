@@ -377,7 +377,7 @@ fn emit_module(docs: &[DocSpec], separate_ir: bool) -> String {
             d.params
                 .iter()
                 .filter(|(n, _)| n != "theme")
-                .map(|(n, _)| format!("'{}'", n.replace('_', "-"))),
+                .map(|(n, _)| format!("'{}'", n.replace(['_', '.'], "-"))),
         );
         let _ = writeln!(m, "   static observedAttributes = [{}];", attrs.join(", "));
         if !d.list_rows.is_empty() {
@@ -786,8 +786,9 @@ pub(crate) fn doc_specs(
     w: &WcOptions,
     stem: &str,
 ) -> (Option<Vec<DocSpec>>, Diagnostics) {
-    let (slir, mut diags) = crate::compile(src, copts);
-    let Some(slir) = slir else {
+    let mut diags = Diagnostics::new();
+    let units = crate::import::closure(src, copts, &mut diags);
+    let Some(slir) = crate::compile_units(&units, copts, &mut diags) else {
         return (None, diags);
     };
 
@@ -820,10 +821,11 @@ pub(crate) fn doc_specs(
         embed_assets: false,
         base_dir: copts.base_dir.clone(),
         assets: None,
+        sources: copts.sources.clone(),
         fonts: copts.fonts.clone(),
     };
-    for def in exported_def_names(src) {
-        let (dslir, ddiags, props) = compile_export(src, &def, &def_opts);
+    for def in exported_def_names(&units) {
+        let (dslir, ddiags, props) = compile_export(&units, &def, &def_opts);
         diags.0.extend(ddiags.0);
         let Some(dslir) = dslir else {
             return (None, diags);
@@ -1100,5 +1102,43 @@ col#canvas bg=color.page { text "tokens" }
         assert!(declarations.contains("readonly diagnostics: readonly FrameDiagnostic[]"));
         assert!(declarations.contains("type: 'slab-diagnostics'"));
         assert!(declarations.contains("export type SlabTokensElementSceneKey"));
+    }
+    #[test]
+    fn grouped_parameters_use_dotted_properties_and_hyphenated_attributes() {
+        let source = r#"
+def Row(label="") export { text label }
+params editor {
+  font_size num = 14
+  rows list(Row) = []
+}
+col {
+  rect w=param.editor.font_size
+  each param.editor.rows
+}
+"#;
+        let options = WcOptions {
+            tag: None,
+            separate_ir: false,
+        };
+        let (files, diagnostics) = generate(source, &Options::default(), &options, "editor");
+        assert!(!diagnostics.has_errors(), "{:?}", diagnostics.0);
+        let files = files.expect("grouped parameter web component");
+        let module = files
+            .iter()
+            .find(|file| file.name == "editor.js")
+            .and_then(|file| std::str::from_utf8(&file.bytes).ok())
+            .expect("generated JavaScript module");
+        let declarations = files
+            .iter()
+            .find(|file| file.name == "editor.d.ts")
+            .and_then(|file| std::str::from_utf8(&file.bytes).ok())
+            .expect("generated declarations");
+
+        assert!(module.contains("'editor-font-size'"));
+        assert!(module.contains("'editor-rows'"));
+        assert!(module.contains("get 'editor.font_size'()"));
+        assert!(module.contains("setParam('editor.font_size', v)"));
+        assert!(declarations.contains("get 'editor.font_size'(): number | undefined"));
+        assert!(declarations.contains("get 'editor.rows'(): EditorRowsItem[]"));
     }
 }

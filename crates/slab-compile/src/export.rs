@@ -22,7 +22,7 @@
 //! default when its literal shape matches the inferred type; otherwise the
 //! type's zero value ("" / 0 / #ffffff / false) is used.
 
-use crate::Options;
+use crate::{Options, import::Unit};
 use slab_slir::Slir;
 use slab_syntax::ast::{
     ADef, ANode, Cond, Document, Item, ParamDecl, ParamDefault, ParamType, Value,
@@ -37,13 +37,14 @@ pub struct ExportProp {
 }
 
 /// Names of `export`-flagged defs, document order, later shadowers deduped.
-pub fn exported_def_names(src: &str) -> Vec<String> {
-    let mut diags = Diagnostics::new();
-    let doc = slab_syntax::parse(src, &mut diags);
-    let mut names: Vec<String> = Vec::new();
-    for def in &doc.defs {
-        if def.export && !names.iter().any(|n| n == &def.name) {
-            names.push(def.name.clone());
+pub fn exported_def_names(units: &[Unit]) -> Vec<String> {
+    let mut names = Vec::new();
+    for unit in units {
+        for definition in &unit.doc.defs {
+            names.retain(|name| name != &definition.name);
+            if definition.export {
+                names.push(definition.name.clone());
+            }
         }
     }
     names
@@ -284,83 +285,92 @@ fn default_for(ty: &ParamType, declared: Option<&Value>) -> Value {
     }
 }
 
-/// Compile `def_name` (which must be `export`-flagged in `src`) into its own
-/// SLIR document: tokens/defs/anims carry over, the def's props become
-/// params, and the root is a single call passing `param.<prop>` for each.
+/// Compile an exported definition from a loaded source closure into standalone
+/// SLIR. Tokens, definitions, animations, and document params remain available.
 pub fn compile_export(
-    src: &str,
+    units: &[Unit],
     def_name: &str,
     opts: &Options,
 ) -> (Option<Slir>, Diagnostics, Vec<ExportProp>) {
     let mut diags = Diagnostics::new();
-    let doc = slab_syntax::parse(src, &mut diags);
-    if diags.has_errors() {
-        return (None, diags, Vec::new());
-    }
-    let Some(def) = doc.def(def_name).filter(|d| d.export) else {
+    let Some((definition_unit, def)) = units.iter().enumerate().rev().find_map(|(unit, source)| {
+        source
+            .doc
+            .defs
+            .iter()
+            .rev()
+            .find(|definition| definition.name == def_name)
+            .map(|definition| (unit, definition))
+    }) else {
         diags.error("ref", format!("no exported def '{def_name}'"), 0);
         return (None, diags, Vec::new());
     };
+    if !def.export {
+        diags.error("ref", format!("no exported def '{def_name}'"), 0);
+        return (None, diags, Vec::new());
+    }
     let props = infer_props(def);
 
-    let mut params: Vec<ParamDecl> = props
+    let params = props
         .iter()
-        .map(|p| {
+        .map(|prop| {
             let declared = def
                 .params
                 .iter()
-                .find(|(n, _)| *n == p.name)
-                .and_then(|(_, d)| d.as_ref());
+                .find(|(name, _)| *name == prop.name)
+                .and_then(|(_, default)| default.as_ref());
             ParamDecl {
-                name: p.name.clone(),
-                ty: p.ty.clone(),
+                name: prop.name.clone(),
+                ty: prop.ty.clone(),
                 enum_syms: Vec::new(),
-                default: if matches!(p.ty, ParamType::List(_)) {
+                default: if matches!(prop.ty, ParamType::List(_)) {
                     ParamDefault::List(Vec::new())
                 } else {
-                    ParamDefault::Scalar(default_for(&p.ty, declared))
+                    ParamDefault::Scalar(default_for(&prop.ty, declared))
                 },
                 line: def.line,
             }
         })
-        .collect();
-    // Original doc params stay reachable (a def body may use `param.x`);
-    // promoted props shadow same-named ones.
-    for decl in &doc.params {
-        if !params.iter().any(|p| p.name == decl.name) {
-            params.push(decl.clone());
-        }
-    }
-
+        .collect::<Vec<_>>();
     let root = ANode {
         name: def.name.clone(),
         id: None,
         args: props
             .iter()
-            .map(|p| Value::Ref(vec!["param".into(), p.name.clone()]))
+            .map(|prop| Value::Ref(vec!["param".into(), prop.name.clone()]))
             .collect(),
         attrs: Vec::new(),
         flags: Vec::new(),
         children: Vec::new(),
         line: def.line,
     };
-    let sdoc = Document {
-        tokens: doc.tokens.clone(),
-        defs: doc.defs.clone(),
-        params,
-        icons: doc.icons.clone(),
-        roots: vec![root],
-        topwhens: doc.topwhens.clone(),
-        anims: doc.anims.clone(),
+    let synthetic = Unit {
+        file: units[definition_unit].file.clone(),
+        abs: None,
+        doc: Document {
+            imports: Vec::new(),
+            tokens: Default::default(),
+            defs: Vec::new(),
+            params,
+            icons: Vec::new(),
+            roots: vec![root],
+            topwhens: Vec::new(),
+            anims: Vec::new(),
+        },
     };
 
-    let expanded = crate::expand::expand(&sdoc, &mut diags);
-    if diags.has_errors() {
-        return (None, diags, props);
+    let mut export_units = Vec::with_capacity(units.len() + 1);
+    export_units.push(synthetic);
+    for unit in units {
+        let mut unit = unit.clone();
+        unit.doc.imports.clear();
+        unit.doc.roots.clear();
+        unit.doc
+            .params
+            .retain(|declaration| !props.iter().any(|prop| prop.name == declaration.name));
+        export_units.push(unit);
     }
-    let slir = crate::emit::emit(&expanded, opts, &mut diags);
-    if diags.has_errors() {
-        return (None, diags, props);
-    }
-    (Some(slir), diags, props)
+
+    let slir = crate::compile_units(&export_units, opts, &mut diags);
+    (slir, diags, props)
 }

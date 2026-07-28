@@ -353,12 +353,17 @@ struct SlotPayload {
     scope: Scope,
     key: String,
     keys: KeysRc,
+    file: Option<usize>,
 }
 
 struct Ctx<'a> {
-    doc: &'a Document,
     diags: &'a mut Diagnostics,
     tokens: &'a TokenTree,
+    defs: HashMap<String, (usize, &'a ADef)>,
+    definitions: Vec<(usize, &'a ADef)>,
+    icons: Vec<(usize, &'a AIcon)>,
+    files: Vec<Option<&'a str>>,
+    cur_file: Option<usize>,
     /// Top-level `when` token override variants: (cond, merged tree).
     variants: Vec<(CondSpec, TokenTree)>,
     /// Fully merged token trees for named themes, in declaration order.
@@ -392,19 +397,42 @@ struct Ctx<'a> {
 }
 
 impl<'a> Ctx<'a> {
+    fn stamp_file(&mut self) {
+        let file = self
+            .cur_file
+            .and_then(|unit| self.files.get(unit))
+            .copied()
+            .flatten()
+            .map(str::to_string);
+        if let Some(file) = file
+            && let Some(diagnostic) = self.diags.0.last_mut()
+        {
+            diagnostic.file = Some(file);
+        }
+    }
+
+    fn def(&self, name: &str) -> Option<(usize, ADef)> {
+        self.defs
+            .get(name)
+            .map(|(unit, definition)| (*unit, (*definition).clone()))
+    }
+
     fn error(&mut self, code: &'static str, msg: String, line: u32) {
         if self.quiet == 0 {
             self.diags.error(code, msg, line);
+            self.stamp_file();
         }
     }
     fn warn(&mut self, code: &'static str, msg: String, line: u32) {
         if self.quiet == 0 {
             self.diags.warn(code, msg, line);
+            self.stamp_file();
         }
     }
     fn warn_with(&mut self, code: &'static str, msg: String, line: u32, remedy: String) {
         if self.quiet == 0 {
             self.diags.warn_with(code, msg, line, remedy);
+            self.stamp_file();
         }
     }
 }
@@ -458,12 +486,11 @@ fn resolve_value_d(
         Value::Fill(wt) => RVal::Fill(*wt),
         Value::Ref(path) => {
             if path[0] == "param" {
-                if path.len() == 2
-                    && let Some(ix) = ctx.params.iter().position(|p| p.name == path[1])
-                {
+                let name = path[1..].join(".");
+                if let Some(ix) = ctx.params.iter().position(|param| param.name == name) {
                     return RVal::Param(ix as u32);
                 }
-                ctx.error("ref", format!("unknown param '{}'", path.join(".")), line);
+                ctx.error("ref", format!("unknown param '{name}'"), line);
                 return RVal::None;
             }
             match lookup(tree, path) {
@@ -707,6 +734,10 @@ fn eval_cond(ctx: &mut Ctx, cond: &Cond, scope: &Scope, line: u32) -> CondEval {
             }
             if let Some(ix) = ctx.params.iter().position(|p| p.name == *name) {
                 return param_cond(ctx, ix, neg, line);
+            }
+            if name.contains('.') {
+                ctx.error("ref", format!("unknown param '{name}' in condition"), line);
+                return CondEval::Bool(false);
             }
             CondEval::Defer(CondSpec::State(name.clone(), neg))
         }
@@ -2603,7 +2634,7 @@ fn expand_each(
         (schema_row, TVal::Num(param_ix as f64))
     };
     let list = ctx.list_schemas[schema_row as usize].clone();
-    let def = ctx.doc.def(&list.schema).cloned()?;
+    let (definition_file, def) = ctx.def(&list.schema)?;
 
     if parent_kind == nk::PARA
         && !matches!(
@@ -2691,6 +2722,8 @@ fn expand_each(
         template_scope.insert(info.name.clone(), RVal::Prop(field as u32));
     }
     let mut children = Vec::new();
+    let previous_file = ctx.cur_file;
+    ctx.cur_file = Some(definition_file);
     if !ctx.each_schemas.contains(&schema_row) {
         ctx.each_schemas.push(schema_row);
         let template_keys: KeysRc = Rc::new(RefCell::new(Keys::default()));
@@ -2755,6 +2788,7 @@ fn expand_each(
         }
     }
     collect_dynamic_font_candidates(ctx, schema_row, &children);
+    ctx.cur_file = previous_file;
     Some(CNode {
         kind: nk::EACH,
         line: a.line,
@@ -2824,6 +2858,8 @@ fn expand_node(
 }
 
 fn resolve_slot(ctx: &mut Ctx, payload: &Rc<SlotPayload>, depth: usize) -> Vec<CNode> {
+    let previous_file = ctx.cur_file;
+    ctx.cur_file = payload.file;
     let mut out = Vec::new();
     for ch in &payload.children {
         match ch {
@@ -2853,51 +2889,57 @@ fn resolve_slot(ctx: &mut Ctx, payload: &Rc<SlotPayload>, depth: usize) -> Vec<C
             Item::Text(_, _) | Item::When(_) => {}
         }
     }
+    ctx.cur_file = previous_file;
     out
 }
 
 fn expand_call(ctx: &mut Ctx, a: &ANode, scope: &Scope, depth: usize, key: String) -> Vec<CNode> {
-    let Some(d) = ctx.doc.def(&a.name) else {
+    let Some((definition_file, d)) = ctx.def(&a.name) else {
         ctx.error("ref", format!("unknown component '{}'", a.name), a.line);
         return vec![];
     };
-    let d = d.clone();
-    // bind params: named attrs win, then positional args, then defaults
+    let call_file = ctx.cur_file;
     let mut new_scope = Scope::new();
     let mut args = a.args.iter();
     for (pname, default) in &d.params {
-        let v = if let Some(av) = a.attr(pname) {
-            resolve_value(ctx, av, scope, a.line, ctx.tokens)
-        } else if let Some(arg) = args.next() {
-            resolve_value(ctx, arg, scope, a.line, ctx.tokens)
-        } else if let Some(dv) = default {
-            resolve_value(ctx, dv, scope, a.line, ctx.tokens)
+        let v = if let Some(value) = a.attr(pname) {
+            resolve_value(ctx, value, scope, a.line, ctx.tokens)
+        } else if let Some(value) = args.next() {
+            resolve_value(ctx, value, scope, a.line, ctx.tokens)
+        } else if let Some(value) = default {
+            ctx.cur_file = Some(definition_file);
+            let resolved = resolve_value(ctx, value, scope, d.line, ctx.tokens);
+            ctx.cur_file = call_file;
+            resolved
         } else {
             RVal::None
         };
         new_scope.insert(pname.clone(), v);
     }
-    for (aname, _) in &a.attrs {
-        if aname != "key" && !d.params.iter().any(|(p, _)| p == aname) {
-            ctx.warn("attr", format!("{} has no prop '{aname}'", a.name), a.line);
+    for (name, _) in &a.attrs {
+        if name != "key" && !d.params.iter().any(|(param, _)| param == name) {
+            ctx.warn("attr", format!("{} has no prop '{name}'", a.name), a.line);
         }
     }
-    // caller children resolve in caller scope, spliced at `slot`; expanded
-    // body roots and slot children both continue under the call's key.
+
     let body_keys: KeysRc = Rc::new(RefCell::new(Keys::default()));
     let payload = Rc::new(SlotPayload {
         children: a.children.clone(),
         scope: scope.clone(),
         key: key.clone(),
         keys: Rc::clone(&body_keys),
+        file: call_file,
     });
     let mut out = Vec::new();
+    ctx.cur_file = Some(definition_file);
     for item in &d.body {
         match item {
-            Item::Node(n) if n.name == "slot" => out.extend(resolve_slot(ctx, &payload, depth)),
-            Item::Node(n) => out.extend(expand_node(
+            Item::Node(node) if node.name == "slot" => {
+                out.extend(resolve_slot(ctx, &payload, depth));
+            }
+            Item::Node(node) => out.extend(expand_node(
                 ctx,
-                n,
+                node,
                 &new_scope,
                 depth + 1,
                 &key,
@@ -2921,7 +2963,7 @@ fn expand_call(ctx: &mut Ctx, a: &ANode, scope: &Scope, depth: usize, key: Strin
             Item::Text(_, _) | Item::When(_) => {}
         }
     }
-    // the call-site id lands on the component's (first) root
+    ctx.cur_file = call_file;
     if let Some(id) = &a.id
         && let Some(first) = out.first_mut()
         && first.id.is_none()
@@ -3927,7 +3969,7 @@ fn ensure_list_schema(ctx: &mut Ctx, schema: &str, line: u32, owner: &str) -> Op
     {
         return Some(row as u32);
     }
-    let Some(def) = ctx.doc.def(schema).cloned() else {
+    let Some((definition_file, def)) = ctx.def(schema) else {
         ctx.error(
             "list-def",
             format!("list '{owner}' references unknown def '{schema}'"),
@@ -3943,6 +3985,8 @@ fn ensure_list_schema(ctx: &mut Ctx, schema: &str, line: u32, owner: &str) -> Op
         );
         return None;
     }
+    let previous_file = ctx.cur_file;
+    ctx.cur_file = Some(definition_file);
 
     // Allocate before resolving fields: recursive and mutually-recursive defs
     // find this placeholder and terminate, then the second pass fills it.
@@ -3988,6 +4032,7 @@ fn ensure_list_schema(ctx: &mut Ctx, schema: &str, line: u32, owner: &str) -> Op
         });
     }
     ctx.list_schemas[row as usize].fields = fields;
+    ctx.cur_file = previous_file;
     Some(row)
 }
 
@@ -4098,28 +4143,32 @@ fn compile_list_info(ctx: &mut Ctx, decl: &ParamDecl, schema: &str) -> Option<(u
 }
 
 /// Names a def param must not use without a `warn[shadow]` (rule 8).
-fn shadow_warns(ctx: &mut Ctx, doc: &Document) {
-    for d in &doc.defs {
-        for (p, _) in &d.params {
-            if slab_slir::attrs::attr_id(p).is_some()
-                || slab_syntax::parse::FLAGS.contains(&p.as_str())
+fn shadow_warns(ctx: &mut Ctx) {
+    let definitions = ctx.definitions.clone();
+    let previous_file = ctx.cur_file;
+    for (unit, definition) in definitions {
+        ctx.cur_file = Some(unit);
+        for (param, _) in &definition.params {
+            if slab_slir::attrs::attr_id(param).is_some()
+                || slab_syntax::parse::FLAGS.contains(&param.as_str())
             {
-                let msg = format!(
-                    "def {}: param '{p}' shadows the '{p}' attribute; bare '{p}' in \
+                let message = format!(
+                    "def {}: param '{param}' shadows the '{param}' attribute; bare '{param}' in \
                      value position resolves to the param",
-                    d.name
+                    definition.name
                 );
-                ctx.warn("shadow", msg, d.line);
-            } else if p == "fill" || p == "hug" {
-                let msg = format!(
-                    "def {}: param '{p}' shadows the reserved sizing keyword; \
-                     '{p}' in value position stays the keyword and the param is unreachable",
-                    d.name
+                ctx.warn("shadow", message, definition.line);
+            } else if param == "fill" || param == "hug" {
+                let message = format!(
+                    "def {}: param '{param}' shadows the reserved sizing keyword; \
+                     '{param}' in value position stays the keyword and the param is unreachable",
+                    definition.name
                 );
-                ctx.warn("shadow", msg, d.line);
+                ctx.warn("shadow", message, definition.line);
             }
         }
     }
+    ctx.cur_file = previous_file;
 }
 
 // -------------------------------------------------------------------- entry
@@ -4139,24 +4188,26 @@ fn collect_theme_items(items: &[Item], mentions: &mut Vec<(u32, String)>) {
     }
 }
 
-fn collect_themes(doc: &Document) -> Vec<String> {
-    let mut mentions = Vec::new();
-    for (cond, _, line) in &doc.topwhens {
-        if let Cond::Theme(name) = cond {
-            mentions.push((*line, name.clone()));
-        }
-    }
-    for root in &doc.roots {
-        collect_theme_items(&root.children, &mut mentions);
-    }
-    for def in &doc.defs {
-        collect_theme_items(&def.body, &mut mentions);
-    }
-    mentions.sort_by_key(|(line, _)| *line);
+fn collect_themes(units: &[crate::import::Unit]) -> Vec<String> {
     let mut themes = Vec::new();
-    for (_, name) in mentions {
-        if !themes.contains(&name) {
-            themes.push(name);
+    for unit in units {
+        let mut mentions = Vec::new();
+        for (condition, _, line) in &unit.doc.topwhens {
+            if let Cond::Theme(name) = condition {
+                mentions.push((*line, name.clone()));
+            }
+        }
+        for root in &unit.doc.roots {
+            collect_theme_items(&root.children, &mut mentions);
+        }
+        for definition in &unit.doc.defs {
+            collect_theme_items(&definition.body, &mut mentions);
+        }
+        mentions.sort_by_key(|(line, _)| *line);
+        for (_, name) in mentions {
+            if !themes.contains(&name) {
+                themes.push(name);
+            }
         }
     }
     themes
@@ -4223,10 +4274,12 @@ fn icon_node_is_static(node: &CNode) -> bool {
 }
 
 fn compile_icons(ctx: &mut Ctx) -> Vec<CIcon> {
-    let declarations = ctx.doc.icons.clone();
+    let declarations = ctx.icons.clone();
+    let previous_file = ctx.cur_file;
     let mut first_lines: HashMap<String, u32> = HashMap::new();
     let mut icons = Vec::new();
-    for declaration in declarations {
+    for (unit, declaration) in declarations {
+        ctx.cur_file = Some(unit);
         if let Some(first) = first_lines.get(&declaration.name) {
             ctx.error(
                 "icon-dup",
@@ -4321,11 +4374,12 @@ fn compile_icons(ctx: &mut Ctx) -> Vec<CIcon> {
             continue;
         }
         icons.push(CIcon {
-            name: declaration.name,
+            name: declaration.name.clone(),
             viewbox,
             root,
         });
     }
+    ctx.cur_file = previous_file;
     icons
 }
 
@@ -4523,35 +4577,122 @@ fn validate_divider_context(ctx: &mut Ctx, node: &CNode, valid_position: bool) {
     }
 }
 
+fn stamp_diagnostic_file(diags: &mut Diagnostics, file: Option<&str>) {
+    if let Some(file) = file
+        && let Some(diagnostic) = diags.0.last_mut()
+    {
+        diagnostic.file = Some(file.to_string());
+    }
+}
+
+fn param_canon(name: &str) -> String {
+    name.chars()
+        .map(|character| match character {
+            '.' | '_' | '-' => '-',
+            _ => character,
+        })
+        .collect()
+}
+
+fn source_location(files: &[Option<&str>], unit: usize, line: u32) -> String {
+    format!("{}:{line}", files[unit].unwrap_or("<root>"))
+}
+
 /// Expand a parsed document into emission-ready trees and tables.
-pub fn expand(doc: &Document, diags: &mut Diagnostics) -> Expanded {
-    // Named themes are complete token tables: each starts from authored base,
-    // then every declaration for that name merges in document order.
-    let base_tokens = &doc.tokens;
-    let themes = collect_themes(doc);
-    let mut theme_tokens: Vec<(String, TokenTree)> = themes
+pub fn expand(units: &[crate::import::Unit], diags: &mut Diagnostics) -> Expanded {
+    let files = units
         .iter()
-        .map(|name| (name.clone(), doc.tokens.clone()))
-        .collect();
-    for (condition, overrides, _) in &doc.topwhens {
-        let Cond::Theme(name) = condition else {
-            continue;
-        };
-        if let Some((_, tree)) = theme_tokens
-            .iter_mut()
-            .find(|(candidate, _)| candidate == name)
-        {
-            tree.deep_merge(overrides);
+        .map(|unit| unit.file.as_deref())
+        .collect::<Vec<_>>();
+
+    let mut base_tokens = TokenTree::default();
+    for unit in units {
+        for path in base_tokens.deep_merge(&unit.doc.tokens) {
+            diags.warn(
+                "dup-token",
+                format!("token '{path}' redefined (last definition wins)"),
+                0,
+            );
+            stamp_diagnostic_file(diags, unit.file.as_deref());
         }
     }
+
+    let mut defs = HashMap::new();
+    let mut definitions = Vec::new();
+    let mut first_definitions: HashMap<&str, (usize, u32)> = HashMap::new();
+    let mut icons = Vec::new();
+    let mut animations = Vec::new();
+    for (unit_index, unit) in units.iter().enumerate() {
+        for definition in &unit.doc.defs {
+            if let Some((first_unit, first_line)) =
+                first_definitions.get(definition.name.as_str()).copied()
+                && first_unit != unit_index
+            {
+                diags.warn(
+                    "dup-def",
+                    format!(
+                        "component '{}' redefined (first defined at line {}; last definition wins)",
+                        definition.name, first_line
+                    ),
+                    definition.line,
+                );
+                stamp_diagnostic_file(diags, unit.file.as_deref());
+            } else {
+                first_definitions
+                    .entry(definition.name.as_str())
+                    .or_insert((unit_index, definition.line));
+            }
+            defs.insert(definition.name.clone(), (unit_index, definition));
+            definitions.push((unit_index, definition));
+        }
+        icons.extend(
+            unit.doc
+                .icons
+                .iter()
+                .map(|declaration| (unit_index, declaration)),
+        );
+        animations.extend(
+            unit.doc
+                .anims
+                .iter()
+                .map(|animation| (unit_index, animation)),
+        );
+    }
+
+    let themes = collect_themes(units);
+    let mut theme_tokens = themes
+        .iter()
+        .map(|name| (name.clone(), base_tokens.clone()))
+        .collect::<Vec<_>>();
+    for unit in units {
+        for (condition, overrides, _) in &unit.doc.topwhens {
+            let Cond::Theme(name) = condition else {
+                continue;
+            };
+            if let Some((_, tree)) = theme_tokens
+                .iter_mut()
+                .find(|(candidate, _)| candidate == name)
+            {
+                tree.deep_merge(overrides);
+            }
+        }
+    }
+
     let mut ctx = Ctx {
-        doc,
         diags,
-        tokens: base_tokens,
+        tokens: &base_tokens,
+        defs,
+        definitions,
+        icons,
+        files,
+        cur_file: None,
         variants: vec![],
         theme_tokens,
         params: vec![],
-        anim_names: doc.anims.iter().map(|a| a.name.clone()).collect(),
+        anim_names: animations
+            .iter()
+            .map(|(_, animation)| animation.name.clone())
+            .collect(),
         anim_content: BTreeSet::new(),
         seen_ids: HashMap::new(),
         holes: HashMap::new(),
@@ -4569,72 +4710,103 @@ pub fn expand(doc: &Document, diags: &mut Diagnostics) -> Expanded {
         quiet: 0,
     };
 
-    // Params first: `when` conditions and `param.` refs need them.
-    for decl in &doc.params {
-        if let Some(first) = ctx.params.iter().find(|p| p.name == decl.name) {
-            let msg = format!(
-                "duplicate param '{}' (first declared at line {}; first declaration wins)",
-                decl.name, first.line
-            );
-            ctx.warn("dup-param", msg, decl.line);
-            continue;
+    let mut param_declarations = Vec::new();
+    let mut first_params: HashMap<&str, (usize, u32)> = HashMap::new();
+    for (unit_index, unit) in units.iter().enumerate() {
+        ctx.cur_file = Some(unit_index);
+        for declaration in &unit.doc.params {
+            if let Some((_, first_line)) = first_params.get(declaration.name.as_str()).copied() {
+                ctx.warn(
+                    "dup-param",
+                    format!(
+                        "duplicate param '{}' (first declared at line {}; first declaration wins)",
+                        declaration.name, first_line
+                    ),
+                    declaration.line,
+                );
+                continue;
+            }
+            first_params.insert(declaration.name.as_str(), (unit_index, declaration.line));
+            param_declarations.push((unit_index, declaration));
+            ctx.params.push(ParamInfo {
+                name: declaration.name.clone(),
+                ty: declaration.ty.clone(),
+                enum_syms: declaration.enum_syms.clone(),
+                default: scalar_zero(&declaration.ty, &declaration.enum_syms, false),
+                list: None,
+                line: declaration.line,
+            });
         }
-        ctx.params.push(ParamInfo {
-            name: decl.name.clone(),
-            ty: decl.ty.clone(),
-            enum_syms: decl.enum_syms.clone(),
-            default: scalar_zero(&decl.ty, &decl.enum_syms, false),
-            list: None,
-            line: decl.line,
-        });
     }
-    for decl in &doc.params {
-        if let Some(ix) = ctx
-            .params
-            .iter()
-            .position(|p| p.name == decl.name && p.line == decl.line)
+
+    let mut canonical_params: HashMap<String, (&str, usize, u32)> = HashMap::new();
+    for (unit, declaration) in &param_declarations {
+        let canonical = param_canon(&declaration.name);
+        if let Some((first_name, first_unit, first_line)) =
+            canonical_params.get(&canonical).copied()
         {
-            match &decl.ty {
-                ParamType::List(schema) => {
-                    if let Some((row, default)) = compile_list_info(&mut ctx, decl, schema) {
-                        ctx.params[ix].list = Some(row);
-                        ctx.params[ix].default = default;
-                    }
+            ctx.cur_file = Some(*unit);
+            let first_site = source_location(&ctx.files, first_unit, first_line);
+            let second_site = source_location(&ctx.files, *unit, declaration.line);
+            ctx.error(
+                "param-collide",
+                format!(
+                    "param '{}' at {first_site} and param '{}' at {second_site} collide after host-name folding",
+                    first_name, declaration.name
+                ),
+                declaration.line,
+            );
+        } else {
+            canonical_params.insert(
+                canonical,
+                (declaration.name.as_str(), *unit, declaration.line),
+            );
+        }
+    }
+
+    for (index, (unit, declaration)) in param_declarations.iter().enumerate() {
+        ctx.cur_file = Some(*unit);
+        match &declaration.ty {
+            ParamType::List(schema) => {
+                if let Some((row, default)) = compile_list_info(&mut ctx, declaration, schema) {
+                    ctx.params[index].list = Some(row);
+                    ctx.params[index].default = default;
                 }
-                _ => {
-                    let tv = check_param_default(&mut ctx, decl);
-                    ctx.params[ix].default = tv;
-                }
+            }
+            _ => {
+                let default = check_param_default(&mut ctx, declaration);
+                ctx.params[index].default = default;
             }
         }
     }
 
-    // Non-theme top-level token conditions retain rule-10 site expansion.
-    // Named themes use the runtime token table instead.
-    let mut variants: Vec<(CondSpec, TokenTree)> = Vec::new();
-    for (cond, overrides, line) in &doc.topwhens {
-        if matches!(cond, Cond::Theme(_)) {
-            continue;
-        }
-        match eval_cond(&mut ctx, cond, &Scope::new(), *line) {
-            CondEval::Defer(spec) => {
-                let mut merged = doc.tokens.clone();
-                merged.deep_merge(overrides);
-                variants.push((spec, merged));
+    let mut variants = Vec::new();
+    for (unit_index, unit) in units.iter().enumerate() {
+        ctx.cur_file = Some(unit_index);
+        for (condition, overrides, line) in &unit.doc.topwhens {
+            if matches!(condition, Cond::Theme(_)) {
+                continue;
             }
-            CondEval::Bool(_) => {}
+            match eval_cond(&mut ctx, condition, &Scope::new(), *line) {
+                CondEval::Defer(spec) => {
+                    let mut merged = base_tokens.clone();
+                    merged.deep_merge(overrides);
+                    variants.push((spec, merged));
+                }
+                CondEval::Bool(_) => {}
+            }
         }
     }
     ctx.variants = variants;
 
-    let icons = compile_icons(&mut ctx);
-    shadow_warns(&mut ctx, doc);
+    let compiled_icons = compile_icons(&mut ctx);
+    shadow_warns(&mut ctx);
 
-    // Animation values retain token identity just like ordinary attributes.
     let mut anims = Vec::new();
-    for anim in &doc.anims {
+    for (unit, animation) in animations {
+        ctx.cur_file = Some(unit);
         let mut stops = Vec::new();
-        for (pos, attrs) in &anim.stops {
+        for (position, attrs) in &animation.stops {
             let mut sink = Sink {
                 patch_ctx: true,
                 keyframe_ctx: true,
@@ -4642,32 +4814,35 @@ pub fn expand(doc: &Document, diags: &mut Diagnostics) -> Expanded {
             };
             for (key, value) in attrs {
                 let resolved =
-                    resolve_value(&mut ctx, value, &Scope::new(), anim.line, base_tokens);
-                apply_attr(&mut ctx, &mut sink, key, &resolved, anim.line);
+                    resolve_value(&mut ctx, value, &Scope::new(), animation.line, &base_tokens);
+                apply_attr(&mut ctx, &mut sink, key, &resolved, animation.line);
             }
             if sink.get(at::CONTENT).is_some() {
-                ctx.anim_content.insert(anim.name.clone());
+                ctx.anim_content.insert(animation.name.clone());
             }
-            stops.push((*pos, sink.entries));
+            stops.push((*position, sink.entries));
         }
         anims.push(RAnim {
-            name: anim.name.clone(),
+            name: animation.name.clone(),
             stops,
         });
     }
 
     let root_keys: KeysRc = Rc::new(RefCell::new(Keys::default()));
     let mut roots = Vec::new();
-    for node in &doc.roots {
-        roots.extend(expand_node(
-            &mut ctx,
-            node,
-            &Scope::new(),
-            0,
-            "",
-            &root_keys,
-            None,
-        ));
+    for (unit_index, unit) in units.iter().enumerate() {
+        ctx.cur_file = Some(unit_index);
+        for node in &unit.doc.roots {
+            roots.extend(expand_node(
+                &mut ctx,
+                node,
+                &Scope::new(),
+                0,
+                "",
+                &root_keys,
+                None,
+            ));
+        }
     }
 
     for root in &roots {
@@ -4683,13 +4858,14 @@ pub fn expand(doc: &Document, diags: &mut Diagnostics) -> Expanded {
         validate_semantic_tree(&mut ctx, root, &static_scene_keys);
     }
 
-    let tokens = collect_token_infos(&mut ctx, base_tokens);
+    ctx.cur_file = None;
+    let tokens = collect_token_infos(&mut ctx, &base_tokens);
     Expanded {
         roots,
         params: ctx.params,
         anims,
         list_schemas: ctx.list_schemas,
-        icons,
+        icons: compiled_icons,
         themes,
         tokens,
         images: ctx.images,

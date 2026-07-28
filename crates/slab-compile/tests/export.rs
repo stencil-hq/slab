@@ -6,14 +6,14 @@ use slab_slir::{Aval, Slir, aval};
 use slab_syntax::ast::ParamType;
 
 fn compile_export_ok(source: &str, name: &str) -> (Slir, Vec<ExportProp>) {
-    let (slir, diagnostics, props) = compile_export(
-        source,
-        name,
-        &Options {
-            embed_assets: false,
-            ..Options::default()
-        },
-    );
+    let options = Options {
+        embed_assets: false,
+        ..Options::default()
+    };
+    let mut load_diagnostics = slab_syntax::diag::Diagnostics::new();
+    let units = slab_compile::import::closure(source, &options, &mut load_diagnostics);
+    assert!(!load_diagnostics.has_errors(), "{:#?}", load_diagnostics.0);
+    let (slir, diagnostics, props) = compile_export(&units, name, &options);
     assert!(!diagnostics.has_errors(), "{:#?}", diagnostics.0);
     (slir.expect("valid exported def"), props)
 }

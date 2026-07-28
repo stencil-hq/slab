@@ -8,6 +8,8 @@ pub mod emit;
 pub mod expand;
 pub mod export;
 pub mod fonts;
+pub mod gogen;
+pub mod import;
 pub mod input;
 pub mod raster;
 pub mod react;
@@ -30,6 +32,9 @@ pub struct Options {
     /// document. `Some` → the filesystem is never touched (wasm hosts);
     /// `None` → read `base_dir.join(src)` as before.
     pub assets: Option<std::collections::HashMap<String, Vec<u8>>>,
+    /// In-memory Slab sources keyed by normalized `base_dir`-relative paths.
+    /// `Some` prevents all filesystem access for imports.
+    pub sources: Option<std::collections::HashMap<String, String>>,
     /// Host-supplied sfnt bytes keyed by family name (matched
     /// case-insensitively). A matching family's FONT tables are built from
     /// these bytes instead of the bundled class fallback, so compiled glyph
@@ -43,6 +48,7 @@ impl Default for Options {
             embed_assets: true,
             base_dir: PathBuf::from("."),
             assets: None,
+            sources: None,
             fonts: std::collections::HashMap::new(),
         }
     }
@@ -52,46 +58,74 @@ impl Default for Options {
 /// `None` when errors make the output meaningless.
 pub fn compile(src: &str, opts: &Options) -> (Option<Slir>, Diagnostics) {
     let mut diags = Diagnostics::new();
-    let doc = slab_syntax::parse(src, &mut diags);
-    let expanded = expand::expand(&doc, &mut diags);
+    let units = import::closure(src, opts, &mut diags);
+    let slir = compile_units(&units, opts, &mut diags);
+    (slir, diags)
+}
+
+/// Compile an already-loaded source closure without loading it again.
+///
+/// Hosts that maintain virtual source maps use this after [`import::closure`].
+pub fn compile_units(
+    units: &[import::Unit],
+    opts: &Options,
+    diags: &mut Diagnostics,
+) -> Option<Slir> {
+    let expanded = expand::expand(units, diags);
     if diags.has_errors() {
-        return (None, diags);
+        return None;
     }
-    let slir = emit::emit(&expanded, opts, &mut diags);
+    let slir = emit::emit(&expanded, opts, diags);
     if diags.has_errors() {
-        return (None, diags);
+        return None;
     }
-    (Some(slir), diags)
+    Some(slir)
 }
 
 /// Compile the document and every exported definition as a standalone document.
 ///
 /// Standalone diagnostics include the exported definition name in their message.
 pub fn compile_with_exports(src: &str, opts: &Options) -> (Option<Slir>, Diagnostics) {
-    let (slir, mut diags) = compile(src, opts);
-    if slir.is_none() {
-        return (None, diags);
-    }
+    let mut diags = Diagnostics::new();
+    let units = import::closure(src, opts, &mut diags);
+    let slir = compile_units_with_exports(&units, opts, &mut diags);
+    (slir, diags)
+}
+
+pub(crate) fn compile_units_with_exports(
+    units: &[import::Unit],
+    opts: &Options,
+    diags: &mut Diagnostics,
+) -> Option<Slir> {
+    let slir = compile_units(units, opts, diags)?;
     let mut field_sync_seen = diags
         .0
         .iter()
         .filter(|diagnostic| diagnostic.code == "field-sync")
-        .map(|diagnostic| (diagnostic.line, diagnostic.msg.clone()))
+        .map(|diagnostic| {
+            (
+                diagnostic.file.clone(),
+                diagnostic.line,
+                diagnostic.msg.clone(),
+            )
+        })
         .collect::<std::collections::BTreeSet<_>>();
-    for def in export::exported_def_names(src) {
-        let (exported, export_diags, _) = export::compile_export(src, &def, opts);
+    for def in export::exported_def_names(units) {
+        let (exported, export_diags, _) = export::compile_export(units, &def, opts);
         for mut diagnostic in export_diags.0 {
             if diagnostic.code == "field-sync"
-                && !field_sync_seen.insert((diagnostic.line, diagnostic.msg.clone()))
+                && !field_sync_seen.insert((
+                    diagnostic.file.clone(),
+                    diagnostic.line,
+                    diagnostic.msg.clone(),
+                ))
             {
                 continue;
             }
             diagnostic.msg = format!("in export {def}: {}", diagnostic.msg);
             diags.0.push(diagnostic);
         }
-        if exported.is_none() {
-            return (None, diags);
-        }
+        exported.as_ref()?;
     }
-    (slir, diags)
+    Some(slir)
 }

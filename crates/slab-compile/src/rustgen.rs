@@ -9,19 +9,37 @@
 use crate::Options;
 use slab_slir::Slir;
 use slab_syntax::diag::Diagnostics;
-use std::fmt::Write as _;
+use std::{fmt::Write as _, path::PathBuf};
 /// Generate the typed Rust module for a compiled `.slab` source. `src_name`
 /// is the input file path (used only in the generated header comment).
 /// Returns the module source (or `None` on compile failure) and the compile
 /// diagnostics.
 pub fn generate(src: &str, copts: &Options, src_name: &str) -> (Option<String>, Diagnostics) {
-    let (slir, diags) = crate::compile_with_exports(src, copts);
+    let (module, diagnostics, _) = generate_with_import_paths(src, copts, src_name);
+    (module, diagnostics)
+}
+
+/// Generate a typed module and return each filesystem import used by the source.
+///
+/// Build-time hosts use the paths to register precise rebuild dependencies.
+pub fn generate_with_import_paths(
+    src: &str,
+    copts: &Options,
+    src_name: &str,
+) -> (Option<String>, Diagnostics, Vec<PathBuf>) {
+    let mut diagnostics = Diagnostics::new();
+    let units = crate::import::closure(src, copts, &mut diagnostics);
+    let imports = units
+        .iter()
+        .filter_map(|unit| unit.abs.clone())
+        .collect::<Vec<_>>();
+    let slir = crate::compile_units_with_exports(&units, copts, &mut diagnostics);
     let Some(slir) = slir else {
-        return (None, diags);
+        return (None, diagnostics, imports);
     };
     let bytes = slab_slir::write(&slir);
     let module = emit_module(&slir, &bytes, src_name);
-    (Some(module), diags)
+    (Some(module), diagnostics, imports)
 }
 
 /// PascalCase from a signal/param name (`row-clicked` -> `RowClicked`).
@@ -826,5 +844,25 @@ col#app { col#items { each param.rows } }
         assert!(module.contains("pub fn focus_note(&self) -> &str"));
         assert!(module.contains("pub fn invalidate_caches(&mut self)"));
         assert!(module.contains("self.rows_cache = None"));
+    }
+    #[test]
+    fn grouped_parameter_names_generate_valid_rust_identifiers() {
+        let source = r#"
+params editor { font_size num = 14 }
+col { rect w=param.editor.font_size }
+"#;
+        let (module, diagnostics) = generate(
+            source,
+            &Options {
+                embed_assets: false,
+                ..Options::default()
+            },
+            "editor.slab",
+        );
+        assert!(!diagnostics.has_errors(), "{:?}", diagnostics.0);
+        let module = module.expect("grouped parameter module");
+        assert!(module.contains("pub const PARAM_EDITOR_FONT_SIZE: u32 = 0;"));
+        assert!(module.contains("pub fn set_editor_font_size(&mut self, v: f64) -> bool"));
+        assert!(module.contains("/// Set param `editor.font_size` (num)"));
     }
 }
