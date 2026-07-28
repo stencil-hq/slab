@@ -10,7 +10,6 @@
 
 use std::collections::BTreeSet;
 
-use rustc_hash::FxHashSet;
 use serde::Serialize;
 
 use crate::{
@@ -60,9 +59,6 @@ pub struct Instance {
 	/// Runtime glyph notes already surfaced, keyed by authored family and
 	/// codepoint.
 	glyph_warned:  BTreeSet<(String, u32)>,
-	/// Codepoints already coverage-checked per font table index.
-	/// Never iterated; invalidated when the font table changes.
-	glyph_scanned: Vec<FxHashSet<u32>>,
 	/// Every distinct diagnostic observed since the document was assigned, in
 	/// first-occurrence order. Solves append; only [`inst_init`] clears.
 	diags_cum:     Vec<FrameDiagnostic>,
@@ -159,7 +155,6 @@ pub fn inst_shell() -> Instance {
 		root_pi:       -1,
 		focus_note:    String::new(),
 		glyph_warned:  BTreeSet::new(),
-		glyph_scanned: Vec::new(),
 		diags_cum:     Vec::new(),
 	}
 }
@@ -168,7 +163,6 @@ pub fn inst_shell() -> Instance {
 pub fn inst_init(i: &mut Instance) {
 	i.ok = i.doc.ok;
 	i.glyph_warned.clear();
-	i.glyph_scanned.clear();
 	i.diags_cum.clear();
 	i.focus_note.clear();
 	i.solved = false;
@@ -218,6 +212,11 @@ fn scan_glyph_coverage(i: &mut Instance, frame: &mut Frame) {
 		let FrameOp::Text(text) = op else {
 			continue;
 		};
+		// The flatten pass already classified coverage per cluster; fully
+		// covered runs (the common case) need no per-character rescan.
+		if text.uncov_len <= 0 {
+			continue;
+		}
 		let Ok(font) = usize::try_from(text.font) else {
 			continue;
 		};
@@ -233,14 +232,22 @@ fn scan_glyph_coverage(i: &mut Instance, frame: &mut Frame) {
 		let Some(content) = frame.strings.get(text.str_ref as usize) else {
 			continue;
 		};
-		if i.glyph_scanned.len() <= font {
-			i.glyph_scanned.resize_with(font + 1, FxHashSet::default);
-		}
-		for character in content.chars() {
-			let codepoint = u32::from(character);
-			if !i.glyph_scanned[font].insert(codepoint) {
+		let run_start = usize::try_from(text.uncov_off).expect("negative uncovered offset");
+		let run_end = run_start + usize::try_from(text.uncov_len).expect("negative run count") * 2;
+		let runs = &frame.uncovered[run_start..run_end];
+		let mut run = 0;
+		for (offset, character) in content.chars().enumerate() {
+			let offset = u32::try_from(offset).expect("text exceeds u32 codepoints");
+			while run < runs.len() && offset >= runs[run + 1] {
+				run += 2;
+			}
+			if run >= runs.len() {
+				break;
+			}
+			if offset < runs[run] {
 				continue;
 			}
+			let codepoint = u32::from(character);
 			if !graphemes::requires_glyph(codepoint)
 				|| slir::font_gid(&i.doc, text.font, codepoint) != 0
 				|| !i.glyph_warned.insert((family.to_owned(), codepoint))
@@ -325,7 +332,6 @@ pub fn inst_font_register(
 	i.doc.font_cmap_gid.extend_from_slice(cmap_gid);
 	i.doc.font_adv.extend_from_slice(adv);
 	style::invalidate_font_selection(&mut i.st);
-	i.glyph_scanned.clear();
 	i.dirty = true;
 
 	i32::try_from(i.doc.font_family.len())
@@ -532,6 +538,7 @@ pub fn inst_set_theme(i: &mut Instance, name: &str) -> bool {
 	if i.st.env.theme != name {
 		name.clone_into(&mut i.st.env.theme);
 		i.st.theme_index = theme_index;
+		style::rebuild_aval_cache(&i.doc, &mut i.st);
 		i.dirty = true;
 	}
 	true

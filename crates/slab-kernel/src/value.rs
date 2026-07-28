@@ -17,7 +17,7 @@ use crate::slir::{
 pub const V_MISSING: u32 = u32::MAX;
 
 /// A decoded, tagged AVAL value.
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct V {
 	/// SLIR value tag, or [`V_MISSING`].
 	pub tag: u32,

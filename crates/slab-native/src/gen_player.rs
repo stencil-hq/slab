@@ -230,7 +230,8 @@ impl Doc {
 	/// Drop generated list reconciliation snapshots after an external document
 	/// reload. Call this when a host-mounted `RequestPump` reports `reloaded ==
 	/// true`, before re-synchronizing typed list setters. Safe and idempotent.
-	pub const fn invalidate_caches(&mut self) {}
+	#[allow(clippy::missing_const_for_fn)]
+	pub fn invalidate_caches(&mut self) {}
 
 	/// Read one token resolved through the active theme, with base fallback.
 	pub fn get_token(&self, path: &str) -> Option<kframe::TokenValue<'_>> {

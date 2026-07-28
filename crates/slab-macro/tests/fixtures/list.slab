@@ -1,0 +1,13 @@
+def Row(value="", score=0) export {
+  row act="selected" {
+    text value size=score
+  }
+}
+
+params {
+  rows list(Row) = []
+}
+
+col {
+  each param.rows
+}

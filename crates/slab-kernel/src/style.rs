@@ -96,6 +96,13 @@ pub struct St {
 	/// Precomputed keyword codes per string-pool entry, parallel with
 	/// `Doc::strs`.
 	kw_codes: Vec<KwCodes>,
+	/// Per-node motion-overlay presence, indexed by node; nodes beyond the
+	/// vector carry no overlay. Skips `mo_index` hashing for the common
+	/// overlay-free node.
+	mo_node_has: Vec<bool>,
+	/// Theme-resolved decoded value per AVAL entry, parallel with
+	/// `Doc::aval_tag`. Rebuilt on document init and theme change.
+	aval_active: Vec<crate::value::V>,
 	/// Synthetic-node size-condition results keyed by node and patch.
 	pub wh_node: Vec<u32>,
 	pub wh_patch: Vec<i32>,
@@ -186,6 +193,8 @@ pub fn st_new() -> crate::style::St {
 		mo_ln: vec![],
 		mo_f: vec![],
 		mo_index: FxHashMap::default(),
+		mo_node_has: vec![],
+		aval_active: vec![],
 		text_layout_cache: FxHashMap::default(),
 		text_layout_cache_cold: FxHashMap::default(),
 		rs: vec![],
@@ -253,6 +262,7 @@ pub fn init_params(d: &crate::slir::Doc, st: &mut crate::style::St) {
 		.extend((0..d.node_kind.len()).map(|node| authored_attr_values(d, node)));
 	st.kw_codes.clear();
 	st.kw_codes.extend(d.strs.iter().map(|s| kw_codes_of(s)));
+	rebuild_aval_cache(d, st);
 	crate::list::init(d, &mut st.lists);
 	for &encoded in &d.parm_default {
 		let v = crate::value::decode(d, i32::from_ne_bytes(encoded.to_ne_bytes()));
@@ -418,6 +428,7 @@ pub fn begin_solve(d: &crate::slir::Doc, st: &mut crate::style::St) {
 	st.mo_ln.clear();
 	st.mo_f.clear();
 	st.mo_index.clear();
+	st.mo_node_has.clear();
 	st.rs.clear();
 	st.track_kind.clear();
 	st.track_v.clear();
@@ -838,6 +849,40 @@ pub fn ov_push(
 	st.mo_off.push(off);
 	st.mo_ln.push(ln);
 	st.mo_index.insert((node, attr), st.mo_node.len() - 1);
+	let node_index = index_u32(node);
+	if st.mo_node_has.len() <= node_index {
+		st.mo_node_has.resize(node_index + 1, false);
+	}
+	st.mo_node_has[node_index] = true;
+}
+
+/// Rebuilds the theme-resolved decoded-value cache for every AVAL entry.
+///
+/// Attribute reads resolve values through this cache instead of re-decoding
+/// and re-following token references per lookup. Call after document init and
+/// whenever the active theme changes.
+pub fn rebuild_aval_cache(d: &crate::slir::Doc, st: &mut crate::style::St) {
+	st.aval_active.clear();
+	st.aval_active.extend((0..d.aval_tag.len()).map(|ix| {
+		crate::value::decode_active(d, st.theme_index, i32::try_from(ix).expect("aval index"))
+	}));
+}
+
+/// Returns the theme-resolved decoded value for AVAL entry `ix`.
+///
+/// Negative and out-of-range indices read as missing, matching
+/// [`crate::value::decode_active`].
+#[inline]
+pub fn aval_active(d: &crate::slir::Doc, st: &crate::style::St, ix: i32) -> crate::value::V {
+	let Ok(index) = usize::try_from(ix) else {
+		return crate::value::missing();
+	};
+	match st.aval_active.get(index) {
+		Some(v) => *v,
+		// A cache rebuilt from the same document covers every entry; the
+		// fallback keeps host-supplied stale indices well-defined.
+		None => crate::value::decode_active(d, st.theme_index, ix),
+	}
 }
 
 /// Reads a tuple element from the document, the motion overlay, or a
@@ -1015,7 +1060,7 @@ pub fn attr_ix(d: &crate::slir::Doc, st: &crate::style::St, node: u32, attr: u32
 /// Returns the last motion overlay value for a node attribute.
 #[inline]
 pub fn overlay_val(st: &crate::style::St, node: u32, attr: u32) -> crate::value::V {
-	if st.mo_index.is_empty() {
+	if !st.mo_node_has.get(index_u32(node)).copied().unwrap_or(false) {
 		return crate::value::missing();
 	}
 	let Some(&index) = st.mo_index.get(&(node, attr)) else {
@@ -1047,7 +1092,7 @@ pub fn attr_val(
 	if mv.tag != crate::value::V_MISSING {
 		return mv;
 	}
-	let v = crate::value::decode_active(d, st.theme_index, crate::style::attr_ix(d, st, node, attr));
+	let v = crate::style::aval_active(d, st, crate::style::attr_ix(d, st, node, attr));
 	if v.tag == crate::slir::T_PARAM_REF {
 		let parameter = index_u32(v.h);
 		let parameter_type = d.parm_type[parameter];
@@ -2546,7 +2591,7 @@ pub fn build_rstyle(
 		Err(s) => crate::style::fit_code(s),
 	};
 	let path_attr = crate::style::attr_ix(d, st, node, crate::slir::A_D);
-	let encoded_path = crate::value::decode_active(d, st.theme_index, path_attr);
+	let encoded_path = crate::style::aval_active(d, st, path_attr);
 	let path = if path_attr < 0 {
 		crate::style::PATH_NONE
 	} else if encoded_path.tag == crate::slir::T_PATH_REF {

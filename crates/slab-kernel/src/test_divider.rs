@@ -384,6 +384,7 @@ pub fn test_divider_reserves_nonfixed_handle_footprints() {
 			usize::try_from(instance.doc.aval_lo[pad]).expect("pad tuple offset fits usize");
 		instance.doc.f64s[pad_offset + 1] = pad_side;
 		instance.doc.f64s[pad_offset + 3] = pad_side;
+		style::rebuild_aval_cache(&instance.doc, &mut instance.st);
 		assert!(frame::inst_set_divider(&mut instance, "#root/#split", 220.0));
 
 		frame::inst_frame(&mut instance, 0.0);
@@ -418,6 +419,7 @@ pub fn test_divider_release_uses_fresh_layout_clamp() {
 
 	let value = attr_value(&instance.doc, 2, slir::A_W);
 	instance.doc.aval_num[value] = 40.0;
+	style::rebuild_aval_cache(&instance.doc, &mut instance.st);
 	instance.dirty = true;
 	frame::inst_frame(&mut instance, 1.0);
 	assert_eq!(extent(&instance, 1, true), 190.0);

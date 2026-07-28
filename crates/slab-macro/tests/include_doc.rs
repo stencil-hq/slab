@@ -19,10 +19,7 @@ fn generated_module_drives_the_document() {
 #[test]
 fn generated_list_cache_can_be_invalidated() {
 	let mut doc = list::Doc::new();
-	let rows = [list::RowsItem {
-		label: "First".to_string(),
-		..Default::default()
-	}];
+	let rows = [list::RowsItem { value: "First".to_string(), ..Default::default() }];
 
 	assert!(doc.set_rows(&rows));
 	doc.invalidate_caches();

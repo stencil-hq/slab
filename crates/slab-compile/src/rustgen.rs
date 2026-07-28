@@ -548,7 +548,8 @@ fn emit_module(slir: &Slir, bytes: &[u8], src_name: &str) -> String {
 			 {{\n\x20       kframe::inst_set_theme(&mut self.inst, name)\n\x20   }}\n\n\x20   /// \
 			 Drop generated list reconciliation snapshots after an external document reload.\n\x20   \
 			 /// Call this when a host-mounted `RequestPump` reports `reloaded == true`,\n\x20   /// \
-			 before re-synchronizing typed list setters. Safe and idempotent.\n\x20   pub fn \
+			 before re-synchronizing typed list setters. Safe and idempotent.\n\x20   \
+			 #[allow(clippy::missing_const_for_fn)]\n\x20   pub fn \
 			 invalidate_caches(&mut self) {{\n{cache_invalidations}    }}\n\n\x20   /// Read one \
 			 token resolved through the active theme, with base fallback.\n\x20   pub fn \
 			 get_token(&self, path: &str) -> Option<kframe::TokenValue<'_>> {{\n\x20       \
@@ -796,6 +797,7 @@ col#app { col#items { each param.rows } }
 		assert!(module.contains("pub fn clear_focus(&mut self)"));
 		assert!(module.contains("pub fn focus_item(&mut self, each_key: &str, index: i32)"));
 		assert!(module.contains("pub fn focus_note(&self) -> &str"));
+		assert!(module.contains("#[allow(clippy::missing_const_for_fn)]"));
 		assert!(module.contains("pub fn invalidate_caches(&mut self)"));
 		assert!(module.contains("self.rows_cache = None"));
 	}

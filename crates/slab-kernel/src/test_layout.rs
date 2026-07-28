@@ -151,6 +151,7 @@ pub fn test_hole_report_does_not_override_non_hug_or_non_hole() {
 	let mut fixed = hole_inst(false, 0.0, style::INF);
 	fixed.doc.aval_tag[0] = slir::T_SIZE_FIXED;
 	fixed.doc.aval_num[0] = 23.0;
+	style::rebuild_aval_cache(&fixed.doc, &mut fixed.st);
 	frame::inst_set_hole_size(&mut fixed, 0, 37.0, 19.0);
 	let root = usize::try_from(solve(&mut fixed)).expect("fixture root index is valid");
 	assert_eq!(fixed.lay.p_w[root], 23.0, "fixed axis ignores reported width");
