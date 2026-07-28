@@ -65,7 +65,7 @@ const TEXT_ATTRS: [&str; 12] = [
     "live",
 ];
 const TEXT_OR_BOOL_ATTRS: [&str; 1] = ["checked"];
-const BOOL_ATTRS: [&str; 4] = ["expanded", "selected", "modal", "live-atomic"];
+const BOOL_ATTRS: [&str; 5] = ["expanded", "selected", "modal", "live-atomic", "strike"];
 const NUM_ATTRS: [&str; 25] = [
     "w",
     "h",

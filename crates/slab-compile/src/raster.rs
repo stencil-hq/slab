@@ -1424,6 +1424,8 @@ impl<'a> Raster<'a> {
         y_baseline: f64,
         size: f64,
         tracking: f64,
+        strike: bool,
+        measured_w: f64,
     ) -> Option<Path> {
         let doc = self.s;
         let fe = doc
@@ -1455,14 +1457,32 @@ impl<'a> Raster<'a> {
             let adv_units = ix.map(|i| advances[i] as f64).unwrap_or(default_adv);
             pen += adv_units * size_px / upem + tracking * s;
         }
+        if strike && measured_w > 0.0 {
+            let center = (y_baseline - size * 0.3) * s;
+            let thickness = (size * s / 16.0).max(1.0);
+            sink.pb.push_rect(tiny_skia::Rect::from_ltrb(
+                (x * s) as f32,
+                (center - thickness / 2.0) as f32,
+                ((x + measured_w) * s) as f32,
+                (center + thickness / 2.0) as f32,
+            )?);
+        }
         sink.pb.finish()
     }
 
     /// Draw one text run: solid fill, gradient fill over the node's content
     /// box (`gx..gh`, contract §6.7), or per-pixel conic.
     fn draw_text(&mut self, surf: &mut Layer, t: &OpText, text: &str) {
-        let Some(path) = self.text_outline(text, t.font, t.x, t.y_baseline, t.size, t.tracking)
-        else {
+        let Some(path) = self.text_outline(
+            text,
+            t.font,
+            t.x,
+            t.y_baseline,
+            t.size,
+            t.tracking,
+            t.strike,
+            t.measured_w,
+        ) else {
             return;
         };
         let s = self.scale;

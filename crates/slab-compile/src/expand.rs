@@ -1103,7 +1103,7 @@ fn apply_attr(ctx: &mut Ctx, sink: &mut Sink, key: &str, rv: &RVal, line: u32) {
                     sink.set(at::attr_id(key).expect("text attribute id is defined"), tv);
                 }
             }
-            "expanded" | "selected" | "modal" | "live-atomic" => {
+            "expanded" | "selected" | "modal" | "live-atomic" | "strike" => {
                 if let Some(tv) = expect_prop_ty(ctx, *field, &[ParamType::Bool], line, key) {
                     sink.set(
                         at::attr_id(key).expect("boolean attribute id is defined"),
@@ -1144,7 +1144,7 @@ fn apply_attr(ctx: &mut Ctx, sink: &mut Sink, key: &str, rv: &RVal, line: u32) {
                 }
             }
             "role" => ctx.error("ref", "role expects an identifier or string".into(), line),
-            "content" => sink.content = Some(TVal::Prop(*field)),
+            "content" | "text" => sink.content = Some(TVal::Prop(*field)),
             "act" | "field" | "submit" | "press" | "context" | "dblclick" | "drag" | "drop"
             | "resize" | "pointer-move" | "pointer-up" | "drag-update" | "drag-end" | "animate"
             | "transition" | "keys" => ctx.error(
@@ -1780,6 +1780,21 @@ fn apply_attr(ctx: &mut Ctx, sink: &mut Sink, key: &str, rv: &RVal, line: u32) {
             }
             _ => ctx.error("ref", "live expects off|polite|assertive text".into(), line),
         },
+        "strike" => {
+            let value = match rv {
+                RVal::Kw(value) if value == "false" => Some(TVal::Num(0.0)),
+                RVal::Kw(value) if value == "true" => Some(TVal::Num(1.0)),
+                RVal::Param(ix) => expect_param_ty(ctx, *ix, &[ParamType::Bool], line, key),
+                RVal::Prop(field) => expect_prop_ty(ctx, *field, &[ParamType::Bool], line, key),
+                _ => {
+                    ctx.error("ref", "strike expects a boolean".into(), line);
+                    None
+                }
+            };
+            if let Some(value) = value {
+                sink.set(at::STRIKE, value);
+            }
+        }
         "size" | "leading" | "tracking" => {
             let id = match key {
                 "size" => at::SIZE,
@@ -1899,12 +1914,12 @@ fn apply_attr(ctx: &mut Ctx, sink: &mut Sink, key: &str, rv: &RVal, line: u32) {
                 sink.set(at::SPAN, TVal::Num((v as i64).max(1) as f64));
             }
         }
-        "content" => match rv {
+        "content" | "text" => match rv {
             RVal::Str(text) => {
                 ctx.note_text(text);
                 sink.set(at::CONTENT, TVal::Str(text.clone()));
             }
-            _ => ctx.error("ref", "content expects a string".into(), line),
+            _ => ctx.error("ref", format!("{key} expects a string"), line),
         },
         "keys" => {
             if let Some(keys) = activation_keys(ctx, rv, line) {
@@ -2872,7 +2887,11 @@ fn expand_builtin(
         hole: None,
     };
     for f in &a.flags {
-        node.flags |= flag_bit(f);
+        if f == "strike" {
+            sink.set(at::STRIKE, TVal::Num(1.0));
+        } else {
+            node.flags |= flag_bit(f);
+        }
     }
     if kind == nk::DIVIDER {
         node.flags |= fl::FOCUSABLE;
@@ -2933,7 +2952,11 @@ fn expand_builtin(
                         apply_attr(ctx, &mut sink, k, &rv, w.line);
                     }
                     for f in &w.flags {
-                        node.flags |= flag_bit(f);
+                        if f == "strike" {
+                            sink.set(at::STRIKE, TVal::Num(1.0));
+                        } else {
+                            node.flags |= flag_bit(f);
+                        }
                     }
                     for c in &w.children {
                         match c {
@@ -3008,7 +3031,11 @@ fn expand_builtin(
                     }
                     let mut flag_mask = psink.flag_mask;
                     for f in &w.flags {
-                        flag_mask |= flag_bit(f);
+                        if f == "strike" {
+                            psink.set(at::STRIKE, TVal::Num(1.0));
+                        } else {
+                            flag_mask |= flag_bit(f);
+                        }
                     }
                     let mut children = Vec::new();
                     for c in &w.children {

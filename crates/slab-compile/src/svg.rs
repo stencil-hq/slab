@@ -988,6 +988,9 @@ impl<'a> Emitter<'a> {
                         format!("font-weight=\"{}\" fill=\"{fill}\"", t.weight),
                         "xml:space=\"preserve\"".into(),
                     ];
+                    if t.strike {
+                        attrs.push("text-decoration=\"line-through\"".into());
+                    }
                     if t.tracking != 0.0 {
                         attrs.push(format!("letter-spacing=\"{}\"", n(t.tracking)));
                     }

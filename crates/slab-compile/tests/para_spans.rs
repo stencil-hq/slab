@@ -161,3 +161,88 @@ col w=600 h=200 {
     assert!(texts.iter().any(|t| t.2 == "abcd"), "no-space merge");
     assert!(texts.iter().any(|t| t.2 == "ab cd"), "one-space merge");
 }
+
+#[test]
+fn strike_resolves_for_text_spans_patches_params_and_list_props() {
+    let source = r#"
+def Item(done=false) export {
+  para w=100 { span text="item" strike=done }
+}
+params {
+  crossed bool = true
+  rows list(Item) = []
+}
+col w=300 h=180 strike=param.crossed {
+  text "bare" strike
+  text "inherited"
+  text "cleared" strike=false
+  text "patched" {
+    when crossed { strike=false }
+  }
+  para w=200 {
+    span text="span-on" strike=true
+    span text="span-off" strike=false
+  }
+  para w=200 { span text="span" strike=true }
+  each param.rows key=rows
+}
+"#;
+    let mut instance = compile_instance(source, 300.0, 180.0);
+    assert!(frame::inst_set_list_len(&mut instance, 1, "", 1));
+    assert!(frame::inst_set_list_field(
+        &mut instance,
+        1,
+        "",
+        0,
+        "done",
+        &frame::ParamValue {
+            kind: 4,
+            num: 1.0,
+            s: String::new(),
+            rgba: 0,
+            sym: String::new(),
+        },
+    ));
+    let fr = frame::inst_frame(&mut instance, 0.0);
+    let runs: Vec<(&str, bool)> = fr
+        .ops
+        .iter()
+        .filter_map(|op| match op {
+            FrameOp::Text(text) => Some((fr.strings[text.str_ref as usize].as_str(), text.strike)),
+            _ => None,
+        })
+        .collect();
+    assert!(runs.contains(&("bare", true)));
+    assert!(runs.contains(&("inherited", true)));
+    assert!(runs.contains(&("cleared", false)));
+    assert!(runs.contains(&("patched", false)));
+    assert!(runs.contains(&("span", true)));
+    assert!(runs.contains(&("span-on", true)));
+    assert!(runs.contains(&("span-off", false)));
+    assert!(runs.contains(&("item", true)));
+}
+
+#[test]
+fn svg_emits_strike_only_for_true_runs() {
+    let (slir, diagnostics) = compile(
+        r#"col w=200 h=60 {
+  text "done" strike=true
+  text "open" strike=false
+}"#,
+        &Options {
+            embed_assets: false,
+            ..Options::default()
+        },
+    );
+    assert!(!diagnostics.has_errors(), "{:#?}", diagnostics.0);
+    let slir = slir.expect("valid source");
+    let bytes = slab_slir::write(&slir);
+    let (mut instance, _) = slab_slir::instance(&bytes).expect("decode fixture");
+    frame::inst_set_env(&mut instance, 200.0, 60.0, 0, false, false);
+    let rendered = frame::inst_frame(&mut instance, 0.0);
+    let svg =
+        slab_compile::svg::render_svg(&slir, &[], &[], &[], &rendered, std::path::Path::new("."));
+    assert_eq!(svg.matches("text-decoration=\"line-through\"").count(), 1);
+    assert!(svg.contains(">done</text>"));
+    assert!(svg.contains(">open</text>"));
+}

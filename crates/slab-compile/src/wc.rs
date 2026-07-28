@@ -36,40 +36,40 @@ pub struct WcFile {
 }
 
 #[derive(Clone)]
-struct ListFieldSpec {
-    name: String,
-    ty: u8,
-    enum_syms: Vec<String>,
+pub(crate) struct ListFieldSpec {
+    pub(crate) name: String,
+    pub(crate) ty: u8,
+    pub(crate) enum_syms: Vec<String>,
     /// Zero for scalar fields, otherwise one plus the nested schema row.
-    sub: u32,
+    pub(crate) sub: u32,
 }
 
 #[derive(Clone)]
-struct ListSpec {
-    name: String,
-    param: u32,
-    fields: Vec<ListFieldSpec>,
-    row: u32,
+pub(crate) struct ListSpec {
+    pub(crate) name: String,
+    pub(crate) param: u32,
+    pub(crate) fields: Vec<ListFieldSpec>,
+    pub(crate) row: u32,
 }
 
 #[derive(Clone)]
-enum HostToken {
+pub(crate) enum HostToken {
     Number(f64),
     String(String),
 }
 
-type TokenTables = Vec<(String, Vec<(String, HostToken)>)>;
+pub(crate) type TokenTables = Vec<(String, Vec<(String, HostToken)>)>;
 
-struct DocSpec {
-    tag: String,
-    class: String,
-    bytes: Vec<u8>,
-    ir_name: String,
-    params: Vec<(String, ParamType)>,
-    lists: Vec<ListSpec>,
-    list_rows: Vec<Vec<ListFieldSpec>>,
-    signals: Vec<(String, bool)>,
-    token_tables: TokenTables,
+pub(crate) struct DocSpec {
+    pub(crate) tag: String,
+    pub(crate) class: String,
+    pub(crate) bytes: Vec<u8>,
+    pub(crate) ir_name: String,
+    pub(crate) params: Vec<(String, ParamType)>,
+    pub(crate) lists: Vec<ListSpec>,
+    pub(crate) list_rows: Vec<Vec<ListFieldSpec>>,
+    pub(crate) signals: Vec<(String, bool)>,
+    pub(crate) token_tables: TokenTables,
 }
 
 fn param_type(ty: u8) -> ParamType {
@@ -85,7 +85,7 @@ fn param_type(ty: u8) -> ParamType {
 }
 
 /// TS type of a scalar param or list field.
-fn ts_type(ty: &ParamType) -> &'static str {
+pub(crate) fn ts_type(ty: &ParamType) -> &'static str {
     match ty {
         ParamType::Text | ParamType::Enum => "string",
         ParamType::Num => "number",
@@ -96,7 +96,7 @@ fn ts_type(ty: &ParamType) -> &'static str {
     }
 }
 
-fn ts_field_type(field: &ListFieldSpec) -> String {
+pub(crate) fn ts_field_type(field: &ListFieldSpec) -> String {
     if field.ty == 5 && !field.enum_syms.is_empty() {
         return field
             .enum_syms
@@ -111,7 +111,7 @@ fn ts_field_type(field: &ListFieldSpec) -> String {
     ts_type(&param_type(field.ty)).to_string()
 }
 
-fn js_string(s: &str) -> String {
+pub(crate) fn js_string(s: &str) -> String {
     let mut out = String::from("\"");
     for c in s.chars() {
         match c {
@@ -275,7 +275,7 @@ fn lists_of(slir: &Slir) -> Vec<ListSpec> {
         .collect()
 }
 
-fn pascal(s: &str) -> String {
+pub(crate) fn pascal(s: &str) -> String {
     let mut out = String::new();
     let mut up = true;
     for c in s.chars() {
@@ -365,7 +365,7 @@ fn canonical_list_row(doc: &DocSpec, row: usize) -> usize {
         .unwrap_or(row)
 }
 
-fn collect_ts_list_types(
+pub(crate) fn collect_ts_list_types(
     doc: &DocSpec,
     row: usize,
     name: String,
@@ -391,7 +391,7 @@ fn collect_ts_list_types(
     }
 }
 
-fn ts_list_type(names: &[(usize, String)], doc: &DocSpec, row: usize) -> String {
+pub(crate) fn ts_list_type(names: &[(usize, String)], doc: &DocSpec, row: usize) -> String {
     let row = canonical_list_row(doc, row);
     names
         .iter()
@@ -791,17 +791,15 @@ fn signals_of(slir: &Slir) -> Vec<(String, bool)> {
     sigs
 }
 
-/// Generate the full `gen wc` file set for a `.slab` source. `stem` is the
-/// output basename (the CLI passes the input file stem). Every successful set
-/// includes the text `slab-runtime.js` and binary `wasm/slab_kernel_bg.wasm`
-/// sidecars, plus `.slir` blobs under `--separate-ir`; the file list is `None`
-/// on compile failure.
-pub fn generate(
+/// Compile the main document and every exported definition into the
+/// [`DocSpec`] list shared by `gen wc` and `gen react`. `None` on compile
+/// failure.
+pub(crate) fn doc_specs(
     src: &str,
     copts: &Options,
     w: &WcOptions,
     stem: &str,
-) -> (Option<Vec<WcFile>>, Diagnostics) {
+) -> (Option<Vec<DocSpec>>, Diagnostics) {
     let (slir, mut diags) = crate::compile(src, copts);
     let Some(slir) = slir else {
         return (None, diags);
@@ -811,7 +809,6 @@ pub fn generate(
         .tag
         .clone()
         .unwrap_or_else(|| format!("slab-{}", sanitize_tag(stem)));
-
     let mut docs: Vec<DocSpec> = Vec::new();
     let params: Vec<(String, ParamType)> = slir
         .params
@@ -861,12 +858,18 @@ pub fn generate(
             token_tables: token_tables.clone(),
         });
     }
+    (Some(docs), diags)
+}
 
-    let module = emit_module(&docs, w.separate_ir);
-    let dts = emit_dts(&docs);
+/// Assemble the `gen wc` file set for compiled [`DocSpec`]s: the module,
+/// declarations, runtime and kernel sidecars, plus `.slir` blobs under
+/// `--separate-ir`.
+pub(crate) fn files_of(docs: &[DocSpec], w: &WcOptions, stem: &str) -> Vec<WcFile> {
+    let module = emit_module(docs, w.separate_ir);
+    let dts = emit_dts(docs);
     let mut files = Vec::new();
     if w.separate_ir {
-        for d in &docs {
+        for d in docs {
             files.push(WcFile {
                 name: d.ir_name.clone(),
                 bytes: d.bytes.clone(),
@@ -894,7 +897,25 @@ pub fn generate(
         bytes: KERNEL_WASM.to_vec(),
         text: false,
     });
-    (Some(files), diags)
+    files
+}
+
+/// Generate the full `gen wc` file set for a `.slab` source. `stem` is the
+/// output basename (the CLI passes the input file stem). Every successful set
+/// includes the text `slab-runtime.js` and binary `wasm/slab_kernel_bg.wasm`
+/// sidecars, plus `.slir` blobs under `--separate-ir`; the file list is `None`
+/// on compile failure.
+pub fn generate(
+    src: &str,
+    copts: &Options,
+    w: &WcOptions,
+    stem: &str,
+) -> (Option<Vec<WcFile>>, Diagnostics) {
+    let (docs, diags) = doc_specs(src, copts, w, stem);
+    let Some(docs) = docs else {
+        return (None, diags);
+    };
+    (Some(files_of(&docs, w, stem)), diags)
 }
 
 #[cfg(test)]
