@@ -243,9 +243,7 @@ struct GlyphVary {
     @location(3) cr: f32,
     @location(4) pre: vec2<f32>,   // pre-transform device position
     @location(5) g2: vec4<f32>,
-    @location(6) @interpolate(flat) uv_rect: vec4<f32>,
-    @location(7) @interpolate(flat) kind: u32,
-    @location(8) @interpolate(flat) ink: f32,
+    @location(6) @interpolate(flat) kind: u32,
 }
 
 @vertex
@@ -262,17 +260,13 @@ fn vs_glyph(@builtin(vertex_index) vi: u32, g: GlyphIn) -> GlyphVary {
     out.cr = g.uc.z;
     out.pre = p;
     out.g2 = g.g2;
-    out.uv_rect = vec4(g.su.zw + vec2(0.5), g.su.zw + g.uc.xy - vec2(0.5));
     out.kind = u32(g.uc.w);
-    // Small glyphs need disproportionate smoothing; retina-sized bitmaps are
-    // already dense enough to remain untouched.
-    out.ink = clamp((18.0 - g.su.y) / 18.0, 0.0, 1.0);
     return out;
 }
 
-fn mask_tap(uv: vec2<f32>, rect: vec4<f32>) -> f32 {
+fn mask_tap(uv: vec2<f32>) -> f32 {
     let dims = vec2<f32>(textureDimensions(tex1));
-    return textureSampleLevel(tex1, samp0, clamp(uv, rect.xy, rect.zw) / dims, 0.0).r;
+    return textureSampleLevel(tex1, samp0, uv / dims, 0.0).r;
 }
 
 @fragment
@@ -296,31 +290,7 @@ fn fs_glyph(v: GlyphVary) -> @location(0) vec4<f32> {
         return out * clip_cov(v.clip_pos.xy, v.clip, v.cr);
     }
 
-    // CoreText-style small-text smoothing, adopted from Slate:
-    // 1. A clamped cross-shaped dilation widens thin stems without blurring
-    //    already-opaque cores or bleeding into neighboring atlas entries.
-    let sharp = mask_tap(v.uv, v.uv_rect);
-    var cov = sharp;
-    let amount = min(v.ink * 1.2, 1.0) * 0.42;
-    if (amount > 0.0) {
-        let d = 0.75;
-        let n = max(
-            max(
-                mask_tap(v.uv + vec2(d, 0.0), v.uv_rect),
-                mask_tap(v.uv - vec2(d, 0.0), v.uv_rect),
-            ),
-            max(
-                mask_tap(v.uv + vec2(0.0, d), v.uv_rect),
-                mask_tap(v.uv - vec2(0.0, d), v.uv_rect),
-            ),
-        );
-        cov = max(sharp, n * amount);
-    }
-    // 2. Stem darkening offsets the thinning of sRGB-space light-on-dark
-    //    blending, with a stronger lift for small and bright glyphs.
-    let lum = dot(col.rgb, vec3(0.299, 0.587, 0.114));
-    let k = mix(0.92, 0.76, lum) - v.ink * 0.12;
-    cov = pow(cov, max(k, 0.62));
+    let cov = mask_tap(v.uv);
     let cov_alpha = cov * col.a;
     let peak = max(col.r, max(col.g, col.b));
     let alpha = srgb_enc1(peak * cov_alpha)

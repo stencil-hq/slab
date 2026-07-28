@@ -5,7 +5,7 @@
 //! (fill, aligned stroke, in-shader linear/radial gradients, blurred-SDF
 //! shadows, rounded clip). Text is hinted into independent A8 mask and RGBA
 //! color atlases from kernel `text_glyphs`; quarter-pixel x/y bins preserve
-//! fractional tracking and the shader applies small-text smoothing.
+//! fractional tracking while the original gamma-compensated blend is retained.
 //! Paths are lyon meshes tessellated at first use.
 //! GroupPush/Pop composite through pooled offscreen layers with opacity and
 //! two-pass gaussian blur; Backdrop copies the current target region, blurs
