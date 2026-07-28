@@ -1030,19 +1030,8 @@ fn patch_attr(
 		})
 }
 
-/// Finds the winning encoded value for an attribute.
-///
-/// Active patches are visited in document order and later declarations replace
-/// earlier declarations, preserving the cascade's last-wins rule.
-#[inline]
-pub fn attr_ix(d: &crate::slir::Doc, st: &crate::style::St, node: u32, attr: u32) -> i32 {
-	if st.effective_attr_node == node {
-		return st
-			.effective_attr_values
-			.get(index_u32(attr))
-			.copied()
-			.unwrap_or(-1);
-	}
+#[inline(never)]
+fn attr_ix_slow(d: &crate::slir::Doc, st: &crate::style::St, node: u32, attr: u32) -> i32 {
 	let base = crate::list::base(&st.lists, d, node);
 	let base_index = index_u32(base);
 	let mut value = st
@@ -1070,21 +1059,27 @@ pub fn attr_ix(d: &crate::slir::Doc, st: &crate::style::St, node: u32, attr: u32
 	value
 }
 
-/// Returns the last motion overlay value for a node attribute.
-#[inline]
-pub fn overlay_val(st: &crate::style::St, node: u32, attr: u32) -> crate::value::V {
-	if !st
-		.mo_node_has
-		.get(index_u32(node))
-		.copied()
-		.unwrap_or(false)
-	{
-		return crate::value::missing();
+/// Finds the winning encoded value for an attribute.
+///
+/// Active patches are visited in document order and later declarations replace
+/// earlier declarations, preserving the cascade's last-wins rule.
+#[inline(always)]
+pub fn attr_ix(d: &crate::slir::Doc, st: &crate::style::St, node: u32, attr: u32) -> i32 {
+	if st.effective_attr_node == node {
+		return st
+			.effective_attr_values
+			.get(index_u32(attr))
+			.copied()
+			.unwrap_or(-1);
 	}
+	attr_ix_slow(d, st, node, attr)
+}
+
+#[inline(never)]
+fn overlay_present(st: &crate::style::St, node: u32, attr: u32) -> crate::value::V {
 	let Some(&index) = st.mo_index.get(&(node, attr)) else {
 		return crate::value::missing();
 	};
-
 	crate::value::V {
 		tag: st.mo_tag[index],
 		num: st.mo_num[index],
@@ -1094,105 +1089,79 @@ pub fn overlay_val(st: &crate::style::St, node: u32, attr: u32) -> crate::value:
 	}
 }
 
+/// Returns the last motion overlay value for a node attribute.
+#[inline(always)]
+pub fn overlay_val(st: &crate::style::St, node: u32, attr: u32) -> crate::value::V {
+	if st
+		.mo_node_has
+		.get(index_u32(node))
+		.copied()
+		.unwrap_or(false)
+	{
+		overlay_present(st, node, attr)
+	} else {
+		crate::value::missing()
+	}
+}
+
+const fn resolved_value(tag: u32, num: f64, h: u32) -> crate::value::V {
+	crate::value::V { tag, num, h, off: 0, ln: 0 }
+}
+
+#[inline(never)]
+fn resolve_attr_ref(
+	d: &crate::slir::Doc,
+	st: &crate::style::St,
+	node: u32,
+	v: crate::value::V,
+) -> crate::value::V {
+	if v.tag == crate::slir::T_PARAM_REF {
+		let parameter = index_u32(v.h);
+		return match d.parm_type[parameter] {
+			1 => resolved_value(crate::slir::T_NUM, st.pv_num[parameter], 0),
+			2 => resolved_value(crate::slir::T_PCT, st.pv_num[parameter], 0),
+			3 => resolved_value(crate::slir::T_COLOR, 0.0, st.pv_h[parameter]),
+			4 => resolved_value(crate::slir::T_NUM, st.pv_num[parameter], 0),
+			_ => v,
+		};
+	}
+	if v.tag == crate::slir::T_PROP_REF {
+		let parameter = u32::from_ne_bytes(crate::list::param_of(&st.lists, d, node).to_ne_bytes());
+		let item = crate::list::item_ix(&st.lists, d, node);
+		let value = crate::list::get_ref(&st.lists, parameter, item, v.h);
+		return match value.kind {
+			1 => resolved_value(crate::slir::T_NUM, value.num, 0),
+			2 => resolved_value(crate::slir::T_PCT, value.num, 0),
+			3 => resolved_value(crate::slir::T_COLOR, 0.0, value.rgba),
+			4 => resolved_value(crate::slir::T_NUM, value.num, 0),
+			_ => v,
+		};
+	}
+	v
+}
+
 /// Decodes an attribute and substitutes numeric, color, and list properties.
 ///
 /// Motion inputs supersede patches and base values and are already parameter
 /// resolved. Enum and text references are resolved by [`attr_enum`] and
 /// [`content_str`] because they use separate string channels.
-#[inline]
+#[inline(always)]
 pub fn attr_val(
 	d: &crate::slir::Doc,
 	st: &crate::style::St,
 	node: u32,
 	attr: u32,
 ) -> crate::value::V {
-	let mv = crate::style::overlay_val(st, node, attr);
-	if mv.tag != crate::value::V_MISSING {
-		return mv;
+	let motion = crate::style::overlay_val(st, node, attr);
+	if motion.tag != crate::value::V_MISSING {
+		return motion;
 	}
-	let v = crate::style::aval_active(d, st, crate::style::attr_ix(d, st, node, attr));
-	if v.tag == crate::slir::T_PARAM_REF {
-		let parameter = index_u32(v.h);
-		let parameter_type = d.parm_type[parameter];
-		if parameter_type == 1 {
-			return crate::value::V {
-				tag: crate::slir::T_NUM,
-				num: st.pv_num[parameter],
-				h:   0,
-				off: 0,
-				ln:  0,
-			};
-		}
-		if parameter_type == 2 {
-			return crate::value::V {
-				tag: crate::slir::T_PCT,
-				num: st.pv_num[parameter],
-				h:   0,
-				off: 0,
-				ln:  0,
-			};
-		}
-		if parameter_type == 3 {
-			return crate::value::V {
-				tag: crate::slir::T_COLOR,
-				num: 0.0,
-				h:   st.pv_h[parameter],
-				off: 0,
-				ln:  0,
-			};
-		}
-		if parameter_type == 4 {
-			return crate::value::V {
-				tag: crate::slir::T_NUM,
-				num: st.pv_num[parameter],
-				h:   0,
-				off: 0,
-				ln:  0,
-			};
-		}
+	let value = crate::style::aval_active(d, st, crate::style::attr_ix(d, st, node, attr));
+	if matches!(value.tag, crate::slir::T_PARAM_REF | crate::slir::T_PROP_REF) {
+		resolve_attr_ref(d, st, node, value)
+	} else {
+		value
 	}
-	if v.tag == crate::slir::T_PROP_REF {
-		let parameter = u32::from_ne_bytes(crate::list::param_of(&st.lists, d, node).to_ne_bytes());
-		let item = crate::list::item_ix(&st.lists, d, node);
-		let x = crate::list::get_ref(&st.lists, parameter, item, v.h);
-		if x.kind == 1u32 {
-			return crate::value::V {
-				tag: crate::slir::T_NUM,
-				num: x.num,
-				h:   0u32,
-				off: 0i32,
-				ln:  0i32,
-			};
-		}
-		if x.kind == 2u32 {
-			return crate::value::V {
-				tag: crate::slir::T_PCT,
-				num: x.num,
-				h:   0u32,
-				off: 0i32,
-				ln:  0i32,
-			};
-		}
-		if x.kind == 3u32 {
-			return crate::value::V {
-				tag: crate::slir::T_COLOR,
-				num: 0.0f64,
-				h:   x.rgba,
-				off: 0i32,
-				ln:  0i32,
-			};
-		}
-		if x.kind == 4u32 {
-			return crate::value::V {
-				tag: crate::slir::T_NUM,
-				num: x.num,
-				h:   0u32,
-				off: 0i32,
-				ln:  0i32,
-			};
-		}
-	}
-	v
 }
 /// Returns a frame-runtime normalized verb stream for a negative path
 /// reference.
