@@ -81,13 +81,13 @@ fn snake(s: &str) -> String {
 }
 
 /// Unique signals in SIGN order: `(name, has_text)`. A name bound to multiple
-/// triggers keeps a text payload when any binding is Change, Submit, or Resize
-/// (matching the `dup-signal` compile warning's resolution).
+/// triggers keeps a text payload when any binding is Change, Submit, Resize,
+/// or Cancel (matching the `dup-signal` compile warning's resolution).
 fn unique_signals(slir: &Slir) -> Vec<(String, bool)> {
     let mut out: Vec<(String, bool)> = Vec::new();
     for &(name, _node, trigger) in &slir.signals {
         let n = slir.str_at(name).to_string();
-        let text_bearing = matches!(trigger, 1 | 2 | 8);
+        let text_bearing = matches!(trigger, 1 | 2 | 8 | 14);
         match out.iter_mut().find(|(en, _)| *en == n) {
             Some((_, has_text)) => *has_text = *has_text || text_bearing,
             None => out.push((n, text_bearing)),
@@ -287,6 +287,50 @@ fn emit_module(slir: &Slir, bytes: &[u8], src_name: &str) -> String {
             key
         );
     }
+    o.push_str(
+        "    /// Join one `each` item into a full canonical scene key.\n\
+         \x20   ///\n\
+         \x20   /// `item_key(EACH, item, \"\")` addresses the item root; a non-empty\n\
+         \x20   /// `rel` appends a template-relative key. `item` is escaped per the\n\
+         \x20   /// canonical grammar (`%` → `%25`, `/` → `%2F`, `~` → `%7E`).\n\
+         \x20   pub fn item_key(each: &str, item: &str, rel: &str) -> String {\n\
+         \x20       let mut escaped = String::with_capacity(item.len());\n\
+         \x20       for ch in item.chars() {\n\
+         \x20           match ch {\n\
+         \x20               '%' => escaped.push_str(\"%25\"),\n\
+         \x20               '/' => escaped.push_str(\"%2F\"),\n\
+         \x20               '~' => escaped.push_str(\"%7E\"),\n\
+         \x20               _ => escaped.push(ch),\n\
+         \x20           }\n\
+         \x20       }\n\
+         \x20       if rel.is_empty() {\n\
+         \x20           format!(\"{each}~{escaped}\")\n\
+         \x20       } else {\n\
+         \x20           format!(\"{each}~{escaped}/{rel}\")\n\
+         \x20       }\n\
+         \x20   }\n",
+    );
+    for group in crate::wc::item_scene_keys(slir) {
+        let _ = writeln!(
+            o,
+            "    /// Template-relative scene keys for the `{}` each; join with [`item_key`].",
+            group.name
+        );
+        let _ = writeln!(o, "    pub mod {} {{", snake(&group.name));
+        let _ = writeln!(
+            o,
+            "        /// Canonical key of the each node itself.\n        pub const EACH: &str = {:?};",
+            group.each_key
+        );
+        for (name, key) in &group.items {
+            let mut upper = snake(name).to_uppercase();
+            if upper == "EACH" {
+                upper.push_str("_ID");
+            }
+            let _ = writeln!(o, "        pub const {upper}: &str = {key:?};");
+        }
+        o.push_str("    }\n");
+    }
     o.push_str("}\n\n");
 
     for (i, p) in slir.params.iter().enumerate() {
@@ -351,6 +395,10 @@ fn emit_module(slir: &Slir, bytes: &[u8], src_name: &str) -> String {
          \x20   pub cancelled: bool,\n\
          \x20   /// Whether DragEnd delivered Drop to an eligible target.\n\
          \x20   pub dropped: bool,\n\
+         \x20   /// Deepest hit-target key on pointer-derived signals, otherwise empty.\n\
+         \x20   pub hit_key: String,\n\
+         \x20   /// Pressed key name on keyboard-driven activation, otherwise empty.\n\
+         \x20   pub pressed_key: String,\n\
          }\n\n\
          impl From<&slab_kernel::dispatch::SigMeta> for SignalMeta {\n\
          \x20   fn from(meta: &slab_kernel::dispatch::SigMeta) -> Self {\n\
@@ -369,6 +417,8 @@ fn emit_module(slir: &Slir, bytes: &[u8], src_name: &str) -> String {
          \x20           src_item: meta.src_item.clone(),\n\
          \x20           cancelled: meta.cancelled,\n\
          \x20           dropped: meta.dropped,\n\
+         \x20           hit_key: meta.hit_key.clone(),\n\
+         \x20           pressed_key: meta.pressed_key.clone(),\n\
          \x20       }\n\
          \x20   }\n\
          }\n",
@@ -832,7 +882,13 @@ col#app { col#items { each param.rows } }
         let module = module.expect("host module");
         assert!(module.contains("pub const APP: &str = \"#app\""));
         assert!(module.contains("pub const ITEMS: &str = \"#app/#items\""));
-        assert!(!module.contains("pub const ITEM:"));
+        assert!(!module.contains("\n    pub const ITEM:"));
+        assert!(module.contains("pub fn item_key(each: &str, item: &str, rel: &str) -> String"));
+        assert!(module.contains("pub mod each_0 {"));
+        assert!(module.contains("pub const EACH: &str ="));
+        assert!(module.contains("pub const ITEM: &str ="));
+        assert!(module.contains("pub hit_key: String"));
+        assert!(module.contains("pub pressed_key: String"));
         assert!(module.contains("pub enum SignalName"));
         assert!(module.contains("pub type Rgba = u32"));
         assert!(module.contains("pub const fn rgba("));

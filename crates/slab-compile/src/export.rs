@@ -329,6 +329,7 @@ pub fn compile_export(
                     ParamDefault::Scalar(default_for(&prop.ty, declared))
                 },
                 line: def.line,
+                prop_of: Some(def.name.clone()),
             }
         })
         .collect::<Vec<_>>();

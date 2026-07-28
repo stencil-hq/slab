@@ -736,6 +736,7 @@ impl<'a> Emitter<'a> {
             (&n.act, 0),
             (&n.field, 1),
             (&n.submit, 2),
+            (&n.cancel, 14),
             (&n.press, 3),
             (&n.context, 4),
             (&n.dblclick, 5),

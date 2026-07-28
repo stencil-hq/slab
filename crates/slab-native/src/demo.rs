@@ -36,6 +36,8 @@ pub struct Opts {
     pub theme: Option<String>,
     /// Borderless window (no title bar / OS chrome).
     pub undecorated: bool,
+    /// Serve the live window kernel as an SDP session on this loopback port.
+    pub port: Option<u16>,
 }
 
 impl Default for Opts {
@@ -51,6 +53,7 @@ impl Default for Opts {
             dark: false,
             theme: None,
             undecorated: false,
+            port: None,
         }
     }
 }

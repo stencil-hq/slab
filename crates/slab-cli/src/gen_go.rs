@@ -140,6 +140,12 @@ pub fn cmd_gen_go(args: &[String]) -> ExitCode {
     let Some(module) = module else {
         return ExitCode::FAILURE;
     };
+    if let Some(parent) = out.parent().filter(|p| !p.as_os_str().is_empty()) {
+        if let Err(e) = std::fs::create_dir_all(parent) {
+            eprintln!("error: cannot create {}: {e}", parent.display());
+            return ExitCode::FAILURE;
+        }
+    }
     if let Err(e) = std::fs::write(&out, &module) {
         eprintln!("error: {}: {e}", out.display());
         return ExitCode::FAILURE;

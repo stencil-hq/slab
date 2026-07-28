@@ -77,6 +77,10 @@ fn emit_signal_types(m: &mut String) {
          \x20  readonly src_item: string;\n\
          \x20  readonly cancelled: boolean;\n\
          \x20  readonly dropped: boolean;\n\
+         \x20  /** Deepest hit-target canonical key on pointer-derived signals. */\n\
+         \x20  readonly hit_key?: string;\n\
+         \x20  /** Pressed key name on keyboard-driven activation. */\n\
+         \x20  readonly pressed_key?: string;\n\
          }\n\
          /** Detail carried by non-text signal CustomEvents. */\n\
          export interface SignalDetail {\n\

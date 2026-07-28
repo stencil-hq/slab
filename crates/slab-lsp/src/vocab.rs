@@ -232,6 +232,10 @@ pub const ATTR_DOCS: &[(&str, &str)] = &[
         "Submit signal name. Legal only on a `field=` text node; Enter emits the full committed text.",
     ),
     (
+        "cancel",
+        "Cancel signal name. Legal only on a `field=` text node; escape-blur emits the retained buffer text.",
+    ),
+    (
         "keys",
         "Comma-separated portable activation keys. Implies `focusable`; platform-specific key names are not supported.",
     ),

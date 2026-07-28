@@ -95,14 +95,14 @@ web-e2e: pack
 # publish the three npm packages (pack + tarball e2e first); e.g. `just publish --dry-run`
 publish *flags: pack
     bun scripts/pack-e2e.ts
-    cd clients/web && bun publish {{flags}}
-    cd packages/dslab && bun publish {{flags}}
-    cd packages/slab && bun publish {{flags}}
+    cd clients/web && bun publish {{ flags }}
+    cd packages/dslab && bun publish {{ flags }}
+    cd packages/slab && bun publish {{ flags }}
 
 # bump the npm package versions in lockstep, commit, tag vX.Y.Z, and push
 # (the tag triggers the release workflow, which publishes to npm via OIDC)
 version *args:
-    bun scripts/version.ts {{args}}
+    bun scripts/version.ts {{ args }}
 
 # build the VSCode .vsix and Zed .tar.gz plugins into out/editors
 editors:
@@ -133,27 +133,27 @@ demo:
 
 # open a .slab document in the native wgpu client
 native file="examples/00-player.slab":
-    cargo run -q -p slab-native -- {{file}}
+    cargo run -q -p slab-native -- {{ file }}
 
 # open a .slab document in the terminal client
 tui file="examples/00-player.slab":
-    cargo run -q -p slab-tui -- {{file}}
+    cargo run -q -p slab-tui -- {{ file }}
 
 # open a .slab document in the Go terminal client (wazero-backed)
 go-tui file="examples/00-player.slab":
-    cd clients/go && go run ./example -file {{justfile_directory()}}/{{file}}
+    cd clients/go && go run ./example -file {{ justfile_directory() }}/{{ file }}
 
 # open a .slab document in the Python terminal client (compiled on the fly)
 py-tui file="examples/00-player.slab":
-    cd packages/pyslab && uv run python -m slab {{justfile_directory()}}/{{file}}
+    cd packages/pyslab && uv run python -m slab {{ justfile_directory() }}/{{ file }}
 
 # browse a directory of .slab documents in the terminal client (Ctrl-N / Ctrl-P)
 gallery dir="examples":
-    cargo run -q -p slab-tui -- --examples {{dir}}
+    cargo run -q -p slab-tui -- --examples {{ dir }}
 
 # render documents through ghostty (libghostty-vt), native wgpu, and the web
 # runtime, then stack each set into out/compare/<doc>.png
 compare *docs:
-    bun tools/compare.ts {{docs}}
+    bun tools/compare.ts {{ docs }}
 
 ci: check test conformance freshness go-test py-test

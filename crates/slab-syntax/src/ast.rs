@@ -187,6 +187,9 @@ pub struct ParamDecl {
     pub enum_syms: Vec<String>,
     pub default: ParamDefault,
     pub line: u32,
+    /// Export name when this param is a promoted prop of an exported def
+    /// (`slab gen` standalone compiles); `None` for authored `params` decls.
+    pub prop_of: Option<String>,
 }
 
 /// Nested token tree; entries keep document order.

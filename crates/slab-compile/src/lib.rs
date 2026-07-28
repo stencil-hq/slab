@@ -22,6 +22,11 @@ use slab_slir::Slir;
 use slab_syntax::diag::Diagnostics;
 use std::path::PathBuf;
 
+/// Build identification for every front end: the workspace semver plus the
+/// git commit hash embedded by `build.rs` (`0.1.0 (72e5ca758)`), or
+/// `(unknown)` when built outside a git checkout.
+pub const VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), " (", env!("SLAB_GIT_HASH"), ")");
+
 #[derive(Debug, Clone)]
 pub struct Options {
     /// Embed image bytes (`--no-embed-assets` clears this).
@@ -98,12 +103,16 @@ pub(crate) fn compile_units_with_exports(
     diags: &mut Diagnostics,
 ) -> Option<Slir> {
     let slir = compile_units(units, opts, diags)?;
-    let mut field_sync_seen = diags
+    // One authored site reports once: an exported def's body is recompiled
+    // per export, so any diagnostic already reported for the same code, file,
+    // line, and message by the document compile (or an earlier export) is a
+    // duplicate, not new information.
+    let mut seen = diags
         .0
         .iter()
-        .filter(|diagnostic| diagnostic.code == "field-sync")
         .map(|diagnostic| {
             (
+                diagnostic.code,
                 diagnostic.file.clone(),
                 diagnostic.line,
                 diagnostic.msg.clone(),
@@ -113,13 +122,12 @@ pub(crate) fn compile_units_with_exports(
     for def in export::exported_def_names(units) {
         let (exported, export_diags, _) = export::compile_export(units, &def, opts);
         for mut diagnostic in export_diags.0 {
-            if diagnostic.code == "field-sync"
-                && !field_sync_seen.insert((
-                    diagnostic.file.clone(),
-                    diagnostic.line,
-                    diagnostic.msg.clone(),
-                ))
-            {
+            if !seen.insert((
+                diagnostic.code,
+                diagnostic.file.clone(),
+                diagnostic.line,
+                diagnostic.msg.clone(),
+            )) {
                 continue;
             }
             diagnostic.msg = format!("in export {def}: {}", diagnostic.msg);
@@ -128,4 +136,19 @@ pub(crate) fn compile_units_with_exports(
         exported.as_ref()?;
     }
     Some(slir)
+}
+
+#[cfg(test)]
+mod version_tests {
+    #[test]
+    fn version_embeds_semver_and_a_hash_annotation() {
+        assert!(super::VERSION.starts_with(env!("CARGO_PKG_VERSION")));
+        // `0.1.0 (<hash>)`: hash is a short git rev or the `unknown` fallback
+        let hash = super::VERSION
+            .split_once(" (")
+            .and_then(|(_, rest)| rest.strip_suffix(')'))
+            .expect("VERSION carries a parenthesized build hash");
+        assert!(!hash.is_empty());
+        assert!(hash == "unknown" || hash.chars().all(|c| c.is_ascii_hexdigit()));
+    }
 }

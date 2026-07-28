@@ -35,6 +35,7 @@ commands:
   gen react FILE -o DIR [--tag NAME]       emit a web component + typed React wrapper
   gen rust FILE -o OUT.rs                  emit a typed Rust module (native client)
   gen go FILE -o OUT.go [--package NAME]   emit a typed Go module (clients/go runtime)
+  --version                                print the version and git commit hash
 ";
 const CHECK_USAGE: &str = "\
 usage: slab check FILE [--width N] [--height N] [--state a,b]
@@ -97,6 +98,10 @@ fn main() -> ExitCode {
                 ExitCode::from(2)
             }
         },
+        "--version" | "-V" | "version" => {
+            println!("slab {}", slab_compile::VERSION);
+            ExitCode::SUCCESS
+        }
         "--help" | "-h" | "help" => {
             print!("{USAGE}");
             ExitCode::SUCCESS
@@ -197,7 +202,7 @@ fn cmd_check(args: &[String]) -> ExitCode {
         eprintln!("error: check needs a FILE");
         return ExitCode::from(2);
     };
-    eprintln!("slab compiler {}", env!("CARGO_PKG_VERSION"));
+    eprintln!("slab compiler {}", slab_compile::VERSION);
     let (_, diags) = compile_file(&file, false, true);
     let name = file.display().to_string();
     print_diags(&diags, &name);

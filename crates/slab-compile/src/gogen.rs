@@ -136,13 +136,13 @@ fn emit_string_const(out: &mut String, name: &str, parts: &[String]) {
 }
 
 /// Unique signals in SIGN order: `(name, has_text)`. A name bound to multiple
-/// triggers keeps a text payload when any binding is Change, Submit, or Resize
-/// (matching the `dup-signal` compile warning's resolution).
+/// triggers keeps a text payload when any binding is Change, Submit, Resize,
+/// or Cancel (matching the `dup-signal` compile warning's resolution).
 fn unique_signals(slir: &Slir) -> Vec<(String, bool)> {
     let mut out: Vec<(String, bool)> = Vec::new();
     for &(name, _node, trigger) in &slir.signals {
         let n = slir.str_at(name).to_string();
-        let text_bearing = matches!(trigger, 1 | 2 | 8);
+        let text_bearing = matches!(trigger, 1 | 2 | 8 | 14);
         match out.iter_mut().find(|(en, _)| *en == n) {
             Some((_, has_text)) => *has_text = *has_text || text_bearing,
             None => out.push((n, text_bearing)),

@@ -987,6 +987,7 @@ mod tests {
             set_size: None,
             disabled: false,
             focused: false,
+            editable: false,
         }
     }
 
@@ -1008,15 +1009,11 @@ mod tests {
     }
 
     fn frame(scene: Vec<SceneNode>) -> Frame {
-        Frame {
-            width: 200.0,
-            height: 100.0,
-            ops: Vec::new(),
-            scene,
-            strings: Vec::new(),
-            paths_rt: Vec::new(),
-            diagnostics: Vec::new(),
-        }
+        let mut frame = slab_kernel::flatten::frame_new();
+        frame.width = 200.0;
+        frame.height = 100.0;
+        frame.scene = scene;
+        frame
     }
 
     #[test]

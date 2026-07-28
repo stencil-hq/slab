@@ -26,6 +26,27 @@ pub mod keys {
     pub const STATUS: &str = "col@0/row@0/#status";
     pub const FIELD: &str = "col@0/#field";
     pub const PANEL: &str = "col@0/#panel";
+    /// Join one `each` item into a full canonical scene key.
+    ///
+    /// `item_key(EACH, item, "")` addresses the item root; a non-empty
+    /// `rel` appends a template-relative key. `item` is escaped per the
+    /// canonical grammar (`%` → `%25`, `/` → `%2F`, `~` → `%7E`).
+    pub fn item_key(each: &str, item: &str, rel: &str) -> String {
+        let mut escaped = String::with_capacity(item.len());
+        for ch in item.chars() {
+            match ch {
+                '%' => escaped.push_str("%25"),
+                '/' => escaped.push_str("%2F"),
+                '~' => escaped.push_str("%7E"),
+                _ => escaped.push(ch),
+            }
+        }
+        if rel.is_empty() {
+            format!("{each}~{escaped}")
+        } else {
+            format!("{each}~{escaped}/{rel}")
+        }
+    }
 }
 
 pub const PARAM_TITLE: u32 = 0;
@@ -71,6 +92,10 @@ pub struct SignalMeta {
     pub cancelled: bool,
     /// Whether DragEnd delivered Drop to an eligible target.
     pub dropped: bool,
+    /// Deepest hit-target key on pointer-derived signals, otherwise empty.
+    pub hit_key: String,
+    /// Pressed key name on keyboard-driven activation, otherwise empty.
+    pub pressed_key: String,
 }
 
 impl From<&slab_kernel::dispatch::SigMeta> for SignalMeta {
@@ -90,6 +115,8 @@ impl From<&slab_kernel::dispatch::SigMeta> for SignalMeta {
             src_item: meta.src_item.clone(),
             cancelled: meta.cancelled,
             dropped: meta.dropped,
+            hit_key: meta.hit_key.clone(),
+            pressed_key: meta.pressed_key.clone(),
         }
     }
 }

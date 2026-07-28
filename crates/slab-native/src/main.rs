@@ -19,6 +19,9 @@ options:
   --theme NAME               select a compiler-declared theme
   --frames N                 windowed: exit after N presented frames
   --exit-after-ms MS         windowed: exit after MS milliseconds
+  --port N                   serve the live window kernel as an SDP session
+                             on 127.0.0.1:N (0 picks a free port)
+  --version                  print the version and git commit hash
 
 undecorated windows set the document-global state `undecorated` (render
 your own chrome behind `when undecorated { … }`) and honor the reserved
@@ -91,6 +94,14 @@ fn main() -> ExitCode {
             }
             "--dark" => opts.dark = true,
             "--undecorated" => opts.undecorated = true,
+            "--port" => match val("--port").and_then(|v| v.parse().map_err(|e| format!("{e}"))) {
+                Ok(v) => opts.port = Some(v),
+                Err(e) => return err(e),
+            },
+            "--version" | "-V" => {
+                println!("slab-native {}", slab_compile::VERSION);
+                return ExitCode::SUCCESS;
+            }
             "--theme" => match val("--theme") {
                 Ok(v) => opts.theme = Some(v),
                 Err(e) => return err(e),
@@ -101,6 +112,14 @@ fn main() -> ExitCode {
             }
             other if !other.starts_with('-') && file.is_none() => file = Some(other.to_string()),
             other => return err(format!("unknown argument '{other}'")),
+        }
+    }
+    if opts.port.is_some() {
+        if file.is_none() {
+            return err("--port needs a FILE.slab (demos do not mount SDP)".into());
+        }
+        if opts.headless_out.is_some() {
+            return err("--port is a windowed mode; drop --headless-frame".into());
         }
     }
     if let Some(path) = &file {

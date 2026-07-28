@@ -3,10 +3,14 @@ name = "slab-cli"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-
+default-run = "slab"
 [[bin]]
 name = "slab"
 path = "src/main.rs"
+
+[[bench]]
+name = "frame"
+harness = false
 
 [dependencies]
 slab-syntax = { path = "../slab-syntax" }

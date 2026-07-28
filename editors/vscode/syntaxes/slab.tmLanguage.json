@@ -198,7 +198,7 @@
     },
     "binding-attribute": {
       "name": "entity.other.attribute-name.binding.slab",
-      "match": "(?<![\\w.-])(?:act|field|submit|keys|press|context|dblclick|pointer-move|pointer-up|drag|drag-update|drag-end|drop|resize)(?=\\s*=)"
+      "match": "(?<![\\w.-])(?:act|field|submit|cancel|keys|press|context|dblclick|pointer-move|pointer-up|drag|drag-update|drag-end|drop|resize)(?=\\s*=)"
     },
     "a11y-attribute": {
       "name": "entity.other.attribute-name.accessibility.slab",

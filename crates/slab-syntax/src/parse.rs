@@ -415,8 +415,11 @@ impl<'d> Parser<'d> {
                     ParamType::List(schema)
                 }
                 other => {
-                    self.diags
-                        .error("parse", format!("unknown param type {other:?}"), line);
+                    self.diags.error(
+                        "parse",
+                        format!("unknown param type {}", py_repr(other)),
+                        line,
+                    );
                     ParamType::Text
                 }
             };
@@ -432,6 +435,7 @@ impl<'d> Parser<'d> {
                 enum_syms,
                 default,
                 line,
+                prop_of: None,
             });
             self.skip_nl();
         }
@@ -763,7 +767,7 @@ impl<'d> Parser<'d> {
                 set_attr(&mut attrs, key, v);
             } else if t.kind == TokKind::Id
                 && FLAGS.contains(&t.text.as_str())
-                && matches!(self.peek_at(1).kind, TokKind::Nl | TokKind::Rb)
+                && self.peek_at(1).kind != TokKind::Eq
             {
                 flags.push(self.next().text);
             } else if t.kind == TokKind::Str {
@@ -1161,6 +1165,52 @@ col scroll {
             panic!("expected outer when");
         };
         assert!(outer.children.is_empty());
+    }
+
+    #[test]
+    fn bare_flags_in_when_body_parse_with_trailing_attrs_and_siblings() {
+        let mut diagnostics = Diagnostics::default();
+        let document = parse(
+            "text \"t\" {\n  when done { strike color=#888888 nowrap }\n}\n",
+            &mut diagnostics,
+        );
+        assert!(diagnostics.0.is_empty(), "{:?}", diagnostics.0);
+        let Item::When(when) = &document.roots[0].children[0] else {
+            panic!("expected when patch");
+        };
+        assert_eq!(when.flags, ["strike", "nowrap"]);
+        assert!(when.attrs.iter().any(|(key, _)| key == "color"));
+        assert!(
+            when.children.is_empty(),
+            "flags must not misparse as nodes: {:?}",
+            when.children.len()
+        );
+    }
+
+    #[test]
+    fn flag_named_attr_in_when_body_still_parses_as_attr() {
+        let mut diagnostics = Diagnostics::default();
+        let document = parse("col {\n  when wide { scroll=cross }\n}\n", &mut diagnostics);
+        assert!(diagnostics.0.is_empty(), "{:?}", diagnostics.0);
+        let Item::When(when) = &document.roots[0].children[0] else {
+            panic!("expected when patch");
+        };
+        assert!(when.flags.is_empty());
+        assert!(when.attrs.iter().any(|(key, _)| key == "scroll"));
+    }
+
+    #[test]
+    fn parses_cancel_binder_attribute() {
+        let mut diagnostics = Diagnostics::default();
+        let document = parse(
+            "text \"d\" field=draft submit=send cancel=discard\n",
+            &mut diagnostics,
+        );
+        assert!(diagnostics.0.is_empty(), "{:?}", diagnostics.0);
+        assert!(matches!(
+            document.roots[0].attr("cancel"),
+            Some(Value::Kw(name)) if name == "discard"
+        ));
     }
 
     #[test]

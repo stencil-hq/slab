@@ -19,6 +19,7 @@ pub mod holes;
 pub mod input;
 pub mod player;
 pub mod renderer;
+pub(crate) mod sdp;
 pub mod shell;
 pub mod surface;
 pub mod tess;

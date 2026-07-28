@@ -9,7 +9,7 @@ use slab_fonts;
 use slab_kernel::pathdata;
 use slab_slir::{attrs as at, cond as ck, flags as fl, kind as nk};
 use slab_syntax::ast::*;
-use slab_syntax::diag::Diagnostics;
+use slab_syntax::diag::{Diag, Diagnostics, Level};
 use std::cell::RefCell;
 use std::collections::{BTreeSet, HashMap};
 use std::rc::Rc;
@@ -235,6 +235,8 @@ pub struct CNode {
     pub act: Option<String>,
     pub field: Option<String>,
     pub submit: Option<String>,
+    /// Cancel signal on an editable field (escape-blur discard).
+    pub cancel: Option<String>,
     /// Pointer-down signal on the primary button.
     pub press: Option<String>,
     /// Secondary-button pointer-down signal.
@@ -291,6 +293,8 @@ pub struct ParamInfo {
     /// Canonical list-schema row for a list parameter.
     pub list: Option<u32>,
     pub line: u32,
+    /// Export def name when this param is a promoted prop of an exported def.
+    pub prop_of: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -397,43 +401,59 @@ struct Ctx<'a> {
 }
 
 impl<'a> Ctx<'a> {
-    fn stamp_file(&mut self) {
-        let file = self
-            .cur_file
-            .and_then(|unit| self.files.get(unit))
-            .copied()
-            .flatten()
-            .map(str::to_string);
-        if let Some(file) = file
-            && let Some(diagnostic) = self.diags.0.last_mut()
-        {
-            diagnostic.file = Some(file);
-        }
-    }
-
     fn def(&self, name: &str) -> Option<(usize, ADef)> {
         self.defs
             .get(name)
             .map(|(unit, definition)| (*unit, (*definition).clone()))
     }
 
-    fn error(&mut self, code: &'static str, msg: String, line: u32) {
-        if self.quiet == 0 {
-            self.diags.error(code, msg, line);
-            self.stamp_file();
+    /// Pushes one diagnostic unless an identical (level, code, message, line,
+    /// file) entry already exists: re-expanding a single authored site (theme
+    /// variants, one line reused by several component instances) reports once.
+    fn push_diag(
+        &mut self,
+        level: Level,
+        code: &'static str,
+        msg: String,
+        line: u32,
+        remedy: Option<String>,
+    ) {
+        if self.quiet != 0 {
+            return;
         }
+        let file = self
+            .cur_file
+            .and_then(|unit| self.files.get(unit))
+            .copied()
+            .flatten()
+            .map(str::to_string);
+        let duplicate = self.diags.0.iter().any(|d| {
+            d.level == level && d.code == code && d.msg == msg && d.line == line && d.file == file
+        });
+        if duplicate {
+            return;
+        }
+        self.diags.0.push(Diag {
+            level,
+            code,
+            msg,
+            line,
+            file,
+            remedy,
+        });
+    }
+
+    fn error(&mut self, code: &'static str, msg: String, line: u32) {
+        self.push_diag(Level::Error, code, msg, line, None);
+    }
+    fn error_with(&mut self, code: &'static str, msg: String, line: u32, remedy: String) {
+        self.push_diag(Level::Error, code, msg, line, Some(remedy));
     }
     fn warn(&mut self, code: &'static str, msg: String, line: u32) {
-        if self.quiet == 0 {
-            self.diags.warn(code, msg, line);
-            self.stamp_file();
-        }
+        self.push_diag(Level::Warning, code, msg, line, None);
     }
     fn warn_with(&mut self, code: &'static str, msg: String, line: u32, remedy: String) {
-        if self.quiet == 0 {
-            self.diags.warn_with(code, msg, line, remedy);
-            self.stamp_file();
-        }
+        self.push_diag(Level::Warning, code, msg, line, Some(remedy));
     }
 }
 
@@ -770,6 +790,7 @@ struct Sink {
     act: Option<String>,
     field: Option<String>,
     submit: Option<String>,
+    cancel: Option<String>,
     press: Option<String>,
     context: Option<String>,
     dblclick: Option<String>,
@@ -806,6 +827,49 @@ impl Sink {
     }
 }
 
+/// Author-facing description of a resolved value for diagnostics. Never the
+/// Rust `Debug` form: user-visible messages name values the way authors
+/// wrote them.
+fn rval_desc(rv: &RVal) -> String {
+    match rv {
+        RVal::None => "an unresolved value".into(),
+        RVal::Num(x) => format!("the number {}", fmt_g(*x)),
+        RVal::Pct(p) => format!("the percentage {}%", fmt_g(*p)),
+        RVal::Str(s) => format!("the string {}", quoted(s)),
+        RVal::Color(c) => format!("the color {c}"),
+        RVal::Fill(_) => "a fill size".into(),
+        RVal::Kw(k) => format!("`{k}`"),
+        RVal::Tup(_) => "a tuple".into(),
+        RVal::KeyMap(_) => "a key map".into(),
+        RVal::Group(_) => "a token group".into(),
+        RVal::Token { path, .. } => format!("token `{}`", path.join(".")),
+        RVal::Param(_) => "a param reference".into(),
+        RVal::Prop(_) => "an item prop".into(),
+    }
+}
+
+/// `"…"` with inner quotes escaped, capped for diagnostics.
+fn quoted(s: &str) -> String {
+    let mut short: String = s.chars().take(24).collect();
+    if short.len() < s.len() {
+        short.push('…');
+    }
+    format!("\"{}\"", short.replace('"', "\\\""))
+}
+
+/// `did you mean `param.NAME`?` when a bare ident names a declared param.
+/// Bare idents in value position are keywords or component props (§2.1);
+/// authors reaching for a param must write the `param.` prefix.
+fn param_remedy(ctx: &Ctx, rv: &RVal) -> Option<String> {
+    let RVal::Kw(name) = rv else {
+        return None;
+    };
+    ctx.params
+        .iter()
+        .find(|param| param.name == *name)
+        .map(|param| format!("did you mean `param.{}`?", param.name))
+}
+
 fn size_spec(ctx: &mut Ctx, rv: &RVal, line: u32, what: &str) -> Option<TVal> {
     match rv {
         RVal::Num(x) => Some(TVal::Size(SizeSpec::Fixed(*x))),
@@ -828,7 +892,15 @@ fn size_spec(ctx: &mut Ctx, rv: &RVal, line: u32, what: &str) -> Option<TVal> {
         }
         RVal::Prop(field) => Some(TVal::Prop(*field)),
         _ => {
-            ctx.error("ref", format!("invalid size for {what}: {rv:?}"), line);
+            let msg = format!(
+                "invalid size for {what}: expected a number, percentage, `fill`, `hug`, \
+                 or a num/pct param, got {}",
+                rval_desc(rv)
+            );
+            match param_remedy(ctx, rv) {
+                Some(remedy) => ctx.error_with("ref", msg, line, remedy),
+                None => ctx.error("ref", msg, line),
+            }
             None
         }
     }
@@ -838,7 +910,11 @@ fn num_val(ctx: &mut Ctx, rv: &RVal, line: u32, what: &str) -> Option<f64> {
     match rv {
         RVal::Num(x) => Some(*x),
         _ => {
-            ctx.error("ref", format!("{what} expects a number"), line);
+            let msg = format!("{what} expects a number, got {}", rval_desc(rv));
+            match param_remedy(ctx, rv) {
+                Some(remedy) => ctx.error_with("ref", msg, line, remedy),
+                None => ctx.error("ref", msg, line),
+            }
             None
         }
     }
@@ -985,7 +1061,11 @@ fn parse_animate(ctx: &mut Ctx, rv: &RVal, line: u32) -> Option<AnimBind> {
                 easing = EASING_NAMES.iter().find(|(n, _)| n == k).unwrap().1;
             }
             other => {
-                ctx.error("ref", format!("animate: unexpected value {other:?}"), line);
+                ctx.error(
+                    "ref",
+                    format!("animate: unexpected value {}", rval_desc(other)),
+                    line,
+                );
                 return None;
             }
         }
@@ -1376,9 +1456,9 @@ fn apply_attr_concrete(ctx: &mut Ctx, sink: &mut Sink, key: &str, rv: &RVal, lin
             }
             "role" => ctx.error("ref", "role expects an identifier or string".into(), line),
             "content" | "text" => sink.content = Some(TVal::Prop(*field)),
-            "act" | "field" | "submit" | "press" | "context" | "dblclick" | "drag" | "drop"
-            | "resize" | "pointer-move" | "pointer-up" | "drag-update" | "drag-end" | "animate"
-            | "transition" | "keys" | "field-sync" => ctx.error(
+            "act" | "field" | "submit" | "cancel" | "press" | "context" | "dblclick" | "drag"
+            | "drop" | "resize" | "pointer-move" | "pointer-up" | "drag-update" | "drag-end"
+            | "animate" | "transition" | "keys" | "field-sync" => ctx.error(
                 "ref",
                 format!("template prop cannot supply reserved attribute '{key}'"),
                 line,
@@ -1952,7 +2032,13 @@ fn apply_attr_concrete(ctx: &mut Ctx, sink: &mut Sink, key: &str, rv: &RVal, lin
                         sink.set(id, tv);
                     }
                 }
-                _ => ctx.error("ref", format!("{key} expects a boolean"), line),
+                _ => {
+                    let msg = format!("{key} expects a boolean, got {}", rval_desc(rv));
+                    match param_remedy(ctx, rv) {
+                        Some(remedy) => ctx.error_with("ref", msg, line, remedy),
+                        None => ctx.error("ref", msg, line),
+                    }
+                }
             }
         }
         "active-descendant" | "controls" | "value-text" => {
@@ -2018,7 +2104,11 @@ fn apply_attr_concrete(ctx: &mut Ctx, sink: &mut Sink, key: &str, rv: &RVal, lin
                 RVal::Param(ix) => expect_param_ty(ctx, *ix, &[ParamType::Bool], line, key),
                 RVal::Prop(field) => expect_prop_ty(ctx, *field, &[ParamType::Bool], line, key),
                 _ => {
-                    ctx.error("ref", "strike expects a boolean".into(), line);
+                    let msg = format!("strike expects a boolean, got {}", rval_desc(rv));
+                    match param_remedy(ctx, rv) {
+                        Some(remedy) => ctx.error_with("ref", msg, line, remedy),
+                        None => ctx.error("ref", msg, line),
+                    }
                     None
                 }
             };
@@ -2172,8 +2262,8 @@ fn apply_attr_concrete(ctx: &mut Ctx, sink: &mut Sink, key: &str, rv: &RVal, lin
                 sink.flag_mask |= fl::FOCUSABLE;
             }
         }
-        "act" | "field" | "submit" | "press" | "context" | "dblclick" | "drag" | "drop"
-        | "resize" | "pointer-move" | "pointer-up" | "drag-update" | "drag-end" => {
+        "act" | "field" | "submit" | "cancel" | "press" | "context" | "dblclick" | "drag"
+        | "drop" | "resize" | "pointer-move" | "pointer-up" | "drag-update" | "drag-end" => {
             let name = match rv {
                 RVal::Kw(k) => Some(k.clone()),
                 RVal::Str(s) => Some(s.clone()),
@@ -2185,6 +2275,7 @@ fn apply_attr_concrete(ctx: &mut Ctx, sink: &mut Sink, key: &str, rv: &RVal, lin
                         "act" => at::ACT,
                         "field" => at::FIELD,
                         "submit" => at::SUBMIT,
+                        "cancel" => at::CANCEL,
                         "press" => at::PRESS,
                         "context" => at::CONTEXT,
                         "dblclick" => at::DBLCLICK,
@@ -2202,6 +2293,7 @@ fn apply_attr_concrete(ctx: &mut Ctx, sink: &mut Sink, key: &str, rv: &RVal, lin
                         "act" => sink.act = Some(name),
                         "field" => sink.field = Some(name),
                         "submit" => sink.submit = Some(name),
+                        "cancel" => sink.cancel = Some(name),
                         "press" => sink.press = Some(name),
                         "context" => sink.context = Some(name),
                         "dblclick" => sink.dblclick = Some(name),
@@ -2805,6 +2897,7 @@ fn expand_each(
         act: None,
         field: None,
         submit: None,
+        cancel: None,
         press: None,
         context: None,
         dblclick: None,
@@ -3126,22 +3219,35 @@ fn warn_field_sync(
         return;
     }
     let param_name = info.name.clone();
+    let prop_of = info.prop_of.clone();
+    let declared_line = info.line;
     if !ctx
         .field_sync_warnings
         .insert((line, field.to_owned(), param_name.clone()))
     {
         return;
     }
-    ctx.warn_with(
-        "field-sync",
-        format!(
-            "field signal '{field}' edits content from text param '{param_name}', so implicit synchronization is disabled"
+    let (msg, remedy) = match prop_of {
+        // Promoted prop of an exported def: name the prop and its
+        // declaration site, not a `params` block that does not exist.
+        Some(def) => (
+            format!(
+                "field signal '{field}' edits content from prop '{param_name}' of export '{def}' (declared at line {declared_line}), so implicit synchronization is disabled"
+            ),
+            format!(
+                "use `field={param_name}` for implicit synchronization; if the host intentionally handles `{field}` Change signals, add `field-sync=host` on this node"
+            ),
         ),
-        line,
-        format!(
-            "use `field={param_name}` for implicit synchronization; if the host intentionally handles `{field}` Change signals, add `field-sync=host` on this node"
+        None => (
+            format!(
+                "field signal '{field}' edits content from text param '{param_name}', so implicit synchronization is disabled"
+            ),
+            format!(
+                "use `field={param_name}` for implicit synchronization; if the host intentionally handles `{field}` Change signals, add `field-sync=host` on this node"
+            ),
         ),
-    );
+    };
+    ctx.warn_with("field-sync", msg, line, remedy);
 }
 
 fn expand_builtin(
@@ -3211,6 +3317,7 @@ fn expand_builtin(
                 (vsink.act.take(), 0, at::ACT),
                 (vsink.field.take(), 1, at::FIELD),
                 (vsink.submit.take(), 2, at::SUBMIT),
+                (vsink.cancel.take(), 14, at::CANCEL),
                 (vsink.press.take(), 3, at::PRESS),
                 (vsink.context.take(), 4, at::CONTEXT),
                 (vsink.dblclick.take(), 5, at::DBLCLICK),
@@ -3267,6 +3374,7 @@ fn expand_builtin(
         act: None,
         field: None,
         submit: None,
+        cancel: None,
         press: None,
         context: None,
         dblclick: None,
@@ -3318,6 +3426,7 @@ fn expand_builtin(
                         act: None,
                         field: None,
                         submit: None,
+                        cancel: None,
                         press: None,
                         context: None,
                         dblclick: None,
@@ -3392,6 +3501,7 @@ fn expand_builtin(
                                     act: None,
                                     field: None,
                                     submit: None,
+                                    cancel: None,
                                     press: None,
                                     context: None,
                                     dblclick: None,
@@ -3498,6 +3608,7 @@ fn expand_builtin(
                         (psink.act.take(), 0),
                         (psink.field.take(), 1),
                         (psink.submit.take(), 2),
+                        (psink.cancel.take(), 14),
                         (psink.press.take(), 3),
                         (psink.context.take(), 4),
                         (psink.dblclick.take(), 5),
@@ -3520,6 +3631,14 @@ fn expand_builtin(
                             ctx.warn(
                                 "attr",
                                 "submit= applies only to text nodes with field=".into(),
+                                w.line,
+                            );
+                            continue;
+                        }
+                        if trigger == 14 && (kind != nk::TEXT || !conditional_has_field) {
+                            ctx.warn(
+                                "attr",
+                                "cancel= applies only to text nodes with field=".into(),
                                 w.line,
                             );
                             continue;
@@ -3641,6 +3760,7 @@ fn expand_builtin(
     node.act = sink.act.take();
     node.field = sink.field.take();
     node.submit = sink.submit.take();
+    node.cancel = sink.cancel.take();
     node.press = sink.press.take();
     node.context = sink.context.take();
     node.dblclick = sink.dblclick.take();
@@ -3793,6 +3913,14 @@ fn expand_builtin(
         );
         node.submit = None;
     }
+    if node.cancel.is_some() && (kind != nk::TEXT || node.field.is_none()) {
+        ctx.warn(
+            "attr",
+            "cancel= applies only to text nodes with field=".into(),
+            a.line,
+        );
+        node.cancel = None;
+    }
     if node.resize.is_some() && kind != nk::DIVIDER {
         ctx.warn(
             "attr",
@@ -3806,13 +3934,14 @@ fn expand_builtin(
         node.flags &= !fl::DRAG_GHOST;
     }
 
-    // Signal registry. Change, Submit, and Resize carry text; all other
-    // triggers carry the common item identity and metadata only.
+    // Signal registry. Change, Submit, Resize, and Cancel carry text; all
+    // other triggers carry the common item identity and metadata only.
     if ctx.quiet == 0 {
         for (name, trigger) in [
             (&node.act, 0),
             (&node.field, 1),
             (&node.submit, 2),
+            (&node.cancel, 14),
             (&node.press, 3),
             (&node.context, 4),
             (&node.dblclick, 5),
@@ -3838,7 +3967,7 @@ fn expand_builtin(
 }
 
 fn signal_has_text(trigger: u8) -> bool {
-    matches!(trigger, 1 | 2 | 8)
+    matches!(trigger, 1 | 2 | 8 | 14)
 }
 
 fn register_signal(ctx: &mut Ctx, name: String, trigger: u8, line: u32) {
@@ -4259,6 +4388,7 @@ fn icon_node_is_static(node: &CNode) -> bool {
         && node.act.is_none()
         && node.field.is_none()
         && node.submit.is_none()
+        && node.cancel.is_none()
         && node.press.is_none()
         && node.context.is_none()
         && node.dblclick.is_none()
@@ -4491,6 +4621,143 @@ fn validate_semantic_tree(ctx: &mut Ctx, node: &CNode, keys: &BTreeSet<String>) 
     for patch in &node.patches {
         for child in &patch.children {
             validate_semantic_tree(ctx, child, keys);
+        }
+    }
+}
+
+/// True when a content value can produce accessible-name text at runtime.
+/// Empty string literals never do; params, props, tokens, and non-empty
+/// literals all can.
+fn content_yields_name(value: &TVal) -> bool {
+    match value {
+        TVal::Str(text) => !text.is_empty(),
+        TVal::Token { base, .. } => content_yields_name(base),
+        TVal::List(_) | TVal::Shadows(_) | TVal::Path(..) => false,
+        _ => true,
+    }
+}
+
+/// True when `node` or any descendant (including conditional children and
+/// patch-supplied content) can yield name text for name-from-content.
+fn subtree_has_name_text(node: &CNode) -> bool {
+    if node.content.as_ref().is_some_and(content_yields_name) {
+        return true;
+    }
+    let patch_content = node.patches.iter().any(|patch| {
+        patch
+            .attrs
+            .iter()
+            .any(|attr| attr.id == at::CONTENT && content_yields_name(&attr.val))
+    });
+    if patch_content {
+        return true;
+    }
+    node.children.iter().any(subtree_has_name_text)
+        || node
+            .patches
+            .iter()
+            .any(|patch| patch.children.iter().any(subtree_has_name_text))
+}
+
+/// True when the node carries a `label=` in its base attrs or any patch.
+fn has_label(node: &CNode) -> bool {
+    node.attrs.iter().any(|attr| attr.id == at::LABEL)
+        || node
+            .patches
+            .iter()
+            .any(|patch| patch.attrs.iter().any(|attr| attr.id == at::LABEL))
+}
+
+/// `warn[a11y-name]`: a focusable or activation-bearing node with neither
+/// `label=` nor name-yielding text content is an unnamed generic to assistive
+/// technology (§7.4, §12). Name-from-content means any descendant text can
+/// name the control, so the walk inspects the whole subtree. Statically inert
+/// subtrees are skipped: their binders are reported by `warn[inert-binder]`.
+fn warn_a11y_names(ctx: &mut Ctx, node: &CNode) {
+    if node.flags & fl::INERT != 0 {
+        return;
+    }
+    let interactive = node.flags & fl::FOCUSABLE != 0
+        || node.act.is_some()
+        || node
+            .conditional_signals
+            .iter()
+            .any(|(_, trigger)| matches!(*trigger, 0 | 13));
+    let presentational = matches!(
+        node.attrs.iter().find(|attr| attr.id == at::ROLE),
+        Some(AttrE { val: TVal::Enum(role), .. }) if role == "presentation" || role == "none"
+    );
+    if interactive && !presentational && !has_label(node) && !subtree_has_name_text(node) {
+        ctx.warn_with(
+            "a11y-name",
+            "focusable control has no accessible name (no `label=` and no text content)"
+                .to_string(),
+            node.line,
+            "add `label=\"…\"` or give the control text content; assistive technology \
+             announces it as an unnamed generic otherwise"
+                .to_string(),
+        );
+    }
+    for child in &node.children {
+        warn_a11y_names(ctx, child);
+    }
+    for patch in &node.patches {
+        for child in &patch.children {
+            warn_a11y_names(ctx, child);
+        }
+    }
+}
+
+/// `warn[inert-binder]`: signal binders under a statically `inert` node can
+/// never fire — inert removes the subtree from hit-testing, focus, and key
+/// routing, and `when` patches can only add flag bits, never clear them.
+fn warn_inert_binders(ctx: &mut Ctx, node: &CNode, ancestor_inert: bool) {
+    let inert = ancestor_inert || node.flags & fl::INERT != 0;
+    if inert {
+        for (name, attr) in [
+            (&node.act, "act"),
+            (&node.field, "field"),
+            (&node.submit, "submit"),
+            (&node.cancel, "cancel"),
+            (&node.press, "press"),
+            (&node.context, "context"),
+            (&node.dblclick, "dblclick"),
+            (&node.drag, "drag"),
+            (&node.drop, "drop"),
+            (&node.resize, "resize"),
+            (&node.pointer_move, "pointer-move"),
+            (&node.pointer_up, "pointer-up"),
+            (&node.drag_update, "drag-update"),
+            (&node.drag_end, "drag-end"),
+        ] {
+            if let Some(name) = name {
+                ctx.warn_with(
+                    "inert-binder",
+                    format!(
+                        "binder `{attr}={name}` can never fire: the node is inside an `inert` subtree"
+                    ),
+                    node.line,
+                    "remove the binder or drop `inert` from the covering ancestor".to_string(),
+                );
+            }
+        }
+        for (name, _) in &node.conditional_signals {
+            ctx.warn_with(
+                "inert-binder",
+                format!(
+                    "conditional binder '{name}' can never fire: the node is inside an `inert` subtree"
+                ),
+                node.line,
+                "remove the binder or drop `inert` from the covering ancestor".to_string(),
+            );
+        }
+    }
+    for child in &node.children {
+        warn_inert_binders(ctx, child, inert);
+    }
+    for patch in &node.patches {
+        for child in &patch.children {
+            warn_inert_binders(ctx, child, inert);
         }
     }
 }
@@ -4735,6 +5002,7 @@ pub fn expand(units: &[crate::import::Unit], diags: &mut Diagnostics) -> Expande
                 default: scalar_zero(&declaration.ty, &declaration.enum_syms, false),
                 list: None,
                 line: declaration.line,
+                prop_of: declaration.prop_of.clone(),
             });
         }
     }
@@ -4856,6 +5124,8 @@ pub fn expand(units: &[crate::import::Unit], diags: &mut Diagnostics) -> Expande
     }
     for root in &roots {
         validate_semantic_tree(&mut ctx, root, &static_scene_keys);
+        warn_a11y_names(&mut ctx, root);
+        warn_inert_binders(&mut ctx, root, false);
     }
 
     ctx.cur_file = None;

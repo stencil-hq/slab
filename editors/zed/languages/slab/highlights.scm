@@ -68,7 +68,7 @@
 (attribute
   name: (identifier) @attribute
   (#any-of? @attribute
-    "act" "field" "submit" "keys" "press" "context" "dblclick"
+    "act" "field" "submit" "cancel" "keys" "press" "context" "dblclick"
     "pointer-move" "pointer-up" "drag" "drag-update" "drag-end" "drop" "resize"))
 (attribute
   name: (identifier) @attribute

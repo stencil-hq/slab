@@ -1016,3 +1016,204 @@ col {
         "{missing:?}"
     );
 }
+
+// --- fix-wave regressions: diagnostics polish + cancel binder -------------
+
+#[test]
+fn bare_ident_size_error_is_human_and_suggests_param_prefix() {
+    let (_, diagnostics) = compile(
+        "params {\n  done_pct num = 0\n}\ncol w=fill {\n  rect w=done_pct h=8\n}\n",
+        &Options::default(),
+    );
+    let diagnostic = diagnostics
+        .0
+        .iter()
+        .find(|diagnostic| diagnostic.code == "ref" && diagnostic.line == 5)
+        .expect("size error for bare ident");
+    assert!(
+        !diagnostic.msg.contains("Kw("),
+        "Debug repr leaked into a user diagnostic: {diagnostic:?}"
+    );
+    assert!(
+        diagnostic.msg.contains("`done_pct`"),
+        "message should name the offending ident: {diagnostic:?}"
+    );
+    assert!(
+        diagnostic
+            .remedy
+            .as_deref()
+            .is_some_and(|remedy| remedy.contains("param.done_pct")),
+        "expected a `param.done_pct` remedy: {diagnostic:?}"
+    );
+}
+
+#[test]
+fn no_debug_reprs_in_any_user_diagnostic() {
+    // A grab bag of malformed values; none of the produced messages may
+    // contain a Rust Debug enum form.
+    let (_, diagnostics) = compile(
+        "col w=oops {\n  rect w=4,5\n  box selected=maybe\n  text \"s\" strike=nope\n  box animate=\"x\"\n}\n",
+        &Options::default(),
+    );
+    for diagnostic in &diagnostics.0 {
+        assert!(
+            !diagnostic.msg.contains("Kw(") && !diagnostic.msg.contains("Tup("),
+            "Debug repr leaked: {diagnostic:?}"
+        );
+    }
+}
+
+#[test]
+fn identical_diagnostics_for_one_line_are_deduped() {
+    // Two identical errors from one authored line (`;` separates same-line
+    // statements) report once.
+    let (_, diagnostics) = compile(
+        "col w=fill {\n  box selected=zap; box selected=zap\n}\n",
+        &Options::default(),
+    );
+    let repeats = diagnostics
+        .0
+        .iter()
+        .filter(|diagnostic| diagnostic.code == "ref" && diagnostic.line == 2)
+        .count();
+    assert_eq!(repeats, 1, "{:?}", diagnostics.0);
+}
+
+#[test]
+fn bare_ident_bool_prop_suggests_param_prefix() {
+    let source = "params {\n  f_all bool = false\n}\ndef Tab(active=false) {\n  box selected=active w=40 h=16\n}\ncol w=fill {\n  Tab active=f_all\n}\n";
+    let (_, diagnostics) = compile(source, &Options::default());
+    let diagnostic = diagnostics
+        .0
+        .iter()
+        .find(|diagnostic| diagnostic.code == "ref" && diagnostic.msg.contains("boolean"))
+        .expect("boolean type error");
+    assert!(
+        diagnostic
+            .remedy
+            .as_deref()
+            .is_some_and(|remedy| remedy.contains("param.f_all")),
+        "expected a `param.f_all` remedy: {diagnostic:?}"
+    );
+}
+
+#[test]
+fn field_sync_wording_names_export_prop_and_declaration_site() {
+    let source = "def TaskRow(title=\"\", editing=false) export {\n  row { text title { when editing { field=title_edit; submit=commit } } }\n}\nparams { tasks list(TaskRow) = [] }\ncol { each param.tasks }\n";
+    let (_, diagnostics) = compile_with_exports(source, &Options::default());
+    let diagnostic = diagnostics
+        .0
+        .iter()
+        .find(|diagnostic| diagnostic.code == "field-sync")
+        .expect("field-sync warning");
+    assert!(
+        diagnostic.msg.contains("prop 'title'") && diagnostic.msg.contains("export 'TaskRow'"),
+        "wording should name the def prop and its export: {diagnostic:?}"
+    );
+    assert!(
+        !diagnostic.msg.contains("text param"),
+        "an export prop is not a document text param: {diagnostic:?}"
+    );
+    assert!(
+        diagnostic.msg.contains("declared at line 1"),
+        "wording should point at the declaration site: {diagnostic:?}"
+    );
+}
+
+#[test]
+fn unnamed_focusable_warns_a11y_name() {
+    assert_has(
+        "col w=fill {\n  row act=save w=40 h=16 { rect w=8 h=8 }\n}\n",
+        "a11y-name",
+        Level::Warning,
+        2,
+    );
+}
+
+#[test]
+fn labeled_or_text_bearing_focusables_do_not_warn_a11y_name() {
+    for source in [
+        "col w=fill {\n  row act=save label=\"Save\" w=40 h=16 { rect w=8 h=8 }\n}\n",
+        "col w=fill {\n  row act=save w=40 h=16 { text \"Save\" }\n}\n",
+        "params { title text = \"x\" }\ncol w=fill {\n  row act=save w=40 h=16 { text param.title }\n}\n",
+    ] {
+        let ds = diags_of(source);
+        assert!(
+            ds.iter().all(|(code, _, _)| code != "a11y-name"),
+            "unexpected a11y-name for {source:?}: {ds:?}"
+        );
+    }
+}
+
+#[test]
+fn binder_inside_inert_subtree_warns_inert_binder() {
+    assert_has(
+        "col w=fill inert {\n  box press=pressed w=8 h=8\n}\n",
+        "inert-binder",
+        Level::Warning,
+        2,
+    );
+}
+
+#[test]
+fn binder_outside_inert_subtree_does_not_warn() {
+    let ds = diags_of("col w=fill {\n  box press=pressed w=8 h=8\n}\n");
+    assert!(
+        ds.iter().all(|(code, _, _)| code != "inert-binder"),
+        "{ds:?}"
+    );
+}
+
+#[test]
+fn cancel_binder_registers_trigger_14_and_carries_text() {
+    let (slir, diagnostics) = compile(
+        "col w=fill {\n  text \"d\" field=draft cancel=discard\n}\n",
+        &Options {
+            embed_assets: false,
+            ..Default::default()
+        },
+    );
+    assert!(!diagnostics.has_errors(), "{:?}", diagnostics.0);
+    let slir = slir.expect("cancel document");
+    assert!(
+        slir.signals
+            .iter()
+            .any(|&(name, _, trigger)| slir.str_at(name) == "discard" && trigger == 14),
+        "cancel binder must register SLIR trigger 14"
+    );
+}
+
+#[test]
+fn cancel_requires_field_text_node() {
+    assert_has(
+        "col w=fill {\n  rect w=8 h=8 cancel=discard\n}\n",
+        "attr",
+        Level::Warning,
+        2,
+    );
+}
+
+#[test]
+fn cancel_is_text_bearing_for_dup_signal() {
+    assert_has(
+        "col w=fill {\n  box press=shared w=8 h=8\n  text \"d\" field=draft cancel=shared\n}\n",
+        "dup-signal",
+        Level::Warning,
+        3,
+    );
+}
+
+#[test]
+fn bare_flag_in_when_patch_body_parses_before_attrs() {
+    // language.md: bare `strike` means true, also inside `when` patch bodies
+    // and when followed by further attrs on the same line.
+    let ds = diags_of(
+        "params { done bool = false }\ncol w=fill {\n  text \"t\" { when done { strike color=#888888 } }\n}\n",
+    );
+    assert!(
+        ds.iter().all(|(code, level, _)| {
+            code != "parse" && !(code == "ref" && *level == Level::Error)
+        }),
+        "bare flag inside `when` body must parse: {ds:?}"
+    );
+}

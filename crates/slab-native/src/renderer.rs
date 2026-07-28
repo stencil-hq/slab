@@ -1693,6 +1693,61 @@ impl Renderer {
                         };
                         fb.push_glyph(clip.scissor, inst);
                     }
+                    // Uncovered clusters (no glyph in the op's font) paint as
+                    // visible tofu boxes over their kernel-charged advances
+                    // instead of vanishing (C-16). `t.uncov_*` reference flat
+                    // [start,end) codepoint-offset pairs in `frame.uncovered`;
+                    // `text_glyphs` walks per codepoint, so offsets index
+                    // `glyphs` directly.
+                    if t.uncov_len > 0 {
+                        let stroke = if t.color_kind == 2 {
+                            // gradient ink has no flat rgba; neutral gray tofu
+                            rgba(0xFF999999, t.opacity)
+                        } else {
+                            rgba(t.color, t.opacity)
+                        };
+                        let hw = ((t.size * f64::from(s) / 16.0).max(1.0) as f32) / 2.0;
+                        let lo = t.uncov_off.max(0) as usize;
+                        let hi = lo + t.uncov_len.max(0) as usize * 2;
+                        let runs = li.frame.uncovered.get(lo..hi).unwrap_or(&[]);
+                        for pair in runs.chunks_exact(2) {
+                            let from = pair[0] as usize;
+                            let to = (pair[1] as usize).min(glyphs.len());
+                            for j in from..to {
+                                let x0 = glyphs[j].x;
+                                let x1 =
+                                    glyphs.get(j + 1).map_or(t.x + t.measured_w, |next| next.x);
+                                let adv = x1 - x0;
+                                if adv <= 0.05 {
+                                    continue; // zero-advance modifiers
+                                }
+                                let inset = (adv * 0.08).min(1.5);
+                                let bw = adv - 2.0 * inset;
+                                let bh = t.size * 0.68;
+                                let cx = ((x0 + adv / 2.0) as f32 + ox) * s;
+                                let cy = ((t.y_baseline - bh / 2.0) as f32 + oy) * s;
+                                fb.push_rect(
+                                    clip.scissor,
+                                    RectI {
+                                        mabcd: [mat.a, mat.b, mat.c, mat.d],
+                                        mtc: [mat.tx, mat.ty, cx, cy],
+                                        hrs: [
+                                            (bw / 2.0) as f32 * s,
+                                            (bh / 2.0) as f32 * s,
+                                            0.0,
+                                            hw,
+                                        ],
+                                        sg: [0.0, 0.0, -1.0, 0.0],
+                                        dc: [0.0, clip.radius, clip.sdf[0], clip.sdf[1]],
+                                        c2: [clip.sdf[2], clip.sdf[3], 0.0, 0.0],
+                                        fill: [0.0; 4],
+                                        stroke,
+                                        g2: [0.0, 1.0, -1.0, 0.0],
+                                    },
+                                );
+                            }
+                        }
+                    }
                     if t.strike && t.measured_w > 0.0 {
                         let mut fill = rgba(t.color, t.opacity);
                         let mut gradient = -1.0;

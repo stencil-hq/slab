@@ -14,10 +14,18 @@ use slab_syntax::diag::{Diagnostics, Level};
 use std::collections::HashMap;
 use wasm_bindgen::prelude::*;
 
-/// Compiler version embedded in this WASM package.
+/// Compiler version embedded in this WASM package: semver plus the git
+/// commit hash of the build (`0.1.0 (72e5ca758)`).
 #[wasm_bindgen]
 pub fn compiler_version() -> String {
-    env!("CARGO_PKG_VERSION").to_string()
+    slab_compile::VERSION.to_string()
+}
+
+/// Canonical formatting via `slab_syntax::format` — the exact text `slab fmt`
+/// writes. Idempotent; returns the input unchanged when already canonical.
+#[wasm_bindgen]
+pub fn fmt(source: &str) -> String {
+    slab_syntax::format(source)
 }
 
 /// Decode a base64 string into bytes (standard alphabet, with padding).

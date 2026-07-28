@@ -35,8 +35,10 @@ fn empty_value(kind: u32) -> ParamValue {
     }
 }
 
-/// Coerce the scalar spelling accepted by `--set`, preserving the historical
-/// text/number/percentage/color/bool/enum rules.
+/// Coerce the scalar spelling shared by CLI `--set` and SDP `param.set`,
+/// preserving the historical text/number/percentage/color/bool/enum rules.
+/// Percentages accept `60` or `"60%"` and are unclamped: `pct` is the generic
+/// parent-relative percentage type, so values above 100% stay legitimate.
 pub fn coerce_scalar(kind: u32, raw: &str) -> Result<ParamValue, String> {
     let mut value = empty_value(kind);
     match kind {
@@ -88,13 +90,13 @@ fn default_field_value(doc: &Doc, field: usize) -> ParamValue {
     match kind {
         0 => {
             if decoded.tag == kslir::T_STR {
-                value.s = kslir::str_at(doc, decoded.h);
+                value.s = kslir::str_at(doc, decoded.h).to_owned();
             }
         }
         1 | 2 | 4 => value.num = decoded.num,
         3 => value.rgba = decoded.h,
         5 if decoded.tag == kslir::T_ENUM_SYM => {
-            value.sym = kslir::str_at(doc, decoded.h);
+            value.sym = kslir::str_at(doc, decoded.h).to_owned();
         }
         _ => {}
     }
@@ -218,12 +220,12 @@ fn prepare_list(doc: &Doc, param: usize, raw: &str) -> Result<Prepared, String> 
         let mut fields = Vec::with_capacity(field_len);
         for field in field_off..field_off + field_len {
             let name = kslir::str_at(doc, doc.list_field_name[field]);
-            let value = match object.get(&name) {
+            let value = match object.get(name) {
                 Some(raw_value) => json_field_value(doc, field, raw_value)
                     .map_err(|e| format!("item {index} field '{name}': {e}"))?,
                 None => default_field_value(doc, field),
             };
-            fields.push((name, value));
+            fields.push((name.to_owned(), value));
         }
         items.push(ListItem { key, fields });
     }
@@ -239,7 +241,7 @@ fn prepare_list(doc: &Doc, param: usize, raw: &str) -> Result<Prepared, String> 
 fn prepare(doc: &Doc, name: &str, raw: &str) -> Result<Prepared, String> {
     let param = (0..doc.parm_name.len())
         .position(|p| kslir::str_at(doc, doc.parm_name[p]) == name)
-        .ok_or_else(|| format!("unknown param '{name}'"))?;
+        .ok_or_else(|| "no such document param".to_string())?;
     let kind = doc.parm_type[param];
     if kind == PARAM_LIST {
         return prepare_list(doc, param, raw);
@@ -261,7 +263,7 @@ pub fn apply_sets(inst: &mut Instance, sets: &[(String, String)]) -> Result<(), 
     let prepared = sets
         .iter()
         .map(|(name, raw)| {
-            prepare(&inst.doc, name, raw).map_err(|e| format!("--set {name}={raw}: {e}"))
+            prepare(&inst.doc, name, raw).map_err(|e| format!("param '{name}': {e}"))
         })
         .collect::<Result<Vec<_>, _>>()?;
 

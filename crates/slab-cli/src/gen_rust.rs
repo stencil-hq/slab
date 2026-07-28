@@ -62,10 +62,40 @@ pub fn cmd_gen_rust(args: &[String]) -> ExitCode {
     let Some(module) = module else {
         return ExitCode::FAILURE;
     };
+    if let Some(parent) = out.parent().filter(|p| !p.as_os_str().is_empty()) {
+        if let Err(e) = std::fs::create_dir_all(parent) {
+            eprintln!("error: cannot create {}: {e}", parent.display());
+            return ExitCode::FAILURE;
+        }
+    }
     if let Err(e) = std::fs::write(&out, &module) {
         eprintln!("error: {}: {e}", out.display());
         return ExitCode::FAILURE;
     }
     eprintln!("wrote {} ({} bytes)", out.display(), module.len());
     ExitCode::SUCCESS
+}
+
+#[cfg(test)]
+mod tests {
+    use super::cmd_gen_rust;
+    use std::process::ExitCode;
+
+    #[test]
+    fn gen_rust_creates_missing_output_directories() {
+        let dir = std::env::temp_dir().join(format!("slab-gen-rust-mkdir-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let src = dir.join("doc.slab");
+        std::fs::write(&src, "col { text \"hi\" }\n").unwrap();
+        let out = dir.join("nested/deeper/out.rs");
+        let args = [
+            src.display().to_string(),
+            "-o".to_string(),
+            out.display().to_string(),
+        ];
+        assert_eq!(cmd_gen_rust(&args), ExitCode::SUCCESS);
+        assert!(out.is_file(), "gen rust must create parent directories");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

@@ -39,6 +39,8 @@ pub enum ShellEvent<U> {
     Accessibility(a11y::Event),
     /// Application event supplied by the host, such as an SDP wake-up.
     User(U),
+    /// Graceful shutdown request (SIGTERM); the shell exits with status 0.
+    Shutdown,
 }
 
 impl<U> From<a11y::Event> for ShellEvent<U> {
@@ -190,7 +192,7 @@ pub fn run_source(
     opts: demo::Opts,
 ) -> Result<(), String> {
     let copts = slab_compile::Options {
-        base_dir,
+        base_dir: base_dir.clone(),
         ..Default::default()
     };
     let (slir, diags) = slab_compile::compile(src, &copts);
@@ -226,10 +228,15 @@ pub fn run_source(
         max_frames: opts.max_frames,
         exit_after_ms: opts.exit_after_ms,
     };
+    if let Some(port) = opts.port {
+        let doc_path = base_dir.join(format!("{name}.slab"));
+        return crate::sdp::run_window(doc, slir, doc_path, options, port);
+    }
     let event_loop = EventLoop::<ShellEvent<()>>::with_user_event()
         .build()
         .map_err(|e| e.to_string())?;
     event_loop.set_control_flow(ControlFlow::Wait);
+    install_sigterm(event_loop.create_proxy());
     let mut app = NativeShell::new(doc, options, event_loop.create_proxy(), DefaultShellHost);
     event_loop.run_app(&mut app).map_err(|e| e.to_string())?;
     eprintln!("slab-native: presented {} frames", app.frames);
@@ -238,6 +245,26 @@ pub fn run_source(
     }
     Ok(())
 }
+
+/// Routes SIGTERM to a graceful [`ShellEvent::Shutdown`] so supervisors that
+/// stop the viewer observe exit status 0 instead of a signal death (N20).
+#[cfg(unix)]
+pub(crate) fn install_sigterm<U: Send + 'static>(proxy: EventLoopProxy<ShellEvent<U>>) {
+    match signal_hook::iterator::Signals::new([signal_hook::consts::SIGTERM]) {
+        Ok(mut signals) => {
+            std::thread::spawn(move || {
+                if signals.forever().next().is_some() {
+                    let _ = proxy.send_event(ShellEvent::Shutdown);
+                }
+            });
+        }
+        Err(e) => eprintln!("slab-native: cannot install SIGTERM handler: {e}"),
+    }
+}
+
+/// SIGTERM does not exist on this platform; nothing to install.
+#[cfg(not(unix))]
+pub(crate) fn install_sigterm<U: Send + 'static>(_proxy: EventLoopProxy<ShellEvent<U>>) {}
 
 /// Render one frame offscreen at `--t` and write a PNG (no probe pixels —
 /// arbitrary documents carry no known colors to assert).
@@ -927,6 +954,13 @@ where
                 {
                     window.request_redraw();
                 }
+            }
+            ShellEvent::Shutdown => {
+                // Same path as the window close button: let the document see
+                // E_CLOSE, then leave the loop so `main` exits with status 0.
+                let ev = self.base_event(kdispatch::E_CLOSE);
+                self.dispatch(event_loop, ev);
+                event_loop.exit();
             }
         }
     }

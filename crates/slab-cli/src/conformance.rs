@@ -131,6 +131,17 @@ fn run_cells(bytes: &[u8], case: &serde_json::Value) -> Result<String, String> {
     let grid = slab_kernel::cells::cells_from_frame(&inst.doc, &fr, fr.width, fr.height);
     Ok(slab_kernel::cells::cells_to_text(&grid, true))
 }
+
+/// Runs one TUI case and returns the attribute plane (`attrs.txt` golden):
+/// per-row runs of explicit fg/bg/strike state. Plain cells compare glyphs
+/// only, so SGR-only regressions (T15: a strike run over blank cells) are
+/// invisible without this plane.
+fn run_cells_attrs(bytes: &[u8], case: &serde_json::Value) -> Result<String, String> {
+    let (mut inst, t) = setup_case(bytes, case)?;
+    let fr = slab_kernel::frame::inst_frame(&mut inst, t);
+    let grid = slab_kernel::cells::cells_from_frame(&inst.doc, &fr, fr.width, fr.height);
+    Ok(slab_kernel::cells::cells_attrs_text(&grid))
+}
 /// Runs one capability case: TUI grid diagnostics first, then the shared
 /// support-chart lines for each used feature the selected client degrades or
 /// omits. Native and WebAssembly runners both use `slab_kernel::capability`.
@@ -180,6 +191,51 @@ pub(crate) fn diff_window(got: &str, want: &str) -> String {
         String::from_utf8_lossy(&wb[lo..w_hi]),
         String::from_utf8_lossy(&gb[lo..g_hi]),
     )
+}
+
+/// Freezes (`--update`) or byte-compares one `expected/<name>.<plane>.txt`
+/// golden; returns whether the plane passed.
+fn text_golden(
+    root: &Path,
+    name: &str,
+    plane: &str,
+    update: bool,
+    produced: Result<String, String>,
+) -> bool {
+    let path = root
+        .join("conformance/expected")
+        .join(format!("{name}.{plane}.txt"));
+    let text = match produced {
+        Ok(text) => text,
+        Err(e) => {
+            eprintln!("FAIL {name}: {plane}: {e}");
+            return false;
+        }
+    };
+    if update {
+        return match std::fs::write(&path, &text) {
+            Ok(()) => {
+                eprintln!("update {name}: wrote {} bytes ({plane})", text.len());
+                true
+            }
+            Err(e) => {
+                eprintln!("FAIL {name}: write {plane} golden: {e}");
+                false
+            }
+        };
+    }
+    match std::fs::read_to_string(&path) {
+        Ok(want) if want == text => true,
+        Ok(want) => {
+            eprintln!("FAIL {name}: {plane}.txt mismatch");
+            eprintln!("{}", diff_window(&text, &want));
+            false
+        }
+        Err(e) => {
+            eprintln!("FAIL {name}: {}: {e} (run with --update)", path.display());
+            false
+        }
+    }
 }
 
 pub fn cmd_conformance(args: &[String]) -> ExitCode {
@@ -332,42 +388,11 @@ pub fn cmd_conformance(args: &[String]) -> ExitCode {
                 }
             }
         }
-        // TUI cases additionally freeze the plain cell grid.
+        // TUI cases additionally freeze the plain cell grid and its
+        // attribute plane (fg/bg/strike runs — see `cells_attrs_text`).
         if case["kind"].as_str() == Some("tui") {
-            let cells_path = root
-                .join("conformance/expected")
-                .join(format!("{name}.cells.txt"));
-            match run_cells(&bytes, case) {
-                Ok(text) => {
-                    if update {
-                        if let Err(e) = std::fs::write(&cells_path, &text) {
-                            eprintln!("FAIL {name}: write cells golden: {e}");
-                            case_ok = false;
-                        } else {
-                            eprintln!("update {name}: wrote {} bytes (cells)", text.len());
-                        }
-                    } else {
-                        match std::fs::read_to_string(&cells_path) {
-                            Ok(want) if want == text => {}
-                            Ok(_) => {
-                                eprintln!("FAIL {name}: cells.txt mismatch");
-                                case_ok = false;
-                            }
-                            Err(e) => {
-                                eprintln!(
-                                    "FAIL {name}: {}: {e} (run with --update)",
-                                    cells_path.display()
-                                );
-                                case_ok = false;
-                            }
-                        }
-                    }
-                }
-                Err(e) => {
-                    eprintln!("FAIL {name}: cells: {e}");
-                    case_ok = false;
-                }
-            }
+            case_ok &= text_golden(&root, name, "cells", update, run_cells(&bytes, case));
+            case_ok &= text_golden(&root, name, "attrs", update, run_cells_attrs(&bytes, case));
         }
         if case_ok {
             if !update {

@@ -14,7 +14,7 @@ pub const USAGE: &str = "\
 usage: slab render FILE [-o OUT.{svg,png,apng,txt}] [--client web|gpu|tui|svg|png]
                    [--width N] [--height N] [--scale N] [--t MS]
                    [--dur S] [--fps N] [--state a,b] [--env portrait,dark,coarse] [--theme NAME]
-                   [--set param=value]... [--font NAME=PATH]... [--plain]
+                   [--set param=value]... [--font NAME=PATH]... [--plain] [-v]
 
   --scale   png/apng device scale factor (default 1)
   --dur     apng duration in seconds (default 2)
@@ -26,6 +26,7 @@ usage: slab render FILE [-o OUT.{svg,png,apng,txt}] [--client web|gpu|tui|svg|pn
   --set     override a scalar param, or a list with a JSON array of objects
   --plain   tui: no ANSI colors (the conformance golden format)
   --font    register a font face from PATH under NAME (repeatable)
+  -v        print every capability note (default: one summary line)
   (txt output with no -o writes to stdout)
 ";
 
@@ -45,6 +46,7 @@ struct Args {
     sets: Vec<(String, String)>,
     fonts: Vec<(String, PathBuf)>,
     plain: bool,
+    verbose: bool,
 }
 
 fn parse(args: &[String]) -> Result<Args, String> {
@@ -64,6 +66,7 @@ fn parse(args: &[String]) -> Result<Args, String> {
         sets: Vec::new(),
         fonts: Vec::new(),
         plain: false,
+        verbose: false,
     };
     let mut file = None;
     let mut it = args.iter();
@@ -101,6 +104,7 @@ fn parse(args: &[String]) -> Result<Args, String> {
                 a.fonts.push((name.to_string(), PathBuf::from(path)));
             }
             "--plain" => a.plain = true,
+            "-v" | "--verbose" => a.verbose = true,
             other if other.starts_with('-') => return Err(format!("unknown flag {other}")),
             other if file.is_none() => file = Some(PathBuf::from(other)),
             other => return Err(format!("unexpected argument '{other}'")),
@@ -152,6 +156,39 @@ fn write_out(out: &Path, bytes: &[u8], note: &str) -> Result<(), String> {
     std::fs::write(out, bytes).map_err(|e| format!("{}: {e}", out.display()))?;
     eprintln!("wrote {} ({} bytes){note}", out.display(), bytes.len());
     Ok(())
+}
+
+/// Prints renderer capability notes: everything under `-v`, otherwise one
+/// summary line naming the distinct note codes (N18: seven stderr lines per
+/// static export is noise, but the information must stay discoverable).
+fn print_notes(notes: &[String], verbose: bool) {
+    if verbose || notes.len() <= 1 {
+        for n in notes {
+            eprintln!("{n}");
+        }
+        return;
+    }
+    eprintln!("{}", note_summary(notes));
+}
+
+/// One-line digest of a multi-note render: count plus distinct note codes.
+fn note_summary(notes: &[String]) -> String {
+    let mut codes: Vec<&str> = Vec::new();
+    for n in notes {
+        // note lines read `note <code>: …` (capsnote + tui grid diagnostics)
+        let code = n
+            .strip_prefix("note ")
+            .and_then(|rest| rest.split(':').next())
+            .unwrap_or(n.as_str());
+        if !codes.contains(&code) {
+            codes.push(code);
+        }
+    }
+    format!(
+        "note: {} capability notes ({}); rerun with -v for details",
+        notes.len(),
+        codes.join(", ")
+    )
 }
 
 fn print_diags(diags: &Diagnostics, file: &str) {
@@ -215,9 +252,7 @@ fn run(a: &Args) -> Result<(), String> {
         registered_fonts,
     };
     let out = render(&slir, &ropts, &base_dir)?;
-    for n in &out.notes {
-        eprintln!("{n}");
-    }
+    print_notes(&out.notes, a.verbose);
     match &a.out {
         Some(path) => write_out(path, &out.bytes, &out.summary)?,
         None => {
@@ -231,12 +266,37 @@ fn run(a: &Args) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::cmd_render;
+    use super::{cmd_render, note_summary};
     use std::process::ExitCode;
 
     #[test]
     fn render_help_is_a_successful_command() {
         assert_eq!(cmd_render(&["--help".to_string()]), ExitCode::SUCCESS);
         assert_eq!(cmd_render(&["-h".to_string()]), ExitCode::SUCCESS);
+    }
+
+    #[test]
+    fn note_summary_counts_and_dedupes_codes() {
+        let notes: Vec<String> = [
+            "note cap-anim: 'transition' is not supported by the svg renderer",
+            "note cap-anim: 'text-keyframes' is degraded by the svg renderer",
+            "note cap-hover: 'hover' is not supported by the svg renderer",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        assert_eq!(
+            note_summary(&notes),
+            "note: 3 capability notes (cap-anim, cap-hover); rerun with -v for details"
+        );
+    }
+
+    #[test]
+    fn note_summary_keeps_unprefixed_lines_whole() {
+        let notes = vec!["grid oddity".to_string(), "grid oddity".to_string()];
+        assert_eq!(
+            note_summary(&notes),
+            "note: 2 capability notes (grid oddity); rerun with -v for details"
+        );
     }
 }
