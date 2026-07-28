@@ -13,6 +13,12 @@ gen:
     cargo run -q -p slab-cli -- gen rust examples/10-settings.slab -o crates/slab-native/src/gen_settings.rs
     rustfmt --edition 2024 crates/slab-native/src/gen_player.rs crates/slab-native/src/gen_settings.rs
 
+    # The Go and Python clients embed the same C-ABI kernel+compiler module,
+    # and `clients/go/gen` proves the Go generator against a real document.
+    cargo run -q -p xtask -- abi-wasm
+    cargo run -q -p slab-cli -- gen go examples/10-settings.slab -o clients/go/gen/settings/settings.go --package settings
+    gofmt -w clients/go/gen/settings/settings.go
+
     cargo run -q -p xtask -- kernel-wasm
 
     # `gen wc` publishes this bundle alongside the kernel WASM that
@@ -31,6 +37,14 @@ check:
 # Rust workspace unit tests
 test:
     cargo test --workspace
+
+# Go client: runtime, terminal driver, and generated typed module
+go-test:
+    cd clients/go && test -z "$(gofmt -l .)" && go build ./... && go vet ./... && go test ./...
+
+# Python client: wasmtime runtime, terminal driver, on-the-fly compilation
+py-test:
+    cd packages/pyslab && uv run --extra dev pytest -q
 
 # full conformance suite (compile -> native + current Node WASM bindings -> byte-exact goldens)
 conformance:
@@ -53,6 +67,10 @@ freshness:
     cp crates/slab-native/src/gen_settings.rs "$snapshot/crates/slab-native/src/gen_settings.rs"
     cp spec/SPEC.md "$snapshot/spec/SPEC.md"
     cp -R tree-sitter-slab/src "$snapshot/tree-sitter-slab/src"
+    mkdir -p "$snapshot/clients/go/slab" "$snapshot/packages/pyslab/src/slab"
+    cp clients/go/slab/slab_abi.wasm.gz "$snapshot/clients/go/slab/slab_abi.wasm.gz"
+    cp packages/pyslab/src/slab/slab_abi.wasm.gz "$snapshot/packages/pyslab/src/slab/slab_abi.wasm.gz"
+    cp -R clients/go/gen "$snapshot/clients/go/gen"
     just gen
     diff -ru "$snapshot/gen/web-runtime" gen/web-runtime
     diff -ru "$snapshot/clients/web/wasm" clients/web/wasm
@@ -62,6 +80,9 @@ freshness:
     diff -u "$snapshot/crates/slab-native/src/gen_settings.rs" crates/slab-native/src/gen_settings.rs
     diff -u "$snapshot/spec/SPEC.md" spec/SPEC.md
     diff -ru "$snapshot/tree-sitter-slab/src" tree-sitter-slab/src
+    diff -u "$snapshot/clients/go/slab/slab_abi.wasm.gz" clients/go/slab/slab_abi.wasm.gz
+    diff -u "$snapshot/packages/pyslab/src/slab/slab_abi.wasm.gz" packages/pyslab/src/slab/slab_abi.wasm.gz
+    diff -ru "$snapshot/clients/go/gen" clients/go/gen
 
 # build the three npm packages (wasm + tsc dists + license copies)
 pack: gen
@@ -114,6 +135,14 @@ native file="examples/00-player.slab":
 tui file="examples/00-player.slab":
     cargo run -q -p slab-tui -- {{file}}
 
+# open a .slab document in the Go terminal client (wazero-backed)
+go-tui file="examples/00-player.slab":
+    cd clients/go && go run ./example -file {{justfile_directory()}}/{{file}}
+
+# open a .slab document in the Python terminal client (compiled on the fly)
+py-tui file="examples/00-player.slab":
+    cd packages/pyslab && uv run python -m slab {{justfile_directory()}}/{{file}}
+
 # browse a directory of .slab documents in the terminal client (Ctrl-N / Ctrl-P)
 gallery dir="examples":
     cargo run -q -p slab-tui -- --examples {{dir}}
@@ -123,4 +152,4 @@ gallery dir="examples":
 compare *docs:
     bun tools/compare.ts {{docs}}
 
-ci: check test conformance freshness
+ci: check test conformance freshness go-test py-test

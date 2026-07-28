@@ -126,7 +126,7 @@ cargo run -p slab-cli -- render examples/07-monitor.slab -o monitor.apng --dur 3
 `slab gen rust FILE -o OUT.rs` emits a typed module over the kernel — scalar params, typed list
 item structs and setters, item-aware signals, holes, and `Doc::set_theme`.
 `slab gen go FILE -o OUT.go` emits the same typed surface for Go, wrapping a
-`slab.Session` from the `github.com/stencil-hq/slab-go/slab` runtime around the
+`slab.Session` from the `github.com/stencil-hq/slab/clients/go/slab` runtime around the
 document's SLIR bytes, lowered at generation time.
 
 ## Packages
@@ -136,7 +136,7 @@ document's SLIR bytes, lowered at generation time.
 | [`@stencil-hq/slab`](packages/slab) | WASM-backed CLI: compile, check, render, generate — no Rust install. |
 | [`@stencil-hq/wslab`](clients/web) | Web runtime: `SlabElement` base class, DOM painter, kernel WASM sidecar. |
 | [`@stencil-hq/dslab`](packages/dslab) | Typed client + CLI for the Slab Drive Protocol (live kernel sessions). |
-| [`slab-go`](clients/go) | Go module `github.com/stencil-hq/slab-go`: `slab` runtime over the kernel WASM (wazero) plus the `slabtui` terminal driver. |
+| [`slab/clients/go`](clients/go) | Go module `github.com/stencil-hq/slab/clients/go`: `slab` runtime over the kernel WASM (wazero) plus the `slabtui` terminal driver. |
 | [`slab-lang`](packages/pyslab) | Python `slab` package: the same runtime over wasmtime, plus a terminal driver and `python -m slab FILE.slab`. |
 
 The Go and Python clients embed `slab_abi.wasm.gz` and speak SDP in process

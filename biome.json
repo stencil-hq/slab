@@ -24,6 +24,6 @@
       }
    },
    "files": {
-      "includes": ["clients/**", "tools/**", "packages/**", "scripts/**", "site/**", "!**/dist/**", "!**/wasm/**", "!packages/slab/bin/**"]
+      "includes": ["clients/**", "tools/**", "packages/**", "scripts/**", "site/**", "!**/dist/**", "!**/wasm/**", "!**/.venv/**", "!packages/slab/bin/**"]
    }
 }

@@ -23,7 +23,8 @@ the kernel.
   -> crates/slab-compile      expand components/imports, embed assets, lower
   -> crates/slab-slir         encode/decode/dump the binary document
   -> crates/slab-kernel       instantiate, lay out, dispatch, produce Frame/Scene
-  -> slab-cli | slab-tui | slab-native | slab-wasm | clients/web
+  -> slab-cli | slab-tui | slab-native | slab-wasm | slab-abi
+  -> clients/web | clients/go | packages/pyslab
 ```
 
 - `crates/slab-cli/src/main.rs` is the reference command surface: `check`,
@@ -35,6 +36,10 @@ the kernel.
   playground.
 - `packages/dslab/` speaks the newline-delimited Slab Drive Protocol (SDP),
   either over TCP or a spawned `slab drive` process.
+- `crates/slab-abi/` compiles the compiler, kernel, and SDP session layer into
+  one import-free C-ABI WASM module. `clients/go/` (wazero) and
+  `packages/pyslab/` (wasmtime) embed it and speak SDP in-process, so both
+  compile `.slab` source at runtime through `doc.open`.
 - Determinism is intentional: kernel arithmetic, output quantization, and
   ordering must stay host-independent so native and WASM conformance goldens
   remain byte-identical.
@@ -49,9 +54,12 @@ the kernel.
 | `crates/slab-kernel/` | Shared deterministic runtime: layout, scene, input, editing, animation. |
 | `crates/slab-cli/` | Native CLI, conformance runner, Drive Protocol server. |
 | `crates/slab-{tui,native,lsp,wasm}/` | Terminal, wgpu, language-server, and WASM host adapters. |
+| `crates/slab-abi/` | Import-free C-ABI WASM module: SDP sessions for non-JavaScript hosts. |
 | `clients/web/` | `@stencil-hq/wslab`: `SlabElement`, frame decode, DOM/canvas painter, browser WASM glue. |
 | `packages/slab/` | `@stencil-hq/slab` WASM-backed npm CLI. |
 | `packages/dslab/` | `@stencil-hq/dslab` typed SDP client and `dslab` CLI. |
+| `clients/go/` | `github.com/stencil-hq/slab/clients/go`: wazero runtime, terminal driver, `slab gen go` output. |
+| `packages/pyslab/` | `slab-lang`: wasmtime runtime, terminal driver, on-the-fly compilation. |
 | `site/` | CodeMirror playground, preview, inspector, and design-mode UI. |
 | `conformance/` | Shared cases, traces, manifest, and byte-exact expected outputs. |
 | `spec/` | Normative language, SLIR, frame API, and platform-support specifications. |
@@ -67,9 +75,11 @@ bun install
 # Usual validation layers
 just check          # rustfmt, clippy -D warnings, Biome, tree-sitter checks
 just test           # cargo test --workspace
+just go-test        # Go client: build, vet, and test clients/go
+just py-test        # Python client: pytest under packages/pyslab
 just conformance    # native and WASM cases against checked-in goldens
 just freshness      # regenerate in a temp snapshot and reject drift
-just ci             # check + test + conformance + freshness
+just ci             # check + test + conformance + freshness + go-test + py-test
 
 # Generation and packages
 just gen             # refresh all committed derived artifacts
@@ -93,6 +103,9 @@ cargo run -q -p slab-cli -- check examples/10-settings.slab
 cargo run -q -p slab-cli -- render examples/10-settings.slab -o /tmp/settings.png
 cargo run -q -p slab-cli -- dump path/to/document.slir
 bun test packages/dslab/test/drive.test.ts
+cargo run -q -p slab-cli -- gen go examples/10-settings.slab -o /tmp/doc.go --package doc
+cd clients/go && go test ./...
+cd packages/pyslab && uv run --extra dev pytest -q
 ```
 
 ## Code Conventions & Common Patterns
@@ -139,8 +152,11 @@ Do not hand-edit generated output. Edit its input, run `just gen`, and include
 all resulting intentional updates. Important derived targets include
 `crates/slab-kernel/src/caps.rs`, `crates/slab-slir/src/pb.rs`,
 `tree-sitter-slab/src/`, `clients/web/wasm/` (the only committed kernel WASM),
-`gen/web-runtime/slab-runtime.js`, and generated native modules under
-`crates/slab-native/src/`.
+`gen/web-runtime/slab-runtime.js`, generated native modules under
+`crates/slab-native/src/`, the embedded ABI modules
+`clients/go/slab/slab_abi.wasm.gz` and
+`packages/pyslab/src/slab/slab_abi.wasm.gz`, and the generated Go module under
+`clients/go/gen/`.
 
 `spec/support.toml` drives capability tables; `spec/slir.proto` drives generated
 bindings. Changes to either require regeneration and freshness verification.
@@ -180,6 +196,10 @@ bindings. Changes to either require regeneration and freshness verification.
 - `@stencil-hq/slab` is the WASM-backed npm CLI; `@stencil-hq/dslab` requires
   Node 22+ when used under Node. The repository itself uses Bun for its scripts
   and workspace management.
+- Use **Go 1.24+** for `clients/go` and **uv** with Python 3.11+ for
+  `packages/pyslab`. Both clients embed the same generated ABI module; rebuild
+  it with `cargo run -q -p xtask -- abi-wasm` after any compiler or kernel
+  change that they must observe.
 
 ## Testing & QA
 
@@ -195,6 +215,8 @@ cross-layer check when the change crosses a boundary.
 | Browser custom elements | `just web-e2e`; inspect `clients/web/element.ts`, `frame-decode.ts`, and `painter.ts`. |
 | npm package layout | `just pack` then `bun scripts/pack-e2e.ts`. |
 | Editor plugins | `just editors`; artifacts land in `out/editors/`. |
+| Go client or `slab gen go` | `just go-test`; regenerate `clients/go/gen` through `just gen`. |
+| Python client | `just py-test`. |
 | Spec/proto/support/generated input | `just gen` then `just freshness`. |
 
 Do not refresh conformance goldens merely to make a test pass. First isolate the
