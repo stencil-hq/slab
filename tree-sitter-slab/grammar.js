@@ -335,8 +335,16 @@ module.exports = grammar({
 
     // -- values ---------------------------------------------------------------
 
-    // value := scalar ("," scalar)*  (2+ scalars = tuple)
-    _value: $ => choice($.tuple, $._scalar),
+    // Values include typed key-to-signal maps for `keys=Escape:close,F2:rename`.
+    _value: $ => choice($.key_map, $.tuple, $._scalar),
+
+    key_map: $ => seq($.key_binding, repeat(seq(',', $.key_binding))),
+
+    key_binding: $ => seq(
+      field('key', choice($.identifier, $.string)),
+      ':',
+      field('signal', choice($.identifier, $.string)),
+    ),
 
     // tuple := scalar ("," scalar)+  e.g. `pad=4,10`, `0,18,44,#00000073`
     tuple: $ => seq($._scalar, repeat1(seq(',', $._scalar))),

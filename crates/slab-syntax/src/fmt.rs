@@ -517,6 +517,12 @@ mod tests {
     }
 
     #[test]
+    fn key_maps_keep_tight_pair_separators() {
+        let src = "col keys=Escape : clear , F2 : rename\n";
+        assert_eq!(format(src), "col keys=Escape:clear,F2:rename\n");
+    }
+
+    #[test]
     fn preserves_comments_continuations_and_strings() {
         let src = "// header\ncol w=360 \\\nbg=#fff { // trailing\n  text \"a  b\\n\" /* keep */ size=12\n}\n";
         assert_eq!(
@@ -548,6 +554,15 @@ mod tests {
         assert_eq!(
             format(src),
             "col {\n  when w<600 { pad=12 }\n  when !hover { opacity=0.5 }\n  rect w=fill:2\n}\n"
+        );
+    }
+
+    #[test]
+    fn strike_keeps_bare_and_boolean_forms() {
+        let src = "col{\ntext \"done\" strike\ntext \"open\" strike = false\n}\n";
+        assert_eq!(
+            format(src),
+            "col {\n  text \"done\" strike\n  text \"open\" strike=false\n}\n"
         );
     }
 

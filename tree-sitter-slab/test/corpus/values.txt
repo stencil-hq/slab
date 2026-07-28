@@ -129,3 +129,27 @@ rect at=-4,.5 w=1.5 opacity=0.65
     (attribute
       (identifier)
       (number))))
+
+==============================
+typed key-to-signal maps
+==============================
+
+col keys=Escape:clear,F2:rename,"/":search
+
+---
+
+(source_file
+  (node
+    (identifier)
+    (attribute
+      (identifier)
+      (key_map
+        (key_binding
+          (identifier)
+          (identifier))
+        (key_binding
+          (identifier)
+          (identifier))
+        (key_binding
+          (string)
+          (identifier))))))

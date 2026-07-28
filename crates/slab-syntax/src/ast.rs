@@ -18,6 +18,8 @@ pub enum Value {
     Fill(f64),
     /// Comma tuple of scalars.
     Tup(Vec<Value>),
+    /// A typed key-to-signal map, e.g. `Escape:close,F2:rename`.
+    KeyMap(Vec<(Value, Value)>),
     /// A nested list literal used by a list-item field default.
     List(Vec<ListItem>),
     /// `list(Def)` type annotation on an exported-def field.

@@ -60,6 +60,10 @@
             "named": true
           },
           {
+            "type": "key_map",
+            "named": true
+          },
+          {
             "type": "number",
             "named": true
           },
@@ -446,6 +450,55 @@
     }
   },
   {
+    "type": "key_binding",
+    "named": true,
+    "fields": {
+      "key": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "string",
+            "named": true
+          }
+        ]
+      },
+      "signal": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "string",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "key_map",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "key_binding",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
     "type": "keyframe",
     "named": true,
     "fields": {
@@ -651,6 +704,10 @@
         },
         {
           "type": "identifier",
+          "named": true
+        },
+        {
+          "type": "key_map",
           "named": true
         },
         {
@@ -964,6 +1021,10 @@
           },
           {
             "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "key_map",
             "named": true
           },
           {

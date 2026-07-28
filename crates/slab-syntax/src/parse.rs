@@ -669,6 +669,14 @@ impl<'d> Parser<'d> {
             } else if t.kind == TokKind::Str {
                 self.next();
                 children.push(Item::Text(t.text, t.line));
+            } else if t.kind == TokKind::Id && t.text == "when" {
+                self.diags.error_with(
+                    "when-compose",
+                    "a `when` block cannot be nested inside another `when` patch",
+                    t.line,
+                    "use one state patch with themed tokens, e.g. `when hover { bg=color.surface }`; token references now resolve through the active theme",
+                );
+                self.parse_when();
             } else if t.kind == TokKind::Id && t.text == "each" {
                 children.push(Item::Each(self.parse_each()));
             } else if t.kind == TokKind::Id {
@@ -736,6 +744,9 @@ impl<'d> Parser<'d> {
 
     fn parse_value(&mut self) -> Value {
         let first = self.parse_scalar();
+        if self.at(TokKind::Colon) {
+            return self.parse_key_map(first);
+        }
         if !self.at(TokKind::Comma) {
             return first;
         }
@@ -744,6 +755,29 @@ impl<'d> Parser<'d> {
             items.push(self.parse_scalar());
         }
         Value::Tup(items)
+    }
+
+    fn parse_key_map(&mut self, first_key: Value) -> Value {
+        let mut entries = Vec::new();
+        let mut key = first_key;
+        loop {
+            self.expect(TokKind::Colon, "':' between a key and signal");
+            let signal = self.parse_scalar();
+            entries.push((key, signal));
+            if !self.eat(TokKind::Comma) {
+                break;
+            }
+            key = self.parse_scalar();
+            if !self.at(TokKind::Colon) {
+                self.diags.error(
+                    "parse",
+                    "key map entries must be `Key:signal` pairs",
+                    self.peek().line,
+                );
+                break;
+            }
+        }
+        Value::KeyMap(entries)
     }
 
     fn parse_scalar(&mut self) -> Value {
@@ -997,6 +1031,29 @@ col scroll {
     }
 
     #[test]
+    fn nested_when_reports_composition_and_themed_token_remedy() {
+        let mut diagnostics = Diagnostics::default();
+        let document = parse(
+            "tokens { color { surface #eee } }\nrect {\n  when theme(dusk) { when hover { bg=color.surface } }\n}\n",
+            &mut diagnostics,
+        );
+        assert_eq!(diagnostics.0.len(), 1, "{:?}", diagnostics.0);
+        let diagnostic = &diagnostics.0[0];
+        assert_eq!(diagnostic.code, "when-compose");
+        assert!(diagnostic.msg.contains("cannot be nested"));
+        assert!(
+            diagnostic
+                .remedy
+                .as_deref()
+                .is_some_and(|remedy| remedy.contains("active theme"))
+        );
+        let Item::When(outer) = &document.roots[0].children[0] else {
+            panic!("expected outer when");
+        };
+        assert!(outer.children.is_empty());
+    }
+
+    #[test]
     fn missing_node_header_continuation_reports_once_and_recovers() {
         let mut diagnostics = Diagnostics::default();
         let document = parse(
@@ -1054,6 +1111,21 @@ box press=pressed context=menu dblclick=twice drag=started drop=dropped resize=r
             &node.children[1],
             Item::When(when)
                 if matches!(&when.cond, Cond::Ident { name, neg: false } if name == "drop")
+        ));
+    }
+
+    #[test]
+    fn parses_typed_key_signal_map() {
+        let mut diagnostics = Diagnostics::default();
+        let document = parse("col keys=Escape:clear,F2:rename { }\n", &mut diagnostics);
+        assert!(diagnostics.0.is_empty(), "{:?}", diagnostics.0);
+        let Some(Value::KeyMap(entries)) = document.roots[0].attr("keys") else {
+            panic!("expected key map");
+        };
+        assert_eq!(entries.len(), 2);
+        assert!(matches!(
+            &entries[0],
+            (Value::Kw(key), Value::Kw(signal)) if key == "Escape" && signal == "clear"
         ));
     }
 }
