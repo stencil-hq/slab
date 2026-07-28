@@ -1559,23 +1559,29 @@ pub fn children(d: &crate::slir::Doc, st: &mut crate::style::St, node: u32, out:
 		let mut key = String::new();
 		for item in range.0..range.1 {
 			crate::list::key_at_into(d, &st.lists, list, item, &mut key);
+			let key_hash = crate::list::identity_hash(&key);
 			let mut template = crate::list::template_first(d, &st.lists, node);
 			while template != crate::slir::NONE {
-				out.push(crate::list::synthetic(d, &mut st.lists, node, template, &key));
+				out.push(crate::list::synthetic_hashed(
+					&mut st.lists,
+					node,
+					template,
+					&key,
+					key_hash,
+				));
 				template = d.node_next[index_u32(template)];
 			}
 		}
 		return;
 	}
 	let each = crate::list::each_of(&st.lists, d, node);
-	let key = crate::list::item_key(&st.lists, d, node);
 	let mut child = d.node_first[base_index];
 	while child != crate::slir::NONE {
 		if d.node_flags[index_u32(child)] & crate::slir::F_DETACHED == 0 {
 			if each == crate::slir::NONE {
 				out.push(child);
 			} else {
-				out.push(crate::list::synthetic(d, &mut st.lists, each, child, &key));
+				out.push(crate::list::synthetic_from(&mut st.lists, node, each, child));
 			}
 		}
 		child = d.node_next[index_u32(child)];
@@ -1605,7 +1611,7 @@ pub fn children(d: &crate::slir::Doc, st: &mut crate::style::St, node: u32, out:
 			if each == crate::slir::NONE {
 				out.push(patch_child);
 			} else {
-				out.push(crate::list::synthetic(d, &mut st.lists, each, patch_child, &key));
+				out.push(crate::list::synthetic_from(&mut st.lists, node, each, patch_child));
 			}
 		}
 	}

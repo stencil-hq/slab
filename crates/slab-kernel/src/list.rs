@@ -4,7 +4,9 @@
 //! This keeps recursive schemas data-bounded while preserving stable item and
 //! synthetic-node identity across keyed reorders and virtual windows.
 
-use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
+use std::hash::Hasher;
+
+use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet, FxHasher};
 
 use crate::{slir, value};
 
@@ -23,6 +25,60 @@ impl KeyItems {
 			Self::One(item) => *item,
 			Self::Many(items) => items[0],
 		}
+	}
+}
+
+#[derive(Clone, Debug)]
+enum IdentityNodes {
+	One(u32),
+	Many(Vec<u32>),
+}
+
+impl IdentityNodes {
+	fn insert(&mut self, id: u32) {
+		match self {
+			Self::One(existing) => *self = Self::Many(vec![*existing, id]),
+			Self::Many(nodes) => nodes.push(id),
+		}
+	}
+
+	fn remove(&mut self, id: u32) -> bool {
+		let remaining = match self {
+			Self::One(existing) => return *existing == id,
+			Self::Many(nodes) => {
+				if let Some(index) = nodes.iter().position(|candidate| *candidate == id) {
+					nodes.swap_remove(index);
+				}
+				(nodes.len() == 1).then_some(nodes[0])
+			},
+		};
+		if let Some(remaining) = remaining {
+			*self = Self::One(remaining);
+		}
+		false
+	}
+
+	fn retain_live(&mut self, slots: &[usize]) -> bool {
+		let remaining = match self {
+			Self::One(id) => {
+				let index = usize::try_from(*id).expect("synthetic node index exceeds usize");
+				return slots.get(index).is_none_or(|slot| *slot == NO_SLOT);
+			},
+			Self::Many(nodes) => {
+				nodes.retain(|id| {
+					let index = usize::try_from(*id).expect("synthetic node index exceeds usize");
+					slots.get(index).is_some_and(|slot| *slot != NO_SLOT)
+				});
+				if nodes.is_empty() {
+					return true;
+				}
+				(nodes.len() == 1).then_some(nodes[0])
+			},
+		};
+		if let Some(remaining) = remaining {
+			*self = Self::One(remaining);
+		}
+		false
 	}
 }
 
@@ -58,13 +114,14 @@ pub struct State {
 	pub sy_each:                Vec<u32>,
 	pub sy_tpl:                 Vec<u32>,
 	pub sy_key:                 Vec<String>,
+	sy_key_hash:                Vec<u64>,
 	sy_item:                    Vec<i32>,
 	sy_list:                    Vec<u32>,
 	sy_generation:              Vec<u64>,
 	location_generation:        u64,
 	pub sy_next:                u32,
 	sy_slot:                    Vec<usize>,
-	sy_identity:                HashMap<(u32, u32), HashMap<String, u32>>,
+	sy_identity:                HashMap<(u32, u32, u64), IdentityNodes>,
 	sy_materialized:            Vec<u32>,
 	sy_materialized_set:        HashSet<u32>,
 	sy_deleted:                 Vec<u32>,
@@ -201,6 +258,7 @@ pub fn state_new() -> State {
 		sy_each:             Vec::new(),
 		sy_tpl:              Vec::new(),
 		sy_key:              Vec::new(),
+		sy_key_hash:          Vec::new(),
 		sy_item:             Vec::new(),
 		sy_list:             Vec::new(),
 		sy_generation:       Vec::new(),
@@ -847,14 +905,11 @@ pub fn key_exists(d: &slir::Doc, s: &State, list: u32, key: &str) -> bool {
 pub fn remove_sy(s: &mut State, k: i32) {
 	let slot = index(k);
 	let id = s.sy_id[slot];
-	let identity = (s.sy_each[slot], s.sy_tpl[slot]);
-	let key = s.sy_key[slot].clone();
-	let remove_identity = if let Some(keys) = s.sy_identity.get_mut(&identity) {
-		keys.remove(&key);
-		keys.is_empty()
-	} else {
-		false
-	};
+	let identity = (s.sy_each[slot], s.sy_tpl[slot], s.sy_key_hash[slot]);
+	let remove_identity = s
+		.sy_identity
+		.get_mut(&identity)
+		.is_some_and(|nodes| nodes.remove(id));
 	if remove_identity {
 		s.sy_identity.remove(&identity);
 	}
@@ -864,6 +919,7 @@ pub fn remove_sy(s: &mut State, k: i32) {
 	s.sy_each.swap_remove(slot);
 	s.sy_tpl.swap_remove(slot);
 	s.sy_key.swap_remove(slot);
+	s.sy_key_hash.swap_remove(slot);
 	s.sy_item.swap_remove(slot);
 	s.sy_list.swap_remove(slot);
 	s.sy_generation.swap_remove(slot);
@@ -1211,11 +1267,12 @@ pub(crate) fn parent(s: &State, d: &slir::Doc, node: u32) -> u32 {
 	if template_parent == slir::NONE {
 		return slir::NONE;
 	}
-	s.sy_identity
-		.get(&(s.sy_each[slot], template_parent))
-		.and_then(|items| items.get(&s.sy_key[slot]))
-		.copied()
-		.unwrap_or(template_parent)
+	identity_match(
+		s,
+		(s.sy_each[slot], template_parent, s.sy_key_hash[slot]),
+		&s.sy_key[slot],
+	)
+	.unwrap_or(template_parent)
 }
 
 #[inline]
@@ -1294,28 +1351,45 @@ pub fn param_of(s: &State, d: &slir::Doc, node: u32) -> i32 {
 	synthetic_location(s, d, node).map_or(-1, |(list, _)| signed(list))
 }
 
-fn synthetic_identity(s: &mut State, each: u32, tpl: u32, key: &str) -> (u32, usize) {
-	let identity = (each, tpl);
+/// Hashes an item key once for repeated synthetic sibling lookups.
+#[inline]
+pub(crate) fn identity_hash(key: &str) -> u64 {
+	let mut hasher = FxHasher::default();
+	hasher.write(key.as_bytes());
+	hasher.finish()
+}
+
+fn identity_match(s: &State, identity: (u32, u32, u64), key: &str) -> Option<u32> {
+	let matches = |id| {
+		let slot = synthetic_slot(s, id)?;
+		(s.sy_key[slot] == key).then_some(id)
+	};
+	match s.sy_identity.get(&identity)? {
+		IdentityNodes::One(id) => matches(*id),
+		IdentityNodes::Many(nodes) => nodes.iter().find_map(|id| matches(*id)),
+	}
+}
+
+fn synthetic_identity(
+	s: &mut State,
+	each: u32,
+	tpl: u32,
+	key: &str,
+	key_hash: u64,
+) -> (u32, usize) {
+	let identity = (each, tpl, key_hash);
 	note_lookup();
-	let existing = s
-		.sy_identity
-		.get(&identity)
-		.and_then(|keys| keys.get(key))
-		.copied();
-	if let Some(id) = existing {
-		if let Some(slot) = synthetic_slot(s, id) {
-			return (id, slot);
-		}
-		let remove_identity = if let Some(keys) = s.sy_identity.get_mut(&identity) {
-			keys.remove(key);
-			keys.is_empty()
-		} else {
-			false
-		};
-		if remove_identity {
-			s.sy_identity.remove(&identity);
-		}
-		s.sy_slot[usize::try_from(id).expect("synthetic node index exceeds usize")] = NO_SLOT;
+	if let Some(id) = identity_match(s, identity, key) {
+		return (id, synthetic_slot(s, id).expect("matched synthetic identity is live"));
+	}
+	let remove_identity = {
+		let slots = &s.sy_slot;
+		s.sy_identity
+			.get_mut(&identity)
+			.is_some_and(|nodes| nodes.retain_live(slots))
+	};
+	if remove_identity {
+		s.sy_identity.remove(&identity);
 	}
 	let id = s.sy_next;
 	s.sy_next = s.sy_next.wrapping_add(1);
@@ -1325,12 +1399,13 @@ fn synthetic_identity(s: &mut State, each: u32, tpl: u32, key: &str) -> (u32, us
 	s.sy_slot[id_index] = slot;
 	s.sy_identity
 		.entry(identity)
-		.or_default()
-		.insert(key.to_owned(), id);
+		.and_modify(|nodes| nodes.insert(id))
+		.or_insert(IdentityNodes::One(id));
 	s.sy_id.push(id);
 	s.sy_each.push(each);
 	s.sy_tpl.push(tpl);
 	s.sy_key.push(key.to_owned());
+	s.sy_key_hash.push(key_hash);
 	s.sy_item.push(-1);
 	s.sy_list.push(NONE);
 	s.sy_generation.push(s.location_generation.wrapping_sub(1));
@@ -1340,11 +1415,43 @@ fn synthetic_identity(s: &mut State, each: u32, tpl: u32, key: &str) -> (u32, us
 /// Returns or creates the stable identity for one each instance, template, and
 /// item key.
 pub fn synthetic(_d: &slir::Doc, s: &mut State, each: u32, tpl: u32, key: &str) -> u32 {
-	synthetic_identity(s, each, tpl, key).0
+	synthetic_identity(s, each, tpl, key, identity_hash(key)).0
 }
 
-fn synthetic_at(s: &mut State, each: u32, tpl: u32, key: &str, list: u32, item: i32) -> u32 {
-	let (node, slot) = synthetic_identity(s, each, tpl, key);
+/// Resolves a synthetic identity while reusing a hash computed for sibling templates.
+pub(crate) fn synthetic_hashed(
+	s: &mut State,
+	each: u32,
+	tpl: u32,
+	key: &str,
+	key_hash: u64,
+) -> u32 {
+	synthetic_identity(s, each, tpl, key, key_hash).0
+}
+
+/// Resolves a synthetic sibling without copying or rehashing its source item's key.
+pub(crate) fn synthetic_from(s: &mut State, source: u32, each: u32, tpl: u32) -> u32 {
+	let source_slot = synthetic_slot(s, source).expect("synthetic child source is not live");
+	let key_hash = s.sy_key_hash[source_slot];
+	let identity = (each, tpl, key_hash);
+	note_lookup();
+	if let Some(id) = identity_match(s, identity, &s.sy_key[source_slot]) {
+		return id;
+	}
+	let key = s.sy_key[source_slot].clone();
+	synthetic_identity(s, each, tpl, &key, key_hash).0
+}
+
+fn synthetic_at(
+	s: &mut State,
+	each: u32,
+	tpl: u32,
+	key: &str,
+	key_hash: u64,
+	list: u32,
+	item: i32,
+) -> u32 {
+	let (node, slot) = synthetic_identity(s, each, tpl, key, key_hash);
 	s.sy_item[slot] = item;
 	s.sy_list[slot] = list;
 	s.sy_generation[slot] = s.location_generation;
@@ -1363,10 +1470,11 @@ fn sync_template(
 	each: u32,
 	tpl: u32,
 	key: &str,
+	key_hash: u64,
 	list: u32,
 	item: i32,
 ) {
-	let node = synthetic_at(s, each, tpl, key, list, item);
+	let node = synthetic_at(s, each, tpl, key, key_hash, list, item);
 	mark_materialized(s, node);
 	if d.node_kind[tpl as usize] == slir::K_EACH {
 		sync_each(d, s, node);
@@ -1374,7 +1482,7 @@ fn sync_template(
 	}
 	let mut child = d.node_first[tpl as usize];
 	while child != slir::NONE {
-		sync_template(d, s, each, child, key, list, item);
+		sync_template(d, s, each, child, key, key_hash, list, item);
 		child = d.node_next[child as usize];
 	}
 	let patch_count = s.patches_by_node[tpl as usize].len();
@@ -1383,7 +1491,16 @@ fn sync_template(
 		let start = d.patch_child_off[patch];
 		let end = start.wrapping_add(d.patch_child_len[patch]);
 		for patch_child in start..end {
-			sync_template(d, s, each, d.patch_children[patch_child as usize], key, list, item);
+			sync_template(
+				d,
+				s,
+				each,
+				d.patch_children[patch_child as usize],
+				key,
+				key_hash,
+				list,
+				item,
+			);
 		}
 	}
 }
@@ -1413,9 +1530,10 @@ fn sync_each(d: &slir::Doc, s: &mut State, each: u32) {
 	let mut key = String::new();
 	for item in range.0..range.1 {
 		key_at_into(d, s, list, item, &mut key);
+		let key_hash = identity_hash(&key);
 		let mut template = template_first(d, s, each);
 		while template != slir::NONE {
-			sync_template(d, s, each, template, &key, list, item);
+			sync_template(d, s, each, template, &key, key_hash, list, item);
 			template = d.node_next[template as usize];
 		}
 	}
