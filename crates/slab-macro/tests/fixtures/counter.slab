@@ -1,0 +1,11 @@
+// Tiny fixture for slab-macro tests: one text param, one signal button.
+params {
+  label text = "Counter"
+}
+
+col pad=8 gap=4 {
+  text param.label size=14 color=#E8EEF6
+  row#bump act="bump" pad=4,8 radius=6 bg=#222A38 w=hug {
+    text "Bump" size=12 color=#E8EEF6 nowrap
+  }
+}

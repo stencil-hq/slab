@@ -1,0 +1,3 @@
+// Deliberately broken fixture: unclosed block and unknown keyword.
+col pad=8 {
+  text "oops

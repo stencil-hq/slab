@@ -1,0 +1,15 @@
+[package]
+name = "slab-macro"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+proc-macro = true
+
+[dependencies]
+slab-compile = { path = "../slab-compile" }
+
+[dev-dependencies]
+slab-kernel = { path = "../slab-kernel" }
+slab-slir = { path = "../slab-slir" }
