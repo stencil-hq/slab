@@ -18,7 +18,7 @@ fn root() -> PathBuf {
 fn run(example: &str, args: &[&str]) -> String {
 	let serial = NEXT_DUMP.fetch_add(1, Ordering::Relaxed);
 	let dump =
-		std::env::temp_dir().join(format!("slab-tui-test-{}-{serial}.txt", std::process::id(),));
+		std::env::temp_dir().join(format!("slab-tui-test-{}-{serial}.txt", std::process::id()));
 	let mut cmd = Command::new(env!("CARGO_BIN_EXE_slab-tui"));
 	cmd.arg(root().join(example))
 		.args(args)
@@ -56,7 +56,7 @@ fn list_identity_is_preserved_on_activation() {
 fn missing_wide_glyph_preserves_caret_columns() {
 	let dump = run("crates/slab-tui/tests/fixtures/edit-wide.slab", &["--script", "TAB"]);
 	assert!(
-		dump.lines().any(|line| line.contains("  é▏")),
+		dump.lines().any(|line| line.contains("中e\u{301}▏")),
 		"wide missing-glyph advance or combining caret is misplaced:\n{dump}"
 	);
 }

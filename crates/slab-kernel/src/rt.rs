@@ -56,16 +56,14 @@ fn codepoint_offset(s: &str, byte: usize) -> i32 {
 ///
 /// Returns `-1` when `needle` is absent.
 pub fn str_find(s: &str, needle: &str) -> i32 {
-	s.find(needle)
-		.map_or(-1, |byte| codepoint_offset(s, byte))
+	s.find(needle).map_or(-1, |byte| codepoint_offset(s, byte))
 }
 
 /// Returns the last occurrence of `needle` as a Unicode scalar offset.
 ///
 /// Returns `-1` when `needle` is absent.
 pub fn str_rfind(s: &str, needle: &str) -> i32 {
-	s.rfind(needle)
-		.map_or(-1, |byte| codepoint_offset(s, byte))
+	s.rfind(needle).map_or(-1, |byte| codepoint_offset(s, byte))
 }
 
 /// Builds a string from Unicode scalar values.

@@ -20,7 +20,7 @@ const MEASURED_FRAMES: usize = 480;
 const CLEAN_FRAMES: usize = 100_000;
 const ROW_HEIGHT: f64 = 26.0;
 
-fn value(kind: u32, num: f64, text: String) -> ParamValue {
+const fn value(kind: u32, num: f64, text: String) -> ParamValue {
 	ParamValue { kind, num, s: text, rgba: 0, sym: String::new() }
 }
 
@@ -138,7 +138,7 @@ fn update_frame(
 	{
 		return Err("dirty stress frame was not rendered".to_owned());
 	}
-	black_box((frame.ops.len(), frame.strings.len(), instance.sc.node.len()));
+	black_box((frame.ops.len(), frame.strings.len(), instance.sc.entries.len()));
 	Ok(())
 }
 
@@ -201,7 +201,7 @@ fn benchmark(path: &str) -> Result<(), String> {
 	println!("METRIC frames_per_second={fps:.3}");
 	println!("METRIC clean_frame_ns={clean_frame_ns}");
 	println!("METRIC frame_ops={}", frame.ops.len());
-	println!("METRIC scene_nodes={}", instance.sc.node.len());
+	println!("METRIC scene_nodes={}", instance.sc.entries.len());
 	Ok(())
 }
 

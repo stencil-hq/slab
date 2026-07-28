@@ -11,6 +11,7 @@
 //! patches and base attributes so layout always re-solves from interpolated
 //! inputs. Overlay tuples are stored in [`St::mo_f`] under [`T_OV_TUPLE`].
 use rustc_hash::{FxHashMap, FxHashSet};
+use serde::Serialize;
 
 pub use crate::slir::ATTR_COUNT;
 
@@ -819,7 +820,6 @@ fn f64_to_i32(value: f64) -> i32 {
 }
 
 /// Appends one motion overlay entry; the last matching write wins.
-#[allow(clippy::too_many_arguments)]
 pub fn ov_push(
 	st: &mut crate::style::St,
 	node: u32,
@@ -1934,9 +1934,8 @@ fn gravity_of(value: &str) -> Gravity {
 /// [`crate::flatten::SceneNode`] into the retained scene, where exporters
 /// (frame JSON, SDP `sem.node`, host accessibility trees) read it row-wise.
 /// Kernel hit-testing and focus paths never touch these fields.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, Serialize)]
 pub struct Semantics {
-	/// Reference into [`St::scene_strs`] for the accessibility role.
 	pub role:              u32,
 	/// Reference into [`St::scene_strs`] for the accessible label.
 	pub label:             u32,
@@ -2180,7 +2179,6 @@ fn cached_font(d: &crate::slir::Doc, st: &mut crate::style::St, family: u32, wei
 /// `parent_kind` is the layout parent's node kind; [`crate::slir::NONE`] marks
 /// the root, whose context is a column. The `inh_*` arguments are the parent's
 /// inherited text-style whitelist.
-#[allow(clippy::too_many_arguments)]
 pub fn build_rstyle(
 	d: &crate::slir::Doc,
 	st: &mut crate::style::St,
@@ -2883,6 +2881,82 @@ mod attribute_cache_tests {
 			attr_ix(&doc, &st, 0, crate::slir::A_CANCEL),
 			0,
 			"attr_ix must return cached value 0 for A_CANCEL when effective_attr_node is active"
+		);
+	}
+
+	/// A state flip between solves must select fresh patch attributes: the
+	/// effective-attr fast path may not outlive [`build_rstyle`], or dispatch
+	/// would read pre-flip patch selections (e.g. a signal channel gated on
+	/// `pressed`).
+	#[test]
+	fn state_flip_after_build_rstyle_selects_fresh_patch_attrs() {
+		let mut doc = crate::slir::doc_new();
+		doc.ok = true;
+		doc.strs.push(String::new());
+		doc.strs.push("pressed".to_string());
+		doc.node_kind.push(crate::slir::K_RECT);
+		doc.node_flags.push(0);
+		doc.node_parent.push(crate::slir::NONE);
+		doc.node_first.push(crate::slir::NONE);
+		doc.node_next.push(crate::slir::NONE);
+		doc.node_key.push(0);
+		doc.node_id.push(0);
+		doc.node_line.push(1);
+		doc.attr_index.extend([0, 0]); // no authored attrs
+
+		// Condition 0: State("pressed"). Patch 0 on node 0 sets A_OPACITY to
+		// encoded value 7 while the state is on.
+		doc.cond_kind.push(crate::slir::C_STATE);
+		doc.cond_neg.push(0);
+		doc.cond_op.push(0);
+		doc.cond_num.push(0.0);
+		doc.cond_sym.push(1);
+		doc.patch_node.push(0);
+		doc.patch_cond.push(0);
+		doc.patch_attr_off.push(0);
+		doc.patch_attr_len.push(1);
+		doc.patch_child_off.push(0);
+		doc.patch_child_len.push(0);
+		doc.wattr_id.push(crate::slir::A_OPACITY);
+		doc.wattr_val.push(7);
+
+		let mut st = st_new();
+		init_params(&doc, &mut st);
+		begin_solve(&doc, &mut st);
+
+		// Resolve once with the state off; the fast path must not survive
+		// build_rstyle, or post-solve dispatch lookups (sig_of/attr_ix) would
+		// reuse this node's pre-flip patch selection.
+		build_rstyle(
+			&doc,
+			&mut st,
+			0,
+			crate::slir::NONE,
+			false,
+			0,
+			0,
+			0,
+			16.0,
+			400.0,
+			1.2,
+			0.0,
+			false,
+		);
+		assert_eq!(
+			st.effective_attr_node,
+			crate::slir::NONE,
+			"effective-attr fast path must not outlive build_rstyle"
+		);
+		assert_eq!(attr_ix(&doc, &st, 0, crate::slir::A_OPACITY), -1);
+
+		// Dispatch-time state flip followed by the next solve boundary: the
+		// patch selection must reflect the new state, not a cached snapshot.
+		assert!(set_node_state(&doc, &mut st, 0, "pressed", true));
+		begin_solve(&doc, &mut st);
+		assert_eq!(
+			attr_ix(&doc, &st, 0, crate::slir::A_OPACITY),
+			7,
+			"attr_ix must observe the state-selected patch after the flip"
 		);
 	}
 }

@@ -1,7 +1,11 @@
 //! Lowers a placed tree into frame operations and retained scene nodes in one
-//! depth-first traversal. Paint order and scene geometry are therefore
-//! identical by construction. Coordinates use absolute document units.
-//! This retains the flattening model established by `research/layout.py`.
+//! depth-first traversal.
+//!
+//! Paint order and scene geometry are therefore identical by construction.
+//! Coordinates use absolute document units. This retains the flattening
+//! model established by `research/layout.py`.
+
+use serde::Serialize;
 
 use crate::{
 	dispatch::{self, DState},
@@ -17,7 +21,7 @@ use crate::{
 // Frame operation payloads.
 
 /// A painted rectangle, including its fill, stroke, shadows, and opacity.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub struct OpRect {
 	pub node:         u32,
 	pub x:            f64,
@@ -51,7 +55,7 @@ pub struct OpRect {
 }
 
 /// A positioned text run referencing the frame-local string pool.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Serialize)]
 pub struct OpText {
 	pub node:       u32,
 	pub x:          f64,
@@ -83,7 +87,7 @@ pub struct OpText {
 }
 
 /// A positioned image operation.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub struct OpImage {
 	pub node:    u32,
 	pub x:       f64,
@@ -101,7 +105,7 @@ pub struct OpImage {
 }
 
 /// A positioned vector path operation.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub struct OpPath {
 	pub node:        u32,
 	pub dx:          f64,
@@ -120,7 +124,7 @@ pub struct OpPath {
 }
 
 /// A rounded rectangular clipping region.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub struct OpClip {
 	pub x:      f64,
 	pub y:      f64,
@@ -132,7 +136,7 @@ pub struct OpClip {
 }
 
 /// Compositing settings applied until the matching group pop.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub struct OpGroup {
 	/// Document node owning this compositing group, or [`slir::NONE`] for a
 	/// host-generated group such as the drag ghost envelope.
@@ -151,7 +155,7 @@ pub struct OpGroup {
 }
 
 /// Rotation applied until the matching rotation pop.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub struct OpRotate {
 	pub cx:  f64,
 	pub cy:  f64,
@@ -159,7 +163,7 @@ pub struct OpRotate {
 }
 
 /// Nonuniform scaling applied until the matching scale pop.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub struct OpScale {
 	/// Fixed point left unchanged by the scale.
 	pub cx: f64,
@@ -172,7 +176,7 @@ pub struct OpScale {
 }
 
 /// A backdrop filter over a rounded rectangle.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub struct OpBackdrop {
 	pub x:          f64,
 	pub y:          f64,
@@ -196,7 +200,7 @@ pub struct OpBackdrop {
 /// The subtree renders as one plane warped by
 /// `perspective(depth) · rotateX(rx) · rotateY(ry)` about `(cx, cy)`
 /// (CSS transform-list order; angles in degrees, depth in layout units).
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub struct OpTilt {
 	pub cx:    f64,
 	pub cy:    f64,
@@ -206,7 +210,7 @@ pub struct OpTilt {
 }
 
 /// A painter command emitted in document paint order.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub enum FrameOp {
 	Rect(OpRect),
 	Text(OpText),
@@ -229,9 +233,10 @@ pub enum FrameOp {
 ///
 /// `flags` contains the node's effective flags: `F_CLIP` means this frame
 /// clips, while `F_INERT` is inherited from ancestors as well as the node.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default, Serialize)]
 pub struct SceneNode {
 	pub node:           u32,
+	#[serde(rename = "parent")]
 	pub parent_ix:      i32,
 	pub kind:           u32,
 	pub x:              f64,
@@ -239,8 +244,11 @@ pub struct SceneNode {
 	pub w:              f64,
 	pub h:              f64,
 	pub radius:         f64,
+	#[serde(rename = "rot")]
 	pub rot_deg:        f64,
+	#[serde(rename = "cx")]
 	pub rot_cx:         f64,
+	#[serde(rename = "cy")]
 	pub rot_cy:         f64,
 	pub flags:          u32,
 	/// Child extent including trailing padding, used to clamp scrolling.
@@ -259,6 +267,7 @@ pub struct SceneNode {
 	pub authored_order: u32,
 	/// Resolved accessibility semantics, copied unchanged from the node's
 	/// [`crate::style::Semantics`] and read row-wise by exporters.
+	#[serde(flatten)]
 	pub sem:            crate::style::Semantics,
 	/// Whether the node is currently disabled.
 	pub disabled:       bool,
@@ -270,7 +279,7 @@ pub struct SceneNode {
 }
 
 /// One frame-local runtime path.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub struct RtPath {
 	/// Canonical `M L C Q Z` verb codes.
 	pub verbs:  Vec<u8>,
@@ -279,7 +288,7 @@ pub struct RtPath {
 }
 
 /// One host-visible diagnostic produced while solving or inspecting a frame.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct FrameDiagnostic {
 	pub code: String,
 	pub line: u32,
@@ -287,7 +296,7 @@ pub struct FrameDiagnostic {
 }
 
 /// Flattened output for one frame.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub struct Frame {
 	pub width:       f64,
 	pub height:      f64,
@@ -302,13 +311,15 @@ pub struct Frame {
 	pub paths_rt:    Vec<RtPath>,
 	/// Diagnostics observed for this frame. Runtime notes may be one-shot.
 	pub diagnostics: Vec<FrameDiagnostic>,
-	/// Recycled string allocations drained from `strings` on [`Frame::clear`].
+	#[serde(skip)]
 	string_pool:     Vec<String>,
-	/// Recycled runtime-path allocations drained from `paths_rt` on
-	/// [`Frame::clear`].
+	#[serde(skip)]
 	path_pool:       Vec<RtPath>,
+	#[serde(skip)]
 	order_scratch:   Vec<u32>,
+	#[serde(skip)]
 	p_ox:            Vec<f64>,
+	#[serde(skip)]
 	p_oy:            Vec<f64>,
 }
 
@@ -407,7 +418,15 @@ const fn unstyled_rect(node: u32, x: f64, y: f64, w: f64, h: f64, radius: f64) -
 	}
 }
 
-const fn styled_rect(rule: &RStyle, node: u32, x: f64, y: f64, w: f64, h: f64, radius: f64) -> OpRect {
+const fn styled_rect(
+	rule: &RStyle,
+	node: u32,
+	x: f64,
+	y: f64,
+	w: f64,
+	h: f64,
+	radius: f64,
+) -> OpRect {
 	let mut rect = unstyled_rect(node, x, y, w, h, radius);
 	rect.bg_kind = rule.bg_kind;
 	rect.bg = rule.bg_h;
@@ -606,7 +625,6 @@ fn emit_icon(
 	}
 	fr.ops.push(FrameOp::ScalePop);
 }
-#[allow(clippy::too_many_arguments)]
 fn push_scrollbar_axis(
 	fr: &mut Frame,
 	rule: &RStyle,
@@ -756,7 +774,6 @@ fn mark_authored_order(l: &Lay, pi: i32, next: &mut u32, order: &mut [u32]) {
 /// The positional context and inherited state are kept as individual
 /// parameters for API compatibility; recursive traversal uses a structured
 /// context internally.
-#[allow(clippy::too_many_arguments)] // Public traversal state is kept explicit for cross-crate API compatibility.
 pub fn walk(
 	d: &slir::Doc,
 	st: &St,
@@ -788,7 +805,6 @@ pub fn walk(
 	fr.order_scratch = authored_order;
 }
 
-#[allow(clippy::too_many_arguments)] // The recursive kernel already groups all inherited traversal state.
 fn walk_node(
 	d: &slir::Doc,
 	st: &St,
@@ -857,8 +873,8 @@ fn walk_node(
 			cy:  y + h / 2.0,
 		})
 	});
-	let (rot_deg, rot_cx, rot_cy) = rotation
-		.map_or((0.0, 0.0, 0.0), |rotation| (rotation.deg, rotation.cx, rotation.cy));
+	let (rot_deg, rot_cx, rot_cy) =
+		rotation.map_or((0.0, 0.0, 0.0), |rotation| (rotation.deg, rotation.cx, rotation.cy));
 
 	let kind = rule.kind;
 	let child_count = l.p_child_len[pi];
@@ -1044,10 +1060,11 @@ fn walk_node(
 		let text_layout = &l.tls[index(l.p_tl[pi])];
 		let content_width = w - padding_left - padding_right;
 		let alignment = text_alignment_factor(rule.talign);
-		let mut font_weight = truncate_u32(rule.weight);
-		if rule.font >= 0 {
-			font_weight = d.font_weight[index(rule.font)];
-		}
+		let font_weight = if rule.font >= 0 {
+			d.font_weight[index(rule.font)]
+		} else {
+			truncate_u32(rule.weight)
+		};
 
 		// The focused field's selection paints as one half-alpha band of
 		// the text color per visual line, before the glyphs (SPEC §15.6).
@@ -1079,7 +1096,9 @@ fn walk_node(
 								to,
 							)
 						};
-						let origin = (content_width - text_layout.line_w[line]).mul_add(alignment, x + padding_left) - field_scroll_x;
+						let origin = (content_width - text_layout.line_w[line])
+							.mul_add(alignment, x + padding_left)
+							- field_scroll_x;
 						let band_x = origin + measure(overlap_lo);
 						push_solid_rect(
 							fr,
@@ -1107,8 +1126,10 @@ fn walk_node(
 			let (uncov_off, uncov_len) = push_uncovered_runs(d, fr, rule.font, string_ref);
 			let mut text_op = OpText {
 				node,
-				x: (content_width - measured_width).mul_add(alignment, x + padding_left) - field_scroll_x,
-				y_baseline: f64::from(line).mul_add(text_layout.line_h, y + padding_top + text_layout.ascent),
+				x: (content_width - measured_width).mul_add(alignment, x + padding_left)
+					- field_scroll_x,
+				y_baseline: f64::from(line)
+					.mul_add(text_layout.line_h, y + padding_top + text_layout.ascent),
 				str_ref: string_ref,
 				measured_w: measured_width,
 				font: rule.font,
@@ -1160,10 +1181,11 @@ fn walk_node(
 				let string_ref =
 					push_str_slice(fr, &l.para_chars, l.seg_a[segment_index], l.seg_b[segment_index]);
 				let font = l.seg_font[segment_index];
-				let mut font_weight = truncate_u32(l.seg_weight[segment_index]);
-				if font >= 0 {
-					font_weight = d.font_weight[index(font)];
-				}
+				let font_weight = if font >= 0 {
+					d.font_weight[index(font)]
+				} else {
+					truncate_u32(l.seg_weight[segment_index])
+				};
 				let seg_kind = l.seg_color_kind[segment_index];
 				let (uncov_off, uncov_len) = push_uncovered_runs(d, fr, font, string_ref);
 				let mut text_op = OpText {

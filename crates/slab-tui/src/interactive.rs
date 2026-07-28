@@ -134,8 +134,8 @@ pub struct Painter {
 impl Painter {
 	/// Detects terminal truecolor support and creates an empty painter.
 	pub fn new() -> Self {
-		let truecolor = std::env::var("COLORTERM")
-			.is_ok_and(|v| v.contains("truecolor") || v.contains("24bit"));
+		let truecolor =
+			std::env::var("COLORTERM").is_ok_and(|v| v.contains("truecolor") || v.contains("24bit"));
 		Self::with_truecolor(truecolor)
 	}
 
@@ -293,7 +293,10 @@ const fn accepts_printable_text(mods: u32) -> bool {
 
 /// Mouse cell → slab units at the cell center.
 fn mouse_xy(col: u16, row: u16) -> (f64, f64) {
-	(f64::from(col).mul_add(cells::CW, cells::CW / 2.0), f64::from(row).mul_add(cells::CH, cells::CH / 2.0))
+	(
+		f64::from(col).mul_add(cells::CW, cells::CW / 2.0),
+		f64::from(row).mul_add(cells::CH, cells::CH / 2.0),
+	)
 }
 
 /// Stateful terminal click counter and pointer delta tracker.

@@ -115,7 +115,7 @@ col { each param.trees key=trees }
 
 #[test]
 fn mutually_recursive_schemas_allocate_before_field_resolution() {
-	let source = r#"
+	let source = r"
 def Branch(leaves=list(Leaf)) export {
   col { each leaves }
 }
@@ -124,7 +124,7 @@ def Leaf(branches=list(Branch)) export {
 }
 params { roots list(Branch) = [] }
 col { each param.roots }
-"#;
+";
 	let slir = compile_ok(source);
 	assert_eq!(slir.lists.len(), 3);
 	assert_eq!(list_field(&slir, 0, "leaves").sub, 2);
@@ -203,8 +203,10 @@ para w=180 { each param.runs key=runs }
 			.node_attrs(span as u32)
 			.iter()
 			.find(|(candidate, _)| *candidate == attr)
-			.map(|(_, value)| slir.avals[*value as usize])
-			.unwrap_or_else(|| panic!("missing span attr {attr}"));
+			.map_or_else(
+				|| panic!("missing span attr {attr}"),
+				|(_, value)| slir.avals[*value as usize],
+			);
 		assert_eq!(value.tag, aval::PROP_REF);
 	}
 
@@ -424,7 +426,7 @@ col w=100 { each param.rows key=rows }
 
 #[test]
 fn paragraph_runs_resolve_all_item_text_style_properties() {
-	let source = r##"
+	let source = r#"
 def Run(text="", tone=#112233, size=12, weight=500, family="Inter", tracking=0) export {
   span text color=tone size=size weight=weight family=family tracking=tracking
 }
@@ -435,7 +437,7 @@ params {
   ]
 }
 para w=200 h=40 { each param.runs key=runs }
-"##;
+"#;
 	let slir = compile_ok(source);
 	for (family, weight) in [("Inter", 500), ("Custom Mono", 700)] {
 		assert!(

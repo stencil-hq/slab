@@ -428,7 +428,10 @@ pub fn wrap360(v: f64) -> f64 {
 /// `swap` measures a quarter-turn payload by swapping the resolved style axes
 /// and skipping rotation handling. `hug_w` and `hug_h` demote the corresponding
 /// authored size to content-driven sizing.
-#[allow(clippy::too_many_arguments)] // Layout traversal carries the full inherited solve context.
+#[allow(
+	clippy::fn_params_excessive_bools,
+	reason = "layout traversal carries the full inherited solve context"
+)]
 pub fn measure(
 	d: &Doc,
 	st: &mut St,
@@ -539,7 +542,10 @@ pub fn measure(
 }
 
 /// Measures a child with main/cross constraints mapped onto physical axes.
-#[allow(clippy::too_many_arguments)] // Axis mapping requires both physical constraint pairs and inheritance.
+#[allow(
+	clippy::fn_params_excessive_bools,
+	reason = "axis mapping requires both physical constraint pairs and inheritance"
+)]
 pub fn measure_child(
 	d: &Doc,
 	st: &mut St,
@@ -698,8 +704,9 @@ fn divider_extent_for_child(
 	let min = effective_min(d, st, previous, row);
 	let max = effective_max(d, st, previous, row);
 	let next_min = effective_min(d, st, next, row);
-	let mut budget_max = crate::style::INF;
-	if remaining != crate::style::INF {
+	let budget_max = if remaining == crate::style::INF {
+		crate::style::INF
+	} else {
 		let divider_min = effective_min(d, st, divider, row);
 		let measured = crate::style::divider_footprint_get(st, divider).unwrap_or({
 			if divider_size.kind == crate::style::S_FIXED {
@@ -709,8 +716,8 @@ fn divider_extent_for_child(
 			}
 		});
 		let divider_reserve = divider_min.max(measured);
-		budget_max = (0.0f64).max(remaining - divider_reserve - next_min);
-	}
+		(0.0f64).max(remaining - divider_reserve - next_min)
+	};
 	let extent = crate::style::divider_clamp(requested, min, max, budget_max);
 	crate::style::divider_set(st, divider, extent);
 	Some(extent)
@@ -1183,7 +1190,6 @@ pub fn box_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &C
 }
 
 /// Measures one child inside a box container's available content area.
-#[allow(clippy::too_many_arguments)] // Box child measurement preserves distinct authored and resolved constraints.
 pub fn measure_in_box(
 	d: &Doc,
 	st: &mut St,
@@ -2963,7 +2969,6 @@ const fn flipped_alignment(gravity: crate::style::Gravity) -> crate::style::Grav
 	}
 }
 
-#[allow(clippy::too_many_arguments)] // Placement keeps the anchor, popup, viewport, and authored offset explicit.
 fn attachment_position(
 	anchor: AttachRect,
 	popup_w: f64,
@@ -3025,7 +3030,6 @@ fn attachment_position(
 	(position.0 + offset_x, position.1 + offset_y)
 }
 
-#[allow(clippy::too_many_arguments)] // The pre-flatten traversal records parent, rotation, and sibling-slot links.
 fn collect_placements(
 	l: &Lay,
 	pi: i32,

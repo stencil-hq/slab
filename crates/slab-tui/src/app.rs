@@ -134,12 +134,12 @@ pub fn paste_event(text: &str) -> dispatch::Event {
 }
 
 /// Builds a primary-button pointer event without a click count.
-pub fn pointer_event(etype: u32, x: f64, y: f64) -> dispatch::Event {
+pub const fn pointer_event(etype: u32, x: f64, y: f64) -> dispatch::Event {
 	pointer_button_event(etype, x, y, 0, 0)
 }
 
 /// Builds a pointer event with a platform button and host-computed click count.
-pub fn pointer_button_event(
+pub const fn pointer_button_event(
 	etype: u32,
 	x: f64,
 	y: f64,
@@ -154,7 +154,7 @@ pub fn pointer_button_event(
 	ev
 }
 
-pub fn wheel_event(x: f64, y: f64, dy: f64) -> dispatch::Event {
+pub const fn wheel_event(x: f64, y: f64, dy: f64) -> dispatch::Event {
 	let mut ev = event_new(E_WHEEL);
 	ev.x = x;
 	ev.y = y;

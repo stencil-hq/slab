@@ -7,7 +7,7 @@ use std::collections::HashMap;
 
 use ab_glyph::{Font, FontVec, GlyphId, point};
 
-/// Atlas texture dimension (square, R8Unorm).
+/// Atlas texture dimension (square, `R8Unorm`).
 pub const ATLAS: u32 = 2048;
 
 /// One cached glyph bitmap: normalized uv rect, device-px quad size, bearing
@@ -27,11 +27,11 @@ pub struct Face {
 }
 
 impl Face {
-	pub fn from_bytes(bytes: &[u8]) -> Option<Face> {
+	pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
 		let font = FontVec::try_from_vec(bytes.to_vec()).ok()?;
 		let upem = font.units_per_em().unwrap_or(1000.0);
 		let height = font.height_unscaled();
-		Some(Face { font, upem, height })
+		Some(Self { font, upem, height })
 	}
 }
 
@@ -48,7 +48,7 @@ pub struct Atlas {
 
 impl Default for Atlas {
 	fn default() -> Self {
-		Atlas {
+		Self {
 			pixels:     vec![0; (ATLAS * ATLAS) as usize],
 			dirty:      false,
 			cache:      HashMap::new(),

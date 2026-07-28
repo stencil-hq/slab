@@ -27,7 +27,6 @@ pub struct Fix {
 }
 
 /// Appends a text node with the supplied geometry to a test scene.
-#[allow(clippy::too_many_arguments)]
 pub fn add_scene(
 	sc: &mut Scene,
 	node: u32,
@@ -38,21 +37,19 @@ pub fn add_scene(
 	h: f64,
 	flags: u32,
 ) {
-	sc.node.push(node);
-	sc.parent.push(parent);
-	sc.kind.push(slir::K_TEXT);
-	sc.x.push(x);
-	sc.y.push(y);
-	sc.w.push(w);
-	sc.h.push(h);
-	sc.radius.push(0.0);
-	sc.rot.push(0.0);
-	sc.cx.push(x + w / 2.0);
-	sc.cy.push(y + h / 2.0);
-	sc.flags.push(flags);
-	sc.content_main.push(0.0);
-	sc.scroll_off.push(0.0);
-	sc.is_row.push(false);
+	sc.entries.push(crate::flatten::SceneNode {
+		node,
+		parent_ix: parent,
+		kind: slir::K_TEXT,
+		x,
+		y,
+		w,
+		h,
+		flags,
+		src_line: 1,
+		authored_order: node,
+		..Default::default()
+	});
 }
 
 /// Creates an empty fixture from fresh document, style, layout, scene, and
@@ -265,10 +262,10 @@ pub fn test_horizontal_and_ancestor_scroll_follow() {
 	g.d.node_id.push(0);
 	g.d.node_line.push(1);
 	g.d.attr_index.push(0);
-	g.sc.parent[0] = 1;
-	g.sc.y[0] = 30.0;
+	g.sc.entries[0].parent_ix = 1;
+	g.sc.entries[0].y = 30.0;
 	add_scene(&mut g.sc, 1, -1, 0.0, 0.0, 100.0, 20.0, slir::F_SCROLL | slir::F_CLIP);
-	g.sc.content_main[1] = 100.0;
+	g.sc.entries[1].content_main = 100.0;
 	send(&mut g, &event(dispatch::E_KEY_DOWN, "ArrowLeft", "", 0));
 	assert!(style::scroll_get(&g.st, 1) > 0.0, "nearest scroll ancestor follows multiline caret");
 }
@@ -286,11 +283,11 @@ pub fn test_fresh_wrapped_layout_scroll_follow_settles() {
 	f.d.node_id.push(0);
 	f.d.node_line.push(1);
 	f.d.attr_index.push(0);
-	f.sc.parent[0] = 1;
-	f.sc.x[0] = 0.0;
-	f.sc.y[0] = 0.0;
+	f.sc.entries[0].parent_ix = 1;
+	f.sc.entries[0].x = 0.0;
+	f.sc.entries[0].y = 0.0;
 	add_scene(&mut f.sc, 1, -1, 0.0, 0.0, 20.0, 16.8, slir::F_SCROLL | slir::F_CLIP);
-	f.sc.content_main[1] = 100.0;
+	f.sc.entries[1].content_main = 100.0;
 	send(&mut f, &event(dispatch::E_TEXT, "", "bc", 0));
 	assert_eq!(style::scroll_get(&f.st, 1), 0.0, "stale one-line layout does not predict wrap");
 	f.lay.tls[0] = std::rc::Rc::new(textm::measure_text(

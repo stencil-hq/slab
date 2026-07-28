@@ -11,6 +11,7 @@
 use std::collections::BTreeSet;
 
 use rustc_hash::FxHashSet;
+use serde::Serialize;
 
 use crate::{
 	dispatch::{self, DState, Effects, Event},
@@ -84,7 +85,7 @@ pub(crate) struct RuntimeImage {
 /// `kind` must match the declared parameter type: `0` is text, `1` is a
 /// number, `2` is a percentage, `3` is RGBA color, `4` is a boolean encoded
 /// as numeric zero or one, and `5` is an enum symbol.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub struct ParamValue {
 	/// Parameter type tag.
 	pub kind: u32,
@@ -102,7 +103,7 @@ pub struct ParamValue {
 ///
 /// Colors use Slab's packed RGBA word (`u32::from_le_bytes([r, g, b, a])`).
 /// Text borrows the decoded document, so token lookup performs no allocation.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 pub enum TokenValue<'a> {
 	Number(f64),
 	Color(u32),
@@ -110,7 +111,7 @@ pub enum TokenValue<'a> {
 }
 
 /// Absolute geometry for one document hole.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub struct HoleRect {
 	/// Index in the document's hole table.
 	pub hole: u32,
@@ -127,7 +128,7 @@ pub struct HoleRect {
 }
 
 /// Positioned glyph for a text frame operation.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub struct GlyphPos {
 	/// Font table index.
 	pub font: i32,
@@ -290,7 +291,6 @@ pub fn inst_lift_animations(i: &mut Instance) -> Vec<motion::Lift> {
 }
 
 /// Appends a runtime font table, which wins equal compiled matches by index.
-#[allow(clippy::too_many_arguments)] // A font table is intrinsically defined by these parallel metrics and slices.
 pub fn inst_font_register(
 	i: &mut Instance,
 	family: &str,
@@ -479,14 +479,13 @@ pub fn inst_img_bytes(i: &Instance, img: i32) -> &[u8] {
 		return &[];
 	};
 	if index < i.doc.img_src.len() {
-		return i.doc.img_data.get(index).map(Vec::as_slice).unwrap_or(&[]);
+		return i.doc.img_data.get(index).map_or(&[], Vec::as_slice);
 	}
 	i.st
 		.runtime_images
 		.get(index - i.doc.img_src.len())
 		.filter(|image| image.active)
-		.map(|image| image.data.as_slice())
-		.unwrap_or(&[])
+		.map_or(&[], |image| image.data.as_slice())
 }
 
 /// Sets viewport, client class, and media flags.
@@ -531,7 +530,7 @@ pub fn inst_set_theme(i: &mut Instance, name: &str) -> bool {
 		return false;
 	};
 	if i.st.env.theme != name {
-		i.st.env.theme = name.to_owned();
+		name.clone_into(&mut i.st.env.theme);
 		i.st.theme_index = theme_index;
 		i.dirty = true;
 	}
@@ -828,14 +827,15 @@ pub fn inst_get_scroll(i: &Instance, key: &str, axis: u32) -> f64 {
 type RevealCorners = [(f64, f64); 4];
 
 fn rotate_reveal_corners(sc: &Scene, corners: &mut RevealCorners, scene_index: usize) {
-	let degrees = sc.rot[scene_index];
+	let entry = &sc.entries[scene_index];
+	let degrees = entry.rot_deg;
 	if degrees == 0.0 {
 		return;
 	}
 	let cosine = hit::cos_deg(degrees);
 	let sine = hit::sin_deg(degrees);
-	let cx = sc.cx[scene_index];
-	let cy = sc.cy[scene_index];
+	let cx = entry.rot_cx;
+	let cy = entry.rot_cy;
 	for (x, y) in corners {
 		let dx = *x - cx;
 		let dy = *y - cy;
@@ -878,24 +878,23 @@ fn sticky_start_cover(
 	exclude_child: usize,
 	physical_x: bool,
 ) -> f64 {
+	let scroll_entry = &sc.entries[scroll_index];
 	let viewport_start = if physical_x {
-		sc.x[scroll_index]
+		scroll_entry.x
 	} else {
-		sc.y[scroll_index]
+		scroll_entry.y
 	};
 	let parent_ix = i32::try_from(scroll_index).expect("scene index exceeds i32");
 	let mut cover = 0.0_f64;
-	for child in 0..sc.node.len() {
-		if child == exclude_child
-			|| sc.parent[child] != parent_ix
-			|| sc.flags[child] & slir::F_STICKY == 0
+	for (child, entry) in sc.entries.iter().enumerate() {
+		if child == exclude_child || entry.parent_ix != parent_ix || entry.flags & slir::F_STICKY == 0
 		{
 			continue;
 		}
 		let (child_start, child_end) = if physical_x {
-			(sc.x[child], sc.x[child] + sc.w[child])
+			(entry.x, entry.x + entry.w)
 		} else {
-			(sc.y[child], sc.y[child] + sc.h[child])
+			(entry.y, entry.y + entry.h)
 		};
 		// A sticky painted within its own extent of the viewport start is
 		// pinned there (or pins as soon as the reveal scrolls past it); its
@@ -922,10 +921,11 @@ pub fn inst_reveal(i: &mut Instance, key: &str, margin: f64) -> bool {
 		return false;
 	}
 	let target = usize::try_from(target).expect("negative scene index");
-	let x = i.sc.x[target];
-	let y = i.sc.y[target];
-	let w = i.sc.w[target];
-	let h = i.sc.h[target];
+	let target_entry = &i.sc.entries[target];
+	let x = target_entry.x;
+	let y = target_entry.y;
+	let w = target_entry.w;
+	let h = target_entry.h;
 	let mut corners = [(x, y), (x + w, y), (x + w, y + h), (x, y + h)];
 	let margin = if margin.is_finite() {
 		margin.max(0.0)
@@ -934,7 +934,7 @@ pub fn inst_reveal(i: &mut Instance, key: &str, margin: f64) -> bool {
 	};
 
 	let mut child = target;
-	let mut current = i.sc.parent[target];
+	let mut current = target_entry.parent_ix;
 	while current >= 0 {
 		rotate_reveal_corners(&i.sc, &mut corners, child);
 		let index = usize::try_from(current).expect("negative scene index");
@@ -944,25 +944,25 @@ pub fn inst_reveal(i: &mut Instance, key: &str, margin: f64) -> bool {
 			} else {
 				slir::F_SCROLL_CROSS
 			};
-			if i.sc.flags[index] & required == 0 {
+			let entry = &i.sc.entries[index];
+			if entry.flags & required == 0 {
 				continue;
 			}
 
-			let owner = i.sc.node[index];
+			let owner = entry.node;
 			let old = style::scroll_get_axis(&i.st, owner, axis);
-			let physical_x = i.sc.is_row[index] == (axis == 0);
+			let physical_x = entry.is_row == (axis == 0);
 			let (mut start, mut end) = reveal_bounds(&corners, physical_x);
 			start -= margin;
 			end += margin;
 			let (viewport_start, viewport_end) = if physical_x {
-				(i.sc.x[index], i.sc.x[index] + i.sc.w[index])
+				(entry.x, entry.x + entry.w)
 			} else {
-				(i.sc.y[index], i.sc.y[index] + i.sc.h[index])
+				(entry.y, entry.y + entry.h)
 			};
 			// Sticky children pinned at the viewport start would cover a
 			// target parked at the raw start edge; reveal below them instead.
-			let cover = if i.sc.flags[child] & slir::F_STICKY != 0 {
-				// Revealing a sticky child (or its content) never scrolls
+			let cover = if i.sc.entries[child].flags & slir::F_STICKY != 0 {
 				// against its own pinned position.
 				0.0
 			} else {
@@ -982,7 +982,7 @@ pub fn inst_reveal(i: &mut Instance, key: &str, margin: f64) -> bool {
 			}
 		}
 		child = index;
-		current = i.sc.parent[index];
+		current = i.sc.entries[index].parent_ix;
 	}
 	true
 }
@@ -995,20 +995,18 @@ fn virtual_scene_geometry(i: &Instance, parent: u32, each: u32) -> Option<(f64, 
 	}
 	let parent_index = usize::try_from(parent_index).expect("negative scene index");
 	let each_index = usize::try_from(each_index).expect("negative scene index");
-	let row = i.sc.is_row[parent_index];
-	let viewport = if row {
-		i.sc.w[parent_index]
-	} else {
-		i.sc.h[parent_index]
-	};
+	let parent_entry = &i.sc.entries[parent_index];
+	let each_entry = &i.sc.entries[each_index];
+	let row = parent_entry.is_row;
+	let viewport = if row { parent_entry.w } else { parent_entry.h };
 	let painted_origin = if row {
-		i.sc.x[each_index] - i.sc.x[parent_index]
+		each_entry.x - parent_entry.x
 	} else {
-		i.sc.y[each_index] - i.sc.y[parent_index]
+		each_entry.y - parent_entry.y
 	};
-	let origin = painted_origin + style::scroll_get(&i.st, parent);
+	let origin = painted_origin + parent_entry.scroll_off;
 	let cover = sticky_start_cover(&i.sc, parent_index, each_index, row);
-	Some((viewport, i.sc.content_main[parent_index], origin, cover))
+	Some((viewport, parent_entry.content_main, origin, cover))
 }
 
 /// Reveals an item in a virtual `each`; non-virtual and unknown lists return
@@ -1152,7 +1150,7 @@ pub fn inst_set_param(i: &mut Instance, param: u32, v: &ParamValue) -> bool {
 			if i.st.pv_str[param_index] == v.s {
 				return true;
 			}
-			i.st.pv_str[param_index] = v.s.clone();
+			v.s.clone_into(&mut i.st.pv_str[param_index]);
 			// A host write to a field-synced text param resets non-composing
 			// edit buffers so the painted field follows the parameter.
 			dispatch::reset_synced_edits(&i.doc, &mut i.st, &mut i.ds, param_index, &v.s);
@@ -1191,7 +1189,7 @@ pub fn inst_set_param(i: &mut Instance, param: u32, v: &ParamValue) -> bool {
 			if i.st.pv_sym[param_index] == v.sym {
 				return true;
 			}
-			i.st.pv_sym[param_index] = v.sym.clone();
+			v.sym.clone_into(&mut i.st.pv_sym[param_index]);
 		},
 		_ => {},
 	}
@@ -1631,15 +1629,15 @@ pub fn inst_holes_retained(i: &Instance) -> Vec<HoleRect> {
 	let mut holes = Vec::new();
 	for hole in 0..i.doc.hole_name.len() {
 		let node = i.doc.hole_node[hole];
-		for (scene_index, scene_node) in i.sc.node.iter().copied().enumerate() {
-			if scene_node == node {
+		for scene_entry in &i.sc.entries {
+			if scene_entry.node == node {
 				holes.push(HoleRect {
 					hole: u32::try_from(hole).expect("too many document holes"),
-					x:    i.sc.x[scene_index],
-					y:    i.sc.y[scene_index],
-					w:    i.sc.w[scene_index],
-					h:    i.sc.h[scene_index],
-					clip: i.sc.flags[scene_index] & (slir::F_CLIP | slir::F_SCROLL) != 0,
+					x:    scene_entry.x,
+					y:    scene_entry.y,
+					w:    scene_entry.w,
+					h:    scene_entry.h,
+					clip: scene_entry.flags & (slir::F_CLIP | slir::F_SCROLL) != 0,
 				});
 			}
 		}
@@ -1657,7 +1655,7 @@ pub fn inst_hit(i: &Instance, x: f64, y: f64) -> Vec<u32> {
 		.into_iter()
 		.map(|index| {
 			let index = usize::try_from(index).expect("negative scene path index");
-			i.sc.node[index]
+			i.sc.entries[index].node
 		})
 		.collect()
 }

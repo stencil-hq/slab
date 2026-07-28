@@ -81,8 +81,7 @@ pub fn cmd_gen_react(args: &[String]) -> ExitCode {
 	let name = file.display().to_string();
 	let stem = file
 		.file_stem()
-		.map(|s| s.to_string_lossy().into_owned())
-		.unwrap_or_else(|| "slab".into());
+		.map_or_else(|| "slab".into(), |s| s.to_string_lossy().into_owned());
 	let wopts = WcOptions { tag, separate_ir };
 
 	let (files, diags) = generate(&src, &copts, &wopts, &stem);

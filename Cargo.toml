@@ -147,8 +147,8 @@ wildcard_imports = "allow"       # Cleaner for preludes and test modules
 # Variables & Type Inference
 # ──────────────────────────────────────────────────────────────────────────────
 let_underscore_untyped = "allow" # Type obvious from context
+many_single_char_names = "allow" # Math and coordinate single-letter variable names are standard
 similar_names = "allow"          # 'req' and 'res' together are fine
-
 # ──────────────────────────────────────────────────────────────────────────────
 # Literals & Formatting
 # ──────────────────────────────────────────────────────────────────────────────

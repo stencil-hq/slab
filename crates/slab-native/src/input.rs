@@ -54,7 +54,7 @@ impl ClickCounter {
 				let dy = y - last.y;
 				if last.button == button
 					&& now.duration_since(last.at) <= MULTI_CLICK_INTERVAL
-					&& dx * dx + dy * dy <= MULTI_CLICK_DISTANCE_SQ
+					&& dy.mul_add(dy, dx * dx) <= MULTI_CLICK_DISTANCE_SQ
 				{
 					last.count.saturating_add(1)
 				} else {
@@ -88,7 +88,7 @@ pub fn cursor_delta(previous: &mut Option<(f64, f64)>, current: (f64, f64)) -> (
 }
 
 /// Maps a kernel cursor effect to its native window cursor.
-pub fn cursor_icon(cursor: u32) -> CursorIcon {
+pub const fn cursor_icon(cursor: u32) -> CursorIcon {
 	match cursor {
 		kdispatch::CUR_POINTER => CursorIcon::Pointer,
 		kdispatch::CUR_TEXT => CursorIcon::Text,
@@ -185,7 +185,7 @@ pub struct ImeState {
 
 impl ImeState {
 	/// Whether a composition is active; hosts suppress raw key events then.
-	pub fn composing(&self) -> bool {
+	pub const fn composing(&self) -> bool {
 		self.composing
 	}
 
@@ -193,7 +193,7 @@ impl ImeState {
 	///
 	/// An enabled IME delivers committed text through `Ime::Commit`, so hosts
 	/// must suppress the matching raw key text to prevent duplicate `E_TEXT`.
-	pub fn forwards_key_text(&self) -> bool {
+	pub const fn forwards_key_text(&self) -> bool {
 		!self.enabled && !self.composing
 	}
 

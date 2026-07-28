@@ -874,9 +874,9 @@ pub fn dump_trace_summary(d: &slir::Doc, st: &style::St, instance: &frame::Insta
 	scrolls.sort_by_key(|&(node, axis, _)| {
 		let scene_index = instance
 			.sc
-			.node
+			.entries
 			.iter()
-			.position(|&candidate| candidate == node);
+			.position(|entry| entry.node == node);
 		match scene_index {
 			Some(index) => (false, index, axis),
 			None => (true, usize::try_from(node).expect("node id exceeds usize"), axis),

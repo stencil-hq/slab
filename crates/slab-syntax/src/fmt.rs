@@ -363,19 +363,19 @@ fn render(lines: Vec<Line>) -> String {
 	};
 	for (i, l) in lines.iter().enumerate() {
 		if let Some(w) = align_width(l) {
-  				let indent = match l {
-  					Line::Text { indent, .. } => *indent,
-  					Line::Blank => 0,
-  				};
-  				if indent != run_indent {
-  					close_run(&mut run, &mut pad);
-  					run_indent = indent;
-  				}
-  				run.push((i, w));
-  			} else {
-  				close_run(&mut run, &mut pad);
-  				run_indent = usize::MAX;
-  			}
+			let indent = match l {
+				Line::Text { indent, .. } => *indent,
+				Line::Blank => 0,
+			};
+			if indent != run_indent {
+				close_run(&mut run, &mut pad);
+				run_indent = indent;
+			}
+			run.push((i, w));
+		} else {
+			close_run(&mut run, &mut pad);
+			run_indent = usize::MAX;
+		}
 	}
 	close_run(&mut run, &mut pad);
 

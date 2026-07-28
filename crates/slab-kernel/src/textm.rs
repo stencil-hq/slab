@@ -202,7 +202,6 @@ pub const fn is_strippable(cp: u32) -> bool {
 /// to the original line rather than the synthesized output buffer.
 // The arguments are the complete text-metric and source-range inputs to this
 // standalone kernel operation; grouping them would only move the same data.
-#[allow(clippy::too_many_arguments)]
 pub fn cut_line(
 	d: &Doc,
 	f: i32,
@@ -267,7 +266,6 @@ pub fn cut_line(
 /// `max_w`. Empty words are preserved by the space-splitting behavior.
 // The arguments preserve the public wrapping primitive's explicit metric,
 // source-range, and width inputs.
-#[allow(clippy::too_many_arguments)]
 pub fn wrap_hard(
 	d: &Doc,
 	f: i32,
@@ -367,7 +365,6 @@ fn replace_line_with_appended(tl: &mut TextLayout, line: usize) {
 /// output lines are codepoint slices in the returned layout.
 // Text measurement intentionally exposes each independent layout option; a
 // builder or options allocation would add ceremony on this hot kernel path.
-#[allow(clippy::too_many_arguments)]
 pub fn measure_text(
 	d: &Doc,
 	f: i32,

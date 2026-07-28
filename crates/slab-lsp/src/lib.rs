@@ -1,4 +1,3 @@
-#![allow(clippy::collapsible_if, clippy::absurd_extreme_comparisons)]
 //! `slab-lsp` — hand-rolled stdio LSP server for the slab language (SPEC §12
 //! diagnostics, completion, hover, definition, symbols, colors, and the
 //! custom `slab/preview` render request). Synchronous JSON-RPC with

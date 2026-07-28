@@ -897,14 +897,16 @@ fn size_spec(ctx: &mut Ctx, rv: &RVal, line: u32, what: &str) -> Option<TVal> {
 }
 
 fn num_val(ctx: &mut Ctx, rv: &RVal, line: u32, what: &str) -> Option<f64> {
-	if let RVal::Num(x) = rv { Some(*x) } else {
- 			let msg = format!("{what} expects a number, got {}", rval_desc(rv));
- 			match param_remedy(ctx, rv) {
- 				Some(remedy) => ctx.error_with("ref", msg, line, remedy),
- 				None => ctx.error("ref", msg, line),
- 			}
- 			None
- 		}
+	if let RVal::Num(x) = rv {
+		Some(*x)
+	} else {
+		let msg = format!("{what} expects a number, got {}", rval_desc(rv));
+		match param_remedy(ctx, rv) {
+			Some(remedy) => ctx.error_with("ref", msg, line, remedy),
+			None => ctx.error("ref", msg, line),
+		}
+		None
+	}
 }
 
 /// Color-ish string out of a resolved value, `Ok(None)` = explicit none.
@@ -2421,7 +2423,6 @@ fn collect_prop_font_fields(
 	}
 }
 
-#[allow(clippy::too_many_arguments)]
 fn collect_list_default_font_candidates(
 	schemas: &[ListInfo],
 	schema_row: u32,
@@ -2509,7 +2510,7 @@ fn collect_dynamic_font_candidates(ctx: &mut Ctx, schema_row: u32, template: &[C
 	ctx.font_weights.extend(weights);
 }
 
-#[allow(clippy::too_many_arguments)] // Expansion context mirrors the recursive traversal state.
+// Expansion context mirrors the recursive traversal state.
 fn expand_each(
 	ctx: &mut Ctx,
 	a: &AEach,
@@ -2560,17 +2561,19 @@ fn expand_each(
 					);
 					return None;
 				};
-				let field = if let Some(RVal::Prop(field)) = resolved { field as usize } else {
-    						let Some(field) = fields.iter().position(|info| info.name == a.param) else {
-    							ctx.error(
-    								"each-target",
-    								format!("each target '{}' is not a field of the enclosing item", a.param),
-    								a.line,
-    							);
-    							return None;
-    						};
-    						field
-    					};
+				let field = if let Some(RVal::Prop(field)) = resolved {
+					field as usize
+				} else {
+					let Some(field) = fields.iter().position(|info| info.name == a.param) else {
+						ctx.error(
+							"each-target",
+							format!("each target '{}' is not a field of the enclosing item", a.param),
+							a.line,
+						);
+						return None;
+					};
+					field
+				};
 				let Some(info) = fields.get(field) else {
 					ctx.error(
 						"each-target",
@@ -4765,14 +4768,14 @@ pub fn expand(units: &[crate::import::Unit], diags: &mut Diagnostics) -> Expande
 	for (index, (unit, declaration)) in param_declarations.iter().enumerate() {
 		ctx.cur_file = Some(*unit);
 		if let ParamType::List(schema) = &declaration.ty {
-  				if let Some((row, default)) = compile_list_info(&mut ctx, declaration, schema) {
-  					ctx.params[index].list = Some(row);
-  					ctx.params[index].default = default;
-  				}
-  			} else {
-  				let default = check_param_default(&mut ctx, declaration);
-  				ctx.params[index].default = default;
-  			}
+			if let Some((row, default)) = compile_list_info(&mut ctx, declaration, schema) {
+				ctx.params[index].list = Some(row);
+				ctx.params[index].default = default;
+			}
+		} else {
+			let default = check_param_default(&mut ctx, declaration);
+			ctx.params[index].default = default;
+		}
 	}
 
 	let mut variants = Vec::new();

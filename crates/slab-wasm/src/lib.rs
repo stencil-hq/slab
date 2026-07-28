@@ -119,9 +119,10 @@ fn diags_json(diags: &Diagnostics, file: &str) -> String {
 			Level::Warning => "warning",
 			Level::Note => "note",
 		};
-		let remedy = d
-			.remedy
-			.as_deref().map_or_else(|| "null".into(), |r| serde_json::to_string(r).unwrap_or_else(|_| "null".into()));
+		let remedy = d.remedy.as_deref().map_or_else(
+			|| "null".into(),
+			|r| serde_json::to_string(r).unwrap_or_else(|_| "null".into()),
+		);
 		let formatted = serde_json::to_string(&d.format(file)).unwrap_or_else(|_| "\"\"".into());
 		let entry = serde_json::json!({
 			 "level": level,

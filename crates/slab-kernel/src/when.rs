@@ -100,7 +100,6 @@ pub fn cmp(base: f64, op: u32, num: f64) -> bool {
 /// the global pass over state, environment, client, and theme conditions.
 // These are the independent inputs to condition evaluation; bundling borrowed
 // runtime state would obscure precedence at this public kernel boundary.
-#[allow(clippy::too_many_arguments)]
 pub fn eval_cond(
 	d: &slir::Doc,
 	ci: i32,
@@ -145,7 +144,6 @@ pub fn eval_cond(
 /// global states. Every other condition has the same behavior as [`eval_cond`].
 // Node-state evaluation adds the two parallel overlay slices to the base
 // condition inputs; keeping them explicit preserves their indexing contract.
-#[allow(clippy::too_many_arguments)]
 pub fn eval_cond_ns(
 	d: &slir::Doc,
 	ci: i32,
@@ -177,7 +175,6 @@ pub fn eval_cond_ns(
 /// field index. All other conditions retain normal per-node behavior.
 // Item evaluation composes condition, node-state, list-state, and constraint
 // inputs. The explicit boundary mirrors that domain operation without copies.
-#[allow(clippy::too_many_arguments)]
 pub fn eval_cond_item(
 	d: &slir::Doc,
 	ci: i32,

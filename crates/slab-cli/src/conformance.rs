@@ -11,7 +11,7 @@ use std::{
 	process::ExitCode,
 };
 
-pub(crate) fn client_code(name: &str) -> Option<u32> {
+pub fn client_code(name: &str) -> Option<u32> {
 	match name {
 		"web" => Some(0),
 		"gpu" => Some(1),
@@ -36,7 +36,7 @@ fn repo_root() -> Option<PathBuf> {
 	}
 }
 
-pub(crate) fn compile_case(path: &Path) -> Result<Vec<u8>, String> {
+pub fn compile_case(path: &Path) -> Result<Vec<u8>, String> {
 	let src = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
 	let opts = slab_compile::Options {
 		embed_assets: true,
@@ -60,10 +60,10 @@ pub(crate) fn compile_case(path: &Path) -> Result<Vec<u8>, String> {
 
 /// Build the instance for a manifest case and return it plus the final
 /// frame clock. Cases with `states_prev`/`state_age` drive the P5
-/// transition sequence: solve once under states_prev at t=0, flip to
+/// transition sequence: solve once under `states_prev` at t=0, flip to
 /// `states` (the kernel stamps the flip at the next solve's t=0), and
-/// sample the tween at t=state_age — the research build(states,
-/// states_prev, state_age) contract realized on kernel-tracked clocks.
+/// sample the tween at `t=state_age` — the research build(states,
+/// `states_prev`, `state_age`) contract realized on kernel-tracked clocks.
 fn setup_case(
 	bytes: &[u8],
 	case: &serde_json::Value,
@@ -168,7 +168,7 @@ fn run_caps(bytes: &[u8], case: &serde_json::Value) -> Result<String, String> {
 }
 
 /// First-difference window for two single-line JSON payloads.
-pub(crate) fn diff_window(got: &str, want: &str) -> String {
+pub fn diff_window(got: &str, want: &str) -> String {
 	let gb = got.as_bytes();
 	let wb = want.as_bytes();
 	let n = gb.len().min(wb.len());
@@ -244,12 +244,13 @@ pub fn cmd_conformance(args: &[String]) -> ExitCode {
 	while let Some(a) = it.next() {
 		match a.as_str() {
 			"--update" => update = true,
-			"--emit-slir" => match it.next() {
-				Some(v) => emit_dir = Some(PathBuf::from(v)),
-				None => {
+			"--emit-slir" => {
+				if let Some(v) = it.next() {
+					emit_dir = Some(PathBuf::from(v));
+				} else {
 					eprintln!("error: missing value for --emit-slir");
 					return ExitCode::from(2);
-				},
+				}
 			},
 			other => {
 				eprintln!("error: unknown argument '{other}'");

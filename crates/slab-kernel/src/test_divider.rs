@@ -105,20 +105,15 @@ fn attr_value(doc: &slir::Doc, node: usize, attr: u32) -> usize {
 fn extent(instance: &frame::Instance, node: u32, row: bool) -> f64 {
 	let index = usize::try_from(crate::scene::index_of(&instance.sc, node))
 		.expect("fixture node is in scene");
-	if row {
-		instance.sc.w[index]
-	} else {
-		instance.sc.h[index]
-	}
+	let entry = &instance.sc.entries[index];
+	if row { entry.w } else { entry.h }
 }
 
 fn divider_center(instance: &frame::Instance) -> (f64, f64) {
 	let index =
 		usize::try_from(crate::scene::index_of(&instance.sc, 2)).expect("divider is in scene");
-	(
-		instance.sc.x[index] + instance.sc.w[index] / 2.0,
-		instance.sc.y[index] + instance.sc.h[index] / 2.0,
-	)
+	let entry = &instance.sc.entries[index];
+	(entry.x + entry.w / 2.0, entry.y + entry.h / 2.0)
 }
 
 const fn pointer(etype: u32, x: f64, y: f64, clicks: u32) -> dispatch::Event {
@@ -268,15 +263,15 @@ pub fn test_divider_neighbors_ignore_sticky_paint_order() {
 
 	let divider_paint_index = instance
 		.sc
-		.node
+		.entries
 		.iter()
-		.position(|&node| node == 2)
+		.position(|entry| entry.node == 2)
 		.expect("divider is painted");
 	let sticky_paint_index = instance
 		.sc
-		.node
+		.entries
 		.iter()
-		.position(|&node| node == 1)
+		.position(|entry| entry.node == 1)
 		.expect("sticky pane is painted");
 	assert!(
 		divider_paint_index < sticky_paint_index,
@@ -303,15 +298,15 @@ pub fn test_focus_order_ignores_sticky_promotion_and_duplicate_keys() {
 
 	let later_paint_index = instance
 		.sc
-		.node
+		.entries
 		.iter()
-		.position(|&node| node == 3)
+		.position(|entry| entry.node == 3)
 		.expect("later normal sibling is painted");
 	let sticky_paint_index = instance
 		.sc
-		.node
+		.entries
 		.iter()
-		.position(|&node| node == 1)
+		.position(|entry| entry.node == 1)
 		.expect("authored-first sticky child is painted");
 	assert!(
 		later_paint_index < sticky_paint_index,

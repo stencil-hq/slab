@@ -61,7 +61,7 @@ impl SlabState {
 	/// Builds document state from encoded SLIR bytes.
 	pub fn from_slir(bytes: &[u8]) -> Result<Self, String> {
 		let (inst, images) = slab_slir::instance(bytes)?;
-		Ok(SlabState {
+		Ok(Self {
 			dark: false,
 			coarse: false,
 			inst,
@@ -85,12 +85,12 @@ impl SlabState {
 	}
 
 	/// Borrows the live kernel instance for host-driven parameter writes.
-	pub fn instance_mut(&mut self) -> &mut kframe::Instance {
+	pub const fn instance_mut(&mut self) -> &mut kframe::Instance {
 		&mut self.inst
 	}
 
 	/// Borrows the live kernel instance for host queries.
-	pub fn instance(&self) -> &kframe::Instance {
+	pub const fn instance(&self) -> &kframe::Instance {
 		&self.inst
 	}
 
@@ -225,7 +225,7 @@ impl StatefulWidget for SlabWidget {
 
 /// Maps a packed `0xRRGGBB` kernel color to ratatui; unset falls back to the
 /// terminal default, exactly like the ANSI painter's `NO_COLOR` handling.
-fn cell_color(rgb: u32, set: bool) -> Color {
+const fn cell_color(rgb: u32, set: bool) -> Color {
 	if set {
 		Color::Rgb((rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8)
 	} else {

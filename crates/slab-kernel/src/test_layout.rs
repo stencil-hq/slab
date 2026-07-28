@@ -246,26 +246,14 @@ mod wave0_api {
 			node,
 			parent_ix,
 			kind,
-			x: 0.0,
 			y,
 			w: 100.0,
 			h,
-			radius: 0.0,
-			rot_deg: 0.0,
-			rot_cx: 0.0,
-			rot_cy: 0.0,
 			flags,
 			content_main,
-			scroll_off: 0.0,
-			scroll_cross: 0.0,
-			content_cross: 0.0,
-			is_row: false,
 			src_line: 1,
 			authored_order: node,
-			sem: Default::default(),
-			disabled: false,
-			focused: false,
-			editable: false,
+			..Default::default()
 		}
 	}
 

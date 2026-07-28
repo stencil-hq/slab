@@ -29,7 +29,10 @@ pub fn test_fmt3_half_even() {
 }
 
 /// Verifies trailing-zero trimming and three-decimal rounding.
-#[allow(clippy::approx_constant)]
+#[allow(
+	clippy::approx_constant,
+	reason = "test case explicitly uses floating point values like -3.14159 to test formatting"
+)]
 pub fn test_fmt3_trim() {
 	assert_eq!(fmt3(0.75), "0.75", "trailing zero trimmed");
 	assert_eq!(fmt3(0.3), "0.3", "0.3");

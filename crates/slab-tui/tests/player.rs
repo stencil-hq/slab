@@ -44,7 +44,7 @@ fn run_err(args: &[&str]) -> (i32, String) {
 
 /// Compile the player and build a kernel instance with param overrides,
 /// mirroring the binary's --set path (name lookup + type-checked
-/// inst_set_param), then return the settled frame at t=0.
+/// `inst_set_param`), then return the settled frame at t=0.
 fn player_frame(sets: &[(&str, slab_kernel::frame::ParamValue)]) -> slab_kernel::flatten::Frame {
 	let file = root().join(PLAYER);
 	let src = std::fs::read_to_string(&file).expect("read player");
@@ -70,13 +70,13 @@ fn player_frame(sets: &[(&str, slab_kernel::frame::ParamValue)]) -> slab_kernel:
 	slab_kernel::frame::inst_frame(&mut inst, 0.0)
 }
 
-fn pv_num(kind: u32, num: f64) -> slab_kernel::frame::ParamValue {
+const fn pv_num(kind: u32, num: f64) -> slab_kernel::frame::ParamValue {
 	slab_kernel::frame::ParamValue { kind, num, s: String::new(), rgba: 0, sym: String::new() }
 }
 
 /// Effective group opacity over each Text op, keyed by its string.
 /// The glyph swap in the player is pure opacity (when playing {...}),
-/// which flatten expresses as GroupPush around the text op.
+/// which flatten expresses as `GroupPush` around the text op.
 fn text_opacities(fr: &slab_kernel::flatten::Frame) -> Vec<(String, f64)> {
 	use slab_kernel::flatten::FrameOp;
 	let mut stack: Vec<f64> = vec![1.0];
@@ -88,7 +88,7 @@ fn text_opacities(fr: &slab_kernel::flatten::Frame) -> Vec<(String, f64)> {
 				stack.pop();
 			},
 			FrameOp::Text(t) => {
-				out.push((fr.strings[t.str_ref as usize].clone(), *stack.last().unwrap()))
+				out.push((fr.strings[t.str_ref as usize].clone(), *stack.last().unwrap()));
 			},
 			_ => {},
 		}
@@ -142,10 +142,10 @@ fn set_overrides_change_the_grid() {
 }
 
 /// (b) The |>/|| swap is pure opacity, which the cell medium cannot
-/// express (`slab_kernel::cells`: GroupPush is ignored — both glyph texts land
-/// in the grid regardless of `playing`; documented degradation). The swap is
-/// asserted where it lives: the frame-op group opacities around the two
-/// glyph text ops, driven through the same type-checked inst_set_param
+/// express (`slab_kernel::cells`: `GroupPush` is ignored — both glyph texts
+/// land in the grid regardless of `playing`; documented degradation). The swap
+/// is asserted where it lives: the frame-op group opacities around the two
+/// glyph text ops, driven through the same type-checked `inst_set_param`
 #[test]
 fn playing_swaps_glyph_opacity_in_frame_ops() {
 	let opacity_of = |fr: &slab_kernel::flatten::Frame, glyph: &str| -> f64 {

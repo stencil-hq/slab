@@ -129,7 +129,7 @@ col w=600 h=200 {
 	let gap2 = b_ops[1].0 - (a_ops[1].0 + a_ops[1].1);
 	assert!(gap1 > 0.5, "single space gap missing: {gap1}");
 	assert!(
-		(gap2 - 2.0 * gap1).abs() < 0.01,
+		2.0f64.mul_add(-gap1, gap2).abs() < 0.01,
 		"two spaces should double the gap: gap1={gap1} gap2={gap2}"
 	);
 

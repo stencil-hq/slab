@@ -58,7 +58,7 @@ fn drain_frame_signals(
 }
 
 /// Maps the shared trace and SDP event names to kernel event type codes.
-pub(crate) fn event_code(name: &str) -> Option<u32> {
+pub fn event_code(name: &str) -> Option<u32> {
 	Some(match name {
 		"pointer-move" => 0,
 		"pointer-down" => 1,
@@ -82,7 +82,7 @@ pub(crate) fn event_code(name: &str) -> Option<u32> {
 }
 
 /// Packs shared trace and SDP modifier names into kernel modifier bits.
-pub(crate) fn mods_of(v: &serde_json::Value) -> u32 {
+pub fn mods_of(v: &serde_json::Value) -> u32 {
 	let mut m = 0;
 	if let Some(list) = v.as_array() {
 		for e in list {
@@ -119,7 +119,7 @@ fn json_u8(value: &serde_json::Value) -> Option<u8> {
 }
 
 /// Builds a kernel event from the shared trace and SDP JSON shape.
-pub(crate) fn build_event(v: &serde_json::Value) -> Result<slab_kernel::dispatch::Event, String> {
+pub fn build_event(v: &serde_json::Value) -> Result<slab_kernel::dispatch::Event, String> {
 	let ty = v["type"].as_str().unwrap_or("");
 	let etype = event_code(ty).ok_or_else(|| format!("unknown event type '{ty}'"))?;
 	let u32_field = |name: &str| match v.get(name) {
@@ -141,7 +141,7 @@ pub(crate) fn build_event(v: &serde_json::Value) -> Result<slab_kernel::dispatch
 }
 
 /// Builds the kernel's typed scalar payload from a trace/SDP spelling.
-pub(crate) fn typed_value_parts(
+pub fn typed_value_parts(
 	kind_name: &str,
 	raw: &serde_json::Value,
 ) -> Result<slab_kernel::frame::ParamValue, String> {
@@ -211,7 +211,7 @@ fn param_index(doc: &slab_kernel::slir::Doc, name: &str) -> Option<u32> {
 }
 
 /// Validated runtime-image registration data shared by trace and SDP hosts.
-pub(crate) struct RuntimeImageInput {
+pub struct RuntimeImageInput {
 	/// Runtime lookup name.
 	pub(crate) name:   String,
 	/// Declared pixel width.
@@ -224,7 +224,7 @@ pub(crate) struct RuntimeImageInput {
 	pub(crate) data:   Vec<u8>,
 }
 
-fn b64_digit(byte: u8) -> Option<u8> {
+const fn b64_digit(byte: u8) -> Option<u8> {
 	match byte {
 		b'A'..=b'Z' => Some(byte - b'A'),
 		b'a'..=b'z' => Some(byte - b'a' + 26),
@@ -236,13 +236,13 @@ fn b64_digit(byte: u8) -> Option<u8> {
 }
 
 /// Decodes padded RFC 4648 base64 without accepting malformed padding.
-pub(crate) fn decode_b64(input: &str) -> Result<Vec<u8>, String> {
+pub fn decode_b64(input: &str) -> Result<Vec<u8>, String> {
 	let bytes = input.as_bytes();
 	if !bytes.len().is_multiple_of(4) {
 		return Err("base64 payload length must be a multiple of four".into());
 	}
 	let mut out = Vec::with_capacity(bytes.len() / 4 * 3);
-	for (index, chunk) in bytes.chunks_exact(4).enumerate() {
+	for (index, chunk) in bytes.as_chunks::<4>().0.iter().enumerate() {
 		let final_chunk = index + 1 == bytes.len() / 4;
 		let a = b64_digit(chunk[0]).ok_or_else(|| "invalid base64 payload".to_string())?;
 		let b = b64_digit(chunk[1]).ok_or_else(|| "invalid base64 payload".to_string())?;
@@ -268,7 +268,7 @@ pub(crate) fn decode_b64(input: &str) -> Result<Vec<u8>, String> {
 }
 
 /// Validates and decodes one trace/SDP image-registration object.
-pub(crate) fn runtime_image_input(
+pub fn runtime_image_input(
 	value: &serde_json::Map<String, serde_json::Value>,
 ) -> Result<RuntimeImageInput, String> {
 	let name = value

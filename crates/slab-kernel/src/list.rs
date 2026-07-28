@@ -129,11 +129,15 @@ fn invalidate_locations(s: &mut State) {
 
 #[cfg(test)]
 thread_local! {
-	 static LOOKUP_WORK: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+	static LOOKUP_WORK: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 #[inline]
-const fn note_lookup() {
+#[allow(
+	clippy::missing_const_for_fn,
+	reason = "thread_local work tracking cannot be called in const fn"
+)]
+fn note_lookup() {
 	#[cfg(test)]
 	LOOKUP_WORK.with(|work| work.set(work.get().saturating_add(1)));
 }
@@ -267,10 +271,12 @@ pub(crate) fn key_at_into(d: &slir::Doc, s: &State, list: u32, item_index: i32, 
 		return;
 	}
 	note_lookup();
-	if let Some(&slot) = s.lk_slot.get(&(list, item_index)) { out.push_str(&s.lk_key[slot]) } else {
- 			use std::fmt::Write;
- 			let _ = write!(out, "{}", unsigned(item_index));
- 		}
+	if let Some(&slot) = s.lk_slot.get(&(list, item_index)) {
+		out.push_str(&s.lk_key[slot]);
+	} else {
+		use std::fmt::Write;
+		let _ = write!(out, "{}", unsigned(item_index));
+	}
 }
 
 /// Returns the schema row for a root list parameter, or `-1` when absent.

@@ -12,7 +12,6 @@ use crate::{
 };
 
 /// Appends a rectangular node with the supplied geometry to a test scene.
-#[allow(clippy::too_many_arguments)]
 pub fn add(
 	sc: &mut Scene,
 	node: u32,
@@ -25,23 +24,23 @@ pub fn add(
 	rot: f64,
 	flags: u32,
 ) {
-	sc.node.push(node);
-	sc.parent.push(parent);
-	sc.kind.push(slir::K_RECT);
-	sc.x.push(x);
-	sc.y.push(y);
-	sc.w.push(w);
-	sc.h.push(h);
-	sc.radius.push(radius);
-	sc.rot.push(rot);
-	sc.cx.push(x + w / 2.0);
-	sc.cy.push(y + h / 2.0);
-	sc.flags.push(flags);
-	sc.content_main.push(0.0);
-	sc.scroll_off.push(0.0);
-	sc.content_cross.push(0.0);
-	sc.scroll_cross.push(0.0);
-	sc.is_row.push(false);
+	sc.entries.push(crate::flatten::SceneNode {
+		node,
+		parent_ix: parent,
+		kind: slir::K_RECT,
+		x,
+		y,
+		w,
+		h,
+		radius,
+		rot_deg: rot,
+		rot_cx: x + w / 2.0,
+		rot_cy: y + h / 2.0,
+		flags,
+		src_line: 1,
+		authored_order: node,
+		..Default::default()
+	});
 }
 
 /// Returns the deepest hit node, or `-1` when the scene is not hit.
@@ -103,20 +102,31 @@ pub fn test_quarter_rotation_bbox() {
 	let mut sc = scene::scene_new();
 	add(&mut sc, 0, -1, 0.0, 0.0, 200.0, 200.0, 0.0, 0.0, 0);
 	// Quarter-turned payload: a 20x120 bounding box for a centered 120x20 payload.
-	sc.node.push(1);
-	sc.parent.push(0);
-	sc.kind.push(slir::K_RECT);
-	sc.x.push(-50.0);
-	sc.y.push(50.0);
-	sc.w.push(120.0);
-	sc.h.push(20.0);
-	sc.radius.push(0.0);
-	sc.rot.push(90.0);
-	sc.cx.push(10.0);
-	sc.cy.push(60.0);
-	sc.flags.push(0);
-	sc.content_main.push(0.0);
-	sc.is_row.push(false);
+	sc.entries.push(crate::flatten::SceneNode {
+		node:           1,
+		parent_ix:      0,
+		kind:           slir::K_RECT,
+		x:              -50.0,
+		y:              50.0,
+		w:              120.0,
+		h:              20.0,
+		radius:         0.0,
+		rot_deg:        90.0,
+		rot_cx:         10.0,
+		rot_cy:         60.0,
+		flags:          0,
+		content_main:   0.0,
+		scroll_off:     0.0,
+		scroll_cross:   0.0,
+		content_cross:  0.0,
+		is_row:         false,
+		src_line:       1,
+		authored_order: 1,
+		sem:            Default::default(),
+		disabled:       false,
+		focused:        false,
+		editable:       false,
+	});
 	// The center of the rotated bounding box at (10, 60) must hit the payload.
 	assert_eq!(target_of(&sc, 10.0, 60.0), 1, "rotated bbox center hits");
 	assert_eq!(target_of(&sc, 10.0, 130.0), 0, "below the rotated bbox misses");
@@ -218,13 +228,13 @@ pub fn test_attach_overlay_traversal_and_focus_restore() {
 pub fn test_scroll_clamp_bounds() {
 	let mut sc = scene::scene_new();
 	add(&mut sc, 0, -1, 0.0, 0.0, 300.0, 100.0, 0.0, 0.0, slir::F_SCROLL | slir::F_CLIP);
-	sc.content_main[0] = 400.0;
+	sc.entries[0].content_main = 400.0;
 	assert_eq!(dispatch::clamp_scroll(&sc, 0, 9999.0), 300.0, "clamps to content - viewport");
 	assert_eq!(dispatch::clamp_scroll(&sc, 0, -5.0), 0.0, "clamps at 0");
 	assert_eq!(dispatch::clamp_scroll(&sc, 0, 120.0), 120.0, "in range passes");
 	// A row uses its width as the viewport along the main axis.
-	sc.is_row[0] = true;
-	sc.content_main[0] = 350.0;
+	sc.entries[0].is_row = true;
+	sc.entries[0].content_main = 350.0;
 	assert_eq!(dispatch::clamp_scroll(&sc, 0, 9999.0), 50.0, "row axis viewport = w");
 }
 
@@ -232,7 +242,7 @@ pub fn test_scroll_clamp_bounds() {
 pub fn test_shift_arrow_fast_scrolls() {
 	let mut sc = scene::scene_new();
 	add(&mut sc, 0, -1, 0.0, 0.0, 100.0, 100.0, 0.0, 0.0, slir::F_SCROLL | slir::F_CLIP);
-	sc.content_main[0] = 1000.0;
+	sc.entries[0].content_main = 1000.0;
 	let mut st = style::st_new();
 	let mut eff = dispatch::effects_new();
 	let d = slir::doc_new();
@@ -263,8 +273,8 @@ pub fn test_wheel_routes_main_and_cross_axes_independently() {
 	let mut sc = scene::scene_new();
 	add(&mut sc, 0, -1, 0.0, 0.0, 100.0, 100.0, 0.0, 0.0, slir::F_SCROLL | slir::F_CLIP);
 	add(&mut sc, 1, 0, 0.0, 0.0, 100.0, 100.0, 0.0, 0.0, slir::F_SCROLL_CROSS | slir::F_CLIP);
-	sc.content_main[0] = 400.0;
-	sc.content_cross[1] = 400.0;
+	sc.entries[0].content_main = 400.0;
+	sc.entries[1].content_cross = 400.0;
 
 	let mut st = style::st_new();
 	let mut ds = dispatch::dstate_new();

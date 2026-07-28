@@ -8,6 +8,7 @@ license.workspace = true
 workspace = true
 
 [dependencies]
+serde.workspace = true
 serde_json.workspace = true
 slab-compile.workspace = true
 slab-fonts.workspace = true

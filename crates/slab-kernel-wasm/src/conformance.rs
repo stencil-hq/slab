@@ -18,11 +18,7 @@ pub fn cells_attrs(instance: &mut Instance, time_ms: f64) -> String {
 	cells::cells_attrs_text(&grid)
 }
 
-pub fn caps_report(
-	instance: &mut Instance,
-	time_ms: f64,
-	client: u32,
-) -> Result<String, String> {
+pub fn caps_report(instance: &mut Instance, time_ms: f64, client: u32) -> Result<String, String> {
 	let client_index =
 		usize::try_from(client).map_err(|_| format!("invalid client index {client}"))?;
 	if client_index >= caps::CLIENTS.len() {

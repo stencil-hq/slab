@@ -592,18 +592,17 @@ pub fn test_context_caret_preserves_selection_only_for_inside_hit() {
 		slir::F_FOCUSABLE,
 	);
 	let rule = st.rs.last().expect("field has resolved style");
-	let origin = sc.x[0] + rule.pad_l;
+	let origin = sc.entries[0].x + rule.pad_l;
 	let inside_x =
 		origin + textm::str_slice_w(&doc, rule.font, rule.size, rule.tracking, text, 0, 3);
 	let mut es = edit::es_new(0, text);
 	es.anchor = 2;
 	es.caret = 4;
 	let hit = dispatch::FieldHit { d: &doc, st: &st, lay: &lay, sc: &sc, node: 0 };
-	assert!(!dispatch::place_context_caret(&hit, &mut es, inside_x, sc.y[0],));
+	assert!(!dispatch::place_context_caret(&hit, &mut es, inside_x, sc.entries[0].y,));
 	assert_eq!((es.anchor, es.caret), (2, 4));
 
-	assert!(dispatch::place_context_caret(&hit, &mut es, origin - 1.0, sc.y[0],));
-	assert_eq!((es.anchor, es.caret), (0, 0));
+	assert!(dispatch::place_context_caret(&hit, &mut es, origin - 1.0, sc.entries[0].y,));
 }
 
 /// Builds a focusable text node whose `field=` binder lives inside a

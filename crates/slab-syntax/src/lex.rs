@@ -1,6 +1,8 @@
-//! Logos lexer for the slab syntax (SPEC §2), a port of the 0.5 reference
-//! lexer: newline-sensitive, dotted refs are single tokens, `%` folds into
-//! the number token, `-` continues an ident only before a letter.
+//! Logos lexer for the slab syntax (SPEC §2).
+//!
+//! A port of the 0.5 reference lexer: newline-sensitive, dotted refs are
+//! single tokens, `%` folds into the number token, `-` continues an ident
+//! only before a letter.
 
 use logos::{Lexer, Logos, Skip};
 
@@ -207,34 +209,36 @@ pub fn lex(src: &str, diags: &mut Diagnostics) -> Vec<Tok> {
 	while let Some(res) = lexer.next() {
 		let span = lexer.span();
 		let line = map.line(span.start);
-		let tok = if let Ok(raw) = res { match raw {
-  				RawTok::Nl => Tok { kind: TokKind::Nl, text: "\n".into(), line, val: 0.0 },
-  				RawTok::Str(s) => Tok { kind: TokKind::Str, text: s, line, val: 0.0 },
-  				RawTok::Hash(s) => Tok { kind: TokKind::Hash, text: s, line, val: 0.0 },
-  				RawTok::Pct(v) => {
-  					Tok { kind: TokKind::Pct, text: lexer.slice().to_string(), line, val: v }
-  				},
-  				RawTok::Num(v) => {
-  					Tok { kind: TokKind::Num, text: lexer.slice().to_string(), line, val: v }
-  				},
-  				RawTok::Ref(s) => Tok { kind: TokKind::Ref, text: s, line, val: 0.0 },
-  				RawTok::Id(s) => Tok { kind: TokKind::Id, text: s, line, val: 0.0 },
-  				RawTok::Cmp(s) => Tok { kind: TokKind::Cmp, text: s, line, val: 0.0 },
-  				RawTok::Lb => simple(TokKind::Lb, "{", line),
-  				RawTok::Rb => simple(TokKind::Rb, "}", line),
-  				RawTok::Lp => simple(TokKind::Lp, "(", line),
-  				RawTok::Rp => simple(TokKind::Rp, ")", line),
-  				RawTok::Ls => simple(TokKind::Ls, "[", line),
-  				RawTok::Rs => simple(TokKind::Rs, "]", line),
-  				RawTok::Eq => simple(TokKind::Eq, "=", line),
-  				RawTok::Comma => simple(TokKind::Comma, ",", line),
-  				RawTok::Colon => simple(TokKind::Colon, ":", line),
-  				RawTok::Bang => simple(TokKind::Bang, "!", line),
-  			} } else {
-  				let ch = src[span.start..].chars().next().unwrap_or('\u{fffd}');
-  				diags.error("parse", format!("unexpected character {}", py_repr_char(ch)), line);
-  				continue;
-  			};
+		let tok = if let Ok(raw) = res {
+			match raw {
+				RawTok::Nl => Tok { kind: TokKind::Nl, text: "\n".into(), line, val: 0.0 },
+				RawTok::Str(s) => Tok { kind: TokKind::Str, text: s, line, val: 0.0 },
+				RawTok::Hash(s) => Tok { kind: TokKind::Hash, text: s, line, val: 0.0 },
+				RawTok::Pct(v) => {
+					Tok { kind: TokKind::Pct, text: lexer.slice().to_string(), line, val: v }
+				},
+				RawTok::Num(v) => {
+					Tok { kind: TokKind::Num, text: lexer.slice().to_string(), line, val: v }
+				},
+				RawTok::Ref(s) => Tok { kind: TokKind::Ref, text: s, line, val: 0.0 },
+				RawTok::Id(s) => Tok { kind: TokKind::Id, text: s, line, val: 0.0 },
+				RawTok::Cmp(s) => Tok { kind: TokKind::Cmp, text: s, line, val: 0.0 },
+				RawTok::Lb => simple(TokKind::Lb, "{", line),
+				RawTok::Rb => simple(TokKind::Rb, "}", line),
+				RawTok::Lp => simple(TokKind::Lp, "(", line),
+				RawTok::Rp => simple(TokKind::Rp, ")", line),
+				RawTok::Ls => simple(TokKind::Ls, "[", line),
+				RawTok::Rs => simple(TokKind::Rs, "]", line),
+				RawTok::Eq => simple(TokKind::Eq, "=", line),
+				RawTok::Comma => simple(TokKind::Comma, ",", line),
+				RawTok::Colon => simple(TokKind::Colon, ":", line),
+				RawTok::Bang => simple(TokKind::Bang, "!", line),
+			}
+		} else {
+			let ch = src[span.start..].chars().next().unwrap_or('\u{fffd}');
+			diags.error("parse", format!("unexpected character {}", py_repr_char(ch)), line);
+			continue;
+		};
 		toks.push(tok);
 	}
 	for (offset, msg) in std::mem::take(&mut lexer.extras.errors) {

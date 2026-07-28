@@ -96,7 +96,8 @@ export class KInst {
      */
     diags_json(): string;
     /**
-     * Dispatches one platform event and emits canonical conformance effects JSON.
+     * Dispatches one platform event and emits canonical conformance effects
+     * JSON.
      */
     dispatch_dump_json(event_type: number, x: number, y: number, dx: number, dy: number, button: number, key: string, text: string, modifiers: number, clicks: number): string;
     /**
@@ -148,7 +149,8 @@ export class KInst {
      */
     get_token_json(path: string): string | undefined;
     /**
-     * Tests a point against one retained scene index, including clips and rotations.
+     * Tests a point against one retained scene index, including clips and
+     * rotations.
      */
     hit_contains(scene_index: number, x: number, y: number): boolean;
     /**
@@ -243,7 +245,8 @@ export class KInst {
      */
     set_list_len(param: number, path: string, length: number): boolean;
     /**
-     * Enables or disables one node-local state, returning false for an unknown key.
+     * Enables or disables one node-local state, returning false for an unknown
+     * key.
      */
     set_node_state(key: string, name: string, on: boolean): boolean;
     /**
@@ -288,43 +291,52 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
+    readonly __wbg_framebuf_free: (a: number, b: number) => void;
     readonly __wbg_kinst_free: (a: number, b: number) => void;
-    readonly kinst_caps_report: (a: number, b: number, c: number) => [number, number, number, number];
-    readonly kinst_caret_effects_json: (a: number) => [number, number];
-    readonly kinst_cells_ansi: (a: number, b: number) => [number, number];
-    readonly kinst_cells_attrs: (a: number, b: number) => [number, number];
-    readonly kinst_cells_text: (a: number, b: number) => [number, number];
-    readonly kinst_chain_json: (a: number, b: number) => [number, number];
+    readonly framebuf_diagnostics_json: (a: number, b: number) => void;
+    readonly framebuf_dirty: (a: number) => number;
+    readonly framebuf_f64s: (a: number, b: number) => void;
+    readonly framebuf_motion_active: (a: number) => number;
+    readonly framebuf_rt_paths_json: (a: number, b: number) => void;
+    readonly framebuf_strs_json: (a: number, b: number) => void;
+    readonly framebuf_u32s: (a: number, b: number) => void;
+    readonly framebuf_uncovered_u32s: (a: number, b: number) => void;
+    readonly kinst_caps_report: (a: number, b: number, c: number, d: number) => void;
+    readonly kinst_caret_effects_json: (a: number, b: number) => void;
+    readonly kinst_cells_ansi: (a: number, b: number, c: number) => void;
+    readonly kinst_cells_attrs: (a: number, b: number, c: number) => void;
+    readonly kinst_cells_text: (a: number, b: number, c: number) => void;
+    readonly kinst_chain_json: (a: number, b: number, c: number) => void;
     readonly kinst_clear_focus: (a: number) => number;
-    readonly kinst_diags_json: (a: number) => [number, number];
-    readonly kinst_dispatch_dump_json: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number) => [number, number];
-    readonly kinst_dispatch_json: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number) => [number, number];
-    readonly kinst_each_window_json: (a: number, b: number, c: number) => [number, number];
-    readonly kinst_field_text: (a: number, b: number, c: number) => [number, number];
+    readonly kinst_diags_json: (a: number, b: number) => void;
+    readonly kinst_dispatch_dump_json: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number) => void;
+    readonly kinst_dispatch_json: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number) => void;
+    readonly kinst_each_window_json: (a: number, b: number, c: number, d: number) => void;
+    readonly kinst_field_text: (a: number, b: number, c: number, d: number) => void;
     readonly kinst_focus: (a: number) => number;
     readonly kinst_focus_item: (a: number, b: number, c: number, d: number) => number;
-    readonly kinst_focus_note: (a: number) => [number, number];
+    readonly kinst_focus_note: (a: number, b: number) => void;
     readonly kinst_font_register: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number, o: number) => number;
     readonly kinst_frame: (a: number, b: number) => number;
-    readonly kinst_frame_json: (a: number, b: number) => [number, number];
+    readonly kinst_frame_json: (a: number, b: number, c: number) => void;
     readonly kinst_get_divider: (a: number, b: number, c: number) => number;
     readonly kinst_get_scroll: (a: number, b: number, c: number, d: number) => number;
-    readonly kinst_get_token_json: (a: number, b: number, c: number) => [number, number];
+    readonly kinst_get_token_json: (a: number, b: number, c: number, d: number) => void;
     readonly kinst_hit_contains: (a: number, b: number, c: number, d: number) => number;
-    readonly kinst_hit_json: (a: number, b: number, c: number) => [number, number];
-    readonly kinst_holes_json: (a: number) => [number, number];
-    readonly kinst_image_data: (a: number, b: number) => [number, number];
-    readonly kinst_image_info_json: (a: number, b: number) => [number, number];
+    readonly kinst_hit_json: (a: number, b: number, c: number, d: number) => void;
+    readonly kinst_holes_json: (a: number, b: number) => void;
+    readonly kinst_image_data: (a: number, b: number, c: number) => void;
+    readonly kinst_image_info_json: (a: number, b: number, c: number) => void;
     readonly kinst_img_register: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => number;
     readonly kinst_img_unregister: (a: number, b: number, c: number) => number;
-    readonly kinst_lift_animations_json: (a: number) => [number, number];
+    readonly kinst_lift_animations_json: (a: number, b: number) => void;
     readonly kinst_list_len: (a: number, b: number, c: number, d: number) => number;
-    readonly kinst_new: (a: number, b: number) => [number, number, number];
-    readonly kinst_param_json: (a: number, b: number, c: number) => [number, number];
+    readonly kinst_new: (a: number, b: number, c: number) => void;
+    readonly kinst_param_json: (a: number, b: number, c: number, d: number) => void;
     readonly kinst_reveal: (a: number, b: number, c: number, d: number) => number;
     readonly kinst_reveal_item: (a: number, b: number, c: number, d: number, e: number) => number;
-    readonly kinst_scene_json: (a: number) => [number, number];
-    readonly kinst_selftest_counts_json: (a: number, b: number) => [number, number];
+    readonly kinst_scene_json: (a: number, b: number) => void;
+    readonly kinst_selftest_counts_json: (a: number, b: number, c: number) => void;
     readonly kinst_set_divider: (a: number, b: number, c: number, d: number) => number;
     readonly kinst_set_env: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
     readonly kinst_set_field_text: (a: number, b: number, c: number, d: number, e: number) => number;
@@ -338,26 +350,15 @@ export interface InitOutput {
     readonly kinst_set_scroll: (a: number, b: number, c: number, d: number, e: number) => number;
     readonly kinst_set_state: (a: number, b: number, c: number, d: number) => void;
     readonly kinst_set_theme: (a: number, b: number, c: number) => number;
-    readonly kinst_statics_json: (a: number) => [number, number];
-    readonly kinst_take_signals_dump_json: (a: number) => [number, number];
-    readonly kinst_take_signals_json: (a: number) => [number, number];
-    readonly kinst_theme: (a: number) => [number, number];
-    readonly kinst_trace_summary_json: (a: number) => [number, number];
-    readonly __wbg_framebuf_free: (a: number, b: number) => void;
-    readonly framebuf_diagnostics_json: (a: number) => [number, number];
-    readonly framebuf_dirty: (a: number) => number;
-    readonly framebuf_f64s: (a: number) => [number, number];
-    readonly framebuf_motion_active: (a: number) => number;
-    readonly framebuf_rt_paths_json: (a: number) => [number, number];
-    readonly framebuf_strs_json: (a: number) => [number, number];
-    readonly framebuf_u32s: (a: number) => [number, number];
-    readonly framebuf_uncovered_u32s: (a: number) => [number, number];
-    readonly __wbindgen_externrefs: WebAssembly.Table;
-    readonly __wbindgen_free: (a: number, b: number, c: number) => void;
-    readonly __externref_table_dealloc: (a: number) => void;
-    readonly __wbindgen_malloc: (a: number, b: number) => number;
-    readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
-    readonly __wbindgen_start: () => void;
+    readonly kinst_statics_json: (a: number, b: number) => void;
+    readonly kinst_take_signals_dump_json: (a: number, b: number) => void;
+    readonly kinst_take_signals_json: (a: number, b: number) => void;
+    readonly kinst_theme: (a: number, b: number) => void;
+    readonly kinst_trace_summary_json: (a: number, b: number) => void;
+    readonly __wbindgen_add_to_stack_pointer: (a: number) => number;
+    readonly __wbindgen_export: (a: number, b: number, c: number) => void;
+    readonly __wbindgen_export2: (a: number, b: number) => number;
+    readonly __wbindgen_export3: (a: number, b: number, c: number, d: number) => number;
 }
 
 export type SyncInitInput = BufferSource | WebAssembly.Module;

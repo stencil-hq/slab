@@ -99,15 +99,7 @@ pub fn contains(scene: &Scene, node: i32, x: f64, y: f64) -> bool {
 			py = local_y;
 		}
 
-		let inside = in_rounded_rect(
-			px,
-			py,
-			entry.x,
-			entry.y,
-			entry.w,
-			entry.h,
-			entry.radius,
-		);
+		let inside = in_rounded_rect(px, py, entry.x, entry.y, entry.w, entry.h, entry.radius);
 		if link == node {
 			return inside;
 		}

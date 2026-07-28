@@ -330,7 +330,6 @@ impl Emitter<'_> {
 	/// Emits a `<linearGradient>`/`<radialGradient>` def with the given stop
 	/// markup mapped over the paint box; returns the `url(#…)` reference.
 	/// Conic ramps (`kind == 2`) never land here — callers fan them out.
-	#[allow(clippy::too_many_arguments)]
 	fn grad_geom_def(
 		&self,
 		defs: &mut Vec<String>,
@@ -373,7 +372,6 @@ impl Emitter<'_> {
 	/// fill= value for a Paint (kind, handle): solid hex or a gradient def.
 	/// Conic degrades to its first stop here — every call site that can
 	/// host a wedge fan (rect/path/text/mask) intercepts conic first.
-	#[allow(clippy::too_many_arguments)]
 	fn paint(
 		&self,
 		defs: &mut Vec<String>,
@@ -408,7 +406,6 @@ impl Emitter<'_> {
 	/// Conic still returns its first stop: full-side non-dashed box conics
 	/// take the ring-fan route in the Rect arm instead, path conics the
 	/// stroke-mask route, leaving only dashed/per-side box degradations.
-	#[allow(clippy::too_many_arguments)]
 	fn stroke_paint(
 		&self,
 		defs: &mut Vec<String>,
@@ -436,7 +433,6 @@ impl Emitter<'_> {
 	/// `<mask>` def cropped to a userSpaceOnUse box: content outside the
 	/// box renders transparent black, so ink outside vanishes (contract
 	/// §6.3).
-	#[allow(clippy::too_many_arguments)]
 	fn mask_def(
 		&self,
 		defs: &mut Vec<String>,
@@ -463,7 +459,6 @@ impl Emitter<'_> {
 	/// white-with-alpha ramp yields the paint's alpha under the default
 	/// luminance interpretation (`luminance(#fff)·a == a`) without leaning
 	/// on `mask-type:alpha` support (contract §6.3).
-	#[allow(clippy::too_many_arguments)]
 	fn white_mask_content(
 		&self,
 		defs: &mut Vec<String>,
@@ -510,7 +505,6 @@ impl Emitter<'_> {
 	/// samples → hard stops), conics per wedge (90 samples), solids
 	/// all-or-nothing. `None` = the band never turns on and its whole
 	/// re-emission is skipped.
-	#[allow(clippy::too_many_arguments)]
 	fn band_content(
 		&self,
 		defs: &mut Vec<String>,
@@ -539,10 +533,9 @@ impl Emitter<'_> {
 			2 => {
 				let gr = self.s.grads.get(h as usize)?;
 				if gr.kind == 2 {
-					let fan =
-						conic_fan(gr, x + w / 2.0, y + hh / 2.0, w.hypot(hh) / 2.0, |c| {
-							in_band(f64::from(c >> 24) / 255.0).then_some(u32::MAX)
-						});
+					let fan = conic_fan(gr, x + w / 2.0, y + hh / 2.0, w.hypot(hh) / 2.0, |c| {
+						in_band(f64::from(c >> 24) / 255.0).then_some(u32::MAX)
+					});
 					(!fan.is_empty()).then_some(fan)
 				} else {
 					let stops = band_stops(gr, lo, hi, last)?;
@@ -565,20 +558,20 @@ impl Emitter<'_> {
 		brightness: f64,
 	) -> String {
 		let sat = if saturate == 1.0 {
-  			String::new()
-  		} else {
-  			format!("<feColorMatrix type=\"saturate\" values=\"{}\"/>", n(saturate))
-  		};
+			String::new()
+		} else {
+			format!("<feColorMatrix type=\"saturate\" values=\"{}\"/>", n(saturate))
+		};
 		let bright = if brightness == 1.0 {
-  			String::new()
-  		} else {
-  			let s = n6(brightness);
-  			format!(
-  				"<feComponentTransfer><feFuncR type=\"linear\" slope=\"{s}\"/><feFuncG \
-  				 type=\"linear\" slope=\"{s}\"/><feFuncB type=\"linear\" \
-  				 slope=\"{s}\"/></feComponentTransfer>"
-  			)
-  		};
+			String::new()
+		} else {
+			let s = n6(brightness);
+			format!(
+				"<feComponentTransfer><feFuncR type=\"linear\" slope=\"{s}\"/><feFuncG \
+				 type=\"linear\" slope=\"{s}\"/><feFuncB type=\"linear\" \
+				 slope=\"{s}\"/></feComponentTransfer>"
+			)
+		};
 		let fid = self.uid(defs, "bf");
 		defs.push(format!(
 			"<filter id=\"{fid}\" color-interpolation-filters=\"sRGB\" x=\"-20%\" y=\"-20%\" \
@@ -1609,7 +1602,11 @@ fn font_faces(s: &Slir, frame: &Frame, registered_fonts: &[RegisteredFont]) -> S
 			.filter(|(_, registered)| registered.name.eq_ignore_ascii_case(s.str_at(font.family)))
 			.min_by_key(|(index, registered)| {
 				(registered.metrics.weight.abs_diff(font.weight), usize::MAX - *index)
-			}).map_or_else(|| slab_fonts::asset(font.class, font.weight).bytes, |(_, registered)| registered.bytes.as_slice());
+			})
+			.map_or_else(
+				|| slab_fonts::asset(font.class, font.weight).bytes,
+				|(_, registered)| registered.bytes.as_slice(),
+			);
 		css.push_str(&format!(
 			"@font-face{{font-family:\"{}\";font-weight:{};src:url(data:font/ttf;base64,{}) \
 			 format(\"truetype\");}}",

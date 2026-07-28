@@ -8,7 +8,7 @@ use slab_kernel::{
 };
 use slab_native::gen_settings::{Doc, Signal};
 
-fn ev(etype: u32, x: f64, y: f64) -> Event {
+const fn ev(etype: u32, x: f64, y: f64) -> Event {
 	Event {
 		etype,
 		x,

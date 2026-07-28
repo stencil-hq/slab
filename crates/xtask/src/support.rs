@@ -12,7 +12,7 @@
 //! - `gen-caps` emits `crates/slab-kernel/src/caps.rs` (per-client feature
 //!   levels as u8 tables plus note/diagnostic-code strings).
 
-use std::{path::Path, process::ExitCode};
+use std::{fmt::Write as _, path::Path, process::ExitCode};
 
 /// Client columns; index = the kernel client code (`inst_set_env`).
 const CLIENTS: [&str; 5] = ["web", "gpu", "tui", "svg", "png"];
@@ -136,7 +136,7 @@ fn chart_md(feats: &[Feature]) -> String {
 	);
 	md.push_str("| feature |");
 	for c in CLIENTS {
-		md.push_str(&format!(" {c} |"));
+		let _ = write!(md, " {c} |");
 	}
 	md.push_str("\n| --- |");
 	for _ in CLIENTS {
@@ -144,14 +144,14 @@ fn chart_md(feats: &[Feature]) -> String {
 	}
 	md.push('\n');
 	for f in feats {
-		md.push_str(&format!("| {} |", f.name));
+		let _ = write!(md, "| {} |", f.name);
 		for cell in &f.cells {
 			let text = match cell {
 				Level::Full => "full".to_string(),
 				Level::Degraded(note) => format!("degraded — {note}"),
 				Level::None(code) => format!("none (`{code}`)"),
 			};
-			md.push_str(&format!(" {text} |"));
+			let _ = write!(md, " {text} |");
 		}
 		md.push('\n');
 	}
@@ -204,21 +204,21 @@ pub fn cmd_support_md() -> ExitCode {
 			// else append at the end
 			let section = section_md(&feats);
 			if let Some(at) = spec.find("\n## 17. Changelog") {
-   					let mut s = String::with_capacity(spec.len() + section.len());
-   					s.push_str(&spec[..=at]);
-   					s.push_str(&section);
-   					s.push('\n');
-   					s.push_str(&spec[at + 1..]);
-   					s
-   				} else {
-   					let mut s = spec.clone();
-   					if !s.ends_with('\n') {
-   						s.push('\n');
-   					}
-   					s.push('\n');
-   					s.push_str(&section);
-   					s
-   				}
+				let mut s = String::with_capacity(spec.len() + section.len());
+				s.push_str(&spec[..=at]);
+				s.push_str(&section);
+				s.push('\n');
+				s.push_str(&spec[at + 1..]);
+				s
+			} else {
+				let mut s = spec.clone();
+				if !s.ends_with('\n') {
+					s.push('\n');
+				}
+				s.push('\n');
+				s.push_str(&section);
+				s
+			}
 		},
 		_ => {
 			eprintln!("error: spec/SPEC.md has mismatched support-chart markers");
@@ -226,14 +226,14 @@ pub fn cmd_support_md() -> ExitCode {
 		},
 	};
 	if next == spec {
- 		eprintln!("support-md: {} up to date", spec_path.display());
- 	} else {
- 		if let Err(e) = std::fs::write(&spec_path, &next) {
- 			eprintln!("error: {}: {e}", spec_path.display());
- 			return ExitCode::from(2);
- 		}
- 		eprintln!("support-md: updated {}", spec_path.display());
- 	}
+		eprintln!("support-md: {} up to date", spec_path.display());
+	} else {
+		if let Err(e) = std::fs::write(&spec_path, &next) {
+			eprintln!("error: {}: {e}", spec_path.display());
+			return ExitCode::from(2);
+		}
+		eprintln!("support-md: updated {}", spec_path.display());
+	}
 	ExitCode::SUCCESS
 }
 
@@ -251,26 +251,20 @@ fn caps_rs(feats: &[Feature]) -> String {
 		 u8 = 2;\n\n",
 	);
 	s.push_str("/// Client columns; the index is the kernel client code (`inst_set_env`).\n");
-	s.push_str(&format!(
-		"pub const CLIENTS: [&str; {}] = [{}];\n\n",
-		CLIENTS.len(),
-		CLIENTS
-			.iter()
-			.map(|c| format!("{c:?}"))
-			.collect::<Vec<_>>()
-			.join(", ")
-	));
+	let clients_formatted = CLIENTS
+		.iter()
+		.map(|c| format!("{c:?}"))
+		.collect::<Vec<_>>()
+		.join(", ");
+	let _ = write!(s, "pub const CLIENTS: [&str; {}] = [{clients_formatted}];\n\n", CLIENTS.len());
 	s.push_str("/// Feature rows, chart order.\n");
-	s.push_str(&format!(
-		"pub const FEATURES: [&str; {}] = [\n{}];\n\n",
-		feats.len(),
-		feats
-			.iter()
-			.map(|f| format!("    {:?},\n", f.name))
-			.collect::<String>()
-	));
+	let _ = writeln!(s, "pub const FEATURES: [&str; {}] = [", feats.len());
+	for f in feats {
+		let _ = writeln!(s, "    {:?},", f.name);
+	}
+	s.push_str("];\n\n");
 	s.push_str("/// `LEVELS[feature][client]`.\n");
-	s.push_str(&format!("pub const LEVELS: [[u8; {}]; {}] = [\n", CLIENTS.len(), feats.len()));
+	let _ = writeln!(s, "pub const LEVELS: [[u8; {}]; {}] = [", CLIENTS.len(), feats.len());
 	for f in feats {
 		let row: Vec<&str> = f
 			.cells
@@ -281,23 +275,23 @@ fn caps_rs(feats: &[Feature]) -> String {
 				Level::None(_) => "NONE",
 			})
 			.collect();
-		s.push_str(&format!("    [{}], // {}\n", row.join(", "), f.name));
+		let _ = writeln!(s, "    [{}], // {}", row.join(", "), f.name);
 	}
 	s.push_str("];\n\n");
 	s.push_str(
 		"/// `NOTES[feature][client]`: `\"\"` for full, the degradation sentence\n/// for degraded, \
 		 the `cap-*` diag code for none.\n",
 	);
-	s.push_str(&format!("pub const NOTES: [[&str; {}]; {}] = [\n", CLIENTS.len(), feats.len()));
+	let _ = writeln!(s, "pub const NOTES: [[&str; {}]; {}] = [", CLIENTS.len(), feats.len());
 	for f in feats {
-		s.push_str(&format!("    // {}\n    [\n", f.name));
+		let _ = write!(s, "    // {}\n    [\n", f.name);
 		for c in &f.cells {
 			let txt = match c {
 				Level::Full => "",
 				Level::Degraded(n) => n.as_str(),
 				Level::None(code) => code.as_str(),
 			};
-			s.push_str(&format!("        {txt:?},\n"));
+			let _ = writeln!(s, "        {txt:?},");
 		}
 		s.push_str("    ],\n");
 	}

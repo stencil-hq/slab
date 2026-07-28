@@ -249,12 +249,20 @@ impl FrameBuf {
 	}
 
 	/// Reports whether the solve dirtied the instance for another frame.
-	pub const fn dirty(&self) -> bool {
+	#[allow(
+		clippy::missing_const_for_fn,
+		reason = "wasm_bindgen exported methods cannot be const fn"
+	)]
+	pub fn dirty(&self) -> bool {
 		self.dirty
 	}
 
 	/// Reports whether animation or transition clocks remain active.
-	pub const fn motion_active(&self) -> bool {
+	#[allow(
+		clippy::missing_const_for_fn,
+		reason = "wasm_bindgen exported methods cannot be const fn"
+	)]
+	pub fn motion_active(&self) -> bool {
 		self.motion_active
 	}
 }

@@ -73,7 +73,7 @@ fn decode_b64(encoded: &str) -> Vec<u8> {
 	let bytes = encoded.as_bytes();
 	let padding = usize::from(bytes.ends_with(b"=")) + usize::from(bytes.ends_with(b"=="));
 	let mut decoded = Vec::with_capacity(bytes.len() / 4 * 3 - padding);
-	for chunk in bytes.chunks_exact(4) {
+	for chunk in bytes.as_chunks::<4>().0 {
 		let packed = digit(chunk[0]) << 18
 			| digit(chunk[1]) << 12
 			| if chunk[2] == b'=' {
@@ -369,9 +369,10 @@ fn drive_tcp_smoke() {
 	let mut banner = String::new();
 	loop {
 		banner.clear();
-		if stderr.read_line(&mut banner).expect("read SDP banner") == 0 {
-			panic!("EOF waiting for SDP banner");
-		}
+		assert!(
+			stderr.read_line(&mut banner).expect("read SDP banner") != 0,
+			"EOF waiting for SDP banner"
+		);
 		if banner.trim().starts_with("sdp: listening on 127.0.0.1:") {
 			break;
 		}

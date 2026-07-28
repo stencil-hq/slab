@@ -30,8 +30,8 @@ row#scroller w=100 h=60 scroll=both scrollbar=always scrollbar-w=4 {
 	let content = node(&instance.doc, &instance, "#scroller/#content");
 	let scroller_scene = scene::index_of(&instance.sc, scroller);
 	let scroller_scene = usize::try_from(scroller_scene).expect("scroller retained");
-	assert_eq!(instance.sc.content_main[scroller_scene], 220.0);
-	assert_eq!(instance.sc.content_cross[scroller_scene], 140.0);
+	assert_eq!(instance.sc.entries[scroller_scene].content_main, 220.0);
+	assert_eq!(instance.sc.entries[scroller_scene].content_cross, 140.0);
 	assert_eq!(first.width, 100.0);
 	assert_eq!(first.height, 60.0);
 
@@ -40,8 +40,8 @@ row#scroller w=100 h=60 scroll=both scrollbar=always scrollbar-w=4 {
 	let moved = frame::inst_frame(&mut instance, 1.0);
 	let content_scene = scene::index_of(&instance.sc, content);
 	let content_scene = usize::try_from(content_scene).expect("content retained");
-	assert_eq!(instance.sc.x[content_scene], -30.0);
-	assert_eq!(instance.sc.y[content_scene], -40.0);
+	assert_eq!(instance.sc.entries[content_scene].x, -30.0);
+	assert_eq!(instance.sc.entries[content_scene].y, -40.0);
 
 	let scrollbar_rects = moved
 		.ops
@@ -87,8 +87,8 @@ col#feed w=100 h=60 scroll {
 	let b2 = node(&instance.doc, &instance, "#feed/#b2");
 	let h1_scene = usize::try_from(scene::index_of(&instance.sc, h1)).expect("h1 retained");
 	let h2_scene = usize::try_from(scene::index_of(&instance.sc, h2)).expect("h2 retained");
-	assert_eq!(instance.sc.y[h1_scene], -10.0, "next header pushes the first away");
-	assert_eq!(instance.sc.y[h2_scene], 10.0, "next header approaches the start edge");
+	assert_eq!(instance.sc.entries[h1_scene].y, -10.0, "next header pushes the first away");
+	assert_eq!(instance.sc.entries[h2_scene].y, 10.0, "next header approaches the start edge");
 
 	let rect_nodes = painted
 		.ops

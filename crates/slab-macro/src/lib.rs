@@ -145,7 +145,7 @@ fn unescape(s: &str) -> Result<String, String> {
 	Ok(out)
 }
 
-/// snake_case module identifier from a file stem (`10-settings` ->
+/// `snake_case` module identifier from a file stem (`10-settings` ->
 /// `_10_settings`).
 fn module_name(stem: &str) -> String {
 	let mut out = String::with_capacity(stem.len() + 1);
@@ -227,10 +227,7 @@ fn expand(path: &str, name: Option<&str>, fonts: &[(String, String)]) -> Result<
 		.collect();
 	// Generated code is not the caller's to lint; shield it from strict
 	// workspace lint levels (clippy::all alone leaves pedantic active).
-	Ok(format!(
-		"pub mod {name} {{\n#![allow(clippy::all, clippy::pedantic, clippy::nursery, \
-		 dead_code)]\n{module}\n{tracked}}}\n"
-	))
+	Ok(format!("pub mod {name} {{\n\n{module}\n{tracked}}}\n"))
 }
 
 #[cfg(test)]

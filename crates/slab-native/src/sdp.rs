@@ -68,7 +68,7 @@ impl ShellHost<SdpRequest> for SdpHost {
 }
 
 /// Runs the windowed viewer with an SDP listener sharing its kernel.
-pub(crate) fn run_window(
+pub fn run_window(
 	doc: NativeDocument,
 	slir: slab_slir::Slir,
 	doc_path: PathBuf,

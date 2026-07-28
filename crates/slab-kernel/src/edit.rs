@@ -427,8 +427,8 @@ pub fn visual_line(tl: &TextLayout, caret: i32) -> i32 {
 }
 
 /// Finds the nearest grapheme-boundary caret on `line` for horizontal `goal`.
-// Keeping the text-metric inputs explicit makes this state transition auditable.
-#[allow(clippy::too_many_arguments)]
+// Keeping the text-metric inputs explicit makes this state transition
+// auditable.
 pub fn caret_for_x(
 	d: &Doc,
 	es: &EditState,
@@ -467,8 +467,8 @@ pub fn caret_for_x(
 }
 
 /// Moves vertically by visual lines while preserving the desired x position.
-// Keeping the text-metric inputs explicit makes this state transition auditable.
-#[allow(clippy::too_many_arguments)]
+// Keeping the text-metric inputs explicit makes this state transition
+// auditable.
 pub fn visual_move(
 	d: &Doc,
 	es: &mut EditState,
@@ -604,7 +604,7 @@ pub fn redo(es: &mut EditState) -> bool {
 /// Updates uncommitted composition text, first replacing any selection.
 pub fn composition_update(es: &mut EditState, text: &str) -> bool {
 	let committed_changed = delete_selection(es);
-	es.compose = text.to_owned();
+	text.clone_into(&mut es.compose);
 	es.composing = true;
 	committed_changed
 }

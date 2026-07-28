@@ -13,7 +13,6 @@
 
 // The shadow/backdrop helpers are geometry ports; keep their research
 // signatures rather than inventing structs for one call site each.
-#![allow(clippy::too_many_arguments)]
 
 use slab_fonts;
 use slab_kernel::{
@@ -369,7 +368,8 @@ fn mat3_mul(a: [f64; 9], b: [f64; 9]) -> [f64; 9] {
 	let mut out = [0.0; 9];
 	for r in 0..3 {
 		for c in 0..3 {
-			out[r * 3 + c] = a[r * 3 + 2].mul_add(b[6 + c], a[r * 3 + 1].mul_add(b[3 + c], a[r * 3] * b[c]));
+			out[r * 3 + c] =
+				a[r * 3 + 2].mul_add(b[6 + c], a[r * 3 + 1].mul_add(b[3 + c], a[r * 3] * b[c]));
 		}
 	}
 	out
@@ -563,11 +563,15 @@ struct GlyphSink {
 
 impl ttf_parser::OutlineBuilder for GlyphSink {
 	fn move_to(&mut self, x: f32, y: f32) {
-		self.pb.move_to(x.mul_add(self.s, self.dx), y.mul_add(-self.s, self.dy));
+		self
+			.pb
+			.move_to(x.mul_add(self.s, self.dx), y.mul_add(-self.s, self.dy));
 	}
 
 	fn line_to(&mut self, x: f32, y: f32) {
-		self.pb.line_to(x.mul_add(self.s, self.dx), y.mul_add(-self.s, self.dy));
+		self
+			.pb
+			.line_to(x.mul_add(self.s, self.dx), y.mul_add(-self.s, self.dy));
 	}
 
 	fn quad_to(&mut self, x1: f32, y1: f32, x: f32, y: f32) {
@@ -619,7 +623,11 @@ impl<'a> Raster<'a> {
 			})
 			.min_by_key(|(index, registered)| {
 				(registered.metrics.weight.abs_diff(font.weight), usize::MAX - *index)
-			}).map_or_else(|| slab_fonts::asset(font.class, font.weight).bytes, |(_, registered)| registered.bytes.as_slice());
+			})
+			.map_or_else(
+				|| slab_fonts::asset(font.class, font.weight).bytes,
+				|(_, registered)| registered.bytes.as_slice(),
+			);
 		ttf_parser::Face::parse(bytes, 0).ok()
 	}
 
@@ -802,19 +810,21 @@ impl<'a> Raster<'a> {
 			return;
 		};
 		let (pw, ph) = (surf.pix.width(), surf.pix.height());
-		let mut mask = if let Some(m) = surf.clips.last() { m.clone() } else {
-  				let mut m = Mask::new(pw, ph).unwrap();
-  				m.fill_path(&inner, FillRule::Winding, true, Transform::identity());
-  				surf.pix.draw_pixmap(
-  					(x0 - band).round() as i32,
-  					(y0 - band).round() as i32,
-  					tmp.as_ref(),
-  					&PixmapPaint::default(),
-  					Transform::identity(),
-  					Some(&m),
-  				);
-  				return;
-  			};
+		let mut mask = if let Some(m) = surf.clips.last() {
+			m.clone()
+		} else {
+			let mut m = Mask::new(pw, ph).unwrap();
+			m.fill_path(&inner, FillRule::Winding, true, Transform::identity());
+			surf.pix.draw_pixmap(
+				(x0 - band).round() as i32,
+				(y0 - band).round() as i32,
+				tmp.as_ref(),
+				&PixmapPaint::default(),
+				Transform::identity(),
+				Some(&m),
+			);
+			return;
+		};
 		mask.intersect_path(&inner, FillRule::Winding, true, Transform::identity());
 		surf.pix.draw_pixmap(
 			(x0 - band).round() as i32,
@@ -1539,14 +1549,14 @@ impl<'a> Raster<'a> {
 			return;
 		};
 		let mask = if let Some(m) = surf.clips.last() {
-  				let mut m = m.clone();
-  				m.intersect_path(&path, FillRule::Winding, true, Transform::identity());
-  				m
-  			} else {
-  				let mut m = Mask::new(surf.pix.width(), surf.pix.height()).unwrap();
-  				m.fill_path(&path, FillRule::Winding, true, Transform::identity());
-  				m
-  			};
+			let mut m = m.clone();
+			m.intersect_path(&path, FillRule::Winding, true, Transform::identity());
+			m
+		} else {
+			let mut m = Mask::new(surf.pix.width(), surf.pix.height()).unwrap();
+			m.fill_path(&path, FillRule::Winding, true, Transform::identity());
+			m
+		};
 		let paint = PixmapPaint {
 			opacity: im.opacity as f32,
 			quality: tiny_skia::FilterQuality::Bilinear,

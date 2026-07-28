@@ -10,7 +10,6 @@ use crate::{
 };
 
 /// Builds a solid rectangle operation for cell-rendering tests.
-#[allow(clippy::too_many_arguments)]
 pub const fn solid_rect(
 	x: f64,
 	y: f64,
@@ -420,7 +419,7 @@ pub fn test_wide_grapheme_clusters() {
 	);
 	let doc = slir::doc_new();
 	let mut frame = flatten::frame_new();
-	for text in ["中", "👍", "é", "👍︎", "🇺🇸"] {
+	for text in ["中", "👍", "e\u{301}", "👍︎", "🇺🇸"] {
 		frame.strings.push(text.to_owned());
 	}
 	for (str_ref, baseline) in [(0, 12.0), (1, 28.0), (2, 44.0), (3, 60.0), (4, 76.0)] {
@@ -437,7 +436,9 @@ pub fn test_wide_grapheme_clusters() {
 	);
 	let combining = usize::try_from(2_i32.wrapping_mul(grid.cols)).expect("positive cell index");
 	assert!(
-		ch_at(&grid, 0, 2) == 101 && str_eq(&grid.cl[combining], "é") && ch_at(&grid, 1, 2) == 32,
+		ch_at(&grid, 0, 2) == 101
+			&& str_eq(&grid.cl[combining], "e\u{301}")
+			&& ch_at(&grid, 1, 2) == 32,
 		"combining cluster uses one cell and retains full text"
 	);
 	let text_presentation =
@@ -456,7 +457,7 @@ pub fn test_wide_grapheme_clusters() {
 		"regional-indicator pair uses two cells"
 	);
 	assert!(
-		str_eq(&cells::cells_to_text(&grid, true), "中\n👍\né\n👍︎\n🇺🇸\n"),
+		str_eq(&cells::cells_to_text(&grid, true), "中\n👍\ne\u{301}\n👍︎\n🇺🇸\n"),
 		"serialization emits clusters without continuation sentinels"
 	);
 

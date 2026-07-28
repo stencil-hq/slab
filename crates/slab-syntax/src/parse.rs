@@ -1,6 +1,8 @@
-//! Recursive-descent parser for the slab syntax (SPEC §2), ported from the
-//! 0.5 reference parser plus the 1.0 additions: `params` blocks and the
-//! `export` flag on defs. (`hole`, `act=`, `field=` need no grammar changes.)
+//! Recursive-descent parser for the slab syntax (SPEC §2).
+//!
+//! Ported from the 0.5 reference parser plus the 1.0 additions: `params`
+//! blocks and the `export` flag on defs. (`hole`, `act=`, `field=` need no
+//! grammar changes.)
 
 use crate::{
 	ast::*,
@@ -468,10 +470,11 @@ impl<'d> Parser<'d> {
 		let mut params: Vec<(String, Option<Value>)> = Vec::new();
 		while !self.at(TokKind::Rp) && !self.at(TokKind::Eof) {
 			let pname = self.expect(TokKind::Id, "param name").text;
-			let mut default = None;
-			if self.eat(TokKind::Eq) {
-				default = Some(self.parse_scalar());
-			}
+			let default = if self.eat(TokKind::Eq) {
+				Some(self.parse_scalar())
+			} else {
+				None
+			};
 			params.push((pname, default));
 			if !self.eat(TokKind::Comma) {
 				break;

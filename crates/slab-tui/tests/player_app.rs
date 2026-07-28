@@ -52,7 +52,7 @@ fn player_instance() -> kframe::Instance {
 	inst
 }
 
-/// Center of a Text op by its string (x + measured_w/2, baseline - size/2)
+/// Center of a Text op by its string (x + `measured_w/2`, baseline - size/2)
 /// — inside the button that wraps it, so it is both a pointer target and
 /// a cell coordinate anchor.
 fn text_center(fr: &Frame, s: &str) -> (f64, f64) {
@@ -99,8 +99,8 @@ fn bg_at(fr: &Frame, x: f64, y: f64) -> u32 {
 }
 
 /// Parse an ANSI dump (`--ansi`) into per-cell bg colors: bg[row][col] =
-/// 0xRRGGBB or NO_COLOR for the terminal default. Only truecolor SGR
-/// (38;2 / 48;2) appears in cells_to_text output.
+/// 0xRRGGBB or `NO_COLOR` for the terminal default. Only truecolor SGR
+/// (38;2 / 48;2) appears in `cells_to_text` output.
 const NO_COLOR: u32 = 0xff00_0000;
 fn ansi_bg_grid(dump: &str) -> Vec<Vec<u32>> {
 	let mut grid = Vec::new();
@@ -231,7 +231,7 @@ fn mouse_hover_changes_shuf_cell_bg() {
 }
 
 /// (d) Hover EASE at the kernel level, per the shared proof contract:
-/// dispatch a pointer-move over SHUF, then sample inst_frame at t0,
+/// dispatch a pointer-move over SHUF, then sample `inst_frame` at t0,
 /// t0+70, t0+500. A base-less color transition fades through the target
 /// at alpha 0 (`slab_kernel::motion` CSS-transparent semantics), so the SHUF
 /// rect bg paint (0xAABBGGRR) runs #00222E1B → #BF222E1B → #FF222E1B: three
@@ -285,7 +285,7 @@ fn hover_ease_interpolates_shuf_bg_paint() {
 }
 
 /// (e) Mouse click on the play circle (center from frame geometry) emits
-/// `toggle` — down+up through inst_dispatch, headless.
+/// `toggle` — down+up through `inst_dispatch`, headless.
 #[test]
 fn click_play_circle_emits_toggle() {
 	let mut inst = player_instance();

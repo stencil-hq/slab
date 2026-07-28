@@ -90,7 +90,8 @@ fn path_uri(path: &Path) -> String {
 	let absolute = if path.is_absolute() {
 		lexical_path(path)
 	} else {
-		std::env::current_dir().map_or_else(|_| lexical_path(path), |directory| lexical_path(&directory.join(path)))
+		std::env::current_dir()
+			.map_or_else(|_| lexical_path(path), |directory| lexical_path(&directory.join(path)))
 	};
 	let mut encoded = String::new();
 	for byte in absolute.to_string_lossy().bytes() {
@@ -115,12 +116,13 @@ fn percent_decode(s: &str) -> String {
 	let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
 	let mut i = 0;
 	while i < bytes.len() {
-		if bytes[i] == b'%' && i + 2 < bytes.len() {
-			if let Ok(b) = u8::from_str_radix(&s[i + 1..i + 3], 16) {
-				out.push(b);
-				i += 3;
-				continue;
-			}
+		if bytes[i] == b'%'
+			&& i + 2 < bytes.len()
+			&& let Ok(b) = u8::from_str_radix(&s[i + 1..i + 3], 16)
+		{
+			out.push(b);
+			i += 3;
+			continue;
 		}
 		out.push(bytes[i]);
 		i += 1;
@@ -1582,13 +1584,14 @@ fn complete(ix: &Index, prefix: &str, ctx: &[&'static str]) -> Vec<Value> {
 	}
 
 	// Value position: text after the last bare `=`.
-	if let Some(eq) = pchars.iter().rposition(|&c| c == '=') {
-		if eq > 0 && !matches!(pchars[eq - 1], '<' | '>' | '!') {
-			let before: String = pchars[..eq].iter().collect();
-			if let Some(attr) = trailing_attr(&before) {
-				let valpart: String = pchars[eq + 1..].iter().collect();
-				return value_items(ix, &attr, &valpart, ctx);
-			}
+	if let Some(eq) = pchars.iter().rposition(|&c| c == '=')
+		&& eq > 0
+		&& !matches!(pchars[eq - 1], '<' | '>' | '!')
+	{
+		let before: String = pchars[..eq].iter().collect();
+		if let Some(attr) = trailing_attr(&before) {
+			let valpart: String = pchars[eq + 1..].iter().collect();
+			return value_items(ix, &attr, &valpart, ctx);
 		}
 	}
 

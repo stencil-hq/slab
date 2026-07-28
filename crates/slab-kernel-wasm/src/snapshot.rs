@@ -451,10 +451,12 @@ fn item_set_metadata(instance: &Instance, index: usize, node: u32) -> (Option<f6
 	}
 	// Item roots are the outermost synthetic entries under their each: the
 	// scene parent belongs to a different (or no) each instance.
-	let parent = instance.sc.parent[index];
+	let parent = instance.sc.entries[index].parent_ix;
 	let parent_each = usize::try_from(parent)
 		.ok()
-		.map_or(slir::NONE, |parent_index| list::each_of(lists, &instance.doc, instance.sc.node[parent_index]));
+		.map_or(slir::NONE, |parent_index| {
+			list::each_of(lists, &instance.doc, instance.sc.entries[parent_index].node)
+		});
 	if parent_each == each {
 		return (None, None);
 	}
@@ -474,10 +476,11 @@ fn item_set_metadata(instance: &Instance, index: usize, node: u32) -> (Option<f6
 pub fn scene_json(instance: &Instance) -> String {
 	let scene = &instance.sc;
 	let nodes: Vec<_> = scene
-		.node
+		.entries
 		.iter()
 		.enumerate()
-		.map(|(index, &node)| {
+		.map(|(index, entry)| {
+			let node = entry.node;
 			let base = list::base(&instance.st.lists, &instance.doc, node);
 			let src_line = if base == slir::NONE {
 				0
@@ -485,7 +488,7 @@ pub fn scene_json(instance: &Instance) -> String {
 				instance.doc.node_line[index_u32(base)]
 			};
 			let (item_pos, item_size) =
-				if scene.sem[index].pos_in_set.is_none() && scene.sem[index].set_size.is_none() {
+				if entry.sem.pos_in_set.is_none() && entry.sem.set_size.is_none() {
 					item_set_metadata(instance, index, node)
 				} else {
 					(None, None)
@@ -493,48 +496,48 @@ pub fn scene_json(instance: &Instance) -> String {
 			SceneSnapshot {
 				key: scene::key_of(&instance.doc, &instance.st.lists, node),
 				node,
-				parent: scene.parent[index],
-				kind: scene.kind[index],
-				x: scene.x[index],
-				y: scene.y[index],
-				w: scene.w[index],
-				h: scene.h[index],
-				radius: scene.radius[index],
-				rotation: scene.rot[index],
-				cx: scene.cx[index],
-				cy: scene.cy[index],
-				flags: scene.flags[index],
-				content_main: scene.content_main[index],
-				scroll_off: scene.scroll_off[index],
-				is_row: scene.is_row[index],
-				scroll: scene.flags[index] & slir::F_SCROLL != 0,
+				parent: entry.parent_ix,
+				kind: entry.kind,
+				x: entry.x,
+				y: entry.y,
+				w: entry.w,
+				h: entry.h,
+				radius: entry.radius,
+				rotation: entry.rot_deg,
+				cx: entry.rot_cx,
+				cy: entry.rot_cy,
+				flags: entry.flags,
+				content_main: entry.content_main,
+				scroll_off: entry.scroll_off,
+				is_row: entry.is_row,
+				scroll: entry.flags & slir::F_SCROLL != 0,
 				src_line,
-				scroll_cross: scene.scroll_cross[index],
-				content_cross: scene.content_cross[index],
-				role: scene_string_at(&instance.st.scene_strs, scene.sem[index].role),
-				label: scene_string_at(&instance.st.scene_strs, scene.sem[index].label),
-				desc: scene_string_at(&instance.st.scene_strs, scene.sem[index].desc),
-				checked: checked_snapshot(scene.sem[index].checked),
-				expanded: optional_bool(scene.sem[index].expanded),
-				selected: optional_bool(scene.sem[index].selected),
+				scroll_cross: entry.scroll_cross,
+				content_cross: entry.content_cross,
+				role: scene_string_at(&instance.st.scene_strs, entry.sem.role),
+				label: scene_string_at(&instance.st.scene_strs, entry.sem.label),
+				desc: scene_string_at(&instance.st.scene_strs, entry.sem.desc),
+				checked: checked_snapshot(entry.sem.checked),
+				expanded: optional_bool(entry.sem.expanded),
+				selected: optional_bool(entry.sem.selected),
 				active_descendant: scene_string_at(
 					&instance.st.scene_strs,
-					scene.sem[index].active_descendant,
+					entry.sem.active_descendant,
 				),
-				controls: scene_string_at(&instance.st.scene_strs, scene.sem[index].controls),
-				value_now: scene.sem[index].value_now,
-				value_min: scene.sem[index].value_min,
-				value_max: scene.sem[index].value_max,
-				value_text: scene_string_at(&instance.st.scene_strs, scene.sem[index].value_text),
-				modal: optional_bool(scene.sem[index].modal),
-				live: live_snapshot(scene.sem[index].live),
-				live_atomic: optional_bool(scene.sem[index].live_atomic),
-				level: scene.sem[index].level,
-				pos_in_set: scene.sem[index].pos_in_set.or(item_pos),
-				set_size: scene.sem[index].set_size.or(item_size),
-				disabled: scene.disabled[index],
-				focused: scene.focused[index],
-				editable: scene.editable[index],
+				controls: scene_string_at(&instance.st.scene_strs, entry.sem.controls),
+				value_now: entry.sem.value_now,
+				value_min: entry.sem.value_min,
+				value_max: entry.sem.value_max,
+				value_text: scene_string_at(&instance.st.scene_strs, entry.sem.value_text),
+				modal: optional_bool(entry.sem.modal),
+				live: live_snapshot(entry.sem.live),
+				live_atomic: optional_bool(entry.sem.live_atomic),
+				level: entry.sem.level,
+				pos_in_set: entry.sem.pos_in_set.or(item_pos),
+				set_size: entry.sem.set_size.or(item_size),
+				disabled: entry.disabled,
+				focused: entry.focused,
+				editable: entry.editable,
 			}
 		})
 		.collect();

@@ -226,7 +226,6 @@ pub fn grad_sample(doc: &Doc, gradient: i32, t: f64) -> u32 {
 /// and normalize the gradient line over the box projection; radial gradients
 /// use the farthest corner; conic gradients sweep clockwise from up around
 /// the box center. An alpha of zero means there is nothing to paint.
-#[allow(clippy::too_many_arguments)]
 pub fn paint_rgba_at(
 	doc: &Doc,
 	kind: u32,
@@ -263,7 +262,8 @@ pub fn paint_rgba_at(
 		if line_length <= 0.0 {
 			return doc.grad_stop_rgba[index(doc.grad_stop_off[gradient_index])];
 		}
-		(py - (center_y - dy * line_length / 2.0)).mul_add(dy, (px - (center_x - dx * line_length / 2.0)) * dx)
+		(py - (center_y - dy * line_length / 2.0))
+			.mul_add(dy, (px - (center_x - dx * line_length / 2.0)) * dx)
 			/ line_length
 	} else if doc.grad_kind[gradient_index] == 2 {
 		let angle = (px - center_x).atan2(center_y - py).to_degrees();
@@ -273,8 +273,7 @@ pub fn paint_rgba_at(
 		if farthest_corner <= 0.0 {
 			return doc.grad_stop_rgba[index(doc.grad_stop_off[gradient_index])];
 		}
-		(px - center_x).hypot(py - center_y)
-			/ farthest_corner
+		(px - center_x).hypot(py - center_y) / farthest_corner
 	};
 	grad_sample(doc, gradient, t.clamp(0.0, 1.0))
 }
@@ -970,7 +969,6 @@ pub fn path_polylines(
 	path_polylines_data(verbs, coords, dx, dy, xs, ys, starts);
 }
 
-#[allow(clippy::too_many_arguments)]
 fn path_polylines_data<T: Copy + Into<u32>>(
 	verbs: &[T],
 	coords: &[f64],
@@ -1017,8 +1015,20 @@ fn path_polylines_data<T: Copy + Into<u32>>(
 					let u = 1.0 - t;
 					let (x, y) = if verb == 2 {
 						(
-							(t * t * t).mul_add(end_x, (3.0 * u * t * t).mul_add(control_x2, (3.0 * u * u * t).mul_add(control_x1, u * u * u * x0))),
-							(t * t * t).mul_add(end_y, (3.0 * u * t * t).mul_add(control_y2, (3.0 * u * u * t).mul_add(control_y1, u * u * u * y0))),
+							(t * t * t).mul_add(
+								end_x,
+								(3.0 * u * t * t).mul_add(
+									control_x2,
+									(3.0 * u * u * t).mul_add(control_x1, u * u * u * x0),
+								),
+							),
+							(t * t * t).mul_add(
+								end_y,
+								(3.0 * u * t * t).mul_add(
+									control_y2,
+									(3.0 * u * u * t).mul_add(control_y1, u * u * u * y0),
+								),
+							),
 						)
 					} else {
 						(
@@ -1682,10 +1692,9 @@ fn overlay_caret(inst: &frame::Instance, fr: &flatten::Frame, grid: &mut CellGri
 			}
 		}
 	}
-	let (col, row) = cell.unwrap_or((
-		cell_col(effects.caret_x),
-		cell_row(effects.caret_y + effects.caret_h / 2.0 - CH / 2.0),
-	));
+	let (col, row) = cell.unwrap_or_else(|| {
+		(cell_col(effects.caret_x), cell_row(effects.caret_y + effects.caret_h / 2.0 - CH / 2.0))
+	});
 	if col < 0 || row < 0 || col >= grid.cols || row >= grid.rows {
 		return;
 	}

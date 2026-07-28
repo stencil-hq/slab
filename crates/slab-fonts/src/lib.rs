@@ -121,7 +121,7 @@ pub fn parse_metrics(bytes: &[u8]) -> Option<RegisteredMetrics> {
 			{
 				cmap
 					.entry(cp)
-					.or_insert((gid.0, face.glyph_hor_advance(gid).unwrap_or(default_advance)));
+					.or_insert_with(|| (gid.0, face.glyph_hor_advance(gid).unwrap_or(default_advance)));
 			}
 		});
 	}

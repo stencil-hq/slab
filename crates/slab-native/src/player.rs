@@ -1,4 +1,5 @@
 //! `slab-native --demo player`: the 00-player music card in a winit window.
+//!
 //! `PlayerCore` is the windowless app: main doc + one precompiled queue
 //! child instance per playlist rotation (the playing marker baked in),
 //! pointer routing into the hole (coordinates translated, hover leave
@@ -155,12 +156,12 @@ struct PlayerState {
 }
 
 impl PlayerState {
-	fn new() -> PlayerState {
+	const fn new() -> Self {
 		// Match the document's param defaults: 2:37 into track 1, playing.
-		PlayerState { idx: 0, pos_s: 157.0, playing: true }
+		Self { idx: 0, pos_s: 157.0, playing: true }
 	}
 
-	fn track(&self) -> &'static TrackDef {
+	const fn track(&self) -> &'static TrackDef {
 		&PLAYLIST[self.idx]
 	}
 
@@ -219,7 +220,7 @@ pub struct PlayerCore {
 }
 
 impl PlayerCore {
-	pub fn new() -> Result<PlayerCore, String> {
+	pub fn new() -> Result<Self, String> {
 		let mut doc = gen_player::Doc::new();
 		if !doc.ok() {
 			return Err(format!("embedded SLIR failed to decode: {:?}", doc.inst.doc.errs));
@@ -236,7 +237,7 @@ impl PlayerCore {
 		let natural = queues[state.idx].natural();
 		kframe::inst_set_hole_size(&mut doc.inst, 0, natural.0, natural.1);
 		state.apply(&mut doc);
-		Ok(PlayerCore {
+		Ok(Self {
 			doc,
 			queues,
 			queue_bytes,
@@ -258,15 +259,15 @@ impl PlayerCore {
 		self.doc.set_env(vw, vh, dark, coarse);
 	}
 
-	pub fn track_index(&self) -> usize {
+	pub const fn track_index(&self) -> usize {
 		self.state.idx
 	}
 
-	pub fn playing(&self) -> bool {
+	pub const fn playing(&self) -> bool {
 		self.state.playing
 	}
 
-	pub fn title(&self) -> &'static str {
+	pub const fn title(&self) -> &'static str {
 		self.state.track().title
 	}
 
@@ -349,8 +350,8 @@ impl PlayerCore {
 			return None;
 		}
 		let ix = ix as usize;
-		let sc = &q.inst.sc;
-		Some((node, (sc.x[ix], sc.y[ix], sc.w[ix], sc.h[ix])))
+		let entry = &q.inst.sc.entries[ix];
+		Some((node, (entry.x, entry.y, entry.w, entry.h)))
 	}
 
 	/// Route a pointer-ish event to the queue hole under it or main.
@@ -681,9 +682,9 @@ struct App {
 }
 
 impl App {
-	fn new(opts: Opts, a11y_proxy: EventLoopProxy<a11y::Event>) -> Result<App, String> {
+	fn new(opts: Opts, a11y_proxy: EventLoopProxy<a11y::Event>) -> Result<Self, String> {
 		let core = player_core(opts.theme.as_deref())?;
-		Ok(App {
+		Ok(Self {
 			exit_deadline: opts
 				.exit_after_ms
 				.map(|ms| Instant::now() + std::time::Duration::from_millis(ms)),
@@ -926,7 +927,7 @@ impl App {
 		}
 	}
 
-	fn base_event(&self, etype: u32) -> Event {
+	const fn base_event(&self, etype: u32) -> Event {
 		Event {
 			etype,
 			x: self.cursor.0,

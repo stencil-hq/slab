@@ -316,9 +316,15 @@ pub fn test_conditional_binder_tab_exclusion() {
 		let st = gated_style(&doc, enabled);
 		let mut retained = scene::scene_new();
 
-		retained.node.push(0);
-		retained.flags.push(style::eff_flags(&doc, &st, 0));
-		retained.disabled.push(false);
+		retained.entries.push(crate::flatten::SceneNode {
+			node: 0,
+			parent_ix: -1,
+			w: 100.0,
+			h: 100.0,
+			flags: style::eff_flags(&doc, &st, 0),
+			src_line: 1,
+			..Default::default()
+		});
 		retained.authored_order.push(0);
 		let mut focusable = Vec::new();
 		scene::focusables(&retained, &mut focusable);

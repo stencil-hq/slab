@@ -126,10 +126,22 @@ pub fn lerp_v(d: &Doc, st: &mut St, a: &V, b: &V, f: f64) -> V {
 		return b.clone();
 	}
 	if is_numlike(a.tag) && is_numlike(b.tag) {
-		return V { tag: slir::T_NUM, num: (b.num - a.num).mul_add(f, a.num), h: 0, off: 0, ln: 0 };
+		return V {
+			tag: slir::T_NUM,
+			num: (b.num - a.num).mul_add(f, a.num),
+			h:   0,
+			off: 0,
+			ln:  0,
+		};
 	}
 	if is_pctlike(a.tag) && is_pctlike(b.tag) {
-		return V { tag: slir::T_PCT, num: (b.num - a.num).mul_add(f, a.num), h: 0, off: 0, ln: 0 };
+		return V {
+			tag: slir::T_PCT,
+			num: (b.num - a.num).mul_add(f, a.num),
+			h:   0,
+			off: 0,
+			ln:  0,
+		};
 	}
 	if is_colorlike(a.tag) && is_colorlike(b.tag) {
 		return V { tag: slir::T_COLOR, num: 0.0, h: lerp_rgba(a.h, b.h, f), off: 0, ln: 0 };
@@ -276,23 +288,24 @@ pub struct MSt {
 /// Sentinel flip time indicating that a patch has never flipped.
 pub const NEVER: f64 = -1.0e30;
 
-#[cfg(test)]
 thread_local! {
 	 static SYNTHETIC_WORK: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 #[inline]
-const fn note_synthetic_work() {
+#[allow(
+	clippy::missing_const_for_fn,
+	reason = "thread_local work tracking cannot be called in const fn"
+)]
+fn note_synthetic_work() {
 	#[cfg(test)]
 	SYNTHETIC_WORK.with(|work| work.set(work.get().saturating_add(1)));
 }
 
-#[cfg(test)]
 pub fn reset_synthetic_work() {
 	SYNTHETIC_WORK.with(|work| work.set(0));
 }
 
-#[cfg(test)]
 pub fn synthetic_work() -> usize {
 	SYNTHETIC_WORK.with(std::cell::Cell::get)
 }

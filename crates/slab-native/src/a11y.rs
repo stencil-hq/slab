@@ -42,19 +42,19 @@ pub struct SceneLayer<'a> {
 
 impl<'a> SceneLayer<'a> {
 	/// Creates one accessibility layer from a settled kernel frame.
-	pub fn new(document: usize, instance: &'a Instance, frame: &'a Frame) -> Self {
+	pub const fn new(document: usize, instance: &'a Instance, frame: &'a Frame) -> Self {
 		Self { document, instance, frame, offset_x: 0.0, offset_y: 0.0, mount: None }
 	}
 
 	/// Translates this layer inside the host window.
-	pub fn translated(mut self, x: f64, y: f64) -> Self {
+	pub const fn translated(mut self, x: f64, y: f64) -> Self {
 		self.offset_x = x;
 		self.offset_y = y;
 		self
 	}
 
 	/// Mounts this layer below a node in another document layer.
-	pub fn mounted(mut self, document: usize, node: u32) -> Self {
+	pub const fn mounted(mut self, document: usize, node: u32) -> Self {
 		self.mount = Some(MountPoint { document, node });
 		self
 	}
@@ -98,7 +98,7 @@ pub enum ActionResult {
 
 impl RoutedAction {
 	/// Whether this action moves keyboard focus between mounted documents.
-	pub fn moves_focus(&self) -> bool {
+	pub const fn moves_focus(&self) -> bool {
 		matches!(
 			self.kind,
 			RoutedActionKind::Focus | RoutedActionKind::Default | RoutedActionKind::DividerKey(_)
@@ -355,7 +355,9 @@ impl Bridge {
 					node.set_children(node_children);
 				}
 
-				if !key.is_empty() {
+				if key.is_empty() {
+					let _ = apply_scroll_properties(&mut node, source, false);
+				} else {
 					node.set_author_id(key.clone());
 					if focusable {
 						node.add_action(Action::Focus);
@@ -387,8 +389,6 @@ impl Bridge {
 						divider_row,
 						scroll,
 					});
-				} else {
-					let _ = apply_scroll_properties(&mut node, source, false);
 				}
 
 				let key_ids = &keys_by_layer[layer_index];
@@ -411,7 +411,7 @@ impl Bridge {
 		self.current = Snapshot { valid: true, nodes, routes, focus };
 	}
 
-	fn source(&self) -> Option<&Snapshot> {
+	const fn source(&self) -> Option<&Snapshot> {
 		if self.current.valid {
 			Some(&self.current)
 		} else if self.published.valid {
@@ -681,8 +681,8 @@ fn transformed_bounds(
 			for (x, y) in &mut corners {
 				let dx = *x - ancestor.rot_cx;
 				let dy = *y - ancestor.rot_cy;
-				*x = ancestor.rot_cx + dx * cosine - dy * sine;
-				*y = ancestor.rot_cy + dx * sine + dy * cosine;
+				*x = dy.mul_add(-sine, dx.mul_add(cosine, ancestor.rot_cx));
+				*y = dy.mul_add(cosine, dx.mul_add(sine, ancestor.rot_cy));
 			}
 		}
 		current = usize::try_from(ancestor.parent_ix)
@@ -887,27 +887,14 @@ mod tests {
 		SceneNode {
 			node,
 			parent_ix,
-			authored_order: 0,
 			kind,
 			x: f64::from(node) * 10.0,
 			y: 4.0,
 			w: 40.0,
 			h: 20.0,
-			radius: 0.0,
-			rot_deg: 0.0,
-			rot_cx: 0.0,
-			rot_cy: 0.0,
 			flags,
-			content_main: 0.0,
-			scroll_off: 0.0,
-			scroll_cross: 0.0,
-			content_cross: 0.0,
-			is_row: false,
 			src_line: 1,
-			sem: Default::default(),
-			disabled: false,
-			focused: false,
-			editable: false,
+			..Default::default()
 		}
 	}
 

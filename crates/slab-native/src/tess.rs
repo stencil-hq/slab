@@ -126,7 +126,7 @@ fn upload(device: &wgpu::Device, buf: &VertexBuffers<[f32; 2], u32>, label: &str
 fn squircle_lyon_path(w: f64, h: f64, r: f64, smooth: f64, dx: f64, dy: f64) -> Option<Path> {
 	let (verbs, mut coords) = squircle_path(w, h, r, smooth);
 	if dx != 0.0 || dy != 0.0 {
-		for pair in coords.chunks_exact_mut(2) {
+		for pair in coords.as_chunks_mut::<2>().0 {
 			pair[0] += dx;
 			pair[1] += dy;
 		}
@@ -324,7 +324,7 @@ struct DashState {
 }
 
 impl DashState {
-	fn new(on: f32, off: f32) -> Self {
+	const fn new(on: f32, off: f32) -> Self {
 		Self { on, off, paint: true, remaining: on, open: false }
 	}
 

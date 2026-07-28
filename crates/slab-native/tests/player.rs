@@ -15,7 +15,7 @@ use slab_native::{
 	renderer::{LayerInput, Renderer},
 };
 
-fn ev(etype: u32, x: f64, y: f64) -> Event {
+const fn ev(etype: u32, x: f64, y: f64) -> Event {
 	Event {
 		etype,
 		x,
@@ -63,7 +63,7 @@ fn toggle_click_at_play_circle_center() {
 }
 
 /// Effective opacity of the transport glyph text op (`|>` or `||`): the op's
-/// own opacity times every enclosing GroupPush (the kernel lowers a `when`
+/// own opacity times every enclosing `GroupPush` (the kernel lowers a `when`
 /// opacity patch to a group around the node).
 fn glyph_opacity(fr: &Frame, glyph: &str) -> f64 {
 	let mut stack: Vec<f64> = Vec::new();
@@ -187,7 +187,7 @@ fn text_present(fr: &Frame, s: &str) -> bool {
 	})
 }
 
-/// The bg paint of node's rect op: (bg_kind, bg). None = no rect painted.
+/// The bg paint of node's rect op: (`bg_kind`, bg). None = no rect painted.
 fn rect_bg(fr: &Frame, node: u32) -> Option<(u32, u32)> {
 	fr.ops.iter().find_map(|op| match op {
 		FrameOp::Rect(r) if r.node == node => Some((r.bg_kind, r.bg)),
@@ -203,7 +203,7 @@ const MOSS: u32 = 0xff222e1b;
 /// strictly between the endpoints on every changing channel. Hover-enter
 /// from no base bg fades through the target color at alpha 0 (CSS
 /// `transparent` semantics), so the alpha channel carries the ramp;
-/// hover->pressed is a full OKLab color lerp.
+/// hover->pressed is a full `OKLab` color lerp.
 fn assert_eases(c0: u32, c1: u32, c2: u32) {
 	assert!(
 		c0 != c1 && c1 != c2 && c0 != c2,
@@ -298,7 +298,7 @@ fn queue_selection_preserves_keyed_focus_and_keyboard_owner() {
 
 /// Hovering SHUF eases its bg to moss over 140ms (transparent-fade in):
 /// three sampled values at flip t0 / +70 / +500, middle strictly between;
-/// pressing it then eases moss -> #0B1A11 the same way (OKLab).
+/// pressing it then eases moss -> #0B1A11 the same way (`OKLab`).
 #[test]
 fn shuffle_hover_and_press_ease_bg() {
 	let mut doc = solved_doc();
@@ -310,10 +310,8 @@ fn shuffle_hover_and_press_ease_bg() {
 	);
 	let ix = slab_kernel::scene::index_of(&doc.inst.sc, node);
 	assert!(ix >= 0, "no #shuffle in scene");
-	let (x, y) = (
-		doc.inst.sc.x[ix as usize] + doc.inst.sc.w[ix as usize] / 2.0,
-		doc.inst.sc.y[ix as usize] + doc.inst.sc.h[ix as usize] / 2.0,
-	);
+	let entry = &doc.inst.sc.entries[ix as usize];
+	let (x, y) = (entry.x + entry.w / 2.0, entry.y + entry.h / 2.0);
 
 	// hover-enter: the first frame after the flip anchors the tween at
 	// t0=1000; the bg fades in from moss@alpha0.
@@ -395,8 +393,8 @@ fn queue_row_hover_and_press_ease_bg() {
 	);
 }
 
-/// ArrowRight x3 walks the focus ring (shuffle -> prev -> play) and Enter
-/// activates: Signal::Toggle, all through kernel dispatch.
+/// `ArrowRight` x3 walks the focus ring (shuffle -> prev -> play) and Enter
+/// activates: `Signal::Toggle`, all through kernel dispatch.
 #[test]
 fn arrow_ring_enter_toggles() {
 	let mut doc = solved_doc();

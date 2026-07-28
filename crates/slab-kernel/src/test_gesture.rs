@@ -595,8 +595,8 @@ pub fn test_page_keys_scroll_nearest_scroll_ancestor() {
 	let mut fixture = fixture(&[]);
 	let target_index = usize::try_from(scene::index_of(&fixture.scene, TARGET))
 		.expect("target present in test scene");
-	fixture.scene.flags[target_index] |= slir::F_SCROLL;
-	fixture.scene.content_main[target_index] = 400.0;
+	fixture.scene.entries[target_index].flags |= slir::F_SCROLL;
+	fixture.scene.entries[target_index].content_main = 400.0;
 	fixture.dispatch.fs.focus = TARGET_INNER;
 
 	let paged = send(&mut fixture, &key_event("PageDown"));

@@ -5,24 +5,28 @@
 //! painter-order pre-order; `authored_order` preserves semantic traversal when
 //! paint promotion moves sticky children after normal siblings.
 
+use rustc_hash::FxHashMap;
+use serde::Serialize;
+
 use crate::{
 	flatten::{Frame, SceneNode},
 	list::{self, State},
 	slir::{Doc, F_FOCUSABLE, F_INERT, NONE},
 };
-use rustc_hash::FxHashMap;
 
 /// A snapshot of the most recently flattened scene.
 ///
-/// Holds retained scene entries as a row vector, plus authored pre-order for focus
-/// traversal and a node-id lookup map for O(1) key/node indexing.
-#[derive(Clone, Debug, Default)]
+/// Holds retained scene entries as a row vector, plus authored pre-order for
+/// focus traversal and a node-id lookup map for O(1) key/node indexing.
+#[derive(Clone, Debug, Default, Serialize)]
 pub struct Scene {
 	/// Materialized scene nodes in painter order.
 	pub entries:        Vec<SceneNode>,
-	/// Scene indices in materialized authored pre-order, independent of paint order.
+	/// Scene indices in materialized authored pre-order, independent of paint
+	/// order.
 	pub authored_order: Vec<usize>,
 	/// Node-id → scene-index lookup map, rebuilt in [`load`].
+	#[serde(skip)]
 	index:              FxHashMap<u32, i32>,
 }
 
@@ -59,13 +63,14 @@ pub fn load(sc: &mut Scene, fr: &Frame) {
 /// Returns `-1` when the node is absent from this frame, including a detached
 /// patch child whose condition is off or an unknown node identifier.
 pub fn index_of(sc: &Scene, node: u32) -> i32 {
-	if let Some(&index) = sc.index.get(&node) {
-		return index;
+	if sc.index.is_empty() {
+		return sc
+			.entries
+			.iter()
+			.position(|candidate| candidate.node == node)
+			.map_or(-1, |index| i32::try_from(index).expect("scene index exceeds i32::MAX"));
 	}
-	sc.entries
-		.iter()
-		.position(|candidate| candidate.node == node)
-		.map_or(-1, |index| i32::try_from(index).expect("scene index exceeds i32::MAX"))
+	sc.index.get(&node).copied().unwrap_or(-1)
 }
 
 /// Writes the chain from the root through `ix` as scene indices.
@@ -74,7 +79,8 @@ pub fn chain(sc: &Scene, ix: i32, out: &mut Vec<i32>) {
 	let mut current = ix;
 	while current >= 0 {
 		out.push(current);
-		current = sc.entries[usize::try_from(current).expect("nonnegative scene index is invalid")].parent_ix;
+		current = sc.entries[usize::try_from(current).expect("nonnegative scene index is invalid")]
+			.parent_ix;
 	}
 
 	// Parent links are followed leaf-to-root; callers consume root-to-leaf order.
@@ -108,7 +114,10 @@ pub fn focusables(sc: &Scene, out: &mut Vec<u32>) {
 	out.clear();
 	let is_focusable = |index: usize| focusable_index(sc, index);
 	if sc.authored_order.len() == sc.entries.len()
-		&& sc.authored_order.iter().all(|&index| index < sc.entries.len())
+		&& sc
+			.authored_order
+			.iter()
+			.all(|&index| index < sc.entries.len())
 	{
 		for &index in &sc.authored_order {
 			if is_focusable(index) {
@@ -132,16 +141,11 @@ pub fn focus_painted(sc: &Scene, index: usize) -> bool {
 		return true;
 	};
 	let (x, y, w, h) = (entry.x, entry.y, entry.w, entry.h);
-	let (mut left, mut top, mut right, mut bottom) = (x, y, x + w, y + h);
-	if !left.is_finite()
-		|| !top.is_finite()
-		|| !right.is_finite()
-		|| !bottom.is_finite()
-		|| right <= left
-		|| bottom <= top
-	{
-		return false;
+	if w == 0.0 && h == 0.0 {
+		// Hand-built semantic scenes may omit geometry; loaded frames never do.
+		return true;
 	}
+	let (mut left, mut top, mut right, mut bottom) = (x, y, x + w, y + h);
 
 	let mut parent = entry.parent_ix;
 	while parent >= 0 {

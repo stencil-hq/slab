@@ -58,7 +58,7 @@ fn server() -> (Server, Vec<Value>) {
 fn req(srv: &mut Server, method: &str, params: Value) -> Value {
 	let out = srv.handle(&json!({"jsonrpc": "2.0", "id": 1, "method": method, "params": params}));
 	assert!(!out.is_empty(), "no response for {method}");
-	assert_eq!(out[0]["id"], json!(1), "{:?}", out);
+	assert_eq!(out[0]["id"], json!(1), "{out:?}");
 	assert!(out[0].get("error").is_none(), "{:?}", out[0]);
 	out[0]["result"].clone()
 }

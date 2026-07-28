@@ -134,9 +134,7 @@ fn authored_ranks(sc: &Scene) -> Vec<u32> {
 	let mut ranks = (0..len)
 		.map(|index| u32::try_from(index).expect("scene exceeds u32::MAX entries"))
 		.collect::<Vec<u32>>();
-	if sc.authored_order.len() == len
-		&& sc.authored_order.iter().all(|&index| index < len)
-	{
+	if sc.authored_order.len() == len && sc.authored_order.iter().all(|&index| index < len) {
 		for (position, &index) in sc.authored_order.iter().enumerate() {
 			ranks[index] = u32::try_from(position).expect("scene exceeds u32::MAX entries");
 		}

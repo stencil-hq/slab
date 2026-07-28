@@ -15,7 +15,7 @@ pub fn list_doc() -> slir::Doc {
 	let mut d = slir::doc_new();
 	d.ok = true;
 	d.strs.extend([
-		String::new(),         // 0
+		String::new(),     // 0
 		"items".into(),    // 1
 		"label".into(),    // 2
 		"shown".into(),    // 3
@@ -181,9 +181,14 @@ pub fn test_list_prop_patch_state_isolation_focus_and_content() {
 	style::children(&d, &mut st, first, &mut kids);
 	assert_eq!(style::content_str(&d, &st, kids[0]), "A", "PROP_REF content resolves item value");
 	let mut sc = scene::scene_new();
-	sc.node.extend([first, second]);
-	sc.flags
-		.extend([style::eff_flags(&d, &st, first), style::eff_flags(&d, &st, second)]);
+	for &n in &[first, second] {
+		sc.entries.push(crate::flatten::SceneNode {
+			node: n,
+			parent_ix: -1,
+			flags: style::eff_flags(&d, &st, n),
+			..Default::default()
+		});
+	}
 	let mut focus = Vec::new();
 	scene::focusables(&sc, &mut focus);
 	assert_eq!(focus, [second], "focus order follows item order and inertness");
@@ -595,8 +600,14 @@ pub fn test_virtual_list_window_extent_identity_and_focus() {
 		list::virtual_metrics(&d, &st.lists, 1).expect("virtual metrics");
 	assert_eq!((extent * f64::from(len), start, end), (200_000.0, 46, 59));
 	let mut sc = scene::scene_new();
-	sc.node.extend(moved.iter().copied());
-	sc.flags.resize(moved.len(), slir::F_FOCUSABLE);
+	for &node in &moved {
+		sc.entries.push(crate::flatten::SceneNode {
+			node,
+			parent_ix: -1,
+			flags: slir::F_FOCUSABLE,
+			..Default::default()
+		});
+	}
 	let mut focusable = Vec::new();
 	scene::focusables(&sc, &mut focusable);
 	assert_eq!(focusable, moved, "unmaterialized identities are not tabbable");
@@ -747,13 +758,13 @@ pub fn test_virtual_list_frame_settle_reveal_and_op_bound() {
 		scene::is_focusable(&inst.sc, focused_item),
 		"materialized focus target is ineligible: node={focused_item} scene={focused_scene} \
 		 flags={} disabled={} painted={} rect=({},{},{},{})",
-		inst.sc.flags[focused_scene_index],
-		inst.sc.disabled[focused_scene_index],
+		inst.sc.entries[focused_scene_index].flags,
+		inst.sc.entries[focused_scene_index].disabled,
 		scene::focus_painted(&inst.sc, focused_scene_index),
-		inst.sc.x[focused_scene_index],
-		inst.sc.y[focused_scene_index],
-		inst.sc.w[focused_scene_index],
-		inst.sc.h[focused_scene_index]
+		inst.sc.entries[focused_scene_index].x,
+		inst.sc.entries[focused_scene_index].y,
+		inst.sc.entries[focused_scene_index].w,
+		inst.sc.entries[focused_scene_index].h
 	);
 	assert_eq!(
 		scene::key_of(&inst.doc, &inst.st.lists, frame::inst_focus(&inst)),

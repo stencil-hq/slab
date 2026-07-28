@@ -9,6 +9,8 @@
 
 use std::borrow::Cow;
 
+use serde::Serialize;
+
 use crate::{
 	edit::{self, EditState},
 	focus::{self, FSt},
@@ -114,7 +116,7 @@ pub const CUR_ROW_RESIZE: u32 = 4;
 /// `key` contains the host's named key, such as `"Tab"`, `"Enter"`,
 /// `"ArrowLeft"`, `"Backspace"`, or `"a"`; host key names are not document
 /// string-pool references.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub struct Event {
 	/// One of the `E_*` event type codes.
 	pub etype:  u32,
@@ -139,7 +141,7 @@ pub struct Event {
 }
 
 /// Metadata attached to every emitted signal.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct SigMeta {
 	/// Document-space pointer x, or `-1.0` for keyboard-originated signals.
 	pub x:           f64,
@@ -178,7 +180,7 @@ pub struct SigMeta {
 }
 
 /// One scroll offset changed by a dispatch.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct ScrollChange {
 	pub key:  String,
 	/// `0` is main and `1` is cross.
@@ -187,7 +189,7 @@ pub struct ScrollChange {
 }
 
 /// Host-visible consequences of dispatching an [`Event`].
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
 pub struct Effects {
 	/// Whether the next frame must re-solve.
 	pub repaint:   bool,
@@ -612,7 +614,10 @@ pub fn record_scroll(
 }
 
 /// Clamps one scene entry's scroll offset to its selected content extent.
-#[allow(clippy::manual_clamp)] // `f64::clamp` propagates NaN; min/max preserve kernel semantics.
+#[allow(
+	clippy::manual_clamp,
+	reason = "f64::clamp propagates NaN; min/max preserve kernel semantics"
+)]
 pub fn clamp_scroll_axis(sc: &Scene, ix: i32, axis: u32, off: f64) -> f64 {
 	let ix = usize::try_from(ix).expect("negative scene index");
 	let entry = &sc.entries[ix];
@@ -628,7 +633,6 @@ pub fn clamp_scroll_axis(sc: &Scene, ix: i32, axis: u32, off: f64) -> f64 {
 pub fn clamp_scroll(sc: &Scene, ix: i32, off: f64) -> f64 {
 	clamp_scroll_axis(sc, ix, 0, off)
 }
-#[allow(clippy::too_many_arguments)]
 fn wheel_axis(
 	d: &Doc,
 	st: &mut St,
@@ -654,16 +658,17 @@ fn wheel_axis(
 	let index = usize::try_from(scene_index).expect("negative scene index");
 	let entry = &sc.entries[index];
 	let node = entry.node;
+	let current = style::scroll_get_axis(st, node, axis);
 	let next = clamp_scroll_axis(sc, scene_index, axis, current + delta);
 	record_scroll(d, st, node, axis, next, eff);
 }
 
 /// Routes main-axis navigation keys to a focused scroll node.
 ///
-/// Arrows step 40u, or 200u with Shift held (fast scroll). `PageUp`, `PageDown`,
-/// Home, and End are handled by [`page_scroll_key`] against the nearest scroll
-/// ancestor instead. `false` leaves the key available to activation, editing,
-/// or focus-ring navigation.
+/// Arrows step 40u, or 200u with Shift held (fast scroll). `PageUp`,
+/// `PageDown`, Home, and End are handled by [`page_scroll_key`] against the
+/// nearest scroll ancestor instead. `false` leaves the key available to
+/// activation, editing, or focus-ring navigation.
 pub fn scroll_key(
 	d: &Doc,
 	st: &mut St,
@@ -698,10 +703,10 @@ pub fn scroll_key(
 
 /// Routes page-navigation keys to the nearest scroll container of the focus.
 ///
-/// `PageUp` and `PageDown` move by exactly one viewport extent; Home and End jump
-/// to the content edges. The target is the nearest scroll-container ancestor
-/// of `node` (including itself), or the primary root scroller — the first
-/// scroll container in materialized authored order — when `node` is
+/// `PageUp` and `PageDown` move by exactly one viewport extent; Home and End
+/// jump to the content edges. The target is the nearest scroll-container
+/// ancestor of `node` (including itself), or the primary root scroller — the
+/// first scroll container in materialized authored order — when `node` is
 /// [`slir::NONE`]. Returns `false` when no scroll container is found, leaving
 /// the key available to activation bubbling.
 pub fn page_scroll_key(
@@ -718,7 +723,10 @@ pub fn page_scroll_key(
 	let mut target = -1;
 	if node == slir::NONE {
 		let authored_valid = sc.authored_order.len() == sc.entries.len()
-			&& sc.authored_order.iter().all(|&index| index < sc.entries.len());
+			&& sc
+				.authored_order
+				.iter()
+				.all(|&index| index < sc.entries.len());
 		let mut order = (0..sc.entries.len()).collect::<Vec<usize>>();
 		if authored_valid {
 			order.copy_from_slice(&sc.authored_order);
@@ -748,11 +756,7 @@ pub fn page_scroll_key(
 	let index = usize::try_from(target).expect("negative scene index");
 	let entry = &sc.entries[index];
 	let scroller = entry.node;
-	let viewport = if entry.is_row {
-		entry.w
-	} else {
-		entry.h
-	};
+	let viewport = if entry.is_row { entry.w } else { entry.h };
 	let current = style::scroll_get(st, scroller);
 	let next = match key {
 		"PageUp" => current - viewport,
@@ -760,6 +764,8 @@ pub fn page_scroll_key(
 		"Home" => 0.0,
 		_ => entry.content_main,
 	};
+	record_scroll(d, st, scroller, 0, clamp_scroll(sc, target, next), eff);
+	true
 }
 
 /// Finds a field node's editing-state index.
@@ -970,23 +976,24 @@ pub fn caret_effects(d: &Doc, st: &St, lay: &Lay, sc: &Scene, ds: &DState, eff: 
 		let text_layout =
 			&lay.tls[usize::try_from(text_layout_index).expect("negative text layout index")];
 		if text_layout.src_ls.is_empty() {
-			(0, 0, sc.h[scene_index], 0.0)
+			(0, 0, sc.entries[scene_index].h, 0.0)
 		} else {
 			let line = line_of(text_layout, caret);
 			let index = usize::try_from(line).expect("negative line index");
 			(line, text_layout.src_ls[index], text_layout.line_h, text_layout.line_w[index])
 		}
 	} else {
-		(0, 0, sc.h[scene_index], 0.0)
+		(0, 0, sc.entries[scene_index].h, 0.0)
 	};
 
 	let advance = crate::textm::str_slice_w(d, font, size, tracking, &text, line_start, caret);
-	let content_width = sc.w[scene_index] - pad_left - pad_right;
-	let origin = (content_width - line_width).mul_add(align, sc.x[scene_index] + pad_left);
+	let entry = &sc.entries[scene_index];
+	let content_width = entry.w - pad_left - pad_right;
+	let origin = (content_width - line_width).mul_add(align, entry.x + pad_left);
 	eff.focus = node;
 	eff.has_caret = true;
 	eff.caret_x = origin + advance - ds.ed[edit_index].scroll_x;
-	eff.caret_y = f64::from(line).mul_add(line_height, sc.y[scene_index] + pad_top);
+	eff.caret_y = f64::from(line).mul_add(line_height, entry.y + pad_top);
 	eff.caret_w = 1.0;
 	eff.caret_h = line_height;
 	eff.has_ime = true;
@@ -1036,12 +1043,14 @@ struct DividerSnapshot {
 
 fn divider_scene_siblings(d: &Doc, st: &St, sc: &Scene, node: u32) -> Option<(usize, usize, bool)> {
 	let divider = usize::try_from(scene::index_of(sc, node)).ok()?;
-	if sc.kind.get(divider) != Some(&slir::K_DIVIDER) {
+	let entry = sc.entries.get(divider)?;
+	if entry.kind != slir::K_DIVIDER {
 		return None;
 	}
-	let parent_i32 = *sc.parent.get(divider)?;
+	let parent_i32 = entry.parent_ix;
 	let parent = usize::try_from(parent_i32).ok()?;
-	if !matches!(sc.kind.get(parent), Some(&slir::K_ROW | &slir::K_COL)) {
+	let parent_entry = sc.entries.get(parent)?;
+	if !matches!(parent_entry.kind, slir::K_ROW | slir::K_COL) {
 		return None;
 	}
 
@@ -1065,18 +1074,18 @@ fn divider_scene_siblings(d: &Doc, st: &St, sc: &Scene, node: u32) -> Option<(us
 
 	let mut previous = None;
 	let mut next = None;
-	for index in 0..sc.node.len() {
-		if sc.parent[index] != parent_i32 {
+	for (index, candidate) in sc.entries.iter().enumerate() {
+		if candidate.parent_ix != parent_i32 {
 			continue;
 		}
-		let candidate_base = list::base(&st.lists, d, sc.node[index]);
+		let candidate_base = list::base(&st.lists, d, candidate.node);
 		if candidate_base == previous_base {
 			previous = Some(index);
 		} else if candidate_base == next_base {
 			next = Some(index);
 		}
 	}
-	Some((previous?, next?, sc.is_row[parent]))
+	Some((previous?, next?, parent_entry.is_row))
 }
 
 fn resolved_axis_bounds(st: &St, node: u32, row: bool) -> (f64, f64) {
@@ -1095,10 +1104,16 @@ fn resolved_axis_bounds(st: &St, node: u32, row: bool) -> (f64, f64) {
 
 fn divider_snapshot(d: &Doc, st: &St, sc: &Scene, node: u32) -> Option<DividerSnapshot> {
 	let (previous, next, row) = divider_scene_siblings(d, st, sc, node)?;
-	let previous_extent = if row { sc.w[previous] } else { sc.h[previous] };
-	let next_extent = if row { sc.w[next] } else { sc.h[next] };
-	let (min, authored_max) = resolved_axis_bounds(st, sc.node[previous], row);
-	let (next_min, _) = resolved_axis_bounds(st, sc.node[next], row);
+	let previous_entry = &sc.entries[previous];
+	let next_entry = &sc.entries[next];
+	let previous_extent = if row {
+		previous_entry.w
+	} else {
+		previous_entry.h
+	};
+	let next_extent = if row { next_entry.w } else { next_entry.h };
+	let (min, authored_max) = resolved_axis_bounds(st, previous_entry.node, row);
+	let (next_min, _) = resolved_axis_bounds(st, next_entry.node, row);
 	let budget_max = previous_extent + (next_extent - next_min).max(0.0);
 	let max = authored_max.min(budget_max);
 	let requested = style::divider_get(st, node).unwrap_or(previous_extent);
@@ -1129,8 +1144,9 @@ fn path_divider_node(d: &Doc, st: &St, sc: &Scene, path: &[i32]) -> u32 {
 		.rev()
 		.find_map(|&scene_index| {
 			let index = usize::try_from(scene_index).expect("negative scene index");
-			let node = sc.node[index];
-			(sc.kind[index] == slir::K_DIVIDER && !disabled(d, st, node)).then_some(node)
+			let entry = &sc.entries[index];
+			let node = entry.node;
+			(entry.kind == slir::K_DIVIDER && !disabled(d, st, node)).then_some(node)
 		})
 		.unwrap_or(slir::NONE)
 }
@@ -1224,7 +1240,7 @@ fn path_trigger_node(d: &Doc, st: &St, sc: &Scene, path: &[i32], trigger: u32) -
 		.iter()
 		.rev()
 		.find_map(|&scene_index| {
-			let node = sc.node[usize::try_from(scene_index).expect("negative scene index")];
+			let node = sc.entries[usize::try_from(scene_index).expect("negative scene index")].node;
 			(sig_of(d, st, node, trigger) >= 0 && !disabled(d, st, node)).then_some(node)
 		})
 		.unwrap_or(slir::NONE)
@@ -1243,10 +1259,10 @@ fn routed_pointer_path(sc: &Scene, ds: &DState, hit_path: &[i32], out: &mut Vec<
 fn scene_node_in_subtree(sc: &Scene, mut scene_index: i32, root: u32) -> bool {
 	while scene_index >= 0 {
 		let index = usize::try_from(scene_index).expect("negative scene index");
-		if sc.node[index] == root {
+		if sc.entries[index].node == root {
 			return true;
 		}
-		scene_index = sc.parent[index];
+		scene_index = sc.entries[index].parent_ix;
 	}
 	false
 }
@@ -1257,7 +1273,7 @@ fn drag_target_of(d: &Doc, st: &St, sc: &Scene, path: &[i32], source: u32) -> u3
 		.rev()
 		.find_map(|&scene_index| {
 			let index = usize::try_from(scene_index).expect("negative scene index");
-			let node = sc.node[index];
+			let node = sc.entries[index].node;
 			(sig_of(d, st, node, TR_DROP) >= 0
 				&& !disabled(d, st, node)
 				&& !scene_node_in_subtree(sc, scene_index, source))
@@ -1361,7 +1377,7 @@ pub fn activate_key_path(
 	let mut scene_index = scene::index_of(sc, focused);
 	while scene_index >= 0 {
 		let index = usize::try_from(scene_index).expect("negative scene index");
-		let node = sc.node[index];
+		let node = sc.entries[index].node;
 		let keys = style::attr_str_ref(d, st, node, slir::A_KEYS);
 		if !disabled(d, st, node) {
 			if let Some(signal) = key_map_signal(&keys, key) {
@@ -1373,21 +1389,27 @@ pub fn activate_key_path(
 						.then_some(index)
 				}) {
 					emit_signal(d, st, eff, signal_index, node, "");
-					eff.sig_meta
-						.last_mut()
-						.expect("activation has metadata")
-						.pressed_key = key.to_owned();
+					key.clone_into(
+						&mut eff
+							.sig_meta
+							.last_mut()
+							.expect("activation has metadata")
+							.pressed_key,
+					);
 					return true;
 				}
 			} else if key_list_has(&keys, key) && deliver_activate(d, st, eff, node) {
-				eff.sig_meta
-					.last_mut()
-					.expect("activation has metadata")
-					.pressed_key = key.to_owned();
+				key.clone_into(
+					&mut eff
+						.sig_meta
+						.last_mut()
+						.expect("activation has metadata")
+						.pressed_key,
+				);
 				return true;
 			}
 		}
-		scene_index = sc.parent[index];
+		scene_index = sc.entries[index].parent_ix;
 	}
 	false
 }
@@ -1464,15 +1486,15 @@ fn field_caret_at(hit: &FieldHit<'_>, text: &str, scroll_x: f64, x: f64, y: f64)
 		} else {
 			(-1, 14.0, 0.0, 0.0, 0.0, 0.0, 0.0)
 		};
-	let line = (((y - sc.y[scene_index] - pad_top) / text_layout.line_h).floor() as i32)
+	let line = (((y - sc.entries[scene_index].y - pad_top) / text_layout.line_h).floor() as i32)
 		.clamp(0, i32::try_from(text_layout.src_ls.len() - 1).expect("too many text lines"));
 	let line_index = usize::try_from(line).expect("negative line index");
 	let start = text_layout.src_ls[line_index];
 	let end = text_layout.src_le[line_index];
-	let content_width = sc.w[scene_index] - pad_left - pad_right;
-	let origin =
-		(content_width - text_layout.line_w[line_index]).mul_add(align, sc.x[scene_index] + pad_left)
-			- scroll_x;
+	let content_width = sc.entries[scene_index].w - pad_left - pad_right;
+	let origin = (content_width - text_layout.line_w[line_index])
+		.mul_add(align, sc.entries[scene_index].x + pad_left)
+		- scroll_x;
 	let mut advance = 0.0;
 	for (index, character) in text
 		.chars()
@@ -1577,14 +1599,14 @@ pub fn follow_caret(
 		let text_layout =
 			&lay.tls[usize::try_from(text_layout_index).expect("negative text layout index")];
 		if text_layout.src_ls.is_empty() {
-			(0, 0, sc.h[scene_index], 0.0)
+			(0, 0, sc.entries[scene_index].h, 0.0)
 		} else {
 			let line = line_of(text_layout, caret);
 			let line_index = usize::try_from(line).expect("negative line index");
 			(line, text_layout.src_ls[line_index], text_layout.line_h, text_layout.line_w[line_index])
 		}
 	} else {
-		(0, 0, sc.h[scene_index], 0.0)
+		(0, 0, sc.entries[scene_index].h, 0.0)
 	};
 	let advance = crate::textm::str_slice_w(
 		d,
@@ -1598,10 +1620,10 @@ pub fn follow_caret(
 
 	if !multiline(d, st, node) {
 		let old_scroll = ds.ed[edit_index].scroll_x;
-		let content_width = sc.w[scene_index] - pad_left - pad_right;
+		let content_width = sc.entries[scene_index].w - pad_left - pad_right;
 		let origin = (content_width - line_width).mul_add(align, pad_left);
 		let left = pad_left + 8.0;
-		let right = left.max(sc.w[scene_index] - pad_right - 8.0);
+		let right = left.max(sc.entries[scene_index].w - pad_right - 8.0);
 		let shown = origin + advance - old_scroll;
 		if shown < left {
 			ds.ed[edit_index].scroll_x = (origin + advance - left).max(0.0);
@@ -1613,24 +1635,24 @@ pub fn follow_caret(
 		return;
 	}
 
-	let top = f64::from(line).mul_add(line_height, sc.y[scene_index] + pad_top);
+	let top = f64::from(line).mul_add(line_height, sc.entries[scene_index].y + pad_top);
 	let bottom = top + line_height;
-	let mut parent = sc.parent[scene_index];
+	let mut parent = sc.entries[scene_index].parent_ix;
 	let mut found_scroll_parent = false;
 	while parent >= 0 {
 		let parent_index = usize::try_from(parent).expect("negative parent index");
-		if !found_scroll_parent && sc.flags[parent_index] & slir::F_SCROLL != 0 {
-			let parent_node = sc.node[parent_index];
+		if !found_scroll_parent && sc.entries[parent_index].flags & slir::F_SCROLL != 0 {
+			let parent_node = sc.entries[parent_index].node;
 			let mut next = style::scroll_get(st, parent_node);
-			if top < sc.y[parent_index] {
-				next -= sc.y[parent_index] - top;
-			} else if bottom > sc.y[parent_index] + sc.h[parent_index] {
-				next += bottom - (sc.y[parent_index] + sc.h[parent_index]);
+			if top < sc.entries[parent_index].y {
+				next -= sc.entries[parent_index].y - top;
+			} else if bottom > sc.entries[parent_index].y + sc.entries[parent_index].h {
+				next += bottom - (sc.entries[parent_index].y + sc.entries[parent_index].h);
 			}
 			record_scroll(d, st, parent_node, 0, clamp_scroll(sc, parent, next), eff);
 			found_scroll_parent = true;
 		}
-		parent = sc.parent[parent_index];
+		parent = sc.entries[parent_index].parent_ix;
 	}
 }
 
@@ -1651,7 +1673,6 @@ pub fn follow_caret_fresh(d: &Doc, st: &mut St, lay: &Lay, sc: &Scene, ds: &mut 
 }
 
 /// Consumes the focused field's editing keys before activation-key bubbling.
-#[allow(clippy::too_many_arguments)] // Routing needs the retained model, scene, state, and event parts together.
 pub fn route_edit_key(
 	d: &Doc,
 	st: &mut St,
@@ -1822,7 +1843,7 @@ pub fn dispatch(
 		scene::key_of(
 			d,
 			&st.lists,
-			sc.node[usize::try_from(scene_index).expect("negative scene index")],
+			sc.entries[usize::try_from(scene_index).expect("negative scene index")].node,
 		)
 	});
 
@@ -1847,7 +1868,8 @@ pub fn dispatch(
 			let mut changed = false;
 			for &hovered in &ds.hover {
 				let still_hovered = path.iter().any(|&scene_index| {
-					sc.node[usize::try_from(scene_index).expect("negative scene index")] == hovered
+					sc.entries[usize::try_from(scene_index).expect("negative scene index")].node
+						== hovered
 				});
 				if !still_hovered && style::set_node_state(d, st, hovered, "hover", false) {
 					changed = true;
@@ -1856,7 +1878,7 @@ pub fn dispatch(
 
 			let mut next_hover = Vec::with_capacity(path.len());
 			for &scene_index in &path {
-				let node = sc.node[usize::try_from(scene_index).expect("negative scene index")];
+				let node = sc.entries[usize::try_from(scene_index).expect("negative scene index")].node;
 				if !ds.hover.contains(&node) && style::set_node_state(d, st, node, "hover", true) {
 					changed = true;
 				}
@@ -1921,8 +1943,8 @@ pub fn dispatch(
 			ds.cursor = CUR_DEFAULT;
 			for &scene_index in path.iter().rev() {
 				let index = usize::try_from(scene_index).expect("negative scene index");
-				let node = sc.node[index];
-				if sc.kind[index] == slir::K_DIVIDER
+				let node = sc.entries[index].node;
+				if sc.entries[index].kind == slir::K_DIVIDER
 					&& !disabled(d, st, node)
 					&& let Some((_, _, row)) = divider_scene_siblings(d, st, sc, node)
 				{
@@ -1933,7 +1955,7 @@ pub fn dispatch(
 					ds.cursor = CUR_TEXT;
 					break;
 				}
-				if sc.flags[index] & slir::F_FOCUSABLE != 0 && !disabled(d, st, node) {
+				if sc.entries[index].flags & slir::F_FOCUSABLE != 0 && !disabled(d, st, node) {
 					ds.cursor = CUR_POINTER;
 					break;
 				}
@@ -1955,8 +1977,8 @@ pub fn dispatch(
 			if ev.button == 2 {
 				let field_target = path.iter().rev().find_map(|&scene_index| {
 					let index = usize::try_from(scene_index).expect("negative scene index");
-					let node = sc.node[index];
-					(sc.flags[index] & slir::F_FOCUSABLE != 0
+					let node = sc.entries[index].node;
+					(sc.entries[index].flags & slir::F_FOCUSABLE != 0
 						&& sig_of(d, st, node, TR_CHANGE) >= 0
 						&& !disabled(d, st, node))
 					.then_some(node)
@@ -2011,8 +2033,8 @@ pub fn dispatch(
 					let source_index = scene::index_of(sc, ds.drag_source);
 					if source_index >= 0 {
 						let source_index = usize::try_from(source_index).expect("negative scene index");
-						ds.drag_grab_x = ev.x - sc.x[source_index];
-						ds.drag_grab_y = ev.y - sc.y[source_index];
+						ds.drag_grab_x = ev.x - sc.entries[source_index].x;
+						ds.drag_grab_y = ev.y - sc.entries[source_index].y;
 					}
 				}
 
@@ -2023,20 +2045,20 @@ pub fn dispatch(
 					.rev()
 					.copied()
 					.find(|&scene_index| {
-						sc.flags[usize::try_from(scene_index).expect("negative scene index")]
+						sc.entries[usize::try_from(scene_index).expect("negative scene index")].flags
 							& slir::F_FOCUSABLE
 							!= 0
 					})
 					.map_or(slir::NONE, |scene_index| {
-						sc.node[usize::try_from(scene_index).expect("negative scene index")]
+						sc.entries[usize::try_from(scene_index).expect("negative scene index")].node
 					});
 				let pressed = if focus_target == slir::NONE {
-    					path.last().map_or(slir::NONE, |&scene_index| {
-    						sc.node[usize::try_from(scene_index).expect("negative scene index")]
-    					})
-    				} else {
-    					focus_target
-    				};
+					path.last().map_or(slir::NONE, |&scene_index| {
+						sc.entries[usize::try_from(scene_index).expect("negative scene index")].node
+					})
+				} else {
+					focus_target
+				};
 				if pressed != slir::NONE {
 					ds.pressed = pressed;
 					effects.repaint |= style::set_node_state(d, st, pressed, "pressed", true);
@@ -2107,8 +2129,8 @@ pub fn dispatch(
 							.sig_meta
 							.last_mut()
 							.expect("delivered drop has metadata");
-						meta.src_key = ds.drag_source_key.clone();
-						meta.src_item = ds.drag_source_item.clone();
+						meta.src_key.clone_from(&ds.drag_source_key);
+						meta.src_item.clone_from(&ds.drag_source_item);
 						apply_drag_meta(meta, ds, false, true);
 					}
 				}
@@ -2122,12 +2144,13 @@ pub fn dispatch(
 				clear_drag(d, st, ds, &mut effects);
 				if !suppress_activate && pressed != slir::NONE {
 					let pointer_over = path.iter().any(|&scene_index| {
-						sc.node[usize::try_from(scene_index).expect("negative scene index")] == pressed
+						sc.entries[usize::try_from(scene_index).expect("negative scene index")].node
+							== pressed
 					});
 					let scene_index = scene::index_of(sc, pressed);
 					if pointer_over && scene_index >= 0 && !disabled(d, st, pressed) {
 						let index = usize::try_from(scene_index).expect("negative scene index");
-						if sc.flags[index] & slir::F_FOCUSABLE != 0 {
+						if sc.entries[index].flags & slir::F_FOCUSABLE != 0 {
 							deliver_activate(d, st, &mut effects, pressed);
 						}
 					}
@@ -2194,7 +2217,7 @@ pub fn dispatch(
 			// With no focus, or when the focused walk leaves the key
 			// unhandled, dispatch falls back to the document root `keys=` map.
 			if !handled && !editor_printable {
-				let root = sc.node.first().copied().unwrap_or(slir::NONE);
+				let root = sc.entries.first().map_or(slir::NONE, |e| e.node);
 				if root != slir::NONE && root != focused {
 					handled = activate_key_path(d, st, sc, root, &ev.key, &mut effects);
 				}
@@ -2214,15 +2237,17 @@ pub fn dispatch(
 			{
 				let scene_index = scene::index_of(sc, focused);
 				if scene_index >= 0
-					&& sc.flags[usize::try_from(scene_index).expect("negative scene index")]
+					&& sc.entries[usize::try_from(scene_index).expect("negative scene index")].flags
 						& slir::F_FOCUSABLE
 						!= 0 && deliver_activate(d, st, &mut effects, focused)
 				{
-					effects
-						.sig_meta
-						.last_mut()
-						.expect("activation has metadata")
-						.pressed_key = ev.key.clone();
+					ev.key.clone_into(
+						&mut effects
+							.sig_meta
+							.last_mut()
+							.expect("activation has metadata")
+							.pressed_key,
+					);
 				}
 			// Without an active editor, arrows walk the focus ring.
 			} else if !handled

@@ -1,4 +1,4 @@
-//! Renders the embed fixture into a TestBackend and clicks its button.
+//! Renders the embed fixture into a `TestBackend` and clicks its button.
 
 use std::path::Path;
 
@@ -42,7 +42,7 @@ fn find(text: &str, needle: &str) -> (u16, u16) {
 	panic!("{needle:?} not on screen:\n{text}");
 }
 
-fn mouse(kind: MouseEventKind, column: u16, row: u16) -> Event {
+const fn mouse(kind: MouseEventKind, column: u16, row: u16) -> Event {
 	Event::Mouse(MouseEvent { kind, column, row, modifiers: KeyModifiers::NONE })
 }
 

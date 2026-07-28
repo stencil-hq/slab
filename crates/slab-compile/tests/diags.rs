@@ -131,7 +131,7 @@ fn field_implies_focusable_and_change_signal() {
 
 #[test]
 fn gesture_triggers_emit_and_only_press_and_drag_imply_focusable() {
-	let source = r#"
+	let source = r"
 col {
   box press=pressed
   box drag=started drag-update=moving drag-end=ended drag-ghost
@@ -143,7 +143,7 @@ col {
     rect w=40
   }
 }
-"#;
+";
 	let (slir, diagnostics) =
 		compile(source, &Options { embed_assets: false, ..Default::default() });
 	assert!(!diagnostics.has_errors(), "{:?}", diagnostics.0);
@@ -193,7 +193,7 @@ col {
 
 #[test]
 fn conditional_binders_and_animation_are_statically_registered() {
-	let source = r#"
+	let source = r"
 anim pulse {
   0% { opacity=0.2 }
   100% { opacity=1 }
@@ -201,7 +201,7 @@ anim pulse {
 rect {
   when hot { act=fired; animate=pulse,1000 }
 }
-"#;
+";
 	let (slir, diagnostics) =
 		compile(source, &Options { embed_assets: false, ..Default::default() });
 	let slir = slir.expect("conditional interactivity compiles");
@@ -327,13 +327,13 @@ fn explicit_key_segments_escape_structural_bytes() {
 
 #[test]
 fn divider_rejects_generic_drag_surface() {
-	let source = r#"
+	let source = r"
 row {
   rect w=40
   divider w=6 drag=started drag-update=updated drag-end=ended drag-ghost
   rect w=40
 }
-"#;
+";
 	let (slir, diagnostics) =
 		compile(source, &Options { embed_assets: false, ..Default::default() });
 	let slir = slir.expect("divider drag diagnostics are warnings");
@@ -682,11 +682,11 @@ row w=300 h=64 gap=40 {
 
 #[test]
 fn quarter_turn_drag_ghost_preserves_placement_to_painted_offset() {
-	let source = r#"
+	let source = r"
 canvas w=240 h=160 {
   box key=source at=80,40 w=80 h=40 rotate=90 drag=started drag-update=moving drag-end=ended drag-ghost bg=#314158
 }
-"#;
+";
 	let (slir, diagnostics) =
 		compile(source, &Options { embed_assets: false, ..Default::default() });
 	assert!(!diagnostics.has_errors(), "{:?}", diagnostics.0);

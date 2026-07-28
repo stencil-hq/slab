@@ -104,8 +104,8 @@ fn main() {
 		let mut inst = instance(&bytes);
 		let mut fr = frame::inst_frame(&mut inst, 0.0);
 		let dispatch = time(200, |i| {
-			let x = 20.0 + (i % 60) as f64 * 20.0;
-			let y = 20.0 + (i % 37) as f64 * 20.0;
+			let x = ((i % 60) as f64).mul_add(20.0, 20.0);
+			let y = ((i % 37) as f64).mul_add(20.0, 20.0);
 			let ev = Event {
 				etype: E_POINTER_MOVE,
 				x,

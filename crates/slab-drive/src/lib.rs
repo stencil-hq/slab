@@ -1792,27 +1792,24 @@ fn scene_entry(doc: &LoadedDoc, index: usize) -> Value {
 	let retained = &doc.inst.sc;
 	let scene_string = |reference: u32| {
 		let index = usize::try_from(reference).expect("scene string index must fit usize");
-		doc.inst
-			.st
-			.scene_strs
-			.get(index)
-			.map_or("", String::as_str)
+		doc.inst.st.scene_strs.get(index).map_or("", String::as_str)
 	};
-	let flags = retained.flags[index];
+	let entry = &retained.entries[index];
+	let flags = entry.flags;
 	json!({
 		 "i": i32::try_from(index).expect("scene index must fit i32"),
-		 "node": retained.node[index],
-		 "key": scene::key_of(&doc.inst.doc, &doc.inst.st.lists, retained.node[index]),
-		 "parent": retained.parent[index],
-		 "kind": kind_name(retained.kind[index]),
-		 "x": retained.x[index],
-		 "y": retained.y[index],
-		 "w": retained.w[index],
-		 "h": retained.h[index],
-		 "radius": retained.radius[index],
-		 "rot": retained.rot[index],
-		 "cx": retained.cx[index],
-		 "cy": retained.cy[index],
+		 "node": entry.node,
+		 "key": scene::key_of(&doc.inst.doc, &doc.inst.st.lists, entry.node),
+		 "parent": entry.parent_ix,
+		 "kind": kind_name(entry.kind),
+		 "x": entry.x,
+		 "y": entry.y,
+		 "w": entry.w,
+		 "h": entry.h,
+		 "radius": entry.radius,
+		 "rot": entry.rot_deg,
+		 "cx": entry.rot_cx,
+		 "cy": entry.rot_cy,
 		 "flags": flags,
 		 "clip": flags & slir::F_CLIP != 0,
 		 "scroll": flags & slir::F_SCROLL != 0,
@@ -1820,57 +1817,57 @@ fn scene_entry(doc: &LoadedDoc, index: usize) -> Value {
 		 "inert": flags & slir::F_INERT != 0,
 		 "focusable": flags & slir::F_FOCUSABLE != 0,
 		 "detached": flags & slir::F_DETACHED != 0,
-		 "scroll_off": retained.scroll_off[index],
-		 "content_main": retained.content_main[index],
-		 "scroll_cross": retained.scroll_cross[index],
-		 "content_cross": retained.content_cross[index],
-		 "role": scene_string(retained.sem[index].role),
-		 "label": scene_string(retained.sem[index].label),
-		 "desc": scene_string(retained.sem[index].desc),
-		 "checked": match retained.sem[index].checked {
+		 "scroll_off": entry.scroll_off,
+		 "content_main": entry.content_main,
+		 "scroll_cross": entry.scroll_cross,
+		 "content_cross": entry.content_cross,
+		 "role": scene_string(entry.sem.role),
+		 "label": scene_string(entry.sem.label),
+		 "desc": scene_string(entry.sem.desc),
+		 "checked": match entry.sem.checked {
 			  1 => Value::Bool(false),
 			  2 => Value::Bool(true),
 			  3 => Value::String("mixed".into()),
 			  _ => Value::Null,
 		 },
-		 "expanded": match retained.sem[index].expanded {
+		 "expanded": match entry.sem.expanded {
 			  1 => Value::Bool(false),
 			  2 => Value::Bool(true),
 			  _ => Value::Null,
 		 },
-		 "selected": match retained.sem[index].selected {
+		 "selected": match entry.sem.selected {
 			  1 => Value::Bool(false),
 			  2 => Value::Bool(true),
 			  _ => Value::Null,
 		 },
-		 "active_descendant": scene_string(retained.sem[index].active_descendant),
-		 "controls": scene_string(retained.sem[index].controls),
-		 "value_now": retained.sem[index].value_now,
-		 "value_min": retained.sem[index].value_min,
-		 "value_max": retained.sem[index].value_max,
-		 "value_text": scene_string(retained.sem[index].value_text),
-		 "modal": match retained.sem[index].modal {
+		 "active_descendant": scene_string(entry.sem.active_descendant),
+		 "controls": scene_string(entry.sem.controls),
+		 "value_now": entry.sem.value_now,
+		 "value_min": entry.sem.value_min,
+		 "value_max": entry.sem.value_max,
+		 "value_text": scene_string(entry.sem.value_text),
+		 "modal": match entry.sem.modal {
 			  1 => Value::Bool(false),
 			  2 => Value::Bool(true),
 			  _ => Value::Null,
 		 },
-		 "live": match retained.sem[index].live {
+		 "live": match entry.sem.live {
 			  1 => Value::String("off".into()),
 			  2 => Value::String("polite".into()),
 			  3 => Value::String("assertive".into()),
 			  _ => Value::Null,
 		 },
-		 "live_atomic": match retained.sem[index].live_atomic {
+		 "live_atomic": match entry.sem.live_atomic {
 			  1 => Value::Bool(false),
 			  2 => Value::Bool(true),
 			  _ => Value::Null,
 		 },
-		 "level": retained.sem[index].level,
-		 "pos_in_set": retained.sem[index].pos_in_set,
-		 "set_size": retained.sem[index].set_size,
-		 "disabled": retained.disabled[index],
-		 "focused": retained.focused[index],
-		 "is_row": retained.is_row[index],
+		 "level": entry.sem.level,
+		 "pos_in_set": entry.sem.pos_in_set,
+		 "set_size": entry.sem.set_size,
+		 "disabled": entry.disabled,
+		 "focused": entry.focused,
+		 "is_row": entry.is_row,
 	})
 }
 
@@ -1911,7 +1908,7 @@ fn node_scene_index(doc: &LoadedDoc, key: &str) -> ProtocolResult<(u32, usize)> 
 
 fn scene_tree(session: &mut Session) -> ProtocolResult {
 	let doc = ensure_frame(session)?;
-	let nodes = (0..doc.inst.sc.node.len())
+	let nodes = (0..doc.inst.sc.entries.len())
 		.map(|index| scene_entry(doc, index))
 		.collect::<Vec<_>>();
 	Ok(json!({"nodes": nodes}))
@@ -1974,7 +1971,7 @@ fn text_in_subtree(doc: &LoadedDoc, target: u32, text_node: u32, chain: &mut Vec
 	scene::chain(&doc.inst.sc, index, chain);
 	chain.iter().any(|index| {
 		let index = usize::try_from(*index).expect("scene chain index must be nonnegative");
-		doc.inst.sc.node[index] == target
+		doc.inst.sc.entries[index].node == target
 	})
 }
 
@@ -2012,11 +2009,12 @@ fn scene_text(session: &mut Session, object: &Map<String, Value>) -> ProtocolRes
 }
 
 fn rect_value(doc: &LoadedDoc, index: usize) -> Value {
+	let entry = &doc.inst.sc.entries[index];
 	json!({
-		 "x": doc.inst.sc.x[index],
-		 "y": doc.inst.sc.y[index],
-		 "w": doc.inst.sc.w[index],
-		 "h": doc.inst.sc.h[index],
+		 "x": entry.x,
+		 "y": entry.y,
+		 "w": entry.w,
+		 "h": entry.h,
 	})
 }
 
@@ -2041,7 +2039,8 @@ fn scene_find(session: &mut Session, object: &Map<String, Value>) -> ProtocolRes
 	let needle = required_str(object, "text")?.to_string();
 	let doc = ensure_frame(session)?;
 	let mut matches = Vec::new();
-	for (index, node) in doc.inst.sc.node.iter().copied().enumerate() {
+	for (index, entry) in doc.inst.sc.entries.iter().enumerate() {
+		let node = entry.node;
 		let matching_text = doc.fr.ops.iter().find_map(|operation| {
 			let FrameOp::Text(text) = operation else {
 				return None;
@@ -2146,7 +2145,7 @@ const fn base_event(etype: u32) -> Event {
 	}
 }
 
-fn pointer_event(etype: u32, x: f64, y: f64, button: u32, clicks: u32, mods: u32) -> Event {
+const fn pointer_event(etype: u32, x: f64, y: f64, button: u32, clicks: u32, mods: u32) -> Event {
 	let mut event = base_event(etype);
 	event.x = x;
 	event.y = y;
@@ -2202,10 +2201,8 @@ fn input_click(session: &mut Session, object: &Map<String, Value>) -> ProtocolRe
 	let (x, y) = match (key, point) {
 		(Some(key), None) => {
 			let (_, index) = node_scene_index(doc, &key)?;
-			(
-				doc.inst.sc.x[index] + doc.inst.sc.w[index] / 2.0,
-				doc.inst.sc.y[index] + doc.inst.sc.h[index] / 2.0,
-			)
+			let entry = &doc.inst.sc.entries[index];
+			(entry.x + entry.w / 2.0, entry.y + entry.h / 2.0)
 		},
 		(None, Some(point)) => point,
 		_ => unreachable!("click address form validated"),
@@ -2903,12 +2900,12 @@ col#app {
 	#[test]
 	fn pct_params_round_trip_as_unclamped_bare_numbers() {
 		let (slir, mut instance, images) = compile_live(
-			r#"
+			r"
 params {
   progress pct = 40%
 }
 row w=200 h=10 { rect w=param.progress h=10 bg=#334455FF }
-"#,
+",
 		);
 		let mut pump = RequestPump::new("test.slab", slir, images);
 		// The "60%" string spelling is write-side convenience; param.get
@@ -2980,7 +2977,7 @@ col#viewport w=120 h=40 scroll {
 		let mut pump = RequestPump::new("test.slab", slir, images);
 		let keyed = pump.request(
 			&mut instance,
-			r##"{"method":"list.set_key","params":{"param":"rows","path":"","index":7,"key":"t7"}}"##,
+			r#"{"method":"list.set_key","params":{"param":"rows","path":"","index":7,"key":"t7"}}"#,
 		);
 		assert_eq!(result(&keyed), &json!({"ok": true}));
 

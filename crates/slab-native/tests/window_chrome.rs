@@ -31,7 +31,7 @@ fn compile(src: &str) -> Vec<u8> {
 	slab_slir::write(&slir.expect("no SLIR"))
 }
 
-fn ev(etype: u32, x: f64, y: f64) -> Event {
+const fn ev(etype: u32, x: f64, y: f64) -> Event {
 	Event {
 		etype,
 		x,
@@ -86,10 +86,8 @@ fn undecorated_state_gates_chrome_and_signals_map() {
 	// ordinary kernel dispatch path (what ViewApp::dispatch intercepts)
 	let ix = scene::index_of(&inst.sc, close);
 	assert!(ix >= 0);
-	let (cx, cy) = (
-		inst.sc.x[ix as usize] + inst.sc.w[ix as usize] / 2.0,
-		inst.sc.y[ix as usize] + inst.sc.h[ix as usize] / 2.0,
-	);
+	let entry = &inst.sc.entries[ix as usize];
+	let (cx, cy) = (entry.x + entry.w / 2.0, entry.y + entry.h / 2.0);
 	kframe::inst_dispatch(&mut inst, &ev(kdispatch::E_POINTER_DOWN, cx, cy));
 	let eff = kframe::inst_dispatch(&mut inst, &ev(kdispatch::E_POINTER_UP, cx, cy));
 	let names: Vec<&str> = eff
@@ -101,10 +99,8 @@ fn undecorated_state_gates_chrome_and_signals_map() {
 
 	// pressing the bar itself: the deepest act binding is the drag region
 	let bix = scene::index_of(&inst.sc, bar);
-	let (bx, by) = (
-		inst.sc.x[bix as usize] + 40.0, // inside the bar, left of the controls
-		inst.sc.y[bix as usize] + inst.sc.h[bix as usize] / 2.0,
-	);
+	let bentry = &inst.sc.entries[bix as usize];
+	let (bx, by) = (bentry.x + 40.0, bentry.y + bentry.h / 2.0);
 	let chain = kframe::inst_hit(&inst, bx, by);
 	let nearest = chain
 		.iter()

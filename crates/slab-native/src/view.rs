@@ -152,12 +152,12 @@ pub enum WindowCmd {
 
 impl WindowCmd {
 	/// Maps a signal name to its window action (None = ordinary app signal).
-	pub fn from_signal(name: &str) -> Option<WindowCmd> {
+	pub fn from_signal(name: &str) -> Option<Self> {
 		match name {
-			"window-close" => Some(WindowCmd::Close),
-			"window-minimize" => Some(WindowCmd::Minimize),
-			"window-maximize" => Some(WindowCmd::Maximize),
-			"window-drag" => Some(WindowCmd::Drag),
+			"window-close" => Some(Self::Close),
+			"window-minimize" => Some(Self::Minimize),
+			"window-maximize" => Some(Self::Maximize),
+			"window-drag" => Some(Self::Drag),
 			_ => None,
 		}
 	}
@@ -367,12 +367,12 @@ where
 	}
 
 	/// Returns the mounted document and its live kernel instance.
-	pub fn document(&self) -> &NativeDocument {
+	pub const fn document(&self) -> &NativeDocument {
 		&self.doc
 	}
 
 	/// Returns mutable access for host-side model and parameter synchronization.
-	pub fn document_mut(&mut self) -> &mut NativeDocument {
+	pub const fn document_mut(&mut self) -> &mut NativeDocument {
 		&mut self.doc
 	}
 
@@ -518,8 +518,7 @@ where
 				.doc
 				.strs
 				.get(eff.sig_name[k] as usize)
-				.map(String::as_str)
-				.unwrap_or("?")
+				.map_or("?", String::as_str)
 				.to_owned();
 			cmd = cmd.or_else(|| WindowCmd::from_signal(&name));
 		}
@@ -550,7 +549,7 @@ where
 			.set_allowed(window, input::focus_in_field(&self.doc.inst));
 	}
 
-	fn base_event(&self, etype: u32) -> Event {
+	const fn base_event(&self, etype: u32) -> Event {
 		Event {
 			etype,
 			x: self.cursor.0,

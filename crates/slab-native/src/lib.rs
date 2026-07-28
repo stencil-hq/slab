@@ -49,7 +49,7 @@ impl NativeDocument {
 
 	/// Wraps a generated Rust document's public `inst` and `imgs` fields for
 	/// use with [`shell::NativeShell`].
-	pub fn from_parts(inst: slab_kernel::frame::Instance, imgs: Vec<Vec<u8>>) -> Self {
+	pub const fn from_parts(inst: slab_kernel::frame::Instance, imgs: Vec<Vec<u8>>) -> Self {
 		Self { inst, imgs, fonts: Vec::new() }
 	}
 
@@ -104,7 +104,7 @@ pub struct NativeDriver {
 }
 
 impl NativeDriver {
-	pub fn new(document: NativeDocument, renderer: renderer::Renderer) -> Self {
+	pub const fn new(document: NativeDocument, renderer: renderer::Renderer) -> Self {
 		Self { document, renderer, doc_id: None }
 	}
 

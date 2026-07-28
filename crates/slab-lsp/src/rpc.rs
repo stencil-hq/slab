@@ -23,10 +23,10 @@ fn read_frame(input: &mut impl BufRead) -> std::io::Result<Option<Vec<u8>>> {
 		return Ok(None); // EOF
 	}
 	while !line.trim().is_empty() {
-		if let Some((key, val)) = line.split_once(':') {
-			if key.trim().eq_ignore_ascii_case("content-length") {
-				length = val.trim().parse::<usize>().ok();
-			}
+		if let Some((key, val)) = line.split_once(':')
+			&& key.trim().eq_ignore_ascii_case("content-length")
+		{
+			length = val.trim().parse::<usize>().ok();
 		}
 		line.clear();
 		if input.read_line(&mut line)? == 0 {
@@ -50,14 +50,16 @@ pub fn serve(mut input: impl BufRead, mut output: impl Write) -> i32 {
 			Ok(Some(b)) => b,
 			Ok(None) | Err(_) => break,
 		};
-		let msg: Value = if let Ok(m) = serde_json::from_slice(&body) { m } else {
-  				let err = serde_json::json!({"jsonrpc": "2.0", "id": null,
+		let msg: Value = if let Ok(m) = serde_json::from_slice(&body) {
+			m
+		} else {
+			let err = serde_json::json!({"jsonrpc": "2.0", "id": null,
                       "error": {"code": -32700, "message": "parse error"}});
-  				if send(&mut output, &err).is_err() {
-  					break;
-  				}
-  				continue;
-  			};
+			if send(&mut output, &err).is_err() {
+				break;
+			}
+			continue;
+		};
 		for out in srv.handle(&msg) {
 			if send(&mut output, &out).is_err() {
 				return srv.exit_code;

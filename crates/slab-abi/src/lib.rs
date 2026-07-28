@@ -74,7 +74,7 @@ const NOT_UTF8: &str = r#"{"id":null,"error":{"code":-32700,"message":"request i
 
 /// Returns the ABI revision this module implements.
 #[unsafe(no_mangle)]
-pub extern "C" fn slab_abi_version() -> u32 {
+pub const extern "C" fn slab_abi_version() -> u32 {
 	ABI_VERSION
 }
 
@@ -184,7 +184,7 @@ fn block_layout(len: usize) -> Option<Layout> {
 /// # Safety
 ///
 /// `ptr`/`len` must name a readable block that stays alive for the call.
-unsafe fn borrow<'a>(ptr: *const u8, len: usize) -> &'a [u8] {
+const unsafe fn borrow<'a>(ptr: *const u8, len: usize) -> &'a [u8] {
 	if ptr.is_null() || len == 0 {
 		return &[];
 	}

@@ -1,4 +1,5 @@
-//! Hole content: the host fills a `hole` viewport with FrameOps.
+//! Hole content: the host fills a `hole` viewport with `FrameOps`.
+//!
 //! `InstanceHole` mounts a child kernel `Instance` (another SLIR document)
 //! and implements preferred-size measurement and viewport rendering.
 
@@ -8,7 +9,7 @@ use slab_kernel::{
 	frame::{self as kframe, Instance},
 };
 
-/// FrameOp provider for one hole. The renderer composites the returned
+/// `FrameOp` provider for one hole. The renderer composites the returned
 /// frame translated into the hole rect and clipped to it; `instance()`
 /// exposes the backing kernel instance for `text_glyphs` and doc resources
 /// (fonts, gradients, paths).
@@ -37,9 +38,9 @@ pub struct InstanceHole {
 
 impl InstanceHole {
 	/// `None` when the SLIR bytes do not decode.
-	pub fn new(slir: &[u8]) -> Option<InstanceHole> {
+	pub fn new(slir: &[u8]) -> Option<Self> {
 		let (inst, imgs) = slab_slir::instance(slir).ok()?;
-		Some(InstanceHole { inst, imgs, env: (0.0, 0.0, false, false), natural: None })
+		Some(Self { inst, imgs, env: (0.0, 0.0, false, false), natural: None })
 	}
 }
 

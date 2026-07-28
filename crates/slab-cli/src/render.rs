@@ -120,7 +120,7 @@ fn parse(args: &[String]) -> Result<Args, String> {
 }
 
 /// Loads runtime font files for CLI render and drive sessions.
-pub(crate) fn load_registered_fonts(
+pub fn load_registered_fonts(
 	fonts: &[(String, PathBuf)],
 ) -> Result<Vec<slab_compile::render::RegisteredFont>, String> {
 	fonts
@@ -252,13 +252,12 @@ fn run(a: &Args) -> Result<(), String> {
 	};
 	let out = render(&slir, &ropts, &base_dir)?;
 	print_notes(&out.notes, a.verbose);
-	match &a.out {
-		Some(path) => write_out(path, &out.bytes, &out.summary)?,
-		None => {
-			// TUI-to-stdout: `out.text` is true; print as UTF-8.
-			let text = std::str::from_utf8(&out.bytes).map_err(|_| "non-utf8 tui output")?;
-			print!("{text}");
-		},
+	if let Some(path) = &a.out {
+		write_out(path, &out.bytes, &out.summary)?;
+	} else {
+		// TUI-to-stdout: `out.text` is true; print as UTF-8.
+		let text = std::str::from_utf8(&out.bytes).map_err(|_| "non-utf8 tui output")?;
+		print!("{text}");
 	}
 	Ok(())
 }

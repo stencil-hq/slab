@@ -11,7 +11,7 @@
 //! two-pass gaussian blur; Backdrop copies the current target region, blurs
 //! it, and paints it back with a rounded mask + saturation.
 //!
-//! Everything renders into an internal Rgba8Unorm target (blending in sRGB
+//! Everything renders into an internal `Rgba8Unorm` target (blending in sRGB
 //! byte space, matching the tiny-skia raster and the web driver), then blits
 //! to the window surface or reads back for headless PNG/probes. f64 model
 //! values narrow to f32 ONLY here, at instance packing.
@@ -219,46 +219,60 @@ struct Mat {
 }
 
 impl Mat {
-	const I: Mat = Mat { a: 1.0, b: 0.0, c: 0.0, d: 1.0, tx: 0.0, ty: 0.0 };
+	const I: Self = Self { a: 1.0, b: 0.0, c: 0.0, d: 1.0, tx: 0.0, ty: 0.0 };
 
 	fn is_identity(&self) -> bool {
-		*self == Mat::I
+		*self == Self::I
 	}
 
 	/// self ∘ o: apply `o` first, then self.
-	fn then(self, o: Mat) -> Mat {
-		Mat {
-			a:  self.a * o.a + self.c * o.b,
-			b:  self.b * o.a + self.d * o.b,
-			c:  self.a * o.c + self.c * o.d,
-			d:  self.b * o.c + self.d * o.d,
-			tx: self.a * o.tx + self.c * o.ty + self.tx,
-			ty: self.b * o.tx + self.d * o.ty + self.ty,
+	fn then(self, o: Self) -> Self {
+		Self {
+			a:  self.c.mul_add(o.b, self.a * o.a),
+			b:  self.d.mul_add(o.b, self.b * o.a),
+			c:  self.c.mul_add(o.d, self.a * o.c),
+			d:  self.d.mul_add(o.d, self.b * o.c),
+			tx: self.c.mul_add(o.ty, self.a * o.tx) + self.tx,
+			ty: self.d.mul_add(o.ty, self.b * o.tx) + self.ty,
 		}
 	}
 
-	fn rotate_about(cx: f32, cy: f32, deg: f32) -> Mat {
+	fn rotate_about(cx: f32, cy: f32, deg: f32) -> Self {
 		let r = deg.to_radians();
 		let (s, c) = r.sin_cos();
-		Mat { a: c, b: s, c: -s, d: c, tx: cx - c * cx + s * cy, ty: cy - s * cx - c * cy }
+		Self {
+			a:  c,
+			b:  s,
+			c:  -s,
+			d:  c,
+			tx: s.mul_add(cy, c.mul_add(-cx, cx)),
+			ty: c.mul_add(-cy, s.mul_add(-cx, cy)),
+		}
 	}
 
-	fn scale_about(cx: f32, cy: f32, sx: f32, sy: f32) -> Mat {
-		Mat { a: sx, b: 0.0, c: 0.0, d: sy, tx: cx - sx * cx, ty: cy - sy * cy }
+	fn scale_about(cx: f32, cy: f32, sx: f32, sy: f32) -> Self {
+		Self { a: sx, b: 0.0, c: 0.0, d: sy, tx: sx.mul_add(-cx, cx), ty: sy.mul_add(-cy, cy) }
 	}
 
 	fn apply(&self, x: f32, y: f32) -> (f32, f32) {
-		(self.a * x + self.c * y + self.tx, self.b * x + self.d * y + self.ty)
+		(self.c.mul_add(y, self.a * x) + self.tx, self.d.mul_add(y, self.b * x) + self.ty)
 	}
 
 	/// Inverse affine, or `None` when degenerate (zero-scale collapse).
-	fn invert(&self) -> Option<Mat> {
-		let det = self.a * self.d - self.b * self.c;
+	fn invert(&self) -> Option<Self> {
+		let det = self.b.mul_add(-self.c, self.a * self.d);
 		if det.abs() < 1e-9 {
 			return None;
 		}
 		let (a, b, c, d) = (self.d / det, -self.b / det, -self.c / det, self.a / det);
-		Some(Mat { a, b, c, d, tx: -(a * self.tx + c * self.ty), ty: -(b * self.tx + d * self.ty) })
+		Some(Self {
+			a,
+			b,
+			c,
+			d,
+			tx: -c.mul_add(self.ty, a * self.tx),
+			ty: -d.mul_add(self.ty, b * self.tx),
+		})
 	}
 }
 
@@ -309,7 +323,7 @@ fn grad_dir(kind: u32, angle: f64, wd: f32, hd: f32) -> [f32; 2] {
 			[dx / ln, dy / ln]
 		},
 		1 => {
-			let rr = (wd * wd + hd * hd).sqrt() / 2.0;
+			let rr = wd.hypot(hd) / 2.0;
 			[1.0 / rr.max(1e-6), 0.0]
 		},
 		_ => [angle as f32, 0.0],
@@ -319,14 +333,13 @@ fn grad_dir(kind: u32, angle: f64, wd: f32, hd: f32) -> [f32; 2] {
 /// Control-point bbox `[x, y, w, h]` of a path in path-local units — the
 /// gradient paint box for path fills/strokes (matches tiny-skia bounds).
 fn path_bounds(doc: &Doc, runtime: Option<&RtPath>, path: i32) -> Option<[f64; 4]> {
-	let coords: &[f64] = match runtime {
-		Some(rt) => &rt.coords,
-		None => {
-			let p = usize::try_from(path).ok()?;
-			let off = usize::try_from(*doc.path_coord_off.get(p)?).ok()?;
-			let len = usize::try_from(*doc.path_coord_len.get(p)?).ok()?;
-			doc.path_coords.get(off..off.checked_add(len)?)?
-		},
+	let coords: &[f64] = if let Some(rt) = runtime {
+		&rt.coords
+	} else {
+		let p = usize::try_from(path).ok()?;
+		let off = usize::try_from(*doc.path_coord_off.get(p)?).ok()?;
+		let len = usize::try_from(*doc.path_coord_len.get(p)?).ok()?;
+		doc.path_coords.get(off..off.checked_add(len)?)?
 	};
 	let mut pairs = coords.chunks_exact(2);
 	let first = pairs.next()?;
@@ -447,7 +460,7 @@ pub struct FrameBuild {
 }
 
 impl FrameBuild {
-	fn empty() -> Self {
+	const fn empty() -> Self {
 		Self {
 			rects:  Vec::new(),
 			glyphs: Vec::new(),
@@ -634,7 +647,7 @@ impl Renderer {
 		}
 	}
 
-	pub fn new(device: wgpu::Device, queue: wgpu::Queue) -> Renderer {
+	pub fn new(device: wgpu::Device, queue: wgpu::Queue) -> Self {
 		let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
 			label:  Some("slab"),
 			source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
@@ -866,7 +879,7 @@ impl Renderer {
 			wgpu::PrimitiveTopology::TriangleStrip,
 		);
 
-		Renderer {
+		Self {
 			device,
 			queue,
 			rect_pl,
@@ -952,8 +965,7 @@ impl Renderer {
 			let family = usize::try_from(doc.font_family[f])
 				.ok()
 				.and_then(|index| doc.strs.get(index))
-				.map(String::as_str)
-				.unwrap_or("");
+				.map_or("", String::as_str);
 			let target_weight = doc.font_weight[f];
 			let registered = registered_fonts
 				.iter()
@@ -1048,8 +1060,7 @@ impl Renderer {
 			let family = doc
 				.strs
 				.get(doc.font_family[f] as usize)
-				.map(String::as_str)
-				.unwrap_or("");
+				.map_or("", String::as_str);
 			let target_weight = doc.font_weight[f];
 			let bytes = registered_fonts
 				.iter()
@@ -1058,10 +1069,10 @@ impl Renderer {
 				.min_by_key(|(index, face)| {
 					(face.weight.abs_diff(target_weight), std::cmp::Reverse(*index))
 				})
-				.map(|(_, face)| face.bytes.as_slice())
-				.unwrap_or_else(|| {
-					slab_fonts::asset(doc.font_class[f] as u8, target_weight as u16).bytes
-				});
+				.map_or_else(
+					|| slab_fonts::asset(doc.font_class[f] as u8, target_weight as u16).bytes,
+					|(_, face)| face.bytes.as_slice(),
+				);
 			resources.fonts.push(Face::from_bytes(bytes));
 		}
 		self.atlas.invalidate_doc_fonts(doc_id, first_font as i32);
@@ -1078,7 +1089,7 @@ impl Renderer {
 		match info.color_type {
 			png::ColorType::Rgba => rgba.copy_from_slice(&buf[..rgba_len]),
 			png::ColorType::Rgb => {
-				for (source, target) in buf.chunks_exact(3).zip(rgba.chunks_exact_mut(4)) {
+				for (source, target) in buf.as_chunks::<3>().0.iter().zip(rgba.chunks_exact_mut(4)) {
 					target[..3].copy_from_slice(source);
 					target[3] = 255;
 				}
@@ -1089,7 +1100,7 @@ impl Renderer {
 				}
 			},
 			png::ColorType::GrayscaleAlpha => {
-				for (source, target) in buf.chunks_exact(2).zip(rgba.chunks_exact_mut(4)) {
+				for (source, target) in buf.as_chunks::<2>().0.iter().zip(rgba.chunks_exact_mut(4)) {
 					target.copy_from_slice(&[source[0], source[0], source[0], source[1]]);
 				}
 			},
@@ -1111,7 +1122,7 @@ impl Renderer {
 			return None;
 		}
 		// The shared texture pipeline blends premultiplied colors.
-		for pixel in rgba.chunks_exact_mut(4) {
+		for pixel in rgba.as_chunks_mut::<4>().0 {
 			let alpha = u32::from(pixel[3]);
 			pixel[0] = (u32::from(pixel[0]) * alpha / 255) as u8;
 			pixel[1] = (u32::from(pixel[1]) * alpha / 255) as u8;
@@ -1221,8 +1232,7 @@ impl Renderer {
 		let end = self
 			.docs
 			.get(doc_id)
-			.map(|resources| resources.images.len())
-			.unwrap_or(start);
+			.map_or(start, |resources| resources.images.len());
 		for index in start..end {
 			let image = i32::try_from(index).expect("image index exceeds i32");
 			self.ensure_image(doc_id, inst, image);
@@ -1323,9 +1333,9 @@ impl Renderer {
 							(
 								((r.x + r.w / 2.0) as f32 + doc.shdw_x[i] as f32 + ox) * s,
 								((r.y + r.h / 2.0) as f32 + doc.shdw_y[i] as f32 + oy) * s,
-								(r.w / 2.0) as f32 * s + spread,
-								(r.h / 2.0) as f32 * s + spread,
-								r.radius as f32 * s + spread,
+								((r.w / 2.0) as f32).mul_add(s, spread),
+								((r.h / 2.0) as f32).mul_add(s, spread),
+								(r.radius as f32).mul_add(s, spread),
 								-1.0,
 								0.0,
 								0.0,
@@ -1569,8 +1579,8 @@ impl Renderer {
 						let Some(e) = self.atlas_entry(li.doc_id, g.font, g.gid, px) else {
 							continue;
 						};
-						let gx = ((g.x as f32 + ox) * s + e.bearing[0]).round();
-						let gy = ((g.y as f32 + oy) * s + e.bearing[1]).round();
+						let gx = (g.x as f32 + ox).mul_add(s, e.bearing[0]).round();
+						let gy = (g.y as f32 + oy).mul_add(s, e.bearing[1]).round();
 						let inst = GlyphI {
 							mabcd: [mat.a, mat.b, mat.c, mat.d],
 							mtp: [mat.tx, mat.ty, gx, gy],
@@ -1599,7 +1609,7 @@ impl Renderer {
 						let lo = t.uncov_off.max(0) as usize;
 						let hi = lo + t.uncov_len.max(0) as usize * 2;
 						let runs = li.frame.uncovered.get(lo..hi).unwrap_or(&[]);
-						for pair in runs.chunks_exact(2) {
+						for pair in runs.as_chunks::<2>().0 {
 							let from = pair[0] as usize;
 							let to = (pair[1] as usize).min(glyphs.len());
 							for j in from..to {
@@ -1610,7 +1620,7 @@ impl Renderer {
 									continue; // zero-advance modifiers
 								}
 								let inset = (adv * 0.08).min(1.5);
-								let bw = adv - 2.0 * inset;
+								let bw = 2.0f64.mul_add(-inset, adv);
 								let bh = t.size * 0.68;
 								let cx = ((x0 + adv / 2.0) as f32 + ox) * s;
 								let cy = ((t.y_baseline - bh / 2.0) as f32 + oy) * s;
@@ -1645,7 +1655,7 @@ impl Renderer {
 						}
 						let thickness = (t.size * f64::from(s) / 16.0).max(1.0) as f32;
 						let cx = ((t.x + t.measured_w / 2.0) as f32 + ox) * s;
-						let cy = ((t.y_baseline - t.size * 0.3) as f32 + oy) * s;
+						let cy = (t.size.mul_add(-0.3, t.y_baseline) as f32 + oy) * s;
 						fb.push_rect(clip.scissor, RectI {
 							mabcd: [mat.a, mat.b, mat.c, mat.d],
 							mtc: [mat.tx, mat.ty, cx, cy],
@@ -1729,14 +1739,13 @@ impl Renderer {
 					} else {
 						None
 					};
-					let mesh_path = runtime_path
-						.map(|path| self.runtime_path_key(li.doc_id, path))
-						.unwrap_or(p.path);
+					let mesh_path =
+						runtime_path.map_or(p.path, |path| self.runtime_path_key(li.doc_id, path));
 					// paint = (color slot, grad tag): solid rgba, or the
 					// gradient box geometry over the path's coordinate bbox
 					// (matching the raster exporter's shader box)
 					let bounds = path_bounds(doc, runtime_path, p.path);
-					let paint = |kind: u32, h: u32, rr: &Renderer| -> Option<([f32; 4], f32)> {
+					let paint = |kind: u32, h: u32, rr: &Self| -> Option<([f32; 4], f32)> {
 						match kind {
 							1 => Some((rgba(h, p.opacity), -1.0)),
 							2 => {
@@ -1887,8 +1896,8 @@ impl Renderer {
 						MaskI {
 							rect: [0.0, 0.0, tw as f32, th as f32],
 							bx:   [
-								(bx0 + bx1) / 2.0,
-								(by0 + by1) / 2.0,
+								f32::midpoint(bx0, bx1),
+								f32::midpoint(by0, by1),
 								(bx1 - bx0) / 2.0,
 								(by1 - by0) / 2.0,
 							],
@@ -1975,11 +1984,11 @@ impl Renderer {
 						let (x, y) = (ux - cx, uy - cy);
 						let x1 = x * cos_ry;
 						let z1 = -x * sin_ry;
-						let y2 = y * cos_rx - z1 * sin_rx;
-						let z2 = y * sin_rx + z1 * cos_rx;
+						let y2 = z1.mul_add(-sin_rx, y * cos_rx);
+						let z2 = z1.mul_add(cos_rx, y * sin_rx);
 						let zc = z2.min(0.95 * depth);
 						let sc = depth / (depth - zc);
-						let (wx, wy) = mat.apply(cx + x1 * sc, cy + y2 * sc);
+						let (wx, wy) = mat.apply(x1.mul_add(sc, cx), y2.mul_add(sc, cy));
 						// homogeneous weight = 1/view-depth = the projection
 						// scale itself; verified exact for the strip split
 						(wx, wy, sc)
@@ -2135,8 +2144,7 @@ impl Renderer {
 		let dash = rect
 			.has_dash
 			.then_some((rect.dash_on, rect.dash_off))
-			.map(dash_key)
-			.unwrap_or([-1, -1]);
+			.map_or([-1, -1], dash_key);
 		let key = StrokeKey::Rect {
 			size: [mesh_scalar_key(rect.w), mesh_scalar_key(rect.h)],
 			radius: mesh_scalar_key(rect.radius),
@@ -2231,8 +2239,7 @@ impl Renderer {
 		if self
 			.main
 			.as_ref()
-			.map(|(w, h, _)| (*w, *h) != (tw, th))
-			.unwrap_or(true)
+			.is_none_or(|(w, h, _)| (*w, *h) != (tw, th))
 		{
 			self.main = Some((tw, th, self.make_target(tw, th)));
 			self.pool.clear();
@@ -2639,8 +2646,8 @@ impl Renderer {
 							let alpha = (band as f32 + 0.5) / bands as f32;
 							(
 								sigma * alpha,
-								1.0 + (saturate - 1.0) * alpha,
-								1.0 + (brightness - 1.0) * alpha,
+								(saturate - 1.0).mul_add(alpha, 1.0),
+								(brightness - 1.0).mul_add(alpha, 1.0),
 								band as f32 / bands as f32,
 								if band + 1 == bands {
 									1.01 // the top band includes alpha == 1
@@ -2693,8 +2700,8 @@ impl Renderer {
 						);
 						// paint the blurred region back with rounded mask +
 						// saturate/brightness (band-windowed when masked)
-						let cx = (rect[0] + rect[2]) / 2.0;
-						let cy = (rect[1] + rect[3]) / 2.0;
+						let cx = f32::midpoint(rect[0], rect[2]);
+						let cy = f32::midpoint(rect[1], rect[3]);
 						let hx = (rect[2] - rect[0]) / 2.0;
 						let hy = (rect[3] - rect[1]) / 2.0;
 						let uv = [
@@ -2799,7 +2806,6 @@ impl Renderer {
 		self.frame_spare = Some(fb);
 	}
 
-	#[allow(clippy::too_many_arguments)]
 	fn blur_pass(
 		&self,
 		encoder: &mut wgpu::CommandEncoder,
@@ -2924,8 +2930,7 @@ fn clamp_sc(sc: Sc, tw: u32, th: u32) -> Sc {
 /// [0,1] is masked transparent in the shader (contain letterboxing).
 fn image_uv(inst: &Instance, im: &slab_kernel::flatten::OpImage) -> [f32; 4] {
 	let (iw, ih) = slab_kernel::frame::inst_img_info(inst, im.img)
-		.map(|(width, height, ..)| (f64::from(width), f64::from(height)))
-		.unwrap_or((0.0, 0.0));
+		.map_or((0.0, 0.0), |(width, height, ..)| (f64::from(width), f64::from(height)));
 	if iw <= 0.0 || ih <= 0.0 || im.w <= 0.0 || im.h <= 0.0 {
 		return [0.0, 0.0, 1.0, 1.0];
 	}
@@ -2941,8 +2946,8 @@ fn image_uv(inst: &Instance, im: &slab_kernel::flatten::OpImage) -> [f32; 4] {
 		},
 	};
 	// scaled image is centered: top-left at (im.x + (w - iw*sx)/2, …)
-	let tx = (im.w - iw * sx) / 2.0;
-	let ty = (im.h - ih * sy) / 2.0;
+	let tx = iw.mul_add(-sx, im.w) / 2.0;
+	let ty = ih.mul_add(-sy, im.h) / 2.0;
 	let u0 = (0.0 - tx) / (iw * sx);
 	let v0 = (0.0 - ty) / (ih * sy);
 	let u1 = (im.w - tx) / (iw * sx);
@@ -2950,7 +2955,7 @@ fn image_uv(inst: &Instance, im: &slab_kernel::flatten::OpImage) -> [f32; 4] {
 	[u0 as f32, v0 as f32, (u1 - u0) as f32, (v1 - v0) as f32]
 }
 
-fn premul_blend() -> wgpu::BlendState {
+const fn premul_blend() -> wgpu::BlendState {
 	wgpu::BlendState {
 		color: wgpu::BlendComponent {
 			src_factor: wgpu::BlendFactor::One,
@@ -2965,7 +2970,7 @@ fn premul_blend() -> wgpu::BlendState {
 	}
 }
 
-fn inst_layout(
+const fn inst_layout(
 	stride: u64,
 	attrs: &[wgpu::VertexAttribute],
 ) -> Option<wgpu::VertexBufferLayout<'_>> {
@@ -2976,7 +2981,6 @@ fn inst_layout(
 	})
 }
 
-#[allow(clippy::too_many_arguments)]
 fn make_pipeline(
 	device: &wgpu::Device,
 	shader: &wgpu::ShaderModule,

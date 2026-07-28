@@ -1,7 +1,7 @@
 //! Diagnostics accumulator shared by the slab front end and compiler (SPEC
 //! §12).
 
-use std::fmt;
+use std::fmt::{self, Write};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Level {
@@ -39,9 +39,9 @@ impl Diag {
 		let file = self.file.as_deref().unwrap_or(file);
 		let mut out = String::new();
 		if !file.is_empty() {
-			out.push_str(&format!("{}:{}: ", file, self.line));
+			let _ = write!(out, "{}:{}: ", file, self.line);
 		}
-		out.push_str(&format!("{}[{}]: {}", self.level, self.code, self.msg));
+		let _ = write!(out, "{}[{}]: {}", self.level, self.code, self.msg);
 		if let Some(r) = &self.remedy {
 			for line in r.lines() {
 				out.push_str("\n  ");

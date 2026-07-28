@@ -222,7 +222,7 @@ fn probes_text_coverage() {
 	let x0 = t.x as u32;
 	let x1 = ((t.x + t.measured_w).ceil() as u32).min(w);
 	let y0 = ((t.y_baseline - t.size).floor().max(0.0)) as u32;
-	let y1 = ((t.y_baseline + t.size * 0.3).ceil() as u32).min(h);
+	let y1 = (t.size.mul_add(0.3, t.y_baseline).ceil() as u32).min(h);
 	let mut lit = 0usize;
 	for y in y0..y1 {
 		for x in x0..x1 {
@@ -265,7 +265,9 @@ fn renders_layered_examples() {
 		let fr = kframe::inst_frame(&mut inst, 250.0);
 		let (w, h, px) = render_and_read(&mut renderer, &inst, &fr, &imgs);
 		let lit = px
-			.chunks_exact(4)
+			.as_chunks::<4>()
+			.0
+			.iter()
 			.filter(|p| p[0] > 8 || p[1] > 8 || p[2] > 8)
 			.count();
 		println!("{name}: {w}x{h}, {lit} non-background pixels");

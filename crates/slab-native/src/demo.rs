@@ -47,7 +47,7 @@ pub struct Opts {
 
 impl Default for Opts {
 	fn default() -> Self {
-		Opts {
+		Self {
 			width:         900.0,
 			height:        640.0,
 			t:             0.0,
@@ -292,10 +292,10 @@ struct App {
 }
 
 impl App {
-	fn new(opts: Opts, a11y_proxy: EventLoopProxy<a11y::Event>) -> Result<App, String> {
+	fn new(opts: Opts, a11y_proxy: EventLoopProxy<a11y::Event>) -> Result<Self, String> {
 		let doc = settings_doc(opts.theme.as_deref())?;
 		let rows_bytes = rows_slir()?;
-		Ok(App {
+		Ok(Self {
 			exit_deadline: opts
 				.exit_after_ms
 				.map(|ms| Instant::now() + std::time::Duration::from_millis(ms)),
@@ -553,7 +553,7 @@ impl App {
 			.set_allowed(window, input::focus_in_field(&self.doc.inst));
 	}
 
-	fn base_event(&self, etype: u32) -> Event {
+	const fn base_event(&self, etype: u32) -> Event {
 		Event {
 			etype,
 			x: self.cursor.0,

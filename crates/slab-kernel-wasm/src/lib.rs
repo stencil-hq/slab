@@ -33,7 +33,6 @@ impl KInst {
 	}
 
 	/// Assigns one scalar parameter by document parameter index.
-	#[allow(clippy::too_many_arguments)]
 	pub fn set_param(
 		&mut self,
 		param: u32,
@@ -68,7 +67,6 @@ impl KInst {
 	}
 
 	/// Assigns one typed list field.
-	#[allow(clippy::too_many_arguments)]
 	pub fn set_list_field(
 		&mut self,
 		param: u32,
@@ -91,7 +89,6 @@ impl KInst {
 	}
 
 	/// Registers runtime font metrics and returns the selected font-table index.
-	#[allow(clippy::too_many_arguments)]
 	pub fn font_register(
 		&mut self,
 		family: &str,
@@ -162,7 +159,11 @@ impl KInst {
 	}
 
 	/// Returns the focused node, or `u32::MAX` when focus is clear.
-	pub const fn focus(&self) -> u32 {
+	#[allow(
+		clippy::missing_const_for_fn,
+		reason = "wasm_bindgen exported methods cannot be const fn"
+	)]
+	pub fn focus(&self) -> u32 {
 		kframe::inst_focus(&self.inner)
 	}
 
@@ -298,7 +299,6 @@ impl KInst {
 	}
 
 	/// Dispatches one platform event and returns all effects as JSON.
-	#[allow(clippy::too_many_arguments)]
 	pub fn dispatch_json(
 		&mut self,
 		event_type: u32,
@@ -329,7 +329,6 @@ impl KInst {
 
 	/// Dispatches one platform event and emits canonical conformance effects
 	/// JSON.
-	#[allow(clippy::too_many_arguments)]
 	pub fn dispatch_dump_json(
 		&mut self,
 		event_type: u32,
