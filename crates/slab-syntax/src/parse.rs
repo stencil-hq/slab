@@ -100,6 +100,37 @@ impl<'d> Parser<'d> {
         }
     }
 
+    /// Recover a run of attributes that started on new lines without `\`.
+    fn recover_missing_header_continuation(&mut self) -> bool {
+        let starts_attr =
+            (self.at(TokKind::Id) && self.peek_at(1).kind == TokKind::Eq) || self.at(TokKind::Eq);
+        if !starts_attr {
+            return false;
+        }
+        let line = self.peek().line;
+        self.diags.error_with(
+            "parse",
+            "node-header attribute starts on a new line",
+            line,
+            "did you mean to continue the previous line with `\\`?",
+        );
+        loop {
+            while !matches!(self.peek().kind, TokKind::Nl | TokKind::Rb | TokKind::Eof) {
+                self.next();
+            }
+            if !self.at(TokKind::Nl) {
+                break;
+            }
+            self.next();
+            let next_starts_attr = (self.at(TokKind::Id) && self.peek_at(1).kind == TokKind::Eq)
+                || self.at(TokKind::Eq);
+            if !next_starts_attr {
+                break;
+            }
+        }
+        true
+    }
+
     // -- entry --------------------------------------------------------------
 
     pub fn parse(&mut self) -> Document {
@@ -174,6 +205,8 @@ impl<'d> Parser<'d> {
                     t.line,
                 );
                 self.parse_each();
+            } else if self.recover_missing_header_continuation() {
+                continue;
             } else if t.kind == TokKind::Id {
                 let n = self.parse_node();
                 doc.roots.push(n);
@@ -594,6 +627,8 @@ impl<'d> Parser<'d> {
                 out.push(Item::When(self.parse_when()));
             } else if t.kind == TokKind::Id && t.text == "each" {
                 out.push(Item::Each(self.parse_each()));
+            } else if self.recover_missing_header_continuation() {
+                continue;
             } else if t.kind == TokKind::Id {
                 out.push(Item::Node(self.parse_node()));
             } else {
@@ -958,6 +993,26 @@ col scroll {
             panic!("expected virtual each");
         };
         assert!(virtual_each.flags.iter().any(|flag| flag == "virtual"));
+    }
+
+    #[test]
+    fn missing_node_header_continuation_reports_once_and_recovers() {
+        let mut diagnostics = Diagnostics::default();
+        let document = parse(
+            "col w=fill {\n  text \"save\"\n    size=18\n    weight=700\n  rect h=1\n}\n",
+            &mut diagnostics,
+        );
+        assert_eq!(diagnostics.0.len(), 1, "{:?}", diagnostics.0);
+        let diagnostic = &diagnostics.0[0];
+        assert_eq!(diagnostic.code, "parse");
+        assert_eq!(diagnostic.line, 3);
+        assert!(
+            diagnostic
+                .remedy
+                .as_deref()
+                .is_some_and(|remedy| remedy.contains("continue the previous line with `\\`"))
+        );
+        assert_eq!(document.roots[0].children.len(), 2);
     }
 
     #[test]

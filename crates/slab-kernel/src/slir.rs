@@ -296,6 +296,9 @@ pub const A_POS_IN_SET: u32 = 87u32;
 
 pub const A_SET_SIZE: u32 = 88u32;
 
+/// Conditional animation binding channel.
+pub const A_ANIMATE: u32 = 89u32;
+
 /// Parameter types stored in [`Doc::parm_type`] and host parameter values.
 pub const PARAM_TEXT: u32 = 0u32;
 

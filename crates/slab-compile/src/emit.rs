@@ -50,6 +50,133 @@ fn collect_node_fonts(node: &CNode, families: &mut BTreeSet<String>, weights: &m
         collect_node_fonts(child, families, weights);
     }
 }
+fn family_from_attrs<'a>(attrs: &'a [AttrE], inherited: Option<&'a str>) -> Option<&'a str> {
+    attrs
+        .iter()
+        .rev()
+        .find(|attr| attr.id == at::FAMILY)
+        .map_or(inherited, |attr| match &attr.val {
+            TVal::Str(family) => Some(family.as_str()),
+            TVal::Param(_) | TVal::Prop(_) => None,
+            _ => inherited,
+        })
+}
+
+fn weight_from_attrs(attrs: &[AttrE], inherited: Option<u16>) -> Option<u16> {
+    attrs
+        .iter()
+        .rev()
+        .find(|attr| attr.id == at::WEIGHT)
+        .map_or(inherited, |attr| match &attr.val {
+            TVal::Num(weight) => Some(font_assets::snap_weight(*weight)),
+            TVal::Param(_) | TVal::Prop(_) => None,
+            _ => inherited,
+        })
+}
+
+fn warn_missing_text_glyphs(
+    text: &str,
+    family: Option<&str>,
+    weight: Option<u16>,
+    line: u32,
+    coverage: &HashMap<String, HashMap<u16, BTreeSet<u32>>>,
+    warned: &mut BTreeSet<(String, u32, u32)>,
+    diags: &mut Diagnostics,
+) {
+    let (Some(family), Some(weight)) = (family, weight) else {
+        return;
+    };
+    let display_family = if family.is_empty() { "sans" } else { family };
+    let Some(codepoints) = coverage.get(family).and_then(|faces| faces.get(&weight)) else {
+        return;
+    };
+    for character in text.chars().filter(|character| !character.is_control()) {
+        let codepoint = character as u32;
+        if codepoints.contains(&codepoint) || !warned.insert((family.to_string(), codepoint, line))
+        {
+            continue;
+        }
+        diags.warn(
+            "glyph-missing",
+            format!(
+                "character '{character}' (U+{codepoint:04X}) is missing from embedded font family '{display_family}'"
+            ),
+            line,
+        );
+    }
+}
+
+fn check_node_glyphs(
+    node: &CNode,
+    inherited_family: Option<&str>,
+    inherited_weight: Option<u16>,
+    coverage: &HashMap<String, HashMap<u16, BTreeSet<u32>>>,
+    warned: &mut BTreeSet<(String, u32, u32)>,
+    diags: &mut Diagnostics,
+) {
+    let family = family_from_attrs(&node.attrs, inherited_family);
+    let weight = weight_from_attrs(&node.attrs, inherited_weight);
+    if let Some(TVal::Str(text)) = &node.content {
+        warn_missing_text_glyphs(text, family, weight, node.line, coverage, warned, diags);
+    }
+    for patch in &node.patches {
+        let patch_family = family_from_attrs(&patch.attrs, family);
+        let patch_weight = weight_from_attrs(&patch.attrs, weight);
+        if let Some(TVal::Str(text)) = patch
+            .attrs
+            .iter()
+            .rev()
+            .find(|attr| attr.id == at::CONTENT)
+            .map(|attr| &attr.val)
+        {
+            warn_missing_text_glyphs(
+                text,
+                patch_family,
+                patch_weight,
+                patch.line,
+                coverage,
+                warned,
+                diags,
+            );
+        }
+        for child in &patch.children {
+            check_node_glyphs(child, patch_family, patch_weight, coverage, warned, diags);
+        }
+    }
+    for child in &node.children {
+        check_node_glyphs(child, family, weight, coverage, warned, diags);
+    }
+}
+
+fn warn_missing_glyphs(ex: &Expanded, opts: &Options, diags: &mut Diagnostics) {
+    let mut families = BTreeSet::from([String::new()]);
+    let mut weights = BTreeSet::from([400u16]);
+    for root in &ex.roots {
+        collect_node_fonts(root, &mut families, &mut weights);
+    }
+    let mut coverage: HashMap<String, HashMap<u16, BTreeSet<u32>>> = HashMap::new();
+    for family in families {
+        let class = font_assets::classify_family(&family);
+        let custom = opts
+            .fonts
+            .iter()
+            .find(|(name, _)| name.eq_ignore_ascii_case(&family))
+            .map(|(_, bytes)| bytes.as_slice());
+        for &weight in &weights {
+            let bytes = custom.unwrap_or_else(|| font_assets::asset(class, weight).bytes);
+            let metrics = font_assets::parse_metrics(bytes).expect("registered font parses");
+            coverage
+                .entry(family.clone())
+                .or_default()
+                .insert(weight, metrics.cps.into_iter().collect());
+        }
+    }
+    let mut warned = BTreeSet::new();
+    for root in &ex.roots {
+        check_node_glyphs(root, Some(""), Some(400), &coverage, &mut warned, diags);
+    }
+}
+
 type GradKey = (u8, u64, Vec<(u64, u32)>);
 
 struct Emitter<'a> {
@@ -404,6 +531,10 @@ impl<'a> Emitter<'a> {
                 self.slir.signals.push((string, ix, trigger));
             }
         }
+        for (name, trigger) in &n.conditional_signals {
+            let string = self.intern(name);
+            self.slir.signals.push((string, ix, *trigger));
+        }
         if let Some(name) = &n.hole {
             let s = self.intern(name);
             self.slir.holes.push((s, ix));
@@ -419,6 +550,18 @@ impl<'a> Emitter<'a> {
                 easing: b.easing,
                 delay: b.delay,
             });
+        }
+        for b in &n.conditional_animations {
+            if let Some(anim) = self.anim_names.iter().position(|a| *a == b.name) {
+                self.slir.bindings.push(BindE {
+                    node: ix,
+                    anim: anim as u32,
+                    dur: b.dur,
+                    mode: b.mode,
+                    easing: b.easing,
+                    delay: b.delay,
+                });
+            }
         }
         if let Some((dur, easing, delay)) = n.transition {
             self.slir.transitions.push(TransE {
@@ -484,6 +627,7 @@ impl<'a> Emitter<'a> {
 
 /// Emit an expanded document as a `Slir` value.
 pub fn emit(ex: &Expanded, opts: &Options, diags: &mut Diagnostics) -> Slir {
+    warn_missing_glyphs(ex, opts, diags);
     let mut em = Emitter {
         slir: Slir::default(),
         str_ix: HashMap::new(),

@@ -214,6 +214,8 @@ pub struct CNode {
     pub children: Vec<CNode>,
     pub patches: Vec<CPatch>,
     pub animate: Option<AnimBind>,
+    /// Animation bindings declared by deferred conditions on this node.
+    pub conditional_animations: Vec<AnimBind>,
     pub transition: Option<(f64, u8, f64)>,
     pub act: Option<String>,
     pub field: Option<String>,
@@ -238,6 +240,8 @@ pub struct CNode {
     pub drag_update: Option<String>,
     /// Drag termination signal.
     pub drag_end: Option<String>,
+    /// Signal bindings declared by deferred conditions on this node.
+    pub conditional_signals: Vec<(String, u8)>,
     pub hole: Option<String>,
 }
 
@@ -610,9 +614,10 @@ struct Sink {
     drag_end: Option<String>,
     /// Extra flag bits set by attrs (`field`, `press`, and `drag` imply focusable).
     flag_mask: u16,
-    /// True while applying a deferred `when` patch. Signal bindings and
-    /// animation controls are per-node statics and are rejected there.
+    /// True while applying deferred patch or keyframe attributes.
     patch_ctx: bool,
+    /// True while applying animation keyframe attributes.
+    keyframe_ctx: bool,
 }
 
 impl Sink {
@@ -1592,15 +1597,16 @@ fn apply_attr(ctx: &mut Ctx, sink: &mut Sink, key: &str, rv: &RVal, line: u32) {
             _ => ctx.error("ref", "tilt expects rx, rx,ry or rx,ry,depth".into(), line),
         },
         "animate" => {
-            if sink.patch_ctx {
+            if sink.keyframe_ctx {
                 ctx.warn(
                     "attr",
-                    "animate inside a deferred `when` patch is not supported".into(),
+                    "animate inside an animation keyframe is not supported".into(),
                     line,
                 );
                 return;
             }
             if let Some(spec) = parse_animate(ctx, rv, line) {
+                sink.set(at::ANIMATE, TVal::Str(spec.name.clone()));
                 sink.animate = Some(spec);
             }
         }
@@ -1908,14 +1914,6 @@ fn apply_attr(ctx: &mut Ctx, sink: &mut Sink, key: &str, rv: &RVal, line: u32) {
         }
         "act" | "field" | "submit" | "press" | "context" | "dblclick" | "drag" | "drop"
         | "resize" | "pointer-move" | "pointer-up" | "drag-update" | "drag-end" => {
-            if sink.patch_ctx {
-                ctx.warn(
-                    "attr",
-                    format!("{key} inside a `when` patch is not supported"),
-                    line,
-                );
-                return;
-            }
             let name = match rv {
                 RVal::Kw(k) => Some(k.clone()),
                 RVal::Str(s) => Some(s.clone()),
@@ -1923,6 +1921,23 @@ fn apply_attr(ctx: &mut Ctx, sink: &mut Sink, key: &str, rv: &RVal, line: u32) {
             };
             match name {
                 Some(name) => {
+                    let attr = match key {
+                        "act" => at::ACT,
+                        "field" => at::FIELD,
+                        "submit" => at::SUBMIT,
+                        "press" => at::PRESS,
+                        "context" => at::CONTEXT,
+                        "dblclick" => at::DBLCLICK,
+                        "drag" => at::DRAG,
+                        "drop" => at::DROP,
+                        "resize" => at::RESIZE,
+                        "pointer-move" => at::POINTER_MOVE,
+                        "pointer-up" => at::POINTER_UP,
+                        "drag-update" => at::DRAG_UPDATE,
+                        "drag-end" => at::DRAG_END,
+                        _ => unreachable!(),
+                    };
+                    sink.set(attr, TVal::Str(name.clone()));
                     match key {
                         "act" => sink.act = Some(name),
                         "field" => sink.field = Some(name),
@@ -2418,6 +2433,32 @@ fn expand_each(
         ctx.each_depth -= 1;
         let _ = ctx.each_schemas.pop();
     }
+    for root in &children {
+        if !root.children.is_empty() || !matches!(root.kind, nk::TEXT | nk::SPAN) {
+            continue;
+        }
+        let axes = root
+            .attrs
+            .iter()
+            .filter_map(|attr| match (attr.id, &attr.val) {
+                (at::W, TVal::Size(SizeSpec::Fill(_))) => Some("w"),
+                (at::H, TVal::Size(SizeSpec::Fill(_))) => Some("h"),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        if !axes.is_empty() {
+            ctx.warn(
+                "fill-unbounded",
+                format!(
+                    "{}=fill on leaf each item root '{}' resolves as hug; \
+                     wrap the leaf in a row or col with fill sizing",
+                    axes.join("="),
+                    root.key
+                ),
+                root.line,
+            );
+        }
+    }
     collect_dynamic_font_candidates(ctx, schema_row, &children);
     Some(CNode {
         kind: nk::EACH,
@@ -2430,6 +2471,7 @@ fn expand_each(
         children,
         patches: Vec::new(),
         animate: None,
+        conditional_animations: vec![],
         transition: None,
         act: None,
         field: None,
@@ -2444,6 +2486,7 @@ fn expand_each(
         pointer_up: None,
         drag_update: None,
         drag_end: None,
+        conditional_signals: vec![],
         hole: None,
     })
 }
@@ -2724,11 +2767,13 @@ fn expand_builtin(
 
     // rule 10: client/env-conditional token overrides become per-site patches
     let mut variant_patches: Vec<CPatch> = Vec::new();
+    let mut variant_animations = Vec::new();
+    let mut variant_signals = Vec::new();
     if !ctx.variants.is_empty() {
         let variants = std::mem::take(&mut ctx.variants);
         for (cond, tree) in &variants {
             ctx.quiet += 1;
-            let vsink = build_sink(ctx, a, scope, tree, base_kind, false);
+            let mut vsink = build_sink(ctx, a, scope, tree, base_kind, false);
             ctx.quiet -= 1;
             let mut patch_attrs: Vec<AttrE> = Vec::new();
             for e in &vsink.entries {
@@ -2746,6 +2791,32 @@ fn expand_builtin(
                 if let TVal::Str(s) = c {
                     let s = s.clone();
                     ctx.note_text(&s);
+                }
+            }
+            if patch_attrs.iter().any(|entry| entry.id == at::ANIMATE)
+                && let Some(binding) = vsink.animate.take()
+            {
+                variant_animations.push(binding);
+            }
+            for (binding, trigger, attr) in [
+                (vsink.act.take(), 0, at::ACT),
+                (vsink.field.take(), 1, at::FIELD),
+                (vsink.submit.take(), 2, at::SUBMIT),
+                (vsink.press.take(), 3, at::PRESS),
+                (vsink.context.take(), 4, at::CONTEXT),
+                (vsink.dblclick.take(), 5, at::DBLCLICK),
+                (vsink.drag.take(), 6, at::DRAG),
+                (vsink.drop.take(), 7, at::DROP),
+                (vsink.resize.take(), 8, at::RESIZE),
+                (vsink.pointer_move.take(), 9, at::POINTER_MOVE),
+                (vsink.pointer_up.take(), 10, at::POINTER_UP),
+                (vsink.drag_update.take(), 11, at::DRAG_UPDATE),
+                (vsink.drag_end.take(), 12, at::DRAG_END),
+            ] {
+                if patch_attrs.iter().any(|entry| entry.id == attr)
+                    && let Some(name) = binding
+                {
+                    variant_signals.push((name, trigger));
                 }
             }
             if !patch_attrs.is_empty() {
@@ -2782,6 +2853,7 @@ fn expand_builtin(
         children: Vec::new(),
         patches: variant_patches,
         animate: None,
+        conditional_animations: variant_animations,
         transition: None,
         act: None,
         field: None,
@@ -2796,6 +2868,7 @@ fn expand_builtin(
         pointer_up: None,
         drag_update: None,
         drag_end: None,
+        conditional_signals: variant_signals,
         hole: None,
     };
     for f in &a.flags {
@@ -2828,6 +2901,7 @@ fn expand_builtin(
                         children: vec![],
                         patches: vec![],
                         animate: None,
+                        conditional_animations: vec![],
                         transition: None,
                         act: None,
                         field: None,
@@ -2842,6 +2916,7 @@ fn expand_builtin(
                         pointer_up: None,
                         drag_update: None,
                         drag_end: None,
+                        conditional_signals: vec![],
                         hole: None,
                     });
                 } else if matches!(kind, nk::TEXT | nk::SPAN) && sink.content.is_none() {
@@ -2898,6 +2973,7 @@ fn expand_builtin(
                                     children: vec![],
                                     patches: vec![],
                                     animate: None,
+                                    conditional_animations: vec![],
                                     transition: None,
                                     act: None,
                                     field: None,
@@ -2912,6 +2988,7 @@ fn expand_builtin(
                                     pointer_up: None,
                                     drag_update: None,
                                     drag_end: None,
+                                    conditional_signals: vec![],
                                     hole: None,
                                 });
                             }
@@ -2973,6 +3050,50 @@ fn expand_builtin(
                             val: c.clone(),
                         });
                     }
+                    if let Some(binding) = psink.animate.take() {
+                        node.conditional_animations.push(binding);
+                    }
+                    let conditional_has_field = psink.field.is_some() || sink.field.is_some();
+                    for (binding, trigger) in [
+                        (psink.act.take(), 0),
+                        (psink.field.take(), 1),
+                        (psink.submit.take(), 2),
+                        (psink.press.take(), 3),
+                        (psink.context.take(), 4),
+                        (psink.dblclick.take(), 5),
+                        (psink.drag.take(), 6),
+                        (psink.drop.take(), 7),
+                        (psink.resize.take(), 8),
+                        (psink.pointer_move.take(), 9),
+                        (psink.pointer_up.take(), 10),
+                        (psink.drag_update.take(), 11),
+                        (psink.drag_end.take(), 12),
+                    ] {
+                        let Some(name) = binding else {
+                            continue;
+                        };
+                        if trigger == 1 && kind != nk::TEXT {
+                            ctx.warn("attr", "field= applies to text nodes".into(), w.line);
+                            continue;
+                        }
+                        if trigger == 2 && (kind != nk::TEXT || !conditional_has_field) {
+                            ctx.warn(
+                                "attr",
+                                "submit= applies only to text nodes with field=".into(),
+                                w.line,
+                            );
+                            continue;
+                        }
+                        if trigger == 8 && kind != nk::DIVIDER {
+                            ctx.warn(
+                                "attr",
+                                "resize= applies only to divider nodes".into(),
+                                w.line,
+                            );
+                            continue;
+                        }
+                        node.conditional_signals.push((name, trigger));
+                    }
                     node.patches.push(CPatch {
                         cond: spec,
                         attrs: psink.entries,
@@ -3015,6 +3136,7 @@ fn expand_builtin(
     // childless node it silently does nothing — the author meant `self=`
     if sink.get(at::ALIGN).is_some()
         && node.children.is_empty()
+        && node.patches.iter().all(|patch| patch.children.is_empty())
         && !matches!(kind, nk::TEXT | nk::SPAN | nk::PARA)
     {
         ctx.warn(
@@ -3238,6 +3360,9 @@ fn expand_builtin(
             if let Some(name) = name {
                 register_signal(ctx, name.clone(), trigger, a.line);
             }
+        }
+        for (name, trigger) in &node.conditional_signals {
+            register_signal(ctx, name.clone(), *trigger, a.line);
         }
     }
 
@@ -4045,6 +4170,7 @@ pub fn expand(doc: &Document, diags: &mut Diagnostics) -> Expanded {
         for (pos, attrs) in &anim.stops {
             let mut sink = Sink {
                 patch_ctx: true,
+                keyframe_ctx: true,
                 ..Default::default()
             };
             for (k, v) in attrs {

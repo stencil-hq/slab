@@ -15,7 +15,7 @@ use std::fmt::Write as _;
 /// Returns the module source (or `None` on compile failure) and the compile
 /// diagnostics.
 pub fn generate(src: &str, copts: &Options, src_name: &str) -> (Option<String>, Diagnostics) {
-    let (slir, diags) = crate::compile(src, copts);
+    let (slir, diags) = crate::compile_with_exports(src, copts);
     let Some(slir) = slir else {
         return (None, diags);
     };
@@ -472,6 +472,14 @@ fn emit_module(slir: &Slir, bytes: &[u8], src_name: &str) -> String {
          \x20   /// `visible` shows the keyboard-grade focus ring.\n\
          \x20   pub fn set_focus(&mut self, key: &str, visible: bool) -> bool {{\n\
          \x20       kframe::inst_set_focus(&mut self.inst, key, visible)\n\
+         \x20   }}\n\n\
+         \x20   /// Replace a keyed field buffer, reset its edit history, and emit Change.\n\
+         \x20   pub fn set_field_text(&mut self, key: &str, text: &str) -> bool {{\n\
+         \x20       kframe::inst_set_field_text(&mut self.inst, key, text)\n\
+         \x20   }}\n\n\
+         \x20   /// Return a keyed field's committed text, or `None` for a non-field key.\n\
+         \x20   pub fn field_text(&self, key: &str) -> Option<String> {{\n\
+         \x20       kframe::inst_field_text(&self.inst, key)\n\
          \x20   }}\n\n\
          \x20   /// Current theme name; empty means the authored base.\n\
          \x20   pub fn theme(&self) -> String {{\n\

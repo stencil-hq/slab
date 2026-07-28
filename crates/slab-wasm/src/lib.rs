@@ -8,7 +8,7 @@
 use slab_compile::render::{RenderKind, RenderOpts, render as render_slir};
 use slab_compile::rustgen::generate as gen_rust_src;
 use slab_compile::wc::{WcFile, WcOptions, generate as gen_wc_files};
-use slab_compile::{Options, compile, expand};
+use slab_compile::{Options, compile, compile_with_exports, expand};
 use slab_syntax::diag::{Diagnostics, Level};
 use std::collections::HashMap;
 use wasm_bindgen::prelude::*;
@@ -124,7 +124,7 @@ fn diags_json(diags: &Diagnostics, file: &str) -> String {
     out
 }
 
-/// Build `Options` from an `assets_json` string (`{"<src>": "<base64>"}`).
+/// Build `Options` from an asset map. `$slabSourceName` is generator metadata.
 fn opts_with_assets(embed: bool, base_dir: &str, assets_json: &str) -> Options {
     let assets = if assets_json.is_empty() || assets_json == "{}" {
         None
@@ -132,6 +132,9 @@ fn opts_with_assets(embed: bool, base_dir: &str, assets_json: &str) -> Options {
         let map: HashMap<String, String> = serde_json::from_str(assets_json).unwrap_or_default();
         let mut m = HashMap::new();
         for (k, v) in map {
+            if k == "$slabSourceName" {
+                continue;
+            }
             m.insert(k, b64_decode(&v));
         }
         Some(m)
@@ -149,7 +152,7 @@ fn opts_with_assets(embed: bool, base_dir: &str, assets_json: &str) -> Options {
 #[wasm_bindgen]
 pub fn check(source: &str, file_name: &str) -> String {
     let opts = opts_with_assets(false, ".", "{}");
-    let (_, diags) = compile(source, &opts);
+    let (_, diags) = compile_with_exports(source, &opts);
     diags_json(&diags, file_name)
 }
 
@@ -272,7 +275,8 @@ pub fn gen_wc(source: &str, opts_json: &str, assets_json: &str) -> Result<String
     let stem = v["stem"].as_str().unwrap_or("slab");
     let copts = opts_with_assets(true, ".", assets_json);
     let (files, diags) = gen_wc_files(source, &copts, &wopts, stem);
-    let diags_j = diags_json(&diags, "gen_wc");
+    let source_name = v["sourceName"].as_str().unwrap_or("slab");
+    let diags_j = diags_json(&diags, source_name);
     let Some(files) = files else {
         return Err(JsValue::from_str(&diags_j));
     };
@@ -298,9 +302,13 @@ pub fn gen_wc(source: &str, opts_json: &str, assets_json: &str) -> Result<String
 /// `{module: string, diagnostics:[…]}`.
 #[wasm_bindgen]
 pub fn gen_rust(source: &str, assets_json: &str) -> Result<String, JsValue> {
+    let source_name = serde_json::from_str::<serde_json::Value>(assets_json)
+        .ok()
+        .and_then(|value| value["$slabSourceName"].as_str().map(String::from))
+        .unwrap_or_else(|| "slab".into());
     let copts = opts_with_assets(true, ".", assets_json);
-    let (module, diags) = gen_rust_src(source, &copts, "gen_rust");
-    let diags_j = diags_json(&diags, "gen_rust");
+    let (module, diags) = gen_rust_src(source, &copts, &source_name);
+    let diags_j = diags_json(&diags, &source_name);
     let Some(module) = module else {
         return Err(JsValue::from_str(&diags_j));
     };

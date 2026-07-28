@@ -227,46 +227,47 @@ col {
 }
 
 #[test]
-fn gesture_bindings_are_rejected_inside_when_patches() {
+fn conditional_binders_and_animation_are_statically_registered() {
     let source = r#"
-box {
-  when hot {
-    press=pressed context=menu dblclick=twice drag=started drop=dropped resize=resized pointer-move=moved pointer-up=released drag-update=updated drag-end=ended
-  }
+anim pulse {
+  0% { opacity=0.2 }
+  100% { opacity=1 }
+}
+rect {
+  when hot { act=fired; animate=pulse,1000 }
 }
 "#;
-    let (_, diagnostics) = compile(
+    let (slir, diagnostics) = compile(
         source,
         &Options {
             embed_assets: false,
             ..Default::default()
         },
     );
-    for attribute in [
-        "press",
-        "context",
-        "dblclick",
-        "drag",
-        "drop",
-        "resize",
-        "pointer-move",
-        "pointer-up",
-        "drag-update",
-        "drag-end",
-    ] {
-        assert!(
-            diagnostics.0.iter().any(|diagnostic| {
-                diagnostic.code == "attr"
-                    && diagnostic.level == Level::Warning
-                    && (diagnostic.line == 3 || diagnostic.line == 4)
-                    && diagnostic
-                        .msg
-                        .contains(&format!("{attribute} inside a `when` patch"))
-            }),
-            "{attribute}: {:?}",
-            diagnostics.0
-        );
-    }
+    let slir = slir.expect("conditional interactivity compiles");
+    assert!(
+        diagnostics.0.iter().all(|diagnostic| {
+            diagnostic.code != "attr"
+                || (!diagnostic.msg.contains("inside a `when` patch")
+                    && !diagnostic.msg.contains("inside a deferred `when` patch"))
+        }),
+        "{:?}",
+        diagnostics.0
+    );
+    assert_eq!(slir.signals.len(), 1, "conditional binder is static");
+    assert_eq!(slir.bindings.len(), 1, "conditional animation is static");
+    assert!(
+        slir.patch_attrs
+            .iter()
+            .any(|&(attr, _)| attr == slab_slir::attrs::ACT),
+        "patch carries the active signal name"
+    );
+    assert!(
+        slir.patch_attrs
+            .iter()
+            .any(|&(attr, _)| attr == slab_slir::attrs::ANIMATE),
+        "patch carries the active animation name"
+    );
 }
 
 #[test]
@@ -722,4 +723,94 @@ canvas w=240 h=160 {
         .expect("ghost source rectangle");
     assert!((ghost_rect.x - base_rect.x - 20.0).abs() < 1e-9);
     assert!((ghost_rect.y - base_rect.y).abs() < 1e-9);
+}
+
+#[test]
+fn standalone_export_check_reports_export_context() {
+    let source = r#"
+def TodoItem(title="") export {
+  col {
+    text title
+    when title { bg=#fff }
+  }
+}
+col { }
+"#;
+    let (_, diagnostics) = slab_compile::compile_with_exports(source, &Options::default());
+    let diagnostic = diagnostics
+        .0
+        .iter()
+        .find(|diagnostic| diagnostic.code == "param-type")
+        .expect("standalone export diagnostic");
+    assert_eq!(diagnostic.line, 5);
+    assert!(
+        diagnostic.msg.contains("in export TodoItem"),
+        "{diagnostic:?}"
+    );
+    assert!(
+        diagnostic
+            .format("todo.slab")
+            .starts_with("todo.slab:5: error[param-type]: in export TodoItem:"),
+        "{}",
+        diagnostic.format("todo.slab")
+    );
+}
+
+#[test]
+fn align_warning_accepts_children_from_deferred_when_patch() {
+    let source = r#"
+params { show bool = false }
+col align=center {
+  when show { text "visible" }
+}
+"#;
+    let (_, diagnostics) = compile(source, &Options::default());
+    assert!(
+        !diagnostics
+            .0
+            .iter()
+            .any(|diagnostic| diagnostic.msg.contains("aligns this node's children")),
+        "{:?}",
+        diagnostics.0
+    );
+}
+
+#[test]
+fn leaf_each_root_fill_warns_before_runtime_hug_fallback() {
+    let source = r#"
+def Item(label="") export {
+  text label w=fill
+}
+params { items list(Item) = [] }
+col w=fill { each param.items }
+"#;
+    assert_has(source, "fill-unbounded", Level::Warning, 3);
+}
+
+#[test]
+fn missing_static_glyph_names_character_codepoint_and_family() {
+    let (_, diagnostics) = compile("text \"✕\" family=\"sans\"\n", &Options::default());
+    let diagnostic = diagnostics
+        .0
+        .iter()
+        .find(|diagnostic| diagnostic.code == "glyph-missing")
+        .expect("missing glyph warning");
+    assert_eq!(diagnostic.line, 1);
+    assert!(diagnostic.msg.contains("'✕'"), "{diagnostic:?}");
+    assert!(diagnostic.msg.contains("U+2715"), "{diagnostic:?}");
+    assert!(diagnostic.msg.contains("family 'sans'"), "{diagnostic:?}");
+}
+
+#[test]
+fn dynamic_text_skips_glyph_coverage_warning() {
+    let source = "params { value text = \"✕\" }\ntext param.value family=\"sans\"\n";
+    let (_, diagnostics) = compile(source, &Options::default());
+    assert!(
+        diagnostics
+            .0
+            .iter()
+            .all(|diagnostic| diagnostic.code != "glyph-missing"),
+        "{:?}",
+        diagnostics.0
+    );
 }

@@ -16,7 +16,7 @@ use std::fmt::Write as _;
 use crate::Options;
 use crate::export::{ExportProp, compile_export, exported_def_names};
 use slab_slir::Slir;
-use slab_syntax::ast::ParamType;
+use slab_syntax::ast::{Cond, ParamType, TokenEntry, TokenTree, Value};
 use slab_syntax::diag::Diagnostics;
 
 /// `gen wc` options.
@@ -52,6 +52,14 @@ struct ListSpec {
     row: u32,
 }
 
+#[derive(Clone)]
+enum HostToken {
+    Number(f64),
+    String(String),
+}
+
+type TokenTables = Vec<(String, Vec<(String, HostToken)>)>;
+
 struct DocSpec {
     tag: String,
     class: String,
@@ -61,6 +69,7 @@ struct DocSpec {
     lists: Vec<ListSpec>,
     list_rows: Vec<Vec<ListFieldSpec>>,
     signals: Vec<(String, bool)>,
+    token_tables: TokenTables,
 }
 
 fn param_type(ty: u8) -> ParamType {
@@ -119,6 +128,102 @@ fn js_string(s: &str) -> String {
     }
     out.push('"');
     out
+}
+
+fn token_lookup<'a>(tree: &'a TokenTree, path: &[String]) -> Option<&'a TokenEntry> {
+    let mut entry = tree.get(path.first()?)?;
+    for segment in &path[1..] {
+        let TokenEntry::Group(group) = entry else {
+            return None;
+        };
+        entry = group.get(segment)?;
+    }
+    Some(entry)
+}
+
+fn resolve_host_token(value: &Value, tree: &TokenTree, depth: usize) -> Option<HostToken> {
+    if depth > 64 {
+        return None;
+    }
+    match value {
+        Value::Num(value) => Some(HostToken::Number(*value)),
+        Value::Pct(value) => Some(HostToken::String(format!("{value}%"))),
+        Value::Str(value) | Value::Color(value) | Value::Kw(value) => {
+            Some(HostToken::String(value.clone()))
+        }
+        Value::Ref(path) => {
+            let TokenEntry::Value(target) = token_lookup(tree, path)? else {
+                return None;
+            };
+            resolve_host_token(target, tree, depth + 1)
+        }
+        Value::Fill(weight) => Some(HostToken::String(if *weight == 1.0 {
+            "fill".to_string()
+        } else {
+            format!("fill:{weight}")
+        })),
+        Value::Tup(items) => {
+            let mut parts = Vec::with_capacity(items.len());
+            for item in items {
+                let part = match resolve_host_token(item, tree, depth + 1)? {
+                    HostToken::Number(value) => value.to_string(),
+                    HostToken::String(value) => value,
+                };
+                parts.push(part);
+            }
+            Some(HostToken::String(parts.join(",")))
+        }
+        Value::List(_) | Value::ListSchema(_) => None,
+    }
+}
+
+fn flatten_host_tokens(
+    tree: &TokenTree,
+    root: &TokenTree,
+    prefix: &str,
+    out: &mut Vec<(String, HostToken)>,
+) {
+    for (name, entry) in &tree.0 {
+        let path = if prefix.is_empty() {
+            name.clone()
+        } else {
+            format!("{prefix}.{name}")
+        };
+        match entry {
+            TokenEntry::Group(group) => flatten_host_tokens(group, root, &path, out),
+            TokenEntry::Value(value) => {
+                if let Some(resolved) = resolve_host_token(value, root, 0) {
+                    out.push((path, resolved));
+                }
+            }
+        }
+    }
+}
+
+fn token_tables_of(src: &str, slir: &Slir) -> TokenTables {
+    let mut diagnostics = Diagnostics::new();
+    let document = slab_syntax::parse(src, &mut diagnostics);
+    debug_assert!(!diagnostics.has_errors());
+    let mut themes = vec![String::new()];
+    themes.extend(
+        slir.themes
+            .iter()
+            .map(|&name| slir.str_at(name).to_string()),
+    );
+    themes
+        .into_iter()
+        .map(|theme| {
+            let mut tree = document.tokens.clone();
+            for (condition, overrides, _) in &document.topwhens {
+                if matches!(condition, Cond::Theme(name) if name == &theme) {
+                    tree.deep_merge(overrides);
+                }
+            }
+            let mut tokens = Vec::new();
+            flatten_host_tokens(&tree, &tree, "", &mut tokens);
+            (theme, tokens)
+        })
+        .collect()
 }
 
 fn list_fields(slir: &Slir, row: usize) -> Vec<ListFieldSpec> {
@@ -334,6 +439,21 @@ fn emit_module(docs: &[DocSpec], separate_ir: bool) -> String {
                 .map(|(n, _)| format!("'{}'", n.replace('_', "-"))),
         );
         let _ = writeln!(m, "   static observedAttributes = [{}];", attrs.join(", "));
+        if !d.token_tables.is_empty() {
+            m.push_str("   static tokenTables = {\n");
+            for (theme, tokens) in &d.token_tables {
+                let _ = writeln!(m, "      {}: {{", js_string(theme));
+                for (path, value) in tokens {
+                    let value = match value {
+                        HostToken::Number(value) => value.to_string(),
+                        HostToken::String(value) => js_string(value),
+                    };
+                    let _ = writeln!(m, "         {}: {value},", js_string(path));
+                }
+                m.push_str("      },\n");
+            }
+            m.push_str("   };\n");
+        }
         if !d.list_rows.is_empty() {
             m.push_str("   static listSchemaRows = [\n");
             for fields in &d.list_rows {
@@ -552,8 +672,14 @@ fn emit_dts(docs: &[DocSpec]) -> String {
         m.push_str("   get theme(): string;\n   set theme(v: string);\n");
         m.push_str("   setTheme(name: string): boolean;\n");
         m.push_str("   getTheme(): string;\n");
+        m.push_str("   /** Read one resolved token for the active theme. */\n");
+        m.push_str("   getToken(path: string): string | number | undefined;\n");
         m.push_str("   /** Move focus to a keyed node; an empty key clears focus. */\n");
         m.push_str("   setFocus(key: string, visible?: boolean): boolean;\n");
+        m.push_str("   /** Replace a keyed field buffer and reset its edit history. */\n");
+        m.push_str("   setFieldText(key: string, text: string): boolean;\n");
+        m.push_str("   /** Read a keyed field's committed text. */\n");
+        m.push_str("   fieldText(key: string): string | undefined;\n");
         m.push_str("   /** Set a keyed scroll offset on axis 0 (main) or 1 (cross). */\n");
         m.push_str("   setScroll(key: string, axis: number, off: number): boolean;\n");
         m.push_str("   /** Read a keyed scroll offset on axis 0 (main) or 1 (cross). */\n");
@@ -692,6 +818,7 @@ pub fn generate(
         .iter()
         .map(|p| (slir.str_at(p.name).to_string(), param_type(p.ty)))
         .collect();
+    let token_tables = token_tables_of(src, &slir);
     docs.push(DocSpec {
         tag: main_tag,
         class: format!("Slab{}Element", pascal(stem)),
@@ -701,6 +828,7 @@ pub fn generate(
         lists: lists_of(&slir),
         list_rows: list_rows_of(&slir),
         signals: signals_of(&slir),
+        token_tables: token_tables.clone(),
     });
 
     // Exported defs skip asset embedding: the page shares one registered
@@ -730,6 +858,7 @@ pub fn generate(
             lists: lists_of(&dslir),
             list_rows: list_rows_of(&dslir),
             signals: signals_of(&dslir),
+            token_tables: token_tables.clone(),
         });
     }
 
@@ -889,5 +1018,46 @@ col { each param.trees }
             1
         );
         assert!(declarations.contains("\"children\"?: TreesItem[]"));
+    }
+
+    #[test]
+    fn generated_tokens_are_resolved_per_theme() {
+        let source = r##"
+tokens {
+  color { page #112233; accent color.page }
+  space { unit 8 }
+  shadow { soft 0,8,24,color.page }
+}
+theme dusk {
+  color { page #334455 }
+  space { unit 10 }
+}
+col bg=color.page { text "tokens" }
+"##;
+        let options = WcOptions {
+            tag: None,
+            separate_ir: false,
+        };
+        let (files, diagnostics) = generate(source, &Options::default(), &options, "tokens");
+        assert!(!diagnostics.has_errors(), "{:?}", diagnostics.0);
+        let files = files.expect("token web component");
+        let module = files
+            .iter()
+            .find(|file| file.name == "tokens.js")
+            .and_then(|file| std::str::from_utf8(&file.bytes).ok())
+            .expect("generated JavaScript module");
+        let declarations = files
+            .iter()
+            .find(|file| file.name == "tokens.d.ts")
+            .and_then(|file| std::str::from_utf8(&file.bytes).ok())
+            .expect("generated declarations");
+        assert!(module.contains("\"color.page\": \"#112233\""));
+        assert!(module.contains("\"color.accent\": \"#112233\""));
+        assert!(module.contains("\"shadow.soft\": \"0,8,24,#112233\""));
+        assert!(module.contains("\"space.unit\": 8"));
+        assert!(module.contains("\"dusk\": {"));
+        assert!(module.contains("\"color.page\": \"#334455\""));
+        assert!(module.contains("\"space.unit\": 10"));
+        assert!(declarations.contains("getToken(path: string): string | number | undefined"));
     }
 }

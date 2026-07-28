@@ -62,3 +62,24 @@ pub fn compile(src: &str, opts: &Options) -> (Option<Slir>, Diagnostics) {
     }
     (Some(slir), diags)
 }
+
+/// Compile the document and every exported definition as a standalone document.
+///
+/// Standalone diagnostics include the exported definition name in their message.
+pub fn compile_with_exports(src: &str, opts: &Options) -> (Option<Slir>, Diagnostics) {
+    let (slir, mut diags) = compile(src, opts);
+    if slir.is_none() {
+        return (None, diags);
+    }
+    for def in export::exported_def_names(src) {
+        let (exported, mut export_diags, _) = export::compile_export(src, &def, opts);
+        for diagnostic in &mut export_diags.0 {
+            diagnostic.msg = format!("in export {def}: {}", diagnostic.msg);
+        }
+        diags.0.extend(export_diags.0);
+        if exported.is_none() {
+            return (None, diags);
+        }
+    }
+    (slir, diags)
+}

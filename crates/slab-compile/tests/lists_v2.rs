@@ -402,6 +402,13 @@ col #surface w=160 { each param.rows key=rows }
     };
     let down = frame::inst_dispatch(&mut instance, &event(dispatch::E_POINTER_DOWN));
     assert!(down.sig_name.is_empty());
+    let focused = instance.ds.fs.focus;
+    assert!(slab_kernel::style::attached(
+        &instance.doc,
+        &instance.st,
+        focused,
+    ));
+    assert_eq!(dispatch::sig_of(&instance.doc, &instance.st, focused, 0), 0);
     let up = frame::inst_dispatch(&mut instance, &event(dispatch::E_POINTER_UP));
     assert_eq!(up.sig_name.len(), 1);
     assert_eq!(
