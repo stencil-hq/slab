@@ -1,0 +1,45 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "slab-lang"
+version = "0.1.0"
+description = "Slab runtime for Python: compile and drive .slab documents on the fly through the WebAssembly ABI"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+authors = [{ name = "Stencil" }]
+keywords = ["slab", "tui", "ui", "wasm", "terminal"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Environment :: Console",
+  "Topic :: Software Development :: User Interfaces",
+]
+dependencies = ["wasmtime>=25"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.urls]
+Homepage = "https://slab.dev"
+Source = "https://github.com/stencil-hq/slab"
+
+[project.scripts]
+pyslab = "slab.__main__:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/slab"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"src/slab/slab_abi.wasm.gz" = "slab/slab_abi.wasm.gz"
+
+[tool.hatch.build.targets.sdist]
+include = ["src", "tests", "examples", "README.md", "pyproject.toml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
