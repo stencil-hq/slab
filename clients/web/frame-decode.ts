@@ -115,6 +115,7 @@ export function decodeFrame(frame: FrameBuf): Frame {
                      weight: u32('Text.weight'),
                      color: u32('Text.color'),
                      color_kind: u32('Text.color_kind'),
+                     strike: u32('Text.strike') !== 0,
                      x: f64('Text.x'),
                      y_baseline: f64('Text.y_baseline'),
                      measured_w: f64('Text.measured_w'),

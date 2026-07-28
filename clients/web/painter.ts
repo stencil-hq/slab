@@ -1022,6 +1022,13 @@ export class Painter {
                   css += `color:${rgbaCss(o.color)};`;
                }
                if (o.tracking !== 0) css += `letter-spacing:${o.tracking}px;`;
+               if (o.strike) {
+                  css += 'text-decoration-line:line-through;';
+                  if (o.color_kind === 2) {
+                     const decoration = strokeCss(doc, o.color_kind, o.color);
+                     if (decoration) css += `text-decoration-color:${decoration};`;
+                  }
+               }
                if (o.opacity !== 1) css += `opacity:${o.opacity};`;
                css += this.animations.get(o.node) ?? '';
                setCss(el, css);

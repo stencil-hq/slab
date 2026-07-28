@@ -419,7 +419,8 @@ export class SlabElement extends HTMLElement {
    #composing = false;
    #imeFieldKey = '';
    #focusNode = 0xffffffff;
-   #contextSelection: [number, number] | null = null;
+   #contextEdit: { start: number; end: number; x: number; y: number } | null = null;
+   #contextTimer = 0;
    #tokensAvailable = true;
    #ownImageUrls: string[] = [];
    #appliedFonts = new Set<string>();
@@ -728,6 +729,14 @@ export class SlabElement extends HTMLElement {
       this.#scene = null;
    }
 
+   /** Replace this class's cached SLIR with `bytes` so every future mount decodes them (HMR hook; pair with `loadSlir()` on live elements). */
+   static hotReplaceSlir(bytes: Uint8Array): void {
+      const cls = this as CachedSlabConstructor;
+      cls[kBytes] = Promise.resolve(bytes);
+      cls.slir = bytes;
+      cls.slirIsUrl = false;
+   }
+
    static #loadSlir(cls: CachedSlabConstructor): Promise<Uint8Array> {
       if (!Object.hasOwn(cls, kBytes)) {
          if (cls.slirIsUrl) {
@@ -964,16 +973,22 @@ export class SlabElement extends HTMLElement {
    #listen(): void {
       this.addEventListener('pointerdown', (event) => {
          if (this.#overHole(event)) return;
-         const contextSelection: [number, number] | null =
+         if (this.#contextEdit) this.#clearContextEdit();
+         const { x, y } = this.#xy(event);
+         const contextEdit =
             event.button === 2 && this.#focusNode !== 0xffffffff
-               ? [this.#ime.selectionStart, this.#ime.selectionEnd]
+               ? {
+                    start: this.#ime.selectionStart,
+                    end: this.#ime.selectionEnd,
+                    x,
+                    y,
+                 }
                : null;
          if (event.button === 0) {
             event.preventDefault();
             this.setPointerCapture(event.pointerId);
             this.#ime.focus({ preventScroll: true });
          }
-         const { x, y } = this.#xy(event);
          const effects = this.#dispatch(
             kernelEvent(E_POINTER_DOWN, {
                x,
@@ -983,10 +998,9 @@ export class SlabElement extends HTMLElement {
                modifiers: modsOf(event),
             }),
          );
-         if (contextSelection && (effects.has_ime || this.#focusNode !== 0xffffffff)) {
-            this.#contextSelection = contextSelection;
-            event.preventDefault();
-            this.#restoreContextSelection();
+         if (contextEdit && (effects.has_ime || this.#focusNode !== 0xffffffff)) {
+            this.#contextEdit = contextEdit;
+            this.#restoreContextEdit();
          }
       });
       this.addEventListener('pointermove', (event) => {
@@ -1025,20 +1039,17 @@ export class SlabElement extends HTMLElement {
                modifiers: modsOf(event),
             }),
          );
-         if (event.button === 2 && this.#contextSelection) {
-            event.preventDefault();
-            this.#restoreContextSelection();
-         }
+         if (event.button === 2 && this.#contextEdit) this.#restoreContextEdit();
       };
       this.addEventListener('pointerup', pointerUp);
       this.addEventListener('contextmenu', () => {
-         if (!this.#contextSelection) return;
-         setTimeout(() => {
-            this.#restoreContextSelection();
-            this.#contextSelection = null;
-         }, 0);
+         if (!this.#contextEdit) return;
+         this.#restoreContextEdit();
+         clearTimeout(this.#contextTimer);
+         this.#contextTimer = window.setTimeout(() => this.#clearContextEdit(), 0);
       });
       this.addEventListener('pointercancel', () => {
+         this.#clearContextEdit();
          this.#dispatch(kernelEvent(E_BLUR));
       });
       this.addEventListener(
@@ -1175,11 +1186,28 @@ export class SlabElement extends HTMLElement {
       return false;
    }
 
-   #restoreContextSelection(): void {
-      const selection = this.#contextSelection;
-      if (!selection || this.#focusNode === 0xffffffff) return;
+   #restoreContextEdit(): void {
+      const context = this.#contextEdit;
+      if (!context || this.#focusNode === 0xffffffff) return;
+      clearTimeout(this.#contextTimer);
+      this.#contextTimer = window.setTimeout(() => this.#clearContextEdit(), 1000);
+      this.#ime.style.left = `${context.x - 2}px`;
+      this.#ime.style.top = `${context.y - 2}px`;
+      this.#ime.style.width = '4px';
+      this.#ime.style.height = '4px';
+      this.#ime.style.pointerEvents = 'auto';
       this.#ime.focus({ preventScroll: true });
-      this.#ime.setSelectionRange(selection[0], selection[1]);
+      this.#ime.setSelectionRange(context.start, context.end);
+   }
+
+   #clearContextEdit(): void {
+      clearTimeout(this.#contextTimer);
+      this.#contextTimer = 0;
+      this.#contextEdit = null;
+      for (const property of ['left', 'top', 'width', 'height', 'pointer-events']) {
+         this.#ime.style.removeProperty(property);
+      }
+      this.#refreshCaret();
    }
 
    #editingEvent(event: Event): boolean {

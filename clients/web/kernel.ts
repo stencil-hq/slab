@@ -250,6 +250,7 @@ export interface OpText {
    tracking: number;
    color: number;
    opacity: number;
+   strike: boolean;
    /** 1 = solid (`color` is packed RGBA), 2 = gradient (`color` is a GRAD handle). */
    color_kind: number;
    /** Gradient box = the text node's content box (all 0 when `color_kind` is 1). */

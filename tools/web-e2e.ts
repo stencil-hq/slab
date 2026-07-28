@@ -575,6 +575,18 @@ await page.waitForFunction(() => {
    return ((globalThis as DebugGlobal).__slabDebug?.get(host as Element)?.geom().length ?? 0) > 0;
 });
 await revealHost('web-interactions-host');
+const strikeResult = await page.evaluate(() => {
+   const host = document.getElementById('web-interactions-host');
+   const span = Array.from(host?.shadowRoot?.querySelectorAll('span') ?? []).find(
+      (element) => element.textContent === 'drag',
+   );
+   return span ? getComputedStyle(span).textDecorationLine : '';
+});
+check(
+   '(m) strike decorates web text',
+   strikeResult.includes('line-through'),
+   JSON.stringify(strikeResult),
+);
 const interactionField = await nodeCenter('/field', 'web-interactions-host');
 check('(m) interaction field located', interactionField !== null, JSON.stringify(interactionField));
 const tokenResult = await page.evaluate(() => {
@@ -683,8 +695,10 @@ check(
 await page.evaluate(() => {
    const host = document.getElementById('web-interactions-host');
    host?.addEventListener('contextmenu', (event) => {
+      const target = event.composedPath()[0];
       (globalThis as DebugGlobal).__sig?.contextmenu?.push({
          prevented: event.defaultPrevented,
+         target: target instanceof HTMLElement ? target.className : '',
       });
    });
    const g = globalThis as DebugGlobal;
@@ -720,11 +734,27 @@ const contextResult = await page.evaluate((key) => {
             : '',
    };
 }, interactionKey);
+let contextButton: unknown;
+const contextSignal = contextResult.menu;
+if (typeof contextSignal === 'object' && contextSignal !== null && 'meta' in contextSignal) {
+   const meta = contextSignal.meta;
+   if (typeof meta === 'object' && meta !== null && 'button' in meta) {
+      contextButton = meta.button;
+   }
+}
+const contextMenu = contextResult.contextmenu;
+const contextMenuTargetsEditor =
+   typeof contextMenu === 'object' &&
+   contextMenu !== null &&
+   'prevented' in contextMenu &&
+   contextMenu.prevented === false &&
+   'target' in contextMenu &&
+   contextMenu.target === 'slab-ime';
 check(
-   '(m) secondary click preserves editing and exposes Context',
+   '(m) secondary click targets the native editor and preserves Context',
    contextResult.text === 'seed漢' &&
-      (contextResult.menu as { meta?: { button?: number } } | undefined)?.meta?.button === 2 &&
-      (contextResult.contextmenu as { prevented?: boolean } | undefined)?.prevented === false &&
+      contextButton === 2 &&
+      contextMenuTargetsEditor &&
       contextResult.editorFocused &&
       contextResult.selectedText === 'seed漢',
    JSON.stringify(contextResult),

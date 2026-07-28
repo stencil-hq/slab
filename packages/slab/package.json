@@ -28,6 +28,7 @@
    "files": [
       "bin",
       "dist",
+      "src",
       "wasm",
       "LICENSE",
       "LICENSE-Inter-OFL.txt",
@@ -41,6 +42,11 @@
       ".": {
          "types": "./dist/cli.d.ts",
          "default": "./dist/cli.js"
+      },
+      "./wasm": {
+         "types": "./dist/wasm.d.ts",
+         "bun": "./src/wasm.ts",
+         "default": "./dist/wasm.js"
       }
    }
 }

@@ -12,7 +12,7 @@ theme dusk {
 col key=board w=320 h=180 gap=16 bg=color.page {
   text "" key=field field=changed context=menu w=240 h=36 size=16 bg=#ffffff color=#111111
   box key=source w=80 h=48 drag=drag-start drag-ghost bg=color.marker {
-    text "drag" color=#ffffff size=14
+    para { span "drag" strike=true color=#ffffff size=14 }
   }
   box key=target w=80 h=48 drop=dropped bg=#226644
 }
