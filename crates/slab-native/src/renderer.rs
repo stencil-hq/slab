@@ -1601,10 +1601,10 @@ impl Renderer {
 					if t.italic {
 						const OBLIQUE_SHEAR: f32 = 0.2;
 						let baseline = (t.y_baseline as f32 + oy) * s;
-						glyph_mabcd[2] -= glyph_mabcd[0] * OBLIQUE_SHEAR;
-						glyph_mabcd[3] -= glyph_mabcd[1] * OBLIQUE_SHEAR;
-						glyph_mt[0] += mat.a * OBLIQUE_SHEAR * baseline;
-						glyph_mt[1] += mat.b * OBLIQUE_SHEAR * baseline;
+						glyph_mabcd[2] = glyph_mabcd[0].mul_add(-OBLIQUE_SHEAR, glyph_mabcd[2]);
+						glyph_mabcd[3] = glyph_mabcd[1].mul_add(-OBLIQUE_SHEAR, glyph_mabcd[3]);
+						glyph_mt[0] = (mat.a * OBLIQUE_SHEAR).mul_add(baseline, glyph_mt[0]);
+						glyph_mt[1] = (mat.b * OBLIQUE_SHEAR).mul_add(baseline, glyph_mt[1]);
 					}
 					let glyphs = slab_kernel::frame::text_glyphs(li.inst, li.frame, op_ix as i32);
 					for g in &glyphs {

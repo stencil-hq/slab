@@ -9,6 +9,8 @@
 //! `!= INF` guards: derived near-sentinel values deliberately remain finite
 //! and behave as astronomically large dimensions.
 
+use std::rc::Rc;
+
 use rustc_hash::FxHashMap;
 
 use crate::{slir::Doc, style::St, textm::TextLayout};
@@ -89,7 +91,7 @@ pub struct Lay {
 	/// Paragraph block index in the paragraph line pools, or `-1`.
 	pub p_para:             Vec<i32>,
 	pub child_pool:         Vec<i32>,
-	pub tls:                Vec<std::rc::Rc<TextLayout>>,
+	pub tls:                Vec<Rc<TextLayout>>,
 	/// Per-paragraph ranges into the line pools; each line stores a segment
 	/// range.
 	pub para_line_off:      Vec<i32>,
@@ -117,7 +119,7 @@ pub struct Lay {
 	/// Background paint behind the segment (`0` none, `1` solid, `2` gradient).
 	pub seg_bg_kind:        Vec<u32>,
 	pub seg_bg:             Vec<u32>,
-	pub seg_shaped:         Vec<crate::textm::ShapedLine>,
+	pub seg_shaped:         Vec<Rc<crate::textm::ShapedLine>>,
 	pub para_chars:         Vec<u32>,
 	/// Reusable measure-pass scratch buffers, taken on container entry and
 	/// returned cleared on exit; recursion depth bounds each pool's size.
@@ -2461,15 +2463,12 @@ fn ellipsize_para_line(d: &Doc, l: &mut Lay, segment_start: i32, max_width: f64)
 		let output_end = len_i32(&l.para_chars);
 		l.seg_a[segment] = output_start;
 		l.seg_b[segment] = output_end;
-		let shaped = crate::textm::shape_line_cached(
+		let shaped = crate::textm::shape_line_shared_cached(
 			d,
 			l.seg_font[segment],
 			l.seg_size[segment],
 			l.seg_tracking[segment],
 			&l.para_chars[idx(output_start)..idx(output_end)],
-			output_start,
-			output_start,
-			output_end,
 			&mut l.shape_cache,
 		);
 		l.seg_w[segment] = shaped.width;
@@ -2772,15 +2771,12 @@ pub fn para_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &
 /// Closes a paragraph segment and records its measured glyph slice.
 pub fn close_seg(d: &Doc, st: &St, l: &mut Lay, seg_start: i32, sri: i32, x: f64) {
 	let seg_end = len_i32(&l.para_chars);
-	let shaped = crate::textm::shape_line_cached(
+	let shaped = crate::textm::shape_line_shared_cached(
 		d,
 		st.rs[idx(sri)].font,
 		st.rs[idx(sri)].size,
 		st.rs[idx(sri)].tracking,
 		&l.para_chars[idx(seg_start)..idx(seg_end)],
-		seg_start,
-		seg_start,
-		seg_end,
 		&mut l.shape_cache,
 	);
 	let wseg = shaped.width;

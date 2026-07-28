@@ -519,12 +519,13 @@ fn push_shaped_glyphs(
 	origin_x: f64,
 	baseline: f64,
 	size: f64,
+	cluster_offset: i32,
 ) -> (i32, i32) {
 	let offset = count(fr.glyphs.len());
 	fr.glyphs.extend(run.glyphs.iter().map(|glyph| FrameGlyph {
 		font: glyph.font,
 		gid: glyph.gid,
-		cluster: glyph.cluster,
+		cluster: glyph.cluster.wrapping_add(cluster_offset),
 		x: origin_x + glyph.x,
 		y: baseline + glyph.y,
 		size,
@@ -1172,7 +1173,7 @@ fn walk_node(
 				let string_ref = push_str_slice(fr, &text_layout.chars, run.start, run.end);
 				let (uncov_off, uncov_len) = push_uncovered_runs(d, fr, run.font, string_ref);
 				let (glyph_off, glyph_len) =
-					push_shaped_glyphs(fr, run, line_origin, baseline, rule.size);
+					push_shaped_glyphs(fr, run, line_origin, baseline, rule.size, 0);
 				let (underline_offset, underline_thickness) =
 					textm::underline_geometry(d, run.font, rule.size);
 				let font_weight = if run.font >= 0 {
@@ -1257,10 +1258,22 @@ fn walk_node(
 					fr.ops.push(FrameOp::Rect(background));
 				}
 				for run in &l.seg_shaped[segment_index].runs {
-					let string_ref = push_str_slice(fr, &l.para_chars, run.start, run.end);
+					let segment_start = l.seg_a[segment_index];
+					let string_ref = push_str_slice(
+						fr,
+						&l.para_chars,
+						segment_start.wrapping_add(run.start),
+						segment_start.wrapping_add(run.end),
+					);
 					let (uncov_off, uncov_len) = push_uncovered_runs(d, fr, run.font, string_ref);
-					let (glyph_off, glyph_len) =
-						push_shaped_glyphs(fr, run, segment_origin, baseline, l.seg_size[segment_index]);
+					let (glyph_off, glyph_len) = push_shaped_glyphs(
+						fr,
+						run,
+						segment_origin,
+						baseline,
+						l.seg_size[segment_index],
+						segment_start,
+					);
 					let (underline_offset, underline_thickness) =
 						textm::underline_geometry(d, run.font, l.seg_size[segment_index]);
 					let font_weight = if run.font >= 0 {

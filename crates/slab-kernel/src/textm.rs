@@ -16,9 +16,9 @@
 //! units_per_em) / 2`. This keeps kernel baselines aligned with browser-painted
 //! glyphs.
 
-use std::{fmt, sync::Arc};
+use std::{fmt, hash::Hasher, rc::Rc, sync::Arc};
 
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHasher};
 
 use crate::{
 	graphemes,
@@ -38,10 +38,29 @@ struct ShapePlanKey {
 	rtl:    bool,
 }
 
-/// Retains expensive OpenType shape plans across text runs and frames.
+const SHAPED_LINE_CACHE_LIMIT: usize = 4096;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct ShapedLineKey {
+	font:     i32,
+	size:     u64,
+	tracking: u64,
+	hash:     u64,
+	len:      u32,
+}
+
+#[derive(Clone, Debug)]
+struct CachedShapedLine {
+	chars: Rc<[u32]>,
+	line:  Rc<ShapedLine>,
+}
+
+/// Retains expensive OpenType plans and immutable shaped lines across frames.
 #[derive(Clone, Default)]
 pub(crate) struct ShapeCache {
-	plans: FxHashMap<ShapePlanKey, Arc<rustybuzz::ShapePlan>>,
+	plans:      FxHashMap<ShapePlanKey, Arc<rustybuzz::ShapePlan>>,
+	lines:      FxHashMap<ShapedLineKey, CachedShapedLine>,
+	lines_cold: FxHashMap<ShapedLineKey, CachedShapedLine>,
 }
 
 impl fmt::Debug for ShapeCache {
@@ -49,6 +68,8 @@ impl fmt::Debug for ShapeCache {
 		formatter
 			.debug_struct("ShapeCache")
 			.field("plans", &self.plans.len())
+			.field("lines", &self.lines.len())
+			.field("lines_cold", &self.lines_cold.len())
 			.finish()
 	}
 }
@@ -81,9 +102,53 @@ impl ShapeCache {
 			.clone()
 	}
 
-	/// Drops plans tied to the previously initialized document.
+	fn line_key(font: i32, size: f64, tracking: f64, chars: &[u32]) -> ShapedLineKey {
+		let mut hasher = FxHasher::default();
+		for &codepoint in chars {
+			hasher.write_u32(codepoint);
+		}
+		ShapedLineKey {
+			font,
+			size: size.to_bits(),
+			tracking: tracking.to_bits(),
+			hash: hasher.finish(),
+			len: u32::try_from(chars.len()).expect("text exceeds u32"),
+		}
+	}
+
+	fn line(&mut self, key: ShapedLineKey, chars: &[u32]) -> Option<Rc<ShapedLine>> {
+		if let Some(entry) = self.lines.get(&key)
+			&& entry.chars.as_ref() == chars
+		{
+			return Some(Rc::clone(&entry.line));
+		}
+		if let Some(entry) = self.lines_cold.remove(&key)
+			&& entry.chars.as_ref() == chars
+		{
+			let line = Rc::clone(&entry.line);
+			self.insert_entry(key, entry);
+			return Some(line);
+		}
+		None
+	}
+
+	fn insert_entry(&mut self, key: ShapedLineKey, entry: CachedShapedLine) {
+		if self.lines.len() >= SHAPED_LINE_CACHE_LIMIT && !self.lines.contains_key(&key) {
+			std::mem::swap(&mut self.lines, &mut self.lines_cold);
+			self.lines.clear();
+		}
+		self.lines.insert(key, entry);
+	}
+
+	fn insert_line(&mut self, key: ShapedLineKey, chars: &[u32], line: Rc<ShapedLine>) {
+		self.insert_entry(key, CachedShapedLine { chars: Rc::from(chars), line });
+	}
+
+	/// Drops retained data tied to the previously initialized document.
 	pub(crate) fn clear(&mut self) {
 		self.plans.clear();
+		self.lines.clear();
+		self.lines_cold.clear();
 	}
 }
 
@@ -475,8 +540,7 @@ pub fn shape_line(
 	source_start: i32,
 	source_end: i32,
 ) -> ShapedLine {
-	let mut cache = ShapeCache::default();
-	shape_line_cached(
+	shape_line_uncached(
 		d,
 		primary_font,
 		size,
@@ -485,11 +549,11 @@ pub fn shape_line(
 		output_start,
 		source_start,
 		source_end,
-		&mut cache,
+		&mut ShapeCache::default(),
 	)
 }
 
-pub(crate) fn shape_line_cached(
+fn shape_line_uncached(
 	d: &Doc,
 	primary_font: i32,
 	size: f64,
@@ -559,6 +623,57 @@ pub(crate) fn shape_line_cached(
 			line.runs.push(run);
 			line.clusters.append(&mut clusters);
 		}
+	}
+	line
+}
+
+/// Returns immutable geometry normalized to zero-based output and source
+/// ranges.
+pub(crate) fn shape_line_shared_cached(
+	d: &Doc,
+	primary_font: i32,
+	size: f64,
+	tracking: f64,
+	chars: &[u32],
+	cache: &mut ShapeCache,
+) -> Rc<ShapedLine> {
+	if chars.is_empty() {
+		return Rc::new(ShapedLine::default());
+	}
+	let key = ShapeCache::line_key(primary_font, size, tracking, chars);
+	if let Some(line) = cache.line(key, chars) {
+		return line;
+	}
+	let end = i32::try_from(chars.len()).expect("text exceeds i32");
+	let line =
+		Rc::new(shape_line_uncached(d, primary_font, size, tracking, chars, 0, 0, end, cache));
+	cache.insert_line(key, chars, Rc::clone(&line));
+	line
+}
+
+pub(crate) fn shape_line_cached(
+	d: &Doc,
+	primary_font: i32,
+	size: f64,
+	tracking: f64,
+	chars: &[u32],
+	output_start: i32,
+	source_start: i32,
+	source_end: i32,
+	cache: &mut ShapeCache,
+) -> ShapedLine {
+	let shared = shape_line_shared_cached(d, primary_font, size, tracking, chars, cache);
+	let mut line = shared.as_ref().clone();
+	for run in &mut line.runs {
+		run.start = run.start.wrapping_add(output_start);
+		run.end = run.end.wrapping_add(output_start);
+		for glyph in &mut run.glyphs {
+			glyph.cluster = glyph.cluster.wrapping_add(source_start);
+		}
+	}
+	for cluster in &mut line.clusters {
+		cluster.start = cluster.start.wrapping_add(source_start).min(source_end);
+		cluster.end = cluster.end.wrapping_add(source_start).min(source_end);
 	}
 	line
 }
@@ -673,7 +788,15 @@ fn shape_layout(
 }
 
 /// Measures a codepoint slice without allocating another character buffer.
-pub fn advance_slice_w(d: &Doc, f: i32, size: f64, tracking: f64, chars: &[u32], a: i32, b: i32) -> f64 {
+pub fn advance_slice_w(
+	d: &Doc,
+	f: i32,
+	size: f64,
+	tracking: f64,
+	chars: &[u32],
+	a: i32,
+	b: i32,
+) -> f64 {
 	slice_w(d, f, size, tracking, chars, a, b)
 }
 
@@ -683,7 +806,7 @@ pub fn slice_w(d: &Doc, f: i32, size: f64, tracking: f64, chars: &[u32], a: i32,
 	slice_w_cached(d, f, size, tracking, chars, a, b, &mut cache)
 }
 
-/// Measures a codepoint slice while reusing retained OpenType plans.
+/// Measures a codepoint slice while reusing retained shaped geometry.
 pub(crate) fn slice_w_cached(
 	d: &Doc,
 	f: i32,
@@ -696,9 +819,8 @@ pub(crate) fn slice_w_cached(
 ) -> f64 {
 	let start = usize::try_from(a).expect("negative character index");
 	let end = usize::try_from(b).expect("negative character index");
-	shape_line_cached(d, f, size, tracking, &chars[start..end], a, a, b, cache).width
+	shape_line_shared_cached(d, f, size, tracking, &chars[start..end], cache).width
 }
-
 
 /// Measures a string's codepoint slice without materializing codepoints.
 pub fn str_slice_w(d: &Doc, f: i32, size: f64, tracking: f64, text: &str, a: i32, b: i32) -> f64 {
@@ -961,17 +1083,7 @@ pub fn measure_text(
 ) -> TextLayout {
 	let mut cache = ShapeCache::default();
 	measure_text_cached(
-		d,
-		f,
-		size,
-		leading,
-		tracking,
-		text,
-		max_w,
-		wrap,
-		ellipsis,
-		max_lines,
-		&mut cache,
+		d, f, size, leading, tracking, text, max_w, wrap, ellipsis, max_lines, &mut cache,
 	)
 }
 

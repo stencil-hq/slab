@@ -319,7 +319,7 @@ impl Writer {
 		self.bytes
 	}
 
-	fn len(&self) -> usize {
+	const fn len(&self) -> usize {
 		self.bytes.len()
 	}
 
