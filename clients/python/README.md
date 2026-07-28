@@ -19,7 +19,7 @@ The only runtime dependency is [`wasmtime`](https://pypi.org/project/wasmtime/).
 
 ### Installing from a path
 
-To consume a checkout instead of PyPI, `uv add /path/to/slab-lang/packages/pyslab`
+To consume a checkout instead of PyPI, `uv add /path/to/slab-lang/clients/python`
 works, but note a uv pitfall: uv rewrites the absolute path to a **relative**
 one under `[tool.uv.sources]`, and on macOS (where `/tmp` and friends are
 symlinks) the recorded `../..` chain can be wrong, which later breaks
@@ -183,7 +183,7 @@ Every SDP method listed in `spec/SDP.md` is reachable through
 ## Development
 
 ```sh
-cd packages/pyslab
+cd clients/python
 uv venv
 uv pip install -e '.[dev]'
 uv run pytest

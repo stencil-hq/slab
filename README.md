@@ -137,14 +137,15 @@ document's SLIR bytes, lowered at generation time.
 | [`@stencil-hq/slab`](packages/slab) | WASM-backed CLI: compile, check, render, generate — no Rust install. |
 | [`@stencil-hq/wslab`](clients/web) | Web runtime: `SlabElement` base class, DOM painter, kernel WASM sidecar. |
 | [`@stencil-hq/dslab`](packages/dslab) | Typed client + CLI for the Slab Drive Protocol (live kernel sessions). |
-| [`slab/clients/go`](clients/go) | Go module `github.com/stencil-hq/slab/clients/go`: `slab` runtime over the kernel WASM (wazero) plus the `slabtui` terminal driver. |
-| [`slab-lang`](packages/pyslab) | Python `slab` package: the same runtime over wasmtime, plus a terminal driver and `python -m slab FILE.slab`. |
+| [Go](clients/go) | Module `github.com/stencil-hq/slab/clients/go`: `slab` runtime over the kernel WASM (wazero) plus the `slabtui` terminal driver. |
+| [Python](clients/python) | Runtime over wasmtime, a terminal driver, and `python -m slab FILE.slab`; `uv pip install slab-lang`. |
+| [Swift](clients/swift) | SwiftPM `Slab` runtime over WasmKit, `SlabAppKit`'s Metal-painted `SlabView`, and the `slab-swift` viewer. |
 
-The Go and Python clients embed `slab_abi.wasm.gz` and speak SDP in process
-([`spec/SDP.md`](spec/SDP.md) §7), so neither needs a Rust toolchain or a
+The Go, Python, and Swift clients embed the ABI module and speak SDP in process
+([`spec/SDP.md`](spec/SDP.md) §7), so none needs a Rust toolchain or a
 separate compiler binary. Generated Go modules load their precompiled SLIR with
-`doc.open_slir`; the Python client compiles `.slab` source at runtime with
-`doc.open`.
+`doc.open_slir`; the Python and Swift clients compile `.slab` source at runtime
+with `doc.open`.
 
 ## Developing
 
@@ -176,7 +177,7 @@ kernel WASM lives in `clients/web/wasm/` and is shared by the runtime, the playg
 | `crates/slab-kernel` | The one solver: layout, animation, interaction, editing, dispatch. |
 | `crates/slab-{cli,tui,native,lsp,wasm}` | Command line, terminal, wgpu, language server, and browser hosts. |
 | `clients/web` · `packages/slab` · `packages/dslab` | The three npm packages. |
-| `crates/slab-abi` · `clients/go` · `packages/pyslab` | Embeddable SDP ABI (WASM) and the Go and Python runtimes built on it. |
+| `crates/slab-abi` · `clients/go` · `clients/python` · `clients/swift` | Embeddable SDP ABI (WASM) and the Go, Python, and Swift runtimes built on it. |
 | `site/` | The playground (GitHub Pages). |
 | `conformance/` | Shared cases and goldens; native and WASM must match byte for byte. |
 | `spec/` | `SPEC.md`, `SLIR.md`, `FRAME.md`, [`SDP.md`](spec/SDP.md), `support.toml` — the normative contracts. |

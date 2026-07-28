@@ -14,7 +14,7 @@ use std::{
 
 /// Compressed client copies, relative to the repository root.
 const COMPRESSED_TARGETS: &[&str] =
-	&["clients/go/slab/slab_abi.wasm.gz", "packages/pyslab/src/slab/slab_abi.wasm.gz"];
+	&["clients/go/slab/slab_abi.wasm.gz", "clients/python/src/slab/slab_abi.wasm.gz"];
 
 /// Raw client copies, relative to the repository root.
 const RAW_TARGETS: &[&str] = &["clients/swift/Sources/Slab/Resources/slab_abi.wasm"];

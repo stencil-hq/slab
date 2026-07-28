@@ -24,7 +24,7 @@ the kernel.
   -> crates/slab-slir         encode/decode/dump the binary document
   -> crates/slab-kernel       instantiate, lay out, dispatch, produce Frame/Scene
   -> slab-cli | slab-tui | slab-native | slab-wasm | slab-abi
-  -> clients/web | clients/go | packages/pyslab
+  -> clients/web | clients/go | clients/python | clients/swift
 ```
 
 - `crates/slab-cli/src/main.rs` is the reference command surface: `check`,
@@ -37,9 +37,10 @@ the kernel.
 - `packages/dslab/` speaks the newline-delimited Slab Drive Protocol (SDP),
   either over TCP or a spawned `slab drive` process.
 - `crates/slab-abi/` compiles the compiler, kernel, and SDP session layer into
-  one import-free C-ABI WASM module. `clients/go/` (wazero) and
-  `packages/pyslab/` (wasmtime) embed it and speak SDP in-process, so both
-  compile `.slab` source at runtime through `doc.open`.
+  one import-free C-ABI WASM module. `clients/go/` (wazero),
+  `clients/python/` (wasmtime), and `clients/swift/` (WasmKit) embed it and
+  speak SDP in-process, so each compiles `.slab` source at runtime through
+  `doc.open`.
 - Determinism is intentional: kernel arithmetic, output quantization, and
   ordering must stay host-independent so native and WASM conformance goldens
   remain byte-identical.
@@ -59,7 +60,8 @@ the kernel.
 | `packages/slab/` | `@stencil-hq/slab` WASM-backed npm CLI. |
 | `packages/dslab/` | `@stencil-hq/dslab` typed SDP client and `dslab` CLI. |
 | `clients/go/` | `github.com/stencil-hq/slab/clients/go`: wazero runtime, terminal driver, `slab gen go` output. |
-| `packages/pyslab/` | `slab-lang`: wasmtime runtime, terminal driver, on-the-fly compilation. |
+| `clients/python/` | `slab-lang`: wasmtime runtime, terminal driver, on-the-fly compilation. |
+| `clients/swift/` | SwiftPM `Slab`: WasmKit runtime, `SlabAppKit` Metal view, `slab-swift` viewer. |
 | `site/` | CodeMirror playground, preview, inspector, and design-mode UI. |
 | `conformance/` | Shared cases, traces, manifest, and byte-exact expected outputs. |
 | `spec/` | Normative language, SLIR, frame API, and platform-support specifications. |
@@ -76,7 +78,7 @@ bun install
 just check          # rustfmt, clippy -D warnings, Biome, tree-sitter checks
 just test           # cargo test --workspace
 just go-test        # Go client: build, vet, and test clients/go
-just py-test        # Python client: pytest under packages/pyslab
+just py-test        # Python client: pytest under clients/python
 just conformance    # native and WASM cases against checked-in goldens
 just freshness      # regenerate in a temp snapshot and reject drift
 just ci             # check + test + conformance + freshness + go-test + py-test
@@ -105,7 +107,7 @@ cargo run -q -p slab-cli -- dump path/to/document.slir
 bun test packages/dslab/test/drive.test.ts
 cargo run -q -p slab-cli -- gen go examples/10-settings.slab -o /tmp/doc.go --package doc
 cd clients/go && go test ./...
-cd packages/pyslab && uv run --extra dev pytest -q
+cd clients/python && uv run --extra dev pytest -q
 ```
 
 ## Code Conventions & Common Patterns
@@ -175,7 +177,7 @@ Untracked build outputs (gitignored, rebuilt by `just gen` or on demand by the
 embeds it via `include_str!`, so it must exist before any cargo build of
 `slab-compile` or its dependents), the embedded ABI modules
 `clients/go/slab/slab_abi.wasm.gz` and
-`packages/pyslab/src/slab/slab_abi.wasm.gz`, and `packages/dslab/dist/`. CI
+`clients/python/src/slab/slab_abi.wasm.gz`, and `packages/dslab/dist/`. CI
 builds all of them; none are committed.
 
 `spec/support.toml` drives capability tables; `spec/slir.proto` drives generated
@@ -217,7 +219,7 @@ bindings. Changes to either require regeneration and freshness verification.
   Node 22+ when used under Node. The repository itself uses Bun for its scripts
   and workspace management.
 - Use **Go 1.24+** for `clients/go` and **uv** with Python 3.11+ for
-  `packages/pyslab`. Both clients embed the same generated ABI module; rebuild
+  `clients/python`. Both clients embed the same generated ABI module; rebuild
   it with `cargo run -q -p xtask -- abi-wasm` after any compiler or kernel
   change that they must observe.
 

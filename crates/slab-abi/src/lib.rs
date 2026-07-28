@@ -5,7 +5,7 @@
 //! host that can run WebAssembly and pass bytes gets the whole Slab runtime:
 //! compile `.slab` source on the fly with `doc.open`, drive input, and read
 //! back terminal cells or scene JSON. The Go client (`clients/go`, wazero) and
-//! the Python client (`packages/pyslab`, wasmtime) are thin wrappers over these
+//! the Python client (`clients/python`, wasmtime) are thin wrappers over these
 //! six exports.
 //!
 //! # Calling convention

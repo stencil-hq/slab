@@ -55,7 +55,7 @@ go-test: abi-wasm
 
 # Python client: wasmtime runtime, terminal driver, on-the-fly compilation
 py-test: abi-wasm
-    cd packages/pyslab && uv run --extra dev pytest -q
+    cd clients/python && uv run --extra dev pytest -q
 
 # full conformance suite (compile -> native + current Node WASM bindings -> byte-exact goldens)
 conformance: web-runtime
@@ -146,7 +146,7 @@ go-tui file="examples/00-player.slab":
 
 # open a .slab document in the Python terminal client (compiled on the fly)
 py-tui file="examples/00-player.slab":
-    cd packages/pyslab && uv run python -m slab {{ justfile_directory() }}/{{ file }}
+    cd clients/python && uv run python -m slab {{ justfile_directory() }}/{{ file }}
 
 # browse a directory of .slab documents in the terminal client (Ctrl-N / Ctrl-P)
 gallery dir="examples":

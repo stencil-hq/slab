@@ -5,7 +5,7 @@ the upstream-ready issue text. The README's "Installing from a path" section
 carries the user-facing mitigation.
 
 Observed with uv 0.11.25 on macOS (arm64). Found while dogfooding the
-documented external-consumer flow `uv add /work/slab-lang/packages/pyslab`.
+documented external-consumer flow `uv add /work/slab-lang/clients/python`.
 
 ## Minimal deterministic repro
 
