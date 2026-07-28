@@ -2524,6 +2524,7 @@ pub fn para_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &
 	let mut w_a: Vec<i32> = take_i32(l);
 	let mut w_b: Vec<i32> = take_i32(l);
 	let mut w_ri: Vec<i32> = take_i32(l);
+	let mut w_mandatory: Vec<i32> = take_i32(l);
 	// Source spaces preceding each word, counted across span boundaries so
 	// adjacent spans join with exactly the whitespace the content contains.
 	let mut w_gap: Vec<i32> = take_i32(l);
@@ -2557,7 +2558,8 @@ pub fn para_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &
 		for k in 0i32..(n) {
 			l.para_chars.push(cs[idx(k)]);
 		}
-		// Split on spaces; each word remembers how many source spaces led it.
+		// Preserve ASCII-space word semantics, then subdivide only at UAX #14
+		// opportunities. Oversized zero-opportunity runs use grapheme fallback.
 		let mut a = 0i32;
 		loop {
 			let mut b = a;
@@ -2565,11 +2567,62 @@ pub fn para_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &
 				b = b.wrapping_add(1i32);
 			}
 			if b > a {
-				w_a.push(base.wrapping_add(a));
-				w_b.push(base.wrapping_add(b));
-				w_ri.push(sri);
-				w_gap.push(pending_gap);
-				pending_gap = 0i32;
+				let mut ranges = Vec::new();
+				let mut breaks = Vec::new();
+				if crate::textm::uses_uax_breaks(&cs, a, b) {
+					crate::textm::line_break_boundaries(&cs, a, b, &mut breaks);
+				}
+				let has_internal_break = breaks.iter().any(|&(position, _)| position < b);
+				if has_internal_break {
+					let mut start = a;
+					for &(end, mandatory) in &breaks {
+						ranges.push((start, end, mandatory && end < b));
+						start = end;
+					}
+				} else {
+					ranges.push((a, b, false));
+				}
+
+				for (range_a, range_b, mandatory) in ranges {
+					let width = crate::textm::slice_w_cached(
+						d,
+						st.rs[idx(sri)].font,
+						st.rs[idx(sri)].size,
+						st.rs[idx(sri)].tracking,
+						&cs,
+						range_a,
+						range_b,
+						&mut l.shape_cache,
+					);
+					let mut parts = Vec::new();
+					if !nowrap && avail != INF && width > avail + EPS {
+						let text: String = cs[idx(range_a)..idx(range_b)]
+							.iter()
+							.map(|&cp| char::from_u32(cp).expect("valid codepoint"))
+							.collect();
+						let mut boundaries = Vec::new();
+						crate::graphemes::boundaries(&text, &mut boundaries);
+						let mut part_start = range_a;
+						for &boundary in boundaries.iter().skip(1) {
+							let part_end = range_a.wrapping_add(boundary);
+							if part_end < range_b && crate::textm::fallback_break_allowed(&cs, part_end) {
+								parts.push((part_start, part_end, false));
+								part_start = part_end;
+							}
+						}
+						parts.push((part_start, range_b, mandatory));
+					} else {
+						parts.push((range_a, range_b, mandatory));
+					}
+					for (part_a, part_b, part_mandatory) in parts {
+						w_a.push(base.wrapping_add(part_a));
+						w_b.push(base.wrapping_add(part_b));
+						w_ri.push(sri);
+						w_gap.push(pending_gap);
+						w_mandatory.push(i32::from(part_mandatory));
+						pending_gap = 0i32;
+					}
+				}
 			}
 			if b >= n {
 				break;
@@ -2586,7 +2639,13 @@ pub fn para_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &
 	let mut cur_line = 0i32;
 	let mut cur_w = 0.0f64;
 	let mut line_len = 0i32;
+	let mut force_new_line = false;
 	for i in 0i32..(len_i32(&w_a)) {
+		if force_new_line && line_len > 0 {
+			cur_line = cur_line.wrapping_add(1i32);
+			cur_w = 0.0;
+			line_len = 0;
+		}
 		let sri = w_ri[idx(i)];
 		let ww = crate::textm::slice_w_cached(
 			d,
@@ -2618,6 +2677,7 @@ pub fn para_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &
 		w_eff.push(eff);
 		cur_w += add;
 		line_len = line_len.wrapping_add(1i32);
+		force_new_line = w_mandatory[idx(i)] != 0;
 	}
 	let pi = p_new(l, node, ri);
 	l.para_line_off.push(len_i32(&l.pl_h));
@@ -2762,6 +2822,7 @@ pub fn para_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &
 	give_i32(l, w_a);
 	give_i32(l, w_b);
 	give_i32(l, w_ri);
+	give_i32(l, w_mandatory);
 	give_i32(l, w_gap);
 	give_i32(l, wline);
 	give_i32(l, w_eff);

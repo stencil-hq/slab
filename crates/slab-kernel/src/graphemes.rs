@@ -1,16 +1,13 @@
-//! Grapheme-cluster segmentation for the subset of Unicode Standard Annex #29
-//! needed by caret, selection, and text geometry.
+//! Extended grapheme-cluster segmentation for caret, selection, and text
+//! geometry.
 //!
-//! Combining marks (`Mn`, `Mc`, and `Me`) never start a cluster. A zero-width
-//! joiner joins the following character, variation selectors attach to the
-//! preceding cluster, regional indicators form flag clusters in pairs, and
-//! CRLF is one cluster.
-//!
-//! Full UAX #29 properties such as extended-pictographic gating, Hangul jamo,
-//! `Prepend`, and `SpacingMark` are intentionally outside this subset. The mark
-//! and terminal-width range tables below are derived from Unicode 16.0.0.
+//! [`unicode_segmentation`] is the single authority for Unicode Standard Annex
+//! #29 boundaries. The mark and terminal-width range tables below are separate
+//! painting concerns derived from Unicode 16.0.0.
 
-/// Zero-width joiner, which joins both adjacent codepoints into one cluster.
+use unicode_segmentation::UnicodeSegmentation;
+
+/// Zero-width joiner.
 pub const ZWJ: u32 = 0x200du32;
 
 /// Variation selector 15, requesting text presentation.
@@ -253,45 +250,13 @@ pub fn boundaries(text: &str, out: &mut Vec<i32>) {
 	out.clear();
 	out.push(0);
 
-	let mut codepoints = text.chars().map(u32::from);
-	let Some(mut previous) = codepoints.next() else {
-		return;
-	};
-
-	let mut offset = 1i32;
-	// Number of regional indicators in the current cluster.
-	let mut regional_run = i32::from(is_ri(previous));
-
-	// This is deliberately a wrapping counter rather than `enumerate`: kernel
-	// string offsets are signed 32-bit values with wrapping arithmetic.
-	for ch in codepoints {
-		let current_is_regional = is_ri(ch);
-		let previous_is_regional = is_ri(previous);
-		let joins_previous = (previous == 13 && ch == 10)
-			|| is_mark(ch)
-			|| matches!(ch, VS15 | VS16 | ZWJ)
-			|| previous == ZWJ
-			|| (current_is_regional && previous_is_regional && regional_run.wrapping_rem(2) == 1);
-
-		if !joins_previous {
-			out.push(offset);
+	let mut offset = 0i32;
+	for cluster in text.graphemes(true) {
+		for _ in cluster.chars() {
+			offset = offset.wrapping_add(1);
 		}
-
-		if current_is_regional {
-			regional_run = if joins_previous {
-				regional_run.wrapping_add(1)
-			} else {
-				1
-			};
-		} else if !joins_previous {
-			regional_run = 0;
-		}
-
-		previous = ch;
-		offset = offset.wrapping_add(1);
+		out.push(offset);
 	}
-
-	out.push(offset);
 }
 
 /// Returns the largest boundary strictly below `at`, or zero when none exists.

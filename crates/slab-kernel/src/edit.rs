@@ -6,6 +6,8 @@
 //! history use capped parallel stacks to preserve the kernel's stable data
 //! layout.
 
+use unicode_segmentation::UnicodeSegmentation as _;
+
 use crate::{
 	graphemes,
 	slir::Doc,
@@ -202,9 +204,9 @@ pub fn delete_selection(es: &mut EditState) -> bool {
 	delete_selection_raw(es)
 }
 
-/// Reports whether `text` ends in an ASCII space, tab, or line break.
+/// Reports whether `text` ends in Unicode whitespace.
 pub fn ends_whitespace(text: &str) -> bool {
-	matches!(text.chars().last(), Some(' ' | '\t' | '\n' | '\r'))
+	text.chars().last().is_some_and(char::is_whitespace)
 }
 
 /// Replaces the selection with input inserted verbatim.
@@ -277,23 +279,41 @@ pub fn del(es: &mut EditState) -> bool {
 	true
 }
 
-/// Returns the preceding space-delimited word boundary.
-pub fn word_prev(text: &str, caret: i32) -> i32 {
-	let before = crate::rt::str_slice(text, 0, caret);
-	let split = crate::rt::str_rfind(before.trim_end(), " ");
-	if split < 0 { 0 } else { split.wrapping_add(1) }
+fn byte_offset(text: &str, codepoint: i32) -> usize {
+	let codepoint = usize::try_from(codepoint).expect("negative codepoint offset");
+	text
+		.char_indices()
+		.map(|(byte, _)| byte)
+		.chain(std::iter::once(text.len()))
+		.nth(codepoint)
+		.expect("codepoint offset out of bounds")
 }
 
-/// Returns the following space-delimited word boundary.
+fn codepoint_offset(text: &str, byte: usize) -> i32 {
+	i32::try_from(text[..byte].chars().count()).expect("string has too many codepoints")
+}
+
+/// Returns the start of the current or preceding UAX #29 word.
+///
+/// Non-word spans are skipped. At a word start, the preceding word is chosen.
+pub fn word_prev(text: &str, caret: i32) -> i32 {
+	let caret_byte = byte_offset(text, caret);
+	text
+		.unicode_word_indices()
+		.rev()
+		.find(|(byte, _)| *byte < caret_byte)
+		.map_or(0, |(byte, _)| codepoint_offset(text, byte))
+}
+
+/// Returns the start of the following UAX #29 word, or the end of the text.
+///
+/// Non-word spans are skipped. A word that starts at the caret is skipped.
 pub fn word_next(text: &str, caret: i32) -> i32 {
-	let end = crate::rt::str_len(text);
-	let after = crate::rt::str_slice(text, caret, end);
-	let split = crate::rt::str_find(&after, " ");
-	if split < 0 {
-		return end;
-	}
-	let tail = crate::rt::str_slice(&after, split, crate::rt::str_len(&after));
-	end.wrapping_sub(crate::rt::str_len(tail.trim_start()))
+	let caret_byte = byte_offset(text, caret);
+	text
+		.unicode_word_indices()
+		.find(|(byte, _)| *byte > caret_byte)
+		.map_or_else(|| crate::rt::str_len(text), |(byte, _)| codepoint_offset(text, byte))
 }
 
 /// Deletes backward to the preceding word boundary, or deletes the selection.
@@ -334,8 +354,8 @@ pub fn word_forward(es: &mut EditState) -> bool {
 /// Moves the caret one grapheme or word in the sign of `delta`.
 ///
 /// When `select` is false, an existing selection first collapses toward the
-/// requested direction. When `word` is true, movement uses space-delimited
-/// word boundaries.
+/// requested direction. When `word` is true, movement skips non-word spans
+/// between UAX #29 word starts.
 pub fn move_caret(es: &mut EditState, delta: i32, select: bool, word: bool) {
 	history_barrier(es);
 	es.goal_x = NO_GOAL_X;

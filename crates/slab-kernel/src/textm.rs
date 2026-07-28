@@ -1,9 +1,14 @@
 //! Text measurement using only SLIR font tables without host metrics.
 //!
-//! Wrapping follows the original `VectorMetrics` behavior: spaces split words
-//! (including empty words), non-breaking spaces remain glued, overlong words
-//! hard-break, and ellipsis truncation strips trailing whitespace. These
-//! details are part of the conformance contract.
+//! Wrapping preserves the original `VectorMetrics` contract for Latin and
+//! space-delimited text: spaces split words (including empty words),
+//! non-breaking spaces remain glued, overlong words hard-break at grapheme
+//! boundaries, and ellipsis truncation strips trailing whitespace. UAX #14
+//! opportunities additionally wrap scripts such as CJK without permitting
+//! line-initial closing punctuation. Complex-context (SA-class) scripts such
+//! as Thai, Lao, and Khmer deliberately use grapheme-cluster fallback rather
+//! than dictionary segmentation. These details are part of the conformance
+//! contract.
 //!
 //! Advances come from the selected font table as
 //! `advance(glyph) * size / units_per_em + tracking`, with the default advance
@@ -19,6 +24,7 @@
 use std::{fmt, hash::Hasher, rc::Rc, sync::Arc};
 
 use rustc_hash::{FxHashMap, FxHasher};
+use unicode_linebreak::{BreakClass, BreakOpportunity, break_property, linebreaks};
 
 use crate::{
 	graphemes,
@@ -1080,8 +1086,117 @@ fn cut_line_cached(
 		.push(slice_w_cached(d, f, size, tracking, &tl.chars, output_start, output_end, cache));
 }
 
-/// Greedily wraps one hard line at spaces and hard-breaks oversized words at
-/// grapheme-cluster boundaries.
+pub(crate) fn line_break_boundaries(src: &[u32], a: i32, b: i32, out: &mut Vec<(i32, bool)>) {
+	out.clear();
+	let mut text = String::new();
+	let mut byte_ends =
+		Vec::with_capacity(usize::try_from(b.wrapping_sub(a)).expect("nonnegative line-break range"));
+	for i in a..b {
+		let cp = src[usize::try_from(i).expect("nonnegative character index")];
+		text.push(char::from_u32(cp).expect("valid codepoint"));
+		byte_ends.push(text.len());
+	}
+	let mut character = 0usize;
+	for (byte, opportunity) in linebreaks(&text) {
+		while byte_ends.get(character).is_some_and(|&end| end <= byte) {
+			character += 1;
+		}
+		out.push((
+			a.wrapping_add(i32::try_from(character).expect("line-break offset exceeds i32")),
+			opportunity == BreakOpportunity::Mandatory,
+		));
+	}
+}
+
+pub(crate) fn fallback_break_allowed(src: &[u32], boundary: i32) -> bool {
+	let before = break_property(
+		src[usize::try_from(boundary.wrapping_sub(1)).expect("nonnegative fallback boundary")],
+	);
+	let after =
+		break_property(src[usize::try_from(boundary).expect("nonnegative fallback boundary")]);
+	!matches!(before, BreakClass::NonBreakingGlue | BreakClass::WordJoiner)
+		&& !matches!(
+			after,
+			BreakClass::NonBreakingGlue
+				| BreakClass::WordJoiner
+				| BreakClass::ClosePunctuation
+				| BreakClass::CloseParenthesis
+				| BreakClass::Exclamation
+				| BreakClass::Inseparable
+				| BreakClass::NonStarter
+				| BreakClass::ConditionalJapaneseStarter
+		) && !matches!(before, BreakClass::OpenPunctuation)
+}
+
+pub(crate) fn uses_uax_breaks(src: &[u32], a: i32, b: i32) -> bool {
+	(a..b).any(|i| {
+		matches!(
+			break_property(src[usize::try_from(i).expect("nonnegative character index")]),
+			BreakClass::Ideographic
+				| BreakClass::HangulLvSyllable
+				| BreakClass::HangulLvtSyllable
+				| BreakClass::HangulLJamo
+				| BreakClass::HangulVJamo
+				| BreakClass::HangulTJamo
+				| BreakClass::ComplexContext
+				| BreakClass::Mandatory
+				| BreakClass::CarriageReturn
+				| BreakClass::LineFeed
+				| BreakClass::NextLine
+		)
+	})
+}
+
+fn append_range(tl: &mut TextLayout, src: &[u32], a: i32, b: i32) {
+	for k in a..b {
+		tl.chars
+			.push(src[usize::try_from(k).expect("nonnegative character index")]);
+	}
+}
+
+fn append_fallback_range(
+	d: &Doc,
+	f: i32,
+	size: f64,
+	tracking: f64,
+	tl: &mut TextLayout,
+	src: &[u32],
+	range_start: i32,
+	range_end: i32,
+	max_w: f64,
+	line_start: &mut i32,
+	source_start: &mut i32,
+	line_width: &mut f64,
+	cache: &mut ShapeCache,
+) {
+	let text: String = src[usize::try_from(range_start).expect("nonnegative range start")
+		..usize::try_from(range_end).expect("nonnegative range end")]
+		.iter()
+		.map(|&codepoint| char::from_u32(codepoint).expect("valid codepoint"))
+		.collect();
+	let mut boundaries = Vec::new();
+	graphemes::boundaries(&text, &mut boundaries);
+	for pair in boundaries.windows(2) {
+		let cluster_start = range_start.wrapping_add(pair[0]);
+		let cluster_end = range_start.wrapping_add(pair[1]);
+		let candidate_width =
+			slice_w_cached(d, f, size, tracking, src, *source_start, cluster_end, cache);
+		let line_nonempty = i32::try_from(tl.chars.len()).expect("text exceeds i32") > *line_start;
+		if line_nonempty
+			&& candidate_width > max_w + WIDTH_EPSILON
+			&& fallback_break_allowed(src, cluster_start)
+		{
+			finish_line(tl, *line_start, *source_start, cluster_start, *line_width);
+			*line_start = i32::try_from(tl.chars.len()).expect("text exceeds i32");
+			*source_start = cluster_start;
+		}
+		append_range(tl, src, cluster_start, cluster_end);
+		*line_width = slice_w_cached(d, f, size, tracking, src, *source_start, cluster_end, cache);
+	}
+}
+
+/// Greedily wraps one hard line at spaces and UAX #14 opportunities, falling
+/// back to grapheme-cluster boundaries for oversized runs.
 // The arguments preserve the public wrapping primitive's explicit metric,
 // source-range, and width inputs.
 pub fn wrap_hard(
@@ -1125,54 +1240,99 @@ fn wrap_hard_cached(
 		}
 
 		let word_width = slice_w_cached(d, f, size, tracking, src, word_start, word_end, cache);
-		let line_nonempty = i32::try_from(tl.chars.len()).expect("text exceeds i32") > line_start;
-		let candidate_width =
-			slice_w_cached(d, f, size, tracking, src, source_start, word_end, cache);
-		if line_nonempty && candidate_width > max_w + WIDTH_EPSILON {
-			finish_line(tl, line_start, source_start, word_start.wrapping_sub(1), line_width);
-			line_start = i32::try_from(tl.chars.len()).expect("text exceeds i32");
-			source_start = word_start;
-			line_width = 0.0;
+		let mut breaks = Vec::new();
+		if uses_uax_breaks(src, word_start, word_end) {
+			line_break_boundaries(src, word_start, word_end, &mut breaks);
 		}
+		let has_internal_break = breaks.iter().any(|&(position, _)| position < word_end);
 
-		if word_width > max_w + WIDTH_EPSILON {
-			let word: String = src[usize::try_from(word_start).expect("nonnegative word start")
-				..usize::try_from(word_end).expect("nonnegative word end")]
-				.iter()
-				.map(|&codepoint| char::from_u32(codepoint).expect("valid codepoint"))
-				.collect();
-			let mut boundaries = Vec::new();
-			graphemes::boundaries(&word, &mut boundaries);
-			for pair in boundaries.windows(2) {
-				let cluster_start = word_start.wrapping_add(pair[0]);
-				let cluster_end = word_start.wrapping_add(pair[1]);
-				let candidate_width =
-					slice_w_cached(d, f, size, tracking, src, source_start, cluster_end, cache);
+		if has_internal_break {
+			let mut unit_start = word_start;
+			for &(unit_end, mandatory) in &breaks {
 				let line_nonempty =
 					i32::try_from(tl.chars.len()).expect("text exceeds i32") > line_start;
+				let candidate_width =
+					slice_w_cached(d, f, size, tracking, src, source_start, unit_end, cache);
 				if line_nonempty && candidate_width > max_w + WIDTH_EPSILON {
-					finish_line(tl, line_start, source_start, cluster_start, line_width);
+					let source_end = if unit_start == word_start {
+						word_start.wrapping_sub(1)
+					} else {
+						unit_start
+					};
+					finish_line(tl, line_start, source_start, source_end, line_width);
 					line_start = i32::try_from(tl.chars.len()).expect("text exceeds i32");
-					source_start = cluster_start;
+					source_start = unit_start;
+					line_width = 0.0;
+				} else if unit_start == word_start && line_nonempty {
+					tl.chars.push(32);
 				}
-				for k in cluster_start..cluster_end {
-					tl.chars
-						.push(src[usize::try_from(k).expect("nonnegative character index")]);
+
+				let unit_width = slice_w_cached(d, f, size, tracking, src, unit_start, unit_end, cache);
+				if unit_width > max_w + WIDTH_EPSILON {
+					append_fallback_range(
+						d,
+						f,
+						size,
+						tracking,
+						tl,
+						src,
+						unit_start,
+						unit_end,
+						max_w,
+						&mut line_start,
+						&mut source_start,
+						&mut line_width,
+						cache,
+					);
+				} else {
+					append_range(tl, src, unit_start, unit_end);
+					line_width =
+						slice_w_cached(d, f, size, tracking, src, source_start, unit_end, cache);
 				}
-				line_width =
-					slice_w_cached(d, f, size, tracking, src, source_start, cluster_end, cache);
+				if mandatory && unit_end < word_end {
+					finish_line(tl, line_start, source_start, unit_end, line_width);
+					line_start = i32::try_from(tl.chars.len()).expect("text exceeds i32");
+					source_start = unit_end;
+					line_width = 0.0;
+				}
+				unit_start = unit_end;
 			}
 		} else {
-			if i32::try_from(tl.chars.len()).expect("text exceeds i32") > line_start {
-				tl.chars.push(32);
+			let line_nonempty = i32::try_from(tl.chars.len()).expect("text exceeds i32") > line_start;
+			let candidate_width =
+				slice_w_cached(d, f, size, tracking, src, source_start, word_end, cache);
+			if line_nonempty && candidate_width > max_w + WIDTH_EPSILON {
+				finish_line(tl, line_start, source_start, word_start.wrapping_sub(1), line_width);
+				line_start = i32::try_from(tl.chars.len()).expect("text exceeds i32");
+				source_start = word_start;
+				line_width = 0.0;
 			}
-			for k in word_start..word_end {
-				tl.chars
-					.push(src[usize::try_from(k).expect("nonnegative character index")]);
+
+			if word_width > max_w + WIDTH_EPSILON {
+				append_fallback_range(
+					d,
+					f,
+					size,
+					tracking,
+					tl,
+					src,
+					word_start,
+					word_end,
+					max_w,
+					&mut line_start,
+					&mut source_start,
+					&mut line_width,
+					cache,
+				);
+			} else {
+				if i32::try_from(tl.chars.len()).expect("text exceeds i32") > line_start {
+					tl.chars.push(32);
+				}
+				append_range(tl, src, word_start, word_end);
+				let output_end = i32::try_from(tl.chars.len()).expect("text exceeds i32");
+				line_width =
+					slice_w_cached(d, f, size, tracking, &tl.chars, line_start, output_end, cache);
 			}
-			let output_end = i32::try_from(tl.chars.len()).expect("text exceeds i32");
-			line_width =
-				slice_w_cached(d, f, size, tracking, &tl.chars, line_start, output_end, cache);
 		}
 
 		if word_end >= b {
