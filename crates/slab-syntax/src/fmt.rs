@@ -578,6 +578,16 @@ mod tests {
         let src = "text \"oops\n";
         assert_eq!(format(src), src);
     }
+
+    #[test]
+    fn formats_imports_named_params_and_dotted_conditions_idempotently() {
+        let source = "import   \"ui/panel.slab\"\nparams panel{\nopen bool=false\n}\ncol{\nwhen ! panel.open{opacity=0}\n}\n";
+        let expected = "import \"ui/panel.slab\"\nparams panel {\n  open bool = false\n}\ncol {\n  when !panel.open { opacity=0 }\n}\n";
+        let formatted = format(source);
+
+        assert_eq!(formatted, expected);
+        assert_eq!(format(&formatted), formatted);
+    }
 }
 
 #[cfg(test)]

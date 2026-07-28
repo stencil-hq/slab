@@ -1,0 +1,3 @@
+def ImportedCounter(count=0) {
+  text count
+}

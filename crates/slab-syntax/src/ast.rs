@@ -260,8 +260,19 @@ pub struct AAnim {
     pub line: u32,
 }
 
+/// A source file imported at compile time.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AImport {
+    /// Path text as written in the quoted import.
+    pub path: String,
+    /// One-based source line of the import statement.
+    pub line: u32,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct Document {
+    /// Imports in source order.
+    pub imports: Vec<AImport>,
     pub tokens: TokenTree,
     /// Document order; later defs with the same name shadow earlier ones.
     pub defs: Vec<ADef>,

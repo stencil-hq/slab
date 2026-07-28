@@ -248,6 +248,7 @@ fn compile(file: &Path) -> Result<Vec<u8>, String> {
         embed_assets: true,
         base_dir: file.parent().unwrap_or(Path::new(".")).to_path_buf(),
         assets: None,
+        sources: None,
         fonts: std::collections::HashMap::new(),
     };
     let (slir, diags) = slab_compile::compile(&src, &opts);

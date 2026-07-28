@@ -193,9 +193,12 @@ fn expand(path: &str, name: Option<&str>, fonts: &[(String, String)]) -> Result<
         embed_assets: true,
         base_dir: abs.parent().map(Path::to_path_buf).unwrap_or_default(),
         assets: None,
+        sources: None,
         fonts: font_bytes,
     };
-    let (module, diags) = slab_compile::rustgen::generate(&src, &opts, path);
+    let (module, diags, imports) =
+        slab_compile::rustgen::generate_with_import_paths(&src, &opts, path);
+    tracked.extend(imports.iter().map(|import| import.display().to_string()));
     let module = match module {
         Some(m) if !diags.has_errors() => {
             // Surface lint-level diagnostics on stderr; stable proc macros have
@@ -250,6 +253,13 @@ mod tests {
         assert!(src.contains("pub struct Doc"), "{src}");
         assert!(src.contains("include_bytes!"), "{src}");
         assert!(src.contains("tests/fixtures/counter.slab"), "{src}");
+    }
+
+    #[test]
+    fn success_tracks_every_imported_module() {
+        let src = expand("tests/fixtures/modular.slab", Some("modular"), &[]).unwrap();
+        assert!(src.contains("tests/fixtures/modular.slab"), "{src}");
+        assert!(src.contains("tests/fixtures/module.slab"), "{src}");
     }
 
     #[test]

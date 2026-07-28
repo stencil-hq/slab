@@ -26,6 +26,8 @@ pub struct Diag {
     pub code: &'static str,
     pub msg: String,
     pub line: u32,
+    /// Source file override for diagnostics from imported units.
+    pub file: Option<String>,
     /// Optional remedy, printed indented under the main line.
     pub remedy: Option<String>,
 }
@@ -33,6 +35,7 @@ pub struct Diag {
 impl Diag {
     /// `file:line: level[code]: message` (+ indented remedy lines).
     pub fn format(&self, file: &str) -> String {
+        let file = self.file.as_deref().unwrap_or(file);
         let mut out = String::new();
         if !file.is_empty() {
             out.push_str(&format!("{}:{}: ", file, self.line));
@@ -63,6 +66,7 @@ impl Diagnostics {
             code,
             msg: msg.into(),
             line,
+            file: None,
             remedy: None,
         });
     }
@@ -79,6 +83,7 @@ impl Diagnostics {
             code,
             msg: msg.into(),
             line,
+            file: None,
             remedy: Some(remedy.into()),
         });
     }
@@ -89,6 +94,7 @@ impl Diagnostics {
             code,
             msg: msg.into(),
             line,
+            file: None,
             remedy: None,
         });
     }
@@ -105,6 +111,7 @@ impl Diagnostics {
             code,
             msg: msg.into(),
             line,
+            file: None,
             remedy: Some(remedy.into()),
         });
     }
@@ -115,6 +122,7 @@ impl Diagnostics {
             code,
             msg: msg.into(),
             line,
+            file: None,
             remedy: None,
         });
     }
@@ -125,5 +133,29 @@ impl Diagnostics {
 
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn diagnostic_file_overrides_the_format_fallback() {
+        let mut diagnostics = Diagnostics::new();
+        diagnostics.error("parse", "invalid source", 7);
+        let diagnostic = &mut diagnostics.0[0];
+
+        assert!(diagnostic.file.is_none());
+        assert_eq!(
+            diagnostic.format("root.slab"),
+            "root.slab:7: error[parse]: invalid source"
+        );
+
+        diagnostic.file = Some("modules/panel.slab".into());
+        assert_eq!(
+            diagnostic.format("root.slab"),
+            "modules/panel.slab:7: error[parse]: invalid source"
+        );
     }
 }

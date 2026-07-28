@@ -132,33 +132,58 @@ fn diags_json(diags: &Diagnostics, file: &str) -> String {
 }
 
 /// Build `Options` from an asset map. `$slabSourceName` is generator metadata.
-fn opts_with_assets(embed: bool, base_dir: &str, assets_json: &str) -> Options {
+fn opts_with_sources(
+    embed: bool,
+    base_dir: &str,
+    assets_json: &str,
+    sources_json: &str,
+) -> Options {
     let assets = if assets_json.is_empty() || assets_json == "{}" {
         None
     } else {
         let map: HashMap<String, String> = serde_json::from_str(assets_json).unwrap_or_default();
-        let mut m = HashMap::new();
-        for (k, v) in map {
-            if k == "$slabSourceName" {
+        let mut decoded = HashMap::new();
+        for (key, value) in map {
+            if key == "$slabSourceName" {
                 continue;
             }
-            m.insert(k, b64_decode(&v));
+            decoded.insert(key, b64_decode(&value));
         }
-        Some(m)
+        Some(decoded)
     };
+    let sources = serde_json::from_str(sources_json).unwrap_or_default();
     Options {
         embed_assets: embed,
         base_dir: base_dir.into(),
         assets,
+        sources: Some(sources),
         fonts: HashMap::new(),
     }
+}
+/// JSON array of direct import paths declared by one source file.
+#[wasm_bindgen]
+pub fn import_paths(source: &str) -> String {
+    let mut diagnostics = Diagnostics::new();
+    let document = slab_syntax::parse(source, &mut diagnostics);
+    let paths = document
+        .imports
+        .iter()
+        .map(|import| import.path.as_str())
+        .collect::<Vec<_>>();
+    serde_json::to_string(&paths).unwrap_or_else(|_| "[]".into())
 }
 
 /// Print diagnostics (exit 1 on errors). Returns JSON diagnostics with
 /// `formatted` lines for byte-identical CLI output.
 #[wasm_bindgen]
 pub fn check(source: &str, file_name: &str) -> String {
-    let opts = opts_with_assets(false, ".", "{}");
+    check_with_sources(source, file_name, "{}")
+}
+
+/// Check source with a normalized import-key to source-text JSON map.
+#[wasm_bindgen]
+pub fn check_with_sources(source: &str, file_name: &str, sources_json: &str) -> String {
+    let opts = opts_with_sources(false, ".", "{}", sources_json);
     let (_, diags) = compile_with_exports(source, &opts);
     diags_json(&diags, file_name)
 }
@@ -167,9 +192,16 @@ pub fn check(source: &str, file_name: &str) -> String {
 /// read + base64 into `assets_json`).
 #[wasm_bindgen]
 pub fn image_srcs(source: &str) -> String {
+    image_srcs_with_sources(source, "{}")
+}
+
+/// JSON image paths from the root and its virtual import closure.
+#[wasm_bindgen]
+pub fn image_srcs_with_sources(source: &str, sources_json: &str) -> String {
     let mut diags = Diagnostics::new();
-    let doc = slab_syntax::parse(source, &mut diags);
-    let ex = expand::expand(&doc, &mut diags);
+    let opts = opts_with_sources(false, ".", "{}", sources_json);
+    let units = slab_compile::import::closure(source, &opts, &mut diags);
+    let ex = expand::expand(&units, &mut diags);
     let mut seen: Vec<String> = Vec::new();
     for (src, _) in &ex.images {
         if !seen.iter().any(|s| s == src) {
@@ -182,7 +214,17 @@ pub fn image_srcs(source: &str) -> String {
 /// Compile to SLIR bytes. `Err` = diagnostics JSON (compile failure).
 #[wasm_bindgen]
 pub fn build(source: &str, assets_json: &str) -> Result<Vec<u8>, JsValue> {
-    let opts = opts_with_assets(true, ".", assets_json);
+    build_with_sources(source, assets_json, "{}")
+}
+
+/// Compile root source plus a virtual import map to SLIR bytes.
+#[wasm_bindgen]
+pub fn build_with_sources(
+    source: &str,
+    assets_json: &str,
+    sources_json: &str,
+) -> Result<Vec<u8>, JsValue> {
+    let opts = opts_with_sources(true, ".", assets_json, sources_json);
     let (slir, diags) = compile(source, &opts);
     if diags.has_errors() {
         return Err(JsValue::from_str(&diags_json(&diags, "build")));
@@ -200,12 +242,23 @@ pub fn dump(slir: &[u8]) -> Result<String, JsValue> {
     }
 }
 
+/// Render source without virtual imports.
+#[wasm_bindgen]
+pub fn render(source: &str, opts_json: &str, assets_json: &str) -> Result<String, JsValue> {
+    render_with_sources(source, opts_json, assets_json, "{}")
+}
+
 /// Render a `.slab` source to SVG/PNG/APNG/TUI. `opts_json` shape:
 /// `{kind, client?, theme?, width, height, scale, t, dur, fps, states, env, sets, plain}`.
 /// `assets_json` = `{"<src>": "<base64>"}`. Returns
 /// `{file:{name, b64?|text?}, notes, summary}` as JSON.
 #[wasm_bindgen]
-pub fn render(source: &str, opts_json: &str, assets_json: &str) -> Result<String, JsValue> {
+pub fn render_with_sources(
+    source: &str,
+    opts_json: &str,
+    assets_json: &str,
+    sources_json: &str,
+) -> Result<String, JsValue> {
     let v: serde_json::Value = serde_json::from_str(opts_json)
         .map_err(|e| JsValue::from_str(&format!("bad opts: {e}")))?;
     let kind = match v["kind"].as_str().unwrap_or("") {
@@ -247,7 +300,7 @@ pub fn render(source: &str, opts_json: &str, assets_json: &str) -> Result<String
         plain: v["plain"].as_bool().unwrap_or(false),
         registered_fonts: Vec::new(),
     };
-    let opts = opts_with_assets(true, ".", assets_json);
+    let opts = opts_with_sources(true, ".", assets_json, sources_json);
     let (slir, diags) = compile(source, &opts);
     if diags.has_errors() {
         return Err(JsValue::from_str(&diags_json(&diags, "render")));
@@ -269,10 +322,21 @@ pub fn render(source: &str, opts_json: &str, assets_json: &str) -> Result<String
     Ok(serde_json::to_string(&result).unwrap_or_else(|_| "{}".into()))
 }
 
+/// Generate web-component files without virtual imports.
+#[wasm_bindgen]
+pub fn gen_wc(source: &str, opts_json: &str, assets_json: &str) -> Result<String, JsValue> {
+    gen_wc_with_sources(source, opts_json, assets_json, "{}")
+}
+
 /// `gen wc` — emit web-component files. `opts_json`:
 /// `{tag?, separateIr, stem}`. Returns `{files:[{name, b64?|text?}], diagnostics:[…]}`.
 #[wasm_bindgen]
-pub fn gen_wc(source: &str, opts_json: &str, assets_json: &str) -> Result<String, JsValue> {
+pub fn gen_wc_with_sources(
+    source: &str,
+    opts_json: &str,
+    assets_json: &str,
+    sources_json: &str,
+) -> Result<String, JsValue> {
     let v: serde_json::Value = serde_json::from_str(opts_json)
         .map_err(|e| JsValue::from_str(&format!("bad opts: {e}")))?;
     let wopts = WcOptions {
@@ -280,7 +344,7 @@ pub fn gen_wc(source: &str, opts_json: &str, assets_json: &str) -> Result<String
         separate_ir: v["separateIr"].as_bool().unwrap_or(false),
     };
     let stem = v["stem"].as_str().unwrap_or("slab");
-    let copts = opts_with_assets(true, ".", assets_json);
+    let copts = opts_with_sources(true, ".", assets_json, sources_json);
     let (files, diags) = gen_wc_files(source, &copts, &wopts, stem);
     let source_name = v["sourceName"].as_str().unwrap_or("slab");
     let diags_j = diags_json(&diags, source_name);
@@ -305,11 +369,22 @@ pub fn gen_wc(source: &str, opts_json: &str, assets_json: &str) -> Result<String
     Ok(serde_json::to_string(&result).unwrap_or_else(|_| "{}".into()))
 }
 
+/// Generate React wrapper files without virtual imports.
+#[wasm_bindgen]
+pub fn gen_react(source: &str, opts_json: &str, assets_json: &str) -> Result<String, JsValue> {
+    gen_react_with_sources(source, opts_json, assets_json, "{}")
+}
+
 /// `gen react` — emit web-component files plus the typed React wrapper.
 /// `opts_json`: `{tag?, separateIr, stem}`. Returns
 /// `{files:[{name, b64?|text?}], diagnostics:[…]}`.
 #[wasm_bindgen]
-pub fn gen_react(source: &str, opts_json: &str, assets_json: &str) -> Result<String, JsValue> {
+pub fn gen_react_with_sources(
+    source: &str,
+    opts_json: &str,
+    assets_json: &str,
+    sources_json: &str,
+) -> Result<String, JsValue> {
     let v: serde_json::Value = serde_json::from_str(opts_json)
         .map_err(|e| JsValue::from_str(&format!("bad opts: {e}")))?;
     let wopts = WcOptions {
@@ -317,7 +392,7 @@ pub fn gen_react(source: &str, opts_json: &str, assets_json: &str) -> Result<Str
         separate_ir: v["separateIr"].as_bool().unwrap_or(false),
     };
     let stem = v["stem"].as_str().unwrap_or("slab");
-    let copts = opts_with_assets(true, ".", assets_json);
+    let copts = opts_with_sources(true, ".", assets_json, sources_json);
     let (files, diags) = gen_react_files(source, &copts, &wopts, stem);
     let source_name = v["sourceName"].as_str().unwrap_or("slab");
     let diags_j = diags_json(&diags, source_name);
@@ -342,15 +417,25 @@ pub fn gen_react(source: &str, opts_json: &str, assets_json: &str) -> Result<Str
     Ok(serde_json::to_string(&result).unwrap_or_else(|_| "{}".into()))
 }
 
+/// Generate a typed Rust module without virtual imports.
+#[wasm_bindgen]
+pub fn gen_rust(source: &str, assets_json: &str) -> Result<String, JsValue> {
+    gen_rust_with_sources(source, assets_json, "{}")
+}
+
 /// `gen rust` — emit a typed Rust module. Returns
 /// `{module: string, diagnostics:[…]}`.
 #[wasm_bindgen]
-pub fn gen_rust(source: &str, assets_json: &str) -> Result<String, JsValue> {
+pub fn gen_rust_with_sources(
+    source: &str,
+    assets_json: &str,
+    sources_json: &str,
+) -> Result<String, JsValue> {
     let source_name = serde_json::from_str::<serde_json::Value>(assets_json)
         .ok()
         .and_then(|value| value["$slabSourceName"].as_str().map(String::from))
         .unwrap_or_else(|| "slab".into());
-    let copts = opts_with_assets(true, ".", assets_json);
+    let copts = opts_with_sources(true, ".", assets_json, sources_json);
     let (module, diags) = gen_rust_src(source, &copts, &source_name);
     let diags_j = diags_json(&diags, &source_name);
     let Some(module) = module else {
@@ -361,4 +446,27 @@ pub fn gen_rust(source: &str, assets_json: &str) -> Result<String, JsValue> {
         "diagnostics": serde_json::from_str::<serde_json::Value>(&diags_j).unwrap_or(serde_json::Value::Array(vec![])),
     });
     Ok(serde_json::to_string(&result).unwrap_or_else(|_| "{}".into()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{build_with_sources, check_with_sources, import_paths};
+
+    #[test]
+    fn virtual_import_apis_compile_a_complete_source_map() {
+        let root = "import \"ui/card.slab\"\nCard\n";
+        let sources = serde_json::json!({
+            "ui/card.slab": "params card { visible bool = true }\ndef Card() { col { when card.visible { text \"ready\" } } }\n"
+        })
+        .to_string();
+
+        assert_eq!(import_paths(root), "[\"ui/card.slab\"]");
+        let diagnostics = check_with_sources(root, "app.slab", &sources);
+        assert!(
+            !diagnostics.contains("\"level\":\"error\""),
+            "{diagnostics}"
+        );
+        let bytes = build_with_sources(root, "{}", &sources).expect("virtual import build");
+        assert!(!bytes.is_empty());
+    }
 }

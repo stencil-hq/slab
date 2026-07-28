@@ -54,6 +54,7 @@
 //! | `protocol.quit` | none | `{"ok":true}`, then the server exits |
 //! | `doc.load` | `{"file":str}` | `{"ok":bool,"diags":[...],"reloaded"?:true,"theme_reset"?}` |
 //! | `doc.open` | `{"source":str,"name":str?}` | compiles inline source with `doc.load` semantics; never reads the filesystem |
+//! | `doc.open_slir` | `{"slir":base64,"name":str?}` | installs precompiled SLIR with `doc.load` semantics; skips the compiler |
 //! | `doc.reload` | none | reloads the current path with `doc.load` semantics |
 //! | `doc.info` | none | file, parameter declarations, themes, holes, signals, env, and clock |
 //! | `env.get` | none | `{"width","height","client","dark","coarse","theme"}` |
@@ -155,6 +156,7 @@ const METHODS: &[&str] = &[
     "protocol.quit",
     "doc.load",
     "doc.open",
+    "doc.open_slir",
     "doc.reload",
     "doc.info",
     "env.get",
@@ -278,10 +280,24 @@ impl Session {
             embed_assets: true,
             base_dir: PathBuf::from("."),
             assets: Some(std::collections::HashMap::new()),
+            sources: Some(std::collections::HashMap::new()),
             fonts: std::collections::HashMap::new(),
         };
         let (slir, diags) = slab_compile::compile(src, &options);
         self.install(name, slir, diags)
+    }
+
+    /// Installs a precompiled SLIR document without running the compiler.
+    ///
+    /// This is the load path for generated modules (`slab gen go`) that embed
+    /// lowered bytes at build time. `name` labels diagnostics and `doc.info`.
+    fn load_slir(&mut self, name: &Path, bytes: &[u8]) -> Value {
+        match slab_slir::read(bytes) {
+            Ok(slir) => self.install(name, Some(slir), Diagnostics::new()),
+            Err(message) => {
+                json!({"ok": false, "diags": [protocol_diag("decode", message)]})
+            }
+        }
     }
 
     /// Shared tail of every load: decode, register fonts, reapply environment.
@@ -603,6 +619,7 @@ fn compile_file(path: &Path, embed_assets: bool) -> (Option<Slir>, Diagnostics) 
         embed_assets,
         base_dir: path.parent().unwrap_or(Path::new(".")).to_path_buf(),
         assets: None,
+        sources: None,
         fonts: std::collections::HashMap::new(),
     };
     slab_compile::compile(&src, &options)
@@ -1008,6 +1025,13 @@ fn handle(
             let source = required_str(object, "source")?;
             let name = optional_str(object, "name")?.unwrap_or("<source>");
             Ok(session.load_source(Path::new(name), source))
+        }
+        "doc.open_slir" => {
+            require_reload_allowed(session, "doc.open_slir")?;
+            let object = params(value);
+            let bytes = wire::decode_b64(required_str(object, "slir")?).map_err(invalid)?;
+            let name = optional_str(object, "name")?.unwrap_or("<slir>");
+            Ok(session.load_slir(Path::new(name), &bytes))
         }
         "doc.reload" => {
             require_reload_allowed(session, "doc.reload")?;
@@ -2538,6 +2562,7 @@ mod tests {
             embed_assets: true,
             base_dir: PathBuf::from("."),
             assets: None,
+            sources: None,
             fonts: std::collections::HashMap::new(),
         };
         let (slir, diagnostics) = slab_compile::compile(source, &options);

@@ -102,6 +102,32 @@ impl<'d> Parser<'d> {
         }
     }
 
+    /// Reject an import in a braced block and recover at the next line.
+    fn reject_block_import(&mut self) -> bool {
+        if !self.at_id("import") {
+            return false;
+        }
+        let line = self.next().line;
+        self.diags
+            .error("parse", "import is allowed at top level only", line);
+        while !matches!(self.peek().kind, TokKind::Nl | TokKind::Rb | TokKind::Eof) {
+            self.next();
+        }
+        true
+    }
+
+    /// Skip a braced block after its opening brace has been consumed.
+    fn skip_braced_body(&mut self) {
+        let mut depth = 1usize;
+        while depth > 0 && !self.at(TokKind::Eof) {
+            match self.next().kind {
+                TokKind::Lb => depth += 1,
+                TokKind::Rb => depth -= 1,
+                _ => {}
+            }
+        }
+    }
+
     /// Recover a run of attributes that started on new lines without `\`.
     fn recover_missing_header_continuation(&mut self) -> bool {
         let starts_attr =
@@ -140,7 +166,11 @@ impl<'d> Parser<'d> {
         self.skip_nl();
         while !self.at(TokKind::Eof) {
             let t = self.peek().clone();
-            if t.kind == TokKind::Id && t.text == "tokens" {
+            if t.kind == TokKind::Id && t.text == "import" {
+                if let Some(import) = self.parse_import() {
+                    doc.imports.push(import);
+                }
+            } else if t.kind == TokKind::Id && t.text == "tokens" {
                 let tk = self.parse_tokens();
                 for path in doc.tokens.deep_merge(&tk) {
                     self.diags.warn(
@@ -177,6 +207,10 @@ impl<'d> Parser<'d> {
                 self.skip_nl();
                 let mut tk = TokenTree::default();
                 while !self.at(TokKind::Rb) && !self.at(TokKind::Eof) {
+                    if self.reject_block_import() {
+                        self.skip_nl();
+                        continue;
+                    }
                     if self.at_id("tokens") {
                         let src = self.parse_tokens();
                         tk.deep_merge(&src);
@@ -225,6 +259,30 @@ impl<'d> Parser<'d> {
         doc
     }
 
+    fn parse_import(&mut self) -> Option<AImport> {
+        let line = self.expect(TokKind::Id, "'import'").line;
+        if !self.at(TokKind::Str) {
+            self.diags
+                .error("parse", "import expects a quoted path", self.peek().line);
+            while !matches!(self.peek().kind, TokKind::Nl | TokKind::Eof) {
+                self.next();
+            }
+            return None;
+        }
+        let path = self.next().text;
+        if !matches!(self.peek().kind, TokKind::Nl | TokKind::Eof) {
+            self.diags.error(
+                "parse",
+                "expected a newline after the import path",
+                self.peek().line,
+            );
+            while !matches!(self.peek().kind, TokKind::Nl | TokKind::Eof) {
+                self.next();
+            }
+        }
+        Some(AImport { path, line })
+    }
+
     /// `anim NAME { 0% { attrs } 100% { attrs } }` — time-indexed patches.
     fn parse_anim(&mut self) -> AAnim {
         let line = self.expect(TokKind::Id, "'anim'").line;
@@ -234,12 +292,20 @@ impl<'d> Parser<'d> {
         self.skip_nl();
         let mut stops: Vec<(f64, Vec<(String, Value)>)> = Vec::new();
         while !self.at(TokKind::Rb) && !self.at(TokKind::Eof) {
+            if self.reject_block_import() {
+                self.skip_nl();
+                continue;
+            }
             let pct = self.expect(TokKind::Pct, "keyframe position like 0%");
             self.skip_nl();
             self.expect(TokKind::Lb, "'{'");
             let mut attrs: Vec<(String, Value)> = Vec::new();
             self.skip_nl();
             while !self.at(TokKind::Rb) && !self.at(TokKind::Eof) {
+                if self.reject_block_import() {
+                    self.skip_nl();
+                    continue;
+                }
                 let key = self.expect(TokKind::Id, "attribute name").text;
                 self.expect(TokKind::Eq, "'='");
                 let v = self.parse_value();
@@ -270,6 +336,10 @@ impl<'d> Parser<'d> {
         let mut out = TokenTree::default();
         self.skip_nl();
         while !self.at(TokKind::Rb) && !self.at(TokKind::Eof) {
+            if self.reject_block_import() {
+                self.skip_nl();
+                continue;
+            }
             let name = self.expect(TokKind::Id, "token name").text;
             if self.at(TokKind::Lb) {
                 self.next();
@@ -290,10 +360,31 @@ impl<'d> Parser<'d> {
     fn parse_params(&mut self, out: &mut Vec<ParamDecl>) {
         self.expect(TokKind::Id, "'params'");
         self.skip_nl();
+        let group = if self.at(TokKind::Id) {
+            Some(self.next().text)
+        } else {
+            None
+        };
         self.expect(TokKind::Lb, "'{'");
         self.skip_nl();
         while !self.at(TokKind::Rb) && !self.at(TokKind::Eof) {
-            let name = self.expect(TokKind::Id, "param name").text;
+            if self.reject_block_import() {
+                self.skip_nl();
+                continue;
+            }
+            if self.at(TokKind::Id) && self.peek_at(1).kind == TokKind::Lb {
+                let nested = self.next();
+                self.next();
+                self.diags
+                    .error("param-group", "param groups do not nest", nested.line);
+                self.skip_braced_body();
+                self.skip_nl();
+                continue;
+            }
+            let leaf = self.expect(TokKind::Id, "param name").text;
+            let name = group
+                .as_ref()
+                .map_or_else(|| leaf.clone(), |prefix| format!("{prefix}.{leaf}"));
             let ty_tok = self.expect(
                 TokKind::Id,
                 "param type (text|num|pct|color|bool|enum|list)",
@@ -550,11 +641,11 @@ impl<'d> Parser<'d> {
             TokKind::Ref => {
                 let mut parts = target.text.split('.');
                 let prefix = parts.next().unwrap_or_default();
-                let name = parts.next().unwrap_or_default().to_string();
-                if prefix != "param" || name.is_empty() || parts.next().is_some() {
+                let name = parts.collect::<Vec<_>>().join(".");
+                if prefix != "param" || name.is_empty() {
                     self.diags.error(
                         "parse",
-                        "`each` root target must be exactly `param.NAME`",
+                        "`each` root target must be `param.NAME`",
                         target.line,
                     );
                 }
@@ -622,6 +713,10 @@ impl<'d> Parser<'d> {
         self.skip_nl();
         while !self.at(TokKind::Rb) && !self.at(TokKind::Eof) {
             let t = self.peek().clone();
+            if self.reject_block_import() {
+                self.skip_nl();
+                continue;
+            }
             if t.kind == TokKind::Str {
                 self.next();
                 out.push(Item::Text(t.text, t.line));
@@ -657,6 +752,10 @@ impl<'d> Parser<'d> {
         self.skip_nl();
         while !self.at(TokKind::Rb) && !self.at(TokKind::Eof) {
             let t = self.peek().clone();
+            if self.reject_block_import() {
+                self.skip_nl();
+                continue;
+            }
             if t.kind == TokKind::Id && self.peek_at(1).kind == TokKind::Eq {
                 let key = self.next().text;
                 self.next();
@@ -707,11 +806,21 @@ impl<'d> Parser<'d> {
     }
 
     fn parse_cond(&mut self) -> Cond {
-        if self.eat(TokKind::Bang) {
-            let name = self.expect(TokKind::Id, "condition name").text;
-            return Cond::Ident { name, neg: true };
+        let neg = self.eat(TokKind::Bang);
+        let t = if self.at(TokKind::Ref) {
+            self.next()
+        } else {
+            self.expect(
+                TokKind::Id,
+                if neg { "condition name" } else { "condition" },
+            )
+        };
+        if neg {
+            return Cond::Ident {
+                name: t.text,
+                neg: true,
+            };
         }
-        let t = self.expect(TokKind::Id, "condition");
         if t.text == "theme" && self.eat(TokKind::Lp) {
             let name = self.expect(TokKind::Id, "theme name").text;
             self.expect(TokKind::Rp, "')'");
@@ -1128,5 +1237,87 @@ box press=pressed context=menu dblclick=twice drag=started drop=dropped resize=r
             &entries[0],
             (Value::Kw(key), Value::Kw(signal)) if key == "Escape" && signal == "clear"
         ));
+    }
+
+    #[test]
+    fn parses_import_group_dotted_conditions_and_each() {
+        let source = r#"import "ui/panel.slab"
+params panel {
+  open bool = true
+  rows list(Row) = []
+}
+col {
+  when panel.open { opacity=1 }
+  when !panel.open { opacity=0 }
+  each param.panel.rows
+}
+"#;
+        let mut diagnostics = Diagnostics::default();
+        let document = parse(source, &mut diagnostics);
+
+        assert!(diagnostics.0.is_empty(), "{:?}", diagnostics.0);
+        assert_eq!(
+            document.imports,
+            [AImport {
+                path: "ui/panel.slab".into(),
+                line: 1,
+            }]
+        );
+        assert_eq!(document.params[0].name, "panel.open");
+        assert_eq!(document.params[1].name, "panel.rows");
+        assert!(matches!(
+            &document.roots[0].children[0],
+            Item::When(when)
+                if matches!(
+                    &when.cond,
+                    Cond::Ident { name, neg: false } if name == "panel.open"
+                )
+        ));
+        assert!(matches!(
+            &document.roots[0].children[1],
+            Item::When(when)
+                if matches!(
+                    &when.cond,
+                    Cond::Ident { name, neg: true } if name == "panel.open"
+                )
+        ));
+        assert!(matches!(
+            &document.roots[0].children[2],
+            Item::Each(each) if each.param == "panel.rows"
+        ));
+    }
+
+    #[test]
+    fn rejects_unquoted_and_block_imports() {
+        let mut diagnostics = Diagnostics::default();
+        let document = parse(
+            "import panel.slab\ncol {\n  import \"nested.slab\"\n  text \"ok\"\n}\n",
+            &mut diagnostics,
+        );
+
+        assert!(document.imports.is_empty());
+        assert_eq!(document.roots[0].children.len(), 1);
+        assert_eq!(diagnostics.0.len(), 2, "{:?}", diagnostics.0);
+        assert_eq!(diagnostics.0[0].msg, "import expects a quoted path");
+        assert_eq!(diagnostics.0[1].msg, "import is allowed at top level only");
+    }
+
+    #[test]
+    fn rejects_nested_param_groups_and_recovers() {
+        let source = r#"params ui {
+  dialog {
+    open bool = true
+  }
+  enabled bool = false
+}
+"#;
+        let mut diagnostics = Diagnostics::default();
+        let document = parse(source, &mut diagnostics);
+
+        assert_eq!(document.params.len(), 1);
+        assert_eq!(document.params[0].name, "ui.enabled");
+        assert_eq!(diagnostics.0.len(), 1, "{:?}", diagnostics.0);
+        assert_eq!(diagnostics.0[0].code, "param-group");
+        assert_eq!(diagnostics.0[0].msg, "param groups do not nest");
     }
 }
