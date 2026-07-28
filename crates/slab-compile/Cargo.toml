@@ -9,6 +9,7 @@ workspace = true
 
 [dependencies]
 png.workspace = true
+minijinja.workspace = true
 serde_json.workspace = true
 slab-fonts.workspace = true
 slab-kernel.workspace = true
