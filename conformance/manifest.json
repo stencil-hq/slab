@@ -474,6 +474,30 @@
       "client": "web"
     },
     {
+      "name": "fx-text-strike",
+      "level": 3,
+      "kind": "ops",
+      "width": 220,
+      "height": 120,
+      "client": "web"
+    },
+    {
+      "name": "fx-para-ellipsis",
+      "level": 3,
+      "kind": "ops",
+      "width": 320,
+      "height": 80,
+      "client": "web"
+    },
+    {
+      "name": "fx-glyph-coverage",
+      "level": 3,
+      "kind": "tui",
+      "width": 520,
+      "height": 64,
+      "client": "tui"
+    },
+    {
       "name": "fx-grain",
       "level": 3,
       "kind": "ops",

@@ -166,7 +166,7 @@ kernel WASM lives in `clients/web/wasm/` and is shared by the runtime, the playg
 | `clients/web` · `packages/slab` · `packages/dslab` | The three npm packages. |
 | `site/` | The playground (GitHub Pages). |
 | `conformance/` | Shared cases and goldens; native and WASM must match byte for byte. |
-| `spec/` | `SPEC.md`, `SLIR.md`, `FRAME.md`, `support.toml` — the normative contracts. |
+| `spec/` | `SPEC.md`, `SLIR.md`, `FRAME.md`, [`SDP.md`](spec/SDP.md), `support.toml` — the normative contracts. |
 | `tree-sitter-slab/` | Editor grammar, corpus-tested against `examples/`. |
 
 ## License

@@ -68,6 +68,51 @@ text — into list fields or params in the host, and treat a re-skin of those
 strings as a host change. Keep the document declarative over the data it is
 given.
 
+### Conditional UI cookbook
+
+**Host-computed display strings.** Keep policy and formatting in the host:
+derive `"✓"`, `"due in 3m"`, `"3 items"`, or a timer caption, then write the
+result into a text param/list field. Use `when` for layout, paint, children,
+and interactive binders—not as a hidden expression language.
+
+**One-hertz/timer rows.** On each whole-second boundary, rebuild the visible
+typed row projection and call generated `set_rows` (or assign the web list
+property). The generated/kernel path diffs equal keys and fields, so this
+declarative resync preserves item identity, focus, hover, and virtualization;
+do not patch individual text nodes or recreate the instance.
+
+**Conditional interactive sections.** Put binders in the `when` patch on each
+stable authored node:
+
+```slab
+params { editing bool = false; draft text = "Rename me" }
+col#editbar {
+  when editing { bg=#171C26; pad=8 }
+  text#draft param.draft color=#E8EEF6 {
+    when editing { field=draft; submit=save; bg=#0C1018; pad=6,10 }
+  }
+  when editing {
+    text "Enter saves · Escape cancels" color=#8A97A8
+  }
+}
+```
+
+The compiler knows the union of all branch signal names. A binder dispatches
+and participates in focus only while its condition is true. On deactivation,
+focus moves/clears but retained text, selection, and undo history remain for
+reactivation. Later overlapping active branches win per trigger. This replaces
+the `h=0 clip` collapse hack and its invisible focus stops.
+
+**Permanently bound, text-looking fields.** When editing is always available,
+author `text param.title field=title` with ordinary body text color/size and no
+input chrome; add background/stroke only under `when focus-visible`. The field
+keeps native caret/selection semantics without looking like a form control.
+Implicit field→param sync requires exact name equality. If content is
+`param.title` but the binder is `field=title_change`, `warn[field-sync]` tells
+you either to use `field=title` or, when the host intentionally handles the
+Change signal, author `field-sync=host`. The opt-out is compiler-only and
+prevents repeated intentional-mismatch noise; it does not change runtime sync.
+
 ## Lists, runs & virtualization
 
 Declare nested list fields on exported defs with `list(Def)`. Schemas may be
@@ -165,9 +210,9 @@ reports `cap-hole`. Duplicate names are `err[dup-hole]`.
 
 ## Signals & gestures
 
-Signals are the document's only app outputs. Bind them on the authored node,
-never inside `when`; deferred binders warn `attr` and are ignored.
-
+Signals are the document's only app outputs. Bind them directly on an authored
+node or in a `when` patch on that same node. Conditional signal names are
+registered statically and dispatch only while their branch is active.
 - `act=NAME`: Activate (trigger 0), ordinary keyboard/pointer activation.
 - `field=NAME`, `submit=NAME`: Change (1) / Submit (2), committed text.
 - `press=NAME`: Press (3), primary pointer-down before capture.
@@ -184,6 +229,24 @@ never inside `when`; deferred binders warn `attr` and are ignored.
   later move, emitted by the drag source.
 - `drag-end=NAME`: DragEnd (12), exactly once from the source on release or
   cancellation.
+
+For additional keyboard activation, use the concise single-action form when
+all keys mean the same thing:
+
+```slab
+col keys=Escape,F2 act=cancel { … }
+```
+
+Use a typed map for document/global shortcut owners with distinct actions:
+
+```slab
+col#shortcuts keys=Escape:clear,F2:rename,"/":search { … }
+```
+
+The focused-node ancestor walk selects the nearest active match. A mapped
+`keys=` binding owns activation routing and is not combined with `act=`.
+Mapped signals are generated into the same typed host signal union; every
+Activate carries the fired key name in `SignalMeta.key`.
 
 Drivers may coalesce hardware motion, so “every move” means every forwarded
 dispatch. Use `when hover` for paint-only feedback. On an ordinary click,
@@ -283,17 +346,30 @@ empty slice for unknown/inactive indices.
 bunx @stencil-hq/slab gen wc doc.slab -o dist --tag my-doc
 ```
 
+The generated module exports `<ElementClass>Keys` with canonical full paths
+for every authored `#id`, plus a `SignalName` union derived from the document:
+
+```ts
+import {
+  SlabDocElementKeys,
+  type SignalName,
+} from './dist/doc.js';
+
+host.setFocus(SlabDocElementKeys.draft);
+const signal: SignalName = 'save';
+host.addEventListener(signal, save);
+```
+
 Keep the generated module, `slab-runtime.js`, and kernel WASM together. The
-element loads asynchronously and fires `slab-frame` after each paint; wait for
-the first one before image registration, reveal, window, or scene queries:
+element loads asynchronously; `whenSettled()` waits for the next retained solve
+and paint, including the initial one:
 
 ```html
 <my-doc id="host" style="display:block;width:800px;height:640px"></my-doc>
 <script type="module">
   import './dist/doc.js';
   const host = document.getElementById('host');
-  await new Promise(resolve =>
-    host.addEventListener('slab-frame', resolve, { once: true }));
+  await host.whenSettled();
 
   host.roots = [{
     key: 'src', label: 'src',
@@ -310,11 +386,9 @@ the first one before image registration, reveal, window, or scene queries:
 
   host.imgRegister('user:42', 1, 1, 1,
     new Uint8Array([79, 199, 224, 255]));
-  const rowsPainted = new Promise(resolve =>
-    host.addEventListener('slab-frame', resolve, { once: true }));
   host.rows = Array.from({ length: 100 }, (_, i) =>
     ({ key: `row-${i}`, label: `Row ${i}` }));
-  await rowsPainted;
+  await host.whenSettled();
   host.setScroll('#feed', 0, 120);       // 0 main, 1 cross
   host.revealItem('#feed/rows', 90, 3);  // nearest; row 90 need not be mounted
 </script>
@@ -329,6 +403,9 @@ getList(name: string, path: string): unknown
 setFieldText(key: string, text: string): boolean
 fieldText(key: string): string | undefined
 getToken(path: string): string | number | undefined
+focusedKey(): string | null
+inEditField(): boolean
+whenSettled(): Promise<void>
 imgRegister(name: string, width: number, height: number,
             format: number, bytes: Uint8Array): number
 imgUnregister(name: string): boolean
@@ -342,18 +419,53 @@ eachWindow(each: string): readonly [start: number, end: number]
 setDivider(key: string, extent: number): boolean
 getDivider(key: string): number
 setFocus(key: string, visible?: boolean): boolean
+clearFocus(): boolean
+focusItem(each: string, index: number): boolean
+focusNote(): string
 sceneSnapshot(): readonly SceneNode[]
+lastFrame: Frame | null // includes complete current-frame diagnostics
 ```
 
 `imgInfo` tuple order is width, height, format, generation. `imgRegister`
 returns `-1` before the instance exists or for invalid bytes.
 Param/list/scroll/divider writes made before initialization are buffered.
+List item `key` is optional (`string | number`) and defaults to the array
+index; provide it whenever rows can reorder so identity and focus remain stable.
+`SlabDocElementKeys` values follow the canonical scene-key grammar, including
+anonymous and component-root segments, so hosts never hand-assemble them.
+Writes stay cheap and synchronous. Call `whenSettled()` only when a following
+operation depends on the retained scene produced by that write; it resolves
+after the next solve has painted and `lastFrame`/`sceneSnapshot()` describe it.
 `setFieldText` requires a mounted field; `fieldText` returns `undefined` for
-an unknown or non-editable key. `getToken` reads the generated component's
-fully resolved active-theme table. It returns CSS color strings, numbers for
-numeric tokens, and `undefined` for unknown paths. Arbitrary SLIR loaded with
-`loadSlir` has no token metadata until a later SLIR revision.
-`hole`s remain named slots; scene snapshots resolve a11y fields to strings.
+an unknown or non-editable key. `focusedKey` returns the retained scene key
+without colliding with `HTMLElement.focus()`; `inEditField` is the direct
+host-shortcut guard. `getToken` asks the kernel for the active-theme value,
+falls back to authored base for leaves the theme does not override, and returns
+CSS colors or canonical strings, numbers for numeric tokens, and `undefined`
+for unknown paths. The same lookup works after `loadSlir`. `hole`s remain
+named slots; scene snapshots resolve a11y fields to strings.
+
+`Frame.diagnostics` is the complete current-frame array of `{code,line,msg}`.
+When it changes to a non-empty value, the element emits a bubbling, composed
+`slab-diagnostics` `CustomEvent` with
+`detail={diagnostics: frame.diagnostics}`. Repeated animation frames with the
+same evidence are deduplicated; consumers that attach later inspect
+`lastFrame?.diagnostics`.
+
+Deferred conditional subtrees require an explicit settlement boundary. Reveal,
+settle, then focus/seed using only typed APIs:
+
+```ts
+host.setParam('dialog_open', true);
+await host.whenSettled(); // the `when` subtree is now retained
+host.reveal('#app/#dialog/#title', 8);
+await host.whenSettled(); // reveal geometry and scroll offsets are retained
+host.setFocus('#app/#dialog/#title');
+host.setFieldText('#app/#dialog/#title', currentTitle);
+```
+
+Do not reach through `instance`, call `dispatch_json`, or reconstruct FRAME
+event constants for field or focus operations.
 
 Bundlers: `slab-runtime.js` resolves the kernel WASM via
 `new URL('./wasm/slab_kernel_bg.wasm', import.meta.url)`. After bundling,
@@ -378,6 +490,11 @@ browser's text actions. The textarea returns to the kernel IME rectangle after
 the event. An authored `context=field_menu` still emits its named
 `CustomEvent`; do not add a second pointer handler or cancel that signal.
 
+Browser automation that needs a durable screenshot file should currently use
+raw Puppeteer `page.screenshot({path})`. The harness
+`tab.screenshot({path})` can report success and return image output without
+persisting `path`; verify the file before consuming it.
+
 ### Bundler plugins & React wrappers
 
 Import `.slab` files directly in JS/TS using Vite or Bun plugins:
@@ -399,34 +516,49 @@ Bundler imports compile the `.slab` source at build/serve time via the WASM comp
 Generate typed React component wrappers with `slab gen react FILE -o DIR`:
 
 ```tsx
-import { Settings } from './dist/settings';
+import { Settings, SettingsKeys, type SignalName } from './dist/settings';
 
+const submitSignal: SignalName = 'save';
 function App() {
   return (
     <Settings
       title="Preferences"
       compact={true}
       onSave={(detail) => console.log('Saved', detail.item)}
+      ref={(element) => element?.setFocus(SettingsKeys.draft)}
     />
   );
 }
 ```
 
-The generated TSX wraps the underlying custom element, passing params as properties and wiring signal listeners cleanly via React effects.
+The generated TSX wraps the underlying custom element, passes params as
+properties, wires signal listeners through React effects, forwards the
+imperative element ref, and exports per-component scene keys plus the shared
+signal-name union.
 
 ## Rust hosts
 
 `slab gen rust FILE -o OUT.rs` emits a typed `Doc` with scalar setters,
 recursive `<Param>Item` structs plus `set_<param>`, a typed `Signal` enum with
-shared `SignalMeta`, and these clean-cutover methods:
-`set_scroll(key,axis,off)`, `get_scroll(key,axis)`,
+shared `SignalMeta`, a `SignalName` enum, and canonical full paths in `keys`.
+Generated list items derive `Default`: omit identity with
+`RowsItem { title, ..Default::default() }`, or attach one without an
+`Option<String>` type annotation using `.with_key(todo.id.to_string())`.
+Use `rgba(r, g, b, a)` for color params and color-valued list fields; it packs
+the SLIR word with red in the low byte. `Doc::get_token` returns the active
+theme's `TokenValue` with base fallback. `invalidate_caches()` is safe and
+idempotent; call it after an opted-in host-mounted SDP reload and before
+reapplying typed list setters.
+
+The wrapper also exposes `set_scroll(key,axis,off)`, `get_scroll(key,axis)`,
 `set_field_text(key,text)`, `field_text(key)`,
 `img_register(name,w,h,format,data)`, `img_unregister(name)`,
 `reveal(key,margin)`, `reveal_item(each,index,align)`, `each_window(each)`,
-`set_divider(key,extent)`, `get_divider(key)`, `set_focus`, `holes`, `frame`,
-and `dispatch`. `Doc.inst` remains public for the complete kernel API and
-scene-string pool. `crates/slab-native` is the reference winit/wgpu driver;
-`slab-tui` is the reference terminal driver.
+`set_divider(key,extent)`, `get_divider(key)`, `set_focus`, `clear_focus`,
+`focus_item`, `focus_note`, `holes`, `frame`, and `dispatch`. `Doc.inst`
+remains public for the complete kernel API.
+`crates/slab-native` is the reference winit/wgpu driver; `slab-tui` is the
+reference terminal driver. `include_doc!` emits the same surface.
 
 ### Proc macro (`include_doc!`)
 
@@ -461,6 +593,7 @@ compiles source or uses `apply_sets`:
 [dependencies]
 slab-native = { git = "https://github.com/stencil-hq/slab", rev = "<SAME_COMMIT>" }
 slab-tui = { git = "https://github.com/stencil-hq/slab", rev = "<SAME_COMMIT>" }
+slab-macro = { git = "https://github.com/stencil-hq/slab", rev = "<SAME_COMMIT>" }
 slab-kernel = { git = "https://github.com/stencil-hq/slab", rev = "<SAME_COMMIT>" }
 slab-slir = { git = "https://github.com/stencil-hq/slab", rev = "<SAME_COMMIT>" }
 slab-compile = { git = "https://github.com/stencil-hq/slab", rev = "<SAME_COMMIT>", optional = true }
@@ -486,16 +619,40 @@ for effects in result.effects {
 write_response(result.response)?;
 ```
 
-This pattern tests real app policy. Input methods dispatch through the live
-kernel, then the host applies emitted signals to its model. Use
-`slab_drive::serve` for a blocking NDJSON loop. Use `RequestPump::request` from a
-window or terminal event loop.
+`request` is the simple kernel-only path. If the host has its own shortcut
+layer, use `request_with_host_input`; it observes SDP key, text, and paste input
+before kernel dispatch and may return `PumpHostAction::Consumed`:
 
-`param.set` remains a deferred input write. It does not solve immediately.
-A transition flip starts at the first solve that observes the changed value.
-For a settled snapshot, use `render` → `clock.advance` → `render`. The first
-render observes the flip, the advance moves its clock, and the second render
-captures the new transition position.
+```rust
+let result = pump.request_with_host_input(&mut doc.inst, request_line, |inst, event| {
+    host_keys.handle_sdp(inst, event) // Dispatch or Consumed
+});
+```
+
+Give every automation-critical host shortcut a signal-bound Slab control too.
+That affordance remains drivable in standalone SDP, web, native, and terminal
+sessions even when no host callback is mounted.
+
+Host-mounted pumps deny `doc.load` and `doc.reload` by default. A host that opts
+in with `ReloadPolicy::Allow` MUST check `result.reloaded`, call generated
+`doc.invalidate_caches()`, then reapply all host-owned setters. Otherwise a
+fresh kernel can disagree with generated list reconciliation caches.
+
+In a host-mounted app, `param.set` is transient for params the host projects
+from its model: the next host sync overwrites it. Drive authored signals,
+key/text input, and visible controls instead. `param.set` is appropriate for
+standalone sessions or explicitly SDP-owned params.
+
+Input methods dispatch through the live shared kernel, then the host applies
+emitted signals to its model. Use `slab_drive::serve` for a blocking NDJSON
+loop and `RequestPump` from a window or terminal event loop. The complete
+framing, addressing, method, callback, and reload contract is normative in
+[`spec/SDP.md`](../../spec/SDP.md).
+
+Parameter writes keep deferred-solve semantics. A transition starts at the
+first solve that observes the changed value. For a settled snapshot, use
+`render` → `clock.advance` → `render`: the first render observes the flip, the
+advance moves its clock, and the second render captures the new position.
 
 ### Terminal hosts
 
@@ -505,42 +662,126 @@ diffs and preserves terminal-default colors. `Translator` maps crossterm input
 to kernel events. Its retained state supplies click counts and pointer deltas.
 The `resize` helper applies cell dimensions to the kernel environment.
 
-Use `run` when the host only needs signal and clock callbacks:
+The complete managed loop is public: `compile` reads and compiles a source
+file, `instance` decodes it, and `run` owns terminal lifecycle and dispatch.
+This example is a complete `main`:
 
 ```rust
+use std::path::Path;
 use slab_tui::{Host, ImageMode, Images, Signal, Ui};
 
-struct App {
-    last_signal: String,
-}
+#[derive(Default)]
+struct App { last_signal: String }
+
 impl Host for App {
     fn on_signal(
         &mut self,
-        inst: &mut slab_kernel::frame::Instance,
+        _inst: &mut slab_kernel::frame::Instance,
         signal: &Signal,
     ) -> Result<(), String> {
         self.last_signal.clone_from(&signal.name);
-        let _ = inst;
         Ok(())
     }
 }
 
-let mut app = App { last_signal: String::new() };
-let images = Images::new(
-    ImageMode::Off,
-    &inst.doc,
-    &[],
-    std::path::Path::new("."),
-);
-let ui = Ui {
-    fps: 30.0,
-    debug: false,
-    dark: true,
-    coarse: false,
-    gallery: None,
-};
-slab_tui::run(&mut inst, &mut app, images, &ui)?;
+fn main() -> Result<(), String> {
+    let file = Path::new("ui/app.slab");
+    let (bytes, warnings) = slab_tui::compile(file)?;
+    for warning in warnings { eprintln!("{warning}"); }
+    let (mut inst, embedded) = slab_tui::instance(&bytes)?;
+    let images = Images::new(ImageMode::Off, &inst.doc, &embedded, file.parent().unwrap());
+    let ui = Ui {
+        fps: 30.0, debug: false, dark: true, coarse: false, gallery: None,
+    };
+    slab_tui::run(&mut inst, &mut App::default(), images, &ui)?;
+    Ok(())
+}
 ```
+
+`key_event`, `text_event`, pointer/paste/wheel constructors, `E_*` event
+codes, and `M_*` modifiers are also public for host-owned loops.
+
+For a keyboard-first list app, implement `Host::on_key`. The managed loop calls
+it only while focus is outside an edit field. `HostKey::item` identifies the
+innermost stable list item and `focused_key` gives its canonical full scene
+path. Consume application shortcuts and forward everything else:
+
+```rust
+use slab_tui::{Host, HostKey, KeyHandling};
+use slab_kernel::frame::{self as kframe, ParamValue};
+
+struct Todo {
+    id: String,
+    title: String,
+    priority: u8,
+}
+
+// `rows` is list param 0 with fields `title text` and `priority num`.
+fn sync_todo_rows(inst: &mut kframe::Instance, rows: &[Todo]) -> Result<(), String> {
+    let ok = |worked, operation: &str| {
+        if worked { Ok(()) } else { Err(format!("kernel rejected {operation}")) }
+    };
+    ok(kframe::inst_set_list_len(inst, 0, "", rows.len() as i32), "rows length")?;
+    for (index, todo) in rows.iter().enumerate() {
+        let index = index as i32;
+        ok(kframe::inst_set_list_key(inst, 0, "", index, &todo.id), "row key")?;
+        let title = ParamValue {
+            kind: 0, num: 0.0, s: todo.title.clone(), rgba: 0, sym: String::new(),
+        };
+        ok(
+            kframe::inst_set_list_field(inst, 0, "", index, "title", &title),
+            "row title",
+        )?;
+        let priority = ParamValue {
+            kind: 1, num: f64::from(todo.priority), s: String::new(),
+            rgba: 0, sym: String::new(),
+        };
+        ok(
+            kframe::inst_set_list_field(inst, 0, "", index, "priority", &priority),
+            "row priority",
+        )?;
+    }
+    Ok(())
+}
+
+struct Todos {
+    rows: Vec<Todo>,
+}
+
+impl Host for Todos {
+    fn on_key(
+        &mut self,
+        inst: &mut slab_kernel::frame::Instance,
+        event: &HostKey,
+    ) -> Result<KeyHandling, String> {
+        let Some(item) = event.item.as_deref() else {
+            return Ok(KeyHandling::Forward);
+        };
+        match (event.key.as_str(), event.mods) {
+            ("d", 0) => {
+                self.rows.retain(|todo| todo.id != item);
+                sync_todo_rows(inst, &self.rows)?;
+                Ok(KeyHandling::Consumed)
+            }
+            ("p", 0) => {
+                let todo = self.rows.iter_mut().find(|todo| todo.id == item)
+                    .ok_or_else(|| format!("unknown focused todo {item}"))?;
+                todo.priority = (todo.priority + 1) % 3;
+                sync_todo_rows(inst, &self.rows)?;
+                Ok(KeyHandling::Consumed)
+            }
+            _ => Ok(KeyHandling::Forward),
+        }
+    }
+}
+```
+
+The sync function above uses only the documented public frame API; a larger
+app can wrap the same writes in its model layer. No edit guard, scene lookup,
+synthetic list-key construction, or custom terminal loop is needed. Printable
+keys in a `field=` continue directly to the kernel. In a
+Ratatui loop, `SlabState::handle_event_with` exposes the same callback and
+forward/consume contract.
 
 ### Ratatui integration (`slab-ratatui`)
 
@@ -555,12 +796,12 @@ let mut slab_state = SlabState::from_file(Path::new("ui/dashboard.slab"))?;
 // In Ratatui render loop:
 frame.render_stateful_widget(SlabWidget, area, &mut slab_state);
 
-// In Ratatui event loop:
-slab_state.handle_event(&crossterm_event, area);
+slab_state.handle_event_with(&crossterm_event, area, |inst, key| {
+    host_keys(inst, key) // KeyHandling::Consumed or KeyHandling::Forward
+});
 for signal in slab_state.drain_signals() {
-    match signal {
-        slab_tui::Signal::Button { key, .. } => handle_click(&key),
-        _ => {}
+    if signal.name == "quit" {
+        should_quit = true;
     }
 }
 ```
@@ -568,6 +809,87 @@ for signal in slab_state.drain_signals() {
 Use `Terminal`, `Painter`, `translate`, and `resize` directly for a custom
 event loop. The library keeps layout, editing, focus, and hit testing inside
 the kernel.
+
+### Native application shell
+
+Use `slab_native::shell::NativeShell` rather than copying the winit driver.
+The shell creates the window and wgpu surface, translates pointer, click,
+wheel, keyboard, clipboard and IME input, schedules dirty/motion frames,
+recovers lost surfaces, recreates resources after suspend/resume, pauses
+presentation while occluded, and publishes AccessKit updates. The application
+supplies only its document/model signal policy and optional user events:
+
+```rust
+use slab_native::{
+    NativeDocument,
+    shell::{
+        NativeShell, ShellEvent, ShellHost, ShellOptions,
+        winit::event_loop::{ControlFlow, EventLoop},
+    },
+};
+
+enum UserEvent {
+    PumpReady, // sent by an SDP/network worker
+}
+
+struct App;
+
+impl ShellHost<UserEvent> for App {
+    fn signal(&mut self, doc: &mut NativeDocument, name: &str, text: &str) {
+        // Update the application model, then synchronize generated setters.
+        println!("{name}: {text}");
+        let _ = doc;
+    }
+
+    fn user_event(
+        &mut self,
+        doc: &mut NativeDocument,
+        _window: &slab_native::shell::winit::window::Window,
+        _loop: &slab_native::shell::winit::event_loop::ActiveEventLoop,
+        event: UserEvent,
+    ) -> bool {
+        match event {
+            UserEvent::PumpReady => {
+                // Drain caller-owned RequestPump work against &mut doc.inst.
+                true // redraw after the request changed retained state
+            }
+        }
+    }
+}
+
+let generated = app_doc::Doc::new();
+let document = NativeDocument::from_parts(generated.inst, generated.imgs);
+let event_loop = EventLoop::<ShellEvent<UserEvent>>::with_user_event().build()?;
+event_loop.set_control_flow(ControlFlow::Wait);
+let proxy = event_loop.create_proxy();
+// A worker wakes the UI with:
+// proxy.send_event(ShellEvent::User(UserEvent::PumpReady))?;
+let mut shell = NativeShell::new(
+    document,
+    ShellOptions { title: "My app".into(), ..Default::default() },
+    proxy,
+    App,
+);
+event_loop.run_app(&mut shell)?;
+```
+
+`ShellEvent` is the one winit user-event type: it carries both AccessKit and
+application/SDP wakeups. `ShellHost::user_event` should drain bounded work and
+return `true` when the window must repaint. The shell never owns the model or
+decides signal semantics, preserving the shared-kernel boundary.
+
+Call `NativeDocument::set_theme` (or `NativeDriver::set_theme` in a lower-level
+host) for runtime theme changes. `NativeShell` synchronizes registered GPU
+gradient resources before every build; solid colors are already carried in the
+kernel frame. GPU, CPU and frame-dump paths therefore consume the same resolved
+theme.
+
+Occluded windows deliberately stop acquiring/presenting GPU textures while the
+kernel and a mounted SDP pump remain live. Desktop screenshot tools can
+therefore capture the last presented frame while a window is fully covered.
+For automation, treat SDP `render.png` output as the authoritative capture;
+uncover the window before using OS-level screenshots. The shell requests a
+fresh presentation on `Occluded(false)`.
 
 ### Native input, IME, clipboard, and accessibility
 
@@ -603,11 +925,13 @@ and dispatch `E_PASTE` with its text. Cmd/Ctrl shortcuts and the visual context
 menu remain host policy. The reference native player shows a title-bar
 affordance after right-click: C copies, X cuts, V pastes, and Escape closes it.
 
-Mount accessibility with `slab_native::a11y::WindowAccessibility`. Create an
-`EventLoop<a11y::Event>`, then create the bridge after the window in
-`ApplicationHandler::resumed`. Forward every `WindowEvent` through
-`process_event`. After each settled frame, call `refresh` with one or more
-`SceneLayer` values, then call `update(false)`. Handle
+`NativeShell` mounts accessibility automatically. Custom low-level loops can
+mount `slab_native::a11y::WindowAccessibility` with any
+`EventLoopProxy<T>` where `T: From<a11y::Event> + Send + 'static`; accessibility
+and SDP/application events therefore share one winit event loop. Create the
+bridge after the window in `ApplicationHandler::resumed`. Forward every
+`WindowEvent` through `process_event`. After each settled frame, call `refresh`
+with one or more `SceneLayer` values, then `update(false)`. Handle
 `EventKind::InitialTreeRequested` with `update(true)`. Resolve
 `EventKind::ActionRequested` through `resolve_action`, apply the returned action
 to its identified document, and dispatch `ActionResult::Dispatch` through the
@@ -645,12 +969,16 @@ fn inst_get_scroll(i: &Instance, key: &str, axis: u32) -> f64
 fn inst_reveal(i: &mut Instance, key: &str, margin: f64) -> bool
 fn inst_reveal_item(i: &mut Instance, each_key: &str, index: i32,
                     align: u32) -> bool
+fn inst_focus_item(i: &mut Instance, each_key: &str, index: i32) -> bool
 fn inst_each_window(i: &Instance, each_key: &str) -> (i32, i32)
 fn inst_set_divider(i: &mut Instance, key: &str, extent: f64) -> bool
 fn inst_get_divider(i: &Instance, key: &str) -> f64
 fn inst_set_field_text(i: &mut Instance, key: &str, text: &str) -> bool
 fn inst_field_text(i: &Instance, key: &str) -> Option<String>
 fn inst_focus(i: &Instance) -> u32
+fn inst_clear_focus(i: &mut Instance) -> bool
+fn inst_focus_note(i: &Instance) -> &str
+fn inst_get_token<'a>(i: &'a Instance, path: &str) -> Option<TokenValue<'a>>
 fn inst_param_json(i: &Instance, name: &str) -> Option<String>
 ```
 
@@ -723,10 +1051,14 @@ clears gesture state. Blur/close cancel an active drag. Always forward
 document-space coordinates and current modifier/button/click fields so
 `SignalMeta` is trustworthy.
 
-Key routing precedence is field editing → focused divider adjustment →
-focused scrolling → `keys=` → Enter/Space activation → focus navigation.
-`keys=Escape,F2` walks from the focused node through ancestors to the first
-enabled match. Interaction styling stays in the template with
+Key routing precedence is drag cancellation by Escape → opted-in field blur →
+field editing → focused divider adjustment → focused scrolling → `keys=` →
+Enter/Space activation → focus navigation. `escape-blur` on an editable node
+consumes Escape and clears focus while preserving its edit buffer; without the
+flag, Escape remains app-owned. Both `keys=Escape,F2 act=cancel` and
+`keys=Escape:clear,F2:rename` walk from the focused node through ancestors to
+the first enabled active match; the mapped form selects its paired signal.
+Interaction styling stays in the template with
 `when hover/pressed/focus-visible/disabled/dragging/drop`.
 
 ## Focus
@@ -734,20 +1066,57 @@ enabled match. Interaction styling stays in the template with
 Document order is tab order. Tab/Shift-Tab walk the ring; arrows also walk
 when the focused node is neither an edit field, divider, nor scrollable on
 that axis. Keyboard focus sets `focus-visible`; pointer focus sets only
-`focus`. Vanished focus restores to the nearest following, then preceding,
-focusable. Virtual-list traversal includes only materialized items. Use
+`focus`. Keyboard traversal automatically minimally reveals the new target
+through every scroll ancestor; the resulting virtual window materializes the
+continuing ring without host offsets. Empty painted rectangles, conditionally
+inactive focusability, and content wholly removed by a non-scroll clip are
+skipped. Merely off-screen scroll children remain eligible. Invalidated focus
+restores to the nearest following, then preceding, eligible target. Use
 `inst_set_focus(i,key,visible)` / web `setFocus` for host-driven dialogs;
 focus traps and restoration policy remain host-owned.
 
 **Host key layer** (per-key actions on the focused row, the TUI list-app
-staple): `keys=` only adds activation keys for one `act=` signal, so distinct
-per-key actions are a host recipe. Intercept printable keys before dispatch
-when focus is not in an edit field; query focus with `inst_focus(i)` / web
-`focus()` (`0xFFFFFFFF` = none); resolve the focused node to its item with
-`list::item_key(&inst.st.lists, &inst.doc, node)` and to its full key with
-`scene::key_of`. Note host `inst_set_focus`/`setFocus` does NOT auto-reveal
-(Tab traversal does): call `inst_reveal(key, margin)` / `reveal` after
-focusing an off-screen row.
+staple): intercept printable keys before dispatch when focus is not in an edit
+field. Native/TUI hosts query `inst_focus(i)` (`0xFFFFFFFF` means none) and
+resolve that node through the retained scene. Web hosts use collision-free
+`focusedKey()` and `inEditField()`; `HTMLElement.focus()` is unrelated DOM
+focus, not a kernel query. Explicit host `inst_set_focus`/`setFocus` deliberately
+does not auto-reveal: for a current off-screen target call `inst_reveal` /
+`reveal` first; for a virtual item call `inst_focus_item(each,index)`, which
+reveals with nearest alignment, materializes, and focuses its first eligible
+descendant. Await web `whenSettled()` before targeting newly conditional UI.
+On failure, Rust `inst_focus_note()` reports missing/ambiguous candidates or
+why the target is not currently painted and focusable.
+
+To leave editing, call `inst_clear_focus` (generated Rust `clear_focus`, web
+`clearFocus`) explicitly. For author-owned Escape-to-leave behavior, add
+`escape-blur` to that field. Prefer the explicit host call when Escape already
+means cancel/close in the application; the kernel never steals Escape from a
+field without the authored opt-in. Clearing focus retains text, selection,
+and undo history for later refocus.
+
+### Canonical scene-key grammar
+
+Canonical keys are slash-separated paths. Each authored segment is chosen by
+`key=v`, else `#id`, else `<kind>@<index>` where the index is zero-based among
+unkeyed same-kind siblings (`col@0`, `rect@2`, `each@0`). Component calls add
+their own segment and body roots/slot children nest below it: a `Button#save`
+call with an anonymous row root contains `#save/row@0`, not a standalone
+`#save` node.
+
+An each item descendant is
+`<each-full-key>~<item-key>/<template-relative-key>`; nested eaches repeat the
+`~item/relative` marker. Positional item identity is its decimal index until
+the host assigns a stable key. In full scene keys, literal `%`, `/`, and `~`
+inside explicit `key=` values or item keys are escaped as `%25`, `%2F`, and
+`%7E` (uppercase). Signal `item` remains the raw innermost item key.
+
+All node APIs accept exact canonical keys. They also accept a unique bare
+`#id`/`id`, or a unique authored suffix rooted at an id such as `#list/rows`.
+Ambiguous shorthand fails; copy `sceneSnapshot().key` / `scene::key_of`, use
+generated key constants, or inspect `inst_focus_note` rather than hand-building
+anonymous segments. Each APIs accept the same locator grammar for their each
+argument.
 
 ## Scroll
 
@@ -767,6 +1136,9 @@ keys/axes, and valid offsets clamp to retained `content_main` or
 minimally moves both active axes through every scroll ancestor. It returns
 false unless the target exists in the retained scene; negative/non-finite
 margin behaves as zero. Use `reveal_item` for an unmaterialized virtual row.
+Item alignment is against the scroll **content box**, so `start` can produce a
+nonzero raw offset when leading padding or earlier in-flow content precedes
+the each. Assert the visible alignment rather than assuming offset zero.
 
 `sticky` is a direct main-scroll child only. It paints above normal siblings,
 is pushed by the next sticky child, and keeps painted geometry for hit tests.
@@ -880,3 +1252,9 @@ Kernel-owned on `field=` text nodes; single-line unless flagged `multiline`.
   the end, synchronizes the same-named Text param, and emits Change through
   the next `inst_take_signals` Effects. Normal field mutations also synchronize
   that param. Do not echo Change into the param or rotate item keys.
+
+For a `when`-gated field, first make its controlling param true and await
+`whenSettled()`. If it must be scrolled into view, call `reveal`, await
+`whenSettled()` again, then `setFocus` and `setFieldText`. Immediate field or
+focus writes before the first settlement return `false` because the key is not
+yet retained.

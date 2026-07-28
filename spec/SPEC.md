@@ -105,6 +105,9 @@ topwhen    := "when" cond "{" tokens* "}"
 each       := "each" REF [ "#" IDENT ] attr*
 node       := NAME [ "#" IDENT ] ( arg | attr | flag )* [ block ]
 attr       := IDENT "=" value
+value      := keymap | scalar ("," scalar)*
+keymap     := keybind ("," keybind)*
+keybind    := (IDENT | STRING) ":" (IDENT | STRING)
 flag       := IDENT
 arg        := STRING | NUMBER | IDENT          // positional, e.g. text "hi"
 block      := "{" (node | each | when | transition | vline | export | newline)* "}"
@@ -134,13 +137,21 @@ cond       := IDENT | "!" IDENT | ("w"|"h") ("<"|"<="|">"|">=") NUMBER
   `field=`, `press=`, and `drag=` imply `focusable`; `submit=` is legal only
   on a `field=` text node, `resize=` is emitted by a divider (§6.11), and the
   two drag companion bindings require `drag=` on the same node.
+- `field-sync=host` is a compiler-only reserved attribute on a field whose
+  Change signal is intentionally reconciled by its host. It suppresses the
+  otherwise actionable `warn[field-sync]`; `field-sync=implicit` restores the
+  default check inside an overriding `when` patch. It never enters SLIR.
 - `multiline` is a closed-vocabulary flag, legal only on a `field=` text
   node. Other placements produce `warn[attr]`.
 - `drag-ghost` is a closed-vocabulary paint flag legal only with `drag=`; it
   duplicates the source subtree above normal content while the drag is active.
-- `keys=` is an authorable reserved-meaning attribute: a comma-separated
-  list of activation keys. It implies `focusable`; its runtime routing is
-  specified in §15.4.
+- `escape-blur` is an opt-in flag legal on an editable node. Escape clears
+  focus while retaining its EditState; without it Escape stays app-owned.
+- `keys=` is an authorable reserved-meaning attribute. The concise
+  `keys=Escape,F2 act=cancel` form routes every listed key to one `act=`
+  signal. The typed `keys=Escape:close,F2:rename` form routes each key to its
+  named signal and MUST NOT be combined with `act=` on the same node. Both
+  forms imply `focusable`; runtime routing is specified in §15.4.
 - A `cond` ident resolves, in order: renderer classes `web gpu tui svg png`
   (1.0 renames 0.5's `gui` to `gpu`, §18), environment idents
   `portrait landscape dark coarse`, component props (§9), **bool params**
@@ -388,7 +399,9 @@ hard-breaks. `nowrap` disables wrapping; a nowrap line that still does not
 fit truncates with a `clipped` diagnostic (flag `ellipsis` to make the
 truncation intentional and silent). `ellipsis` truncates the last line
 with `…` when out of width or height. `para` flows its strings/`span`s as one
-wrapped paragraph with per-run styling. Text measurement uses the SLIR
+paragraph with per-run styling. On `para nowrap ellipsis`, the combined runs
+form one line: the cut crosses run boundaries and `…` inherits the last
+retained run's complete text style. Text measurement uses the SLIR
 `FONT` metric tables (§11.1; normative formulas in spec/FRAME.md):
 per-codepoint advances under the vendored Inter / JetBrains Mono faces —
 the same tables every driver rasterizes from.
@@ -668,24 +681,52 @@ so a declaration may follow every node that uses its tokens.
 The host selects one declared theme by name. `inst_set_theme` rejects an
 unknown name without mutation; the empty name is always valid and restores
 the authored base. A `theme(NAME)` condition is active exactly when `NAME` is
-selected, and may also be used directly in a node's `when` patch.
+selected, and remains available for genuinely theme-specific structure or
+behavior.
 
-Theme token overrides use rule-10 site expansion, not a runtime token table.
-Consequently a deferred token value resolves token references against the
-authored base, and compound theme×client token overrides are not
-representable. Use explicit per-node `when theme(NAME)` patches when
-theme-specific token site expansion is insufficient.
+Scalar token references preserve their dotted-path identity in SLIR and resolve
+through the active theme at evaluation time. This is uniform across direct
+attributes, deferred `when` patch and animation values, and values substituted
+through component defaults or explicit arguments. A named theme inherits every
+leaf it does not override from the authored base.
+
+Do not duplicate state patches under `when theme(NAME)` merely to retint them.
+Migrate the old workaround to one ordinary state patch:
+
+```slab
+when hover { bg=color.surface }
+```
+
+Nested `when` blocks are unsupported composition and produce
+`error[when-compose]` with this migration. A direct
+`when theme(NAME) { ... }` remains valid when the condition changes more than
+token values.
+
+The kernel exposes allocation-free host lookup as
+`inst_get_token(&Instance, path) -> Option<TokenValue<'_>>`. `TokenValue` is a
+number, a packed RGBA word (`u32::from_le_bytes([r,g,b,a])`), or borrowed
+canonical text, always resolved through the active theme with base fallback.
 
 Width conditions read the incoming **constraint**, never the resolved size —
 responsive patches cannot create layout feedback loops. A `when` block may
 contain attrs and/or extra children (appended in place).
 
-Signal binders and `animate=` inside a deferred `when` are registered
-statically, then gated by that patch at runtime. While the condition is false,
-its binders do not dispatch, contribute hit behavior, or make the node
-focusable. Its animation clock stops and does not keep the instance repainting.
-When several active patches bind the same trigger or animation channel, the
-last active patch wins.
+Signal binders (`act`, `field`, `submit`, pointer/drag binders, and mapped
+`keys`) and `animate=` are legal on an already-authored node inside a deferred
+`when`. Their statically registered universe is the union of the base node and
+every branch; no runtime condition can introduce an unknown host-facing signal.
+A binder is active exactly while its patch condition holds. While inactive it
+does not dispatch, contribute hit behavior, or make the node focusable, and an
+inactive animation clock does not keep the instance repainting. Active patches
+apply in source order, so the last active binder on a trigger channel wins; a
+typed `keys` map is one channel and the last active map owns all its keys.
+
+If deactivation makes the focused node ineligible, focus restoration follows
+§15.3 in the same solve, so there is no invisible focus stop. The node's
+`EditState` (text, selection, scroll, and undo history) remains retained and is
+reused if that authored node's field binder later reactivates; deactivation
+changes focus, not the retained edit buffer. Hosts that require a fresh value
+set it explicitly before refocusing.
 
 **State scoping (§15).** A state ident matches in this order: component-prop
 scope (folds at compile time) → a **bool param** of the same name (§13.1) →
@@ -700,15 +741,16 @@ focus-visible disabled selected composing dragging drop`.
 
 ## 11. SLIR and the Frame contract
 
-Pipeline: parse → resolve (tokens, defs, prop folds) → **SLIR** → **kernel**
-(when/anim/param eval, layout, flatten) → **Frame** (draw ops + scene) →
-driver. The split is normative. Compile time folds everything foldable:
-token refs, `style=` bundles, ordinary def expansion/prop truthiness, shadow
-presets, path normalization, and font subsetting. Each-template props remain
-symbolic as PropRef/Prop conditions. Everything env- or item-dependent ships
-as **data** for the kernel: `when` patches, animations, scalar/list
-params, list templates, holes, and signals. A driver does zero layout and
-zero policy — it paints ops and forwards events.
+Pipeline: parse → resolve (defs, prop folds, token identity) → **SLIR** →
+**kernel** (active-theme tokens, when/anim/param eval, layout, flatten) →
+**Frame** (draw ops + scene) → driver. The split is normative. Compile time
+folds everything foldable: component structure/prop truthiness, shadow
+presets, and path normalization. Scalar token references ship as typed
+`TokenRef` data so every evaluation context observes the same active
+theme. Each-template props remain symbolic as PropRef/Prop conditions.
+Everything env- or item-dependent ships as **data** for the kernel: `when`
+patches, animations, scalar/list params, list templates, holes, and signals.
+A driver does zero layout and zero policy — it paints ops and forwards events.
 
 ### 11.1 SLIR
 
@@ -727,17 +769,19 @@ the public kernel `Doc`. The kernel does not parse SLIR bytes.
 - `WHEN`: conditions (`State`, `Env(portrait|landscape|dark|coarse)`,
   `Client(web|gpu|tui|svg|png)`, `Prop`, `Theme`, `W/HCmp` — width/height
   compare against the INCOMING constraint, as in 0.5) plus per-node patch
-  runs; last patch wins. Top-level token overrides compile to ordinary
-  per-site patches placed before the node's explicit ones (site expansion,
-  rule 10, §18).
-- `THEM`: declared theme names, deduplicated in declaration order.
+  runs; last patch wins. Non-theme top-level token conditions compile to
+  ordinary per-site patches placed before the node's explicit ones (site
+  expansion, rule 10, §18).
+- `THEM`/`TOKN`: declared theme names plus base and named-theme token values.
+  Attribute and animation values retain typed `TokenRef` rows.
 - `PARM`/`LIST`/`HOLE`/`SIGN`: the typed host surface (§13), including list
   schemas, normalized defaults, detached Each templates, and every ordinary
   attribute site a scalar param feeds.
-- `FONT`: subset cmap + per-glyph advances and fallback metrics per authored
-  family/weight. Font bytes are a runtime concern: registered faces override
-  matching fallback tables; otherwise the client uses its bundled or platform
-  fallback.
+- `FONT`: complete cmap + per-glyph advances and fallback metrics per authored
+  family/weight. The selected cmap is authoritative coverage. Registered or
+  bundled matching font bytes rasterize its nonzero glyph ids; a cmap miss
+  advances by the table's default advance but paints no `.notdef` or platform
+  fallback glyph.
 - `IMGS`: image metadata plus parallel `img_data` payloads. Empty payloads
   represent omitted or unavailable assets.
 - `ANIM`: keyframe stops, binds, and transitions (§14) as data.
@@ -759,6 +803,9 @@ inst_set_state(i, name, on)                    // document-global states (§10)
 inst_set_theme(i, name) -> bool                 // unknown rejected; empty restores authored base
 inst_theme(i) -> str                            // current name; empty means authored base
 inst_set_node_state(i, key, name, on)          // host app states on one node
+inst_set_focus(i, key, visible) -> bool         // current painted focusable; explicit, no reveal
+inst_clear_focus(i) -> bool                     // retain edit state; true iff focus changed
+inst_focus_note(i) -> str                       // actionable most recent focus failure
 inst_set_scroll(i, key, axis, offset) -> bool   // axis 0 main | 1 cross; retained-geometry clamp
 inst_get_scroll(i, key, axis) -> float         // 0 for an unknown key or axis
 inst_reveal(i, key, margin) -> bool             // minimally reveal through every scroll ancestor
@@ -768,6 +815,7 @@ inst_set_list_len(i, param, path, n) -> bool   // recursive defaults / recursive
 inst_set_list_field(i, param, path, index, field, v) -> bool // scalar field in selected list
 inst_set_list_key(i, param, path, index, key) -> bool // innermost stable identity
 inst_reveal_item(i, each_key, index, align) -> bool // virtual: start|center|end|nearest (0..3)
+inst_focus_item(i, each_key, index) -> bool     // virtual nearest-reveal + first focusable
 inst_each_window(i, each_key) -> (i32, i32)     // virtual materialized half-open range
 inst_set_hole_size(i, hole, w, h)              // persistent natural size; dirties only on change
 inst_set_divider(i, key, extent) -> bool        // persistent split extent; clamps to adjacent panes
@@ -858,6 +906,7 @@ Compile time (`slab-syntax` + `slab-compile`):
 | code | level | meaning |
 |---|---|---|
 | `parse` | error | syntax error; a node-header attribute after a newline suggests the missing continuation `\` once |
+| `when-compose` | error | a `when` block is nested inside another patch; remedy uses one state patch with active-theme tokens |
 | `ref` | error | unknown token/param/prop/component reference; token cycle; malformed value |
 | `param-type` | error | a param default does not fit its declared type, or a non-bool param used as a `when` condition (§13.1) |
 | `dup-hole` | error | one hole name declared twice |
@@ -879,7 +928,7 @@ Compile time (`slab-syntax` + `slab-compile`):
 | `icon-body` | error | an icon has no paths, a non-path child, a dynamic value, or a nonpositive viewbox (§4.3) |
 | `icon-dup` | error | a top-level icon name is declared more than once |
 | `fill-unbounded` | warning | explicit fill on a leaf `each` item root resolves as hug; use a fill-sized container root |
-| `glyph-missing` | warning | a static text character has no glyph in its resolved embedded family; includes character and codepoint |
+| `glyph-missing` | warning/note | a compiler-known literal/parameter/list-field default or first runtime use has no glyph in its resolved family; includes character and codepoint, and runtime notes emit once per family+codepoint |
 
 Layout time (kernel, per solve):
 
@@ -1350,16 +1399,22 @@ exactly `2` is double). `Effects.repaint` doubles as the dirty mark: the next
 ### 15.1 Node keys (identity)
 
 Every node gets a stable key path **at compile time** (SLIR `NODE.key`).
-Per-child segment precedence: explicit `key=v` → `v`; else `#id` →
+Per-child segment precedence: explicit `key=v` → escaped `v`; else `#id` →
 `#<id>`; else `<kind>@<n>` where `n` is the ordinal among *unkeyed
 same-kind* siblings. Full key = parent key + `"/"` + segment (root: bare
-segment). Component calls contribute their own segment; expanded body
-roots and slot children continue under the call's key. Diagnostics:
-`dup-id`, `dup-key` (§12). All interaction state — node states, scroll
-offsets, focus, edits — is keyed or node-addressed inside the kernel and
-survives every re-solve by construction.
-Synthetic descendants of `each` add the stable `~<item-key>/` segment
-specified in §13.6; public state APIs accept those full keys.
+segment). Component calls contribute their own segment; expanded body roots
+and slot children continue under the call's key, so a call id is above the
+actual first root. Diagnostics: `dup-id`, `dup-key` (§12).
+
+Synthetic descendants of `each` use
+`<each-full-key>~<item-key>/<template-relative-key>`; nested eaches repeat the
+`~item/relative` marker. `%`, `/`, and `~` inside explicit authored key values
+or stable item keys are emitted as uppercase `%25`, `%2F`, and `%7E`.
+`sig_item` remains raw; scene snapshots, signal full keys, and node APIs use
+the escaped canonical path. Public locators accept an exact canonical path, a
+unique bare `#id`/`id`, or a unique authored suffix rooted at an id such as
+`#list/rows`; ambiguous shorthand fails with deterministic candidates. All
+interaction state survives re-solve by canonical node identity.
 
 ### 15.2 Scene and hit testing
 
@@ -1432,20 +1487,27 @@ signals and policy.
 
 ### 15.3 Focus
 
-`focusable` nodes participate in tab order; **document order IS tab
-order**. `Tab`/`Shift-Tab` walk the ring, and the arrow keys walk it too
-whenever the focused node is neither an edit field nor a scrollable on the
-arrow's main axis (`Right`/`Down` forward, `Left`/`Up` back). Keyboard-driven
-focus sets `focus-visible`; pointer focus sets only `focus` (ring-free).
-Restoration rule: when the focused
-key vanishes after a re-solve, focus moves to the nearest following entry
-of the previous focusables list (then nearest preceding), else clears.
-Focusing a `field=` node — keyboard focus included — binds its
-`EditState` on first focus, seeded from the node's content (§15.6).
-Hosts move focus for dialogs and wizards through `inst_set_focus`
-(FRAME.md): the target must be focusable in the current scene, and the
-same `focus-visible` rule applies — `visible` selects the keyboard-grade
-ring, a cleared or pointer-grade focus shows none.
+`focusable` nodes participate in tab order; **document order IS tab order**.
+`Tab`/`Shift-Tab` walk the ring, and arrow keys walk it whenever the focused
+node is neither an edit field nor a scrollable on that arrow's main axis
+(`Right`/`Down` forward, `Left`/`Up` back). Keyboard traversal minimally
+reveals the new target through every scroll ancestor before the next solve,
+which advances virtual materialization without host-computed offsets.
+
+Eligibility uses the current painted scene: effective inert, disabled, or
+non-focusable nodes, empty painted rectangles, and nodes wholly removed by a
+non-scroll clip are excluded. Merely off-screen descendants of scroll clips
+remain eligible so traversal can reveal them. When current focus becomes
+ineligible, restoration chooses the nearest following entry in the previous
+focusables list (then nearest preceding), else clears. A conditionally
+deactivated binder follows this rule while its retained EditState survives.
+
+Keyboard focus sets `focus-visible`; pointer focus sets only `focus`. Focusing
+a `field=` node binds its EditState on first focus, seeded from content (§15.6).
+Hosts use `inst_set_focus` for dialogs/wizards; its target must be eligible in
+the current scene and it deliberately does not reveal. `inst_focus_item`
+nearest-reveals and materializes a virtual item before keyboard-focusing its
+first eligible descendant. `inst_clear_focus` retains EditState.
 
 ### 15.4 Events and dispatch (deliberately simpler than the DOM)
 
@@ -1456,15 +1518,20 @@ composition-end blur resize close inspect` plus `activate`, which is
 focusable, or Enter/Space key-down on the focused non-edit node;
 `disabled` suppresses it.
 
-`keys=Escape,F2` declares additional activation keys and implies `focusable`.
+`keys=Escape,F2 act=cancel` declares additional activation keys for one signal.
+`keys=Escape:clear,F2:rename` is the typed multi-action form: each key routes
+directly to its paired signal and no `act=` is present. Both imply `focusable`.
 On key-down, dispatch walks from the focused scene node through its parents;
-the first enabled node whose `keys` list contains the event key receives the
-synthesized activate event. Its `SigMeta.key` is the fired key name. A disabled
-match is skipped so an enabled ancestor may handle it. Routing precedence is
-drag cancellation by Escape, field-edit commands, focused divider adjustment,
-focused scrolling, `keys=`, default Enter/Space activation, then Tab/arrow
-focus navigation. While an edit field is focused, single printable keys stay
-in the text-input path; unconsumed named keys may bubble.
+the first enabled node whose active `keys` binding contains the event key
+receives the synthesized activate event for the selected signal. Its
+`SigMeta.key` is the fired key name. A disabled or conditionally inactive match
+is skipped so an enabled ancestor may handle it. Routing precedence is
+drag cancellation by Escape, editable `escape-blur`, field-edit commands,
+focused divider adjustment, focused scrolling, `keys=`, default Enter/Space
+activation, then Tab/arrow focus navigation. `escape-blur` consumes Escape and
+clears focus; without that authored opt-in it remains available to `keys=` and
+application cancel/close semantics. While an edit field is focused, single
+printable keys stay in the text-input path; unconsumed named keys may bubble.
 
 The portable named-key vocabulary is `Enter Space Escape Tab Backspace Delete
 Insert Home End PageUp PageDown ArrowLeft ArrowRight ArrowUp ArrowDown` and
@@ -1638,6 +1705,14 @@ unless they carry the `multiline` flag.
   Multiline fields do not horizontally scroll; after a mutation or caret
   command the kernel scrolls the nearest `scroll` ancestor enough to reveal
   the caret, clamped by the ordinary retained-scene scroll limits.
+- When a field's Change signal has exactly the same name as a root `text`
+  param, every committed edit also updates that param. A field displaying
+  `param.draft` under a differently named binder such as `field=draft_change`
+  receives `warn[field-sync]` with two explicit choices: use `field=draft` for
+  implicit synchronization, or, when the host intentionally handles
+  `draft_change`, add `field-sync=host` on that node. Diagnostics are emitted
+  once per authored field/param mismatch even when component/export expansion
+  visits the source repeatedly. Name equality is exact and intentional.
 - The embedding owns IME plumbing and the clipboard. Web uses a hidden
   `<textarea>` for field focus and prevents its native Enter behavior after
   forwarding one key event, so the browser cannot duplicate a kernel newline
@@ -1708,9 +1783,11 @@ driver over the Frame contract — no kernel changes:
    decoding step and accept SLIR bytes, as `slab-kernel-wasm` does. Re-send
    the document or update the instance on resize as appropriate for the driver.
 2. Each frame (only when dirty or animating): `inst_frame(t_ms)` → paint
-   `Frame.ops` in order (§11.3). Text uses metric tables for layout and a
-   registered runtime face, bundled fallback, or platform fallback for paint;
-   atlas renderers use `text_glyphs`. Honor clip/group/rotate as a stack.
+   `Frame.ops` in order (§11.3) and surface `Frame.diagnostics`. Text layout,
+   glyph coverage, and glyph ids come from the selected `FONT` table; registered
+   or bundled bytes only rasterize its nonzero glyph ids. Cmap misses retain
+   default advance but paint no platform fallback or `.notdef`. Honor
+   clip/group/rotate as a stack.
 3. Translate platform input to `Event`s → `inst_dispatch` → obey
    `Effects` (§15). Mount holes (§13.2); deliver signals (§13.3).
 4. Declare capabilities in `spec/support.toml`, then
@@ -1836,6 +1913,7 @@ exporters print to stderr). Machine-readable source:
 | signals | full | full | full | none (`cap-signal`) | none (`cap-signal`) |
 | a11y | full | full | none (`cap-a11y`) | none (`cap-a11y`) | none (`cap-a11y`) |
 | text-edit | full | degraded — cut/copy/paste do not reach the system clipboard (winit has no clipboard API) | full | none (`cap-edit`) | none (`cap-edit`) |
+| text-strike | full | full | full | full | full |
 | text-raster | degraded — browser-rasterized glyphs; kernel line breaks and advances are authoritative | full | degraded — wide clusters (EAW W/F, emoji presentation) occupy two cells; runs re-quantize to columns under the real font metrics | degraded — viewer-rasterized glyphs; textLength force-fits each run to the kernel-measured width | full |
 
 <!-- support-chart:end -->
@@ -1901,10 +1979,10 @@ exporters print to stderr). Machine-readable source:
   - **rule 9** — the host injection/selector API is REMOVED; params,
     holes, signals, and exported defs are the host surface (§13).
     `key-missing` is retired with it.
-  - **rule 10** — top-level `when <cond> { tokens … }` overrides compile
-    to per-site patches (token **site expansion**); token refs inside
-    deferred patch values resolve against base tokens (compound
-    conditions are not representable).
+  - **rule 10** — non-theme top-level `when <cond> { tokens … }` overrides
+    compile to per-site patches (token **site expansion**). Named themes use
+    runtime `TokenRef` identity instead: direct, deferred, animated, and
+    component-substituted references all resolve through the active theme.
   Also visible: text baselines sit at CSS half-leading over the real font
   box (0.5 centered a fictional 0.76-em box; `text.y` shifts ≈ 1u at size
   14), and the 0.5 JSON wire-op serialization (old §11.1) is replaced by

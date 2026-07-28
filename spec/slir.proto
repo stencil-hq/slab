@@ -126,4 +126,12 @@ message Doc {
   repeated uint32 icon_name = 121; // STRS ref
   repeated uint32 icon_node = 122; // detached subtree root
   repeated double icon_viewbox = 123; // square design-box size, default 24
+  repeated uint32 token_name = 130; // STRS ref, dotted path
+  repeated uint32 token_base = 131; // AVAL ref
+  repeated int32 token_theme_off = 132; // slice into token_theme_name/val
+  repeated int32 token_theme_len = 133;
+  repeated uint32 token_theme_name = 134; // STRS ref
+  repeated uint32 token_theme_val = 135; // AVAL ref
+  repeated uint32 token_base_repr = 136; // STRS ref, canonical host text
+  repeated uint32 token_theme_repr = 137; // STRS ref parallel to token_theme_val
 }

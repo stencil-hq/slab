@@ -292,6 +292,13 @@ tui = "full"
 svg = "none:cap-edit"
 png = "none:cap-edit"
 
+[feature.text-strike]
+web = "full"
+gpu = "full"
+tui = "full"
+svg = "full"
+png = "full"
+
 [feature.text-raster]
 web = "degraded:browser-rasterized glyphs; kernel line breaks and advances are authoritative"
 gpu = "full"

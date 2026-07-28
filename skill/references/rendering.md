@@ -15,15 +15,18 @@ Contents: [Pipeline](#pipeline) · [Frame ops](#frame-ops) ·
 ```
 
 Compile time folds token refs, styles, component expansion, static paths/icons,
-shadow presets, and font subsets. The kernel retains everything dynamic:
-`when`, animation, scalar params, recursive list schemas/templates, virtual
-windows, runtime path strings, image-name lookups, holes, signals, scroll,
+and shadow presets. Complete FONT metric/coverage tables keep dynamic host text
+deterministic. The kernel retains everything else dynamic: `when`, animation,
+scalar params, recursive list schemas/templates, virtual windows, runtime path
+strings, image-name lookups, holes, signals, scroll,
 divider overlays, anchored placement, and accessibility strings. Clients
 receive SLIR and frames, never `.slab`; a driver performs no layout policy.
 
-Normative docs: `spec/SLIR.md` (wire), `spec/FRAME.md` (Instance API, Event/
-Effects/Frame structs, text-metric formulas, frame.json canonicalization).
-`slab dump FILE.slir` prints the canonical slir-dump text.
+Normative docs: `spec/SLIR.md` (compiled wire), `spec/FRAME.md` (Instance API,
+Event/Effects/Frame structs, text-metric formulas, frame.json canonicalization),
+and `spec/SDP.md` (deterministic live-session automation, scene addressing,
+input, inspection, and rendering). `slab dump FILE.slir` prints the canonical
+slir-dump text.
 
 ## Frame ops
 
@@ -34,6 +37,7 @@ coordinates and is already sampled at `t`; there are no animation ops.
 struct Frame {
   width: f64, height: f64, ops: Vec<FrameOp>, scene: Vec<SceneNode>,
   strings: Vec<String>, paths_rt: Vec<RtPath>,
+  diagnostics: Vec<FrameDiagnostic>,
 }
 struct RtPath { verbs: Vec<u8>, coords: Vec<f64> }
 // Retained scene also carries main/cross scroll geometry and the complete
@@ -42,7 +46,7 @@ struct RtPath { verbs: Vec<u8>, coords: Vec<f64> }
 
 ```
 Rect      {node x y w h radius; bg/stroke; dash/shadows; opacity; smooth; grain}
-Text      {node x y_baseline string-ref measured-w font size weight tracking color}
+Text      {node x y_baseline string-ref measured-w font size weight tracking color strike}
 Image     {node x y w h img fit radius opacity smooth}        // unified image index
 PathDraw  {node dx dy path bg stroke stroke-w dash opacity}   // signed path ref
 ClipPush {x y w h radius smooth} / ClipPop
@@ -58,6 +62,9 @@ Every paint op carries its node id. `PathDraw.path >= 0` indexes the document
 PATH table; a negative value indexes `paths_rt[!path]`, whose entry is
 `RtPath { verbs, coords }`. Runtime entry zero is therefore `-1`.
 Scale/rotate/tilt/group/clip stacks are balanced.
+`strike` paints a line-through over the kernel-provided `measured-w`; it never
+changes text layout. `diagnostics` carries current layout findings and one-shot
+runtime notes such as `glyph-missing`.
 
 `drag-ghost` introduces no driver API or semantic node. While active, flatten
 appends a 0.72-opacity duplicate of the resolved source subtree at the cursor,
@@ -185,15 +192,17 @@ slab check FILE                            # compile, print diagnostics (exit 1 
 slab build FILE -o OUT.slir [--no-embed-assets]
 slab dump  FILE.slir                       # canonical slir-dump text
 slab render FILE -o OUT.{svg,png,apng,txt}
-     [--client web|gpu|tui|svg|png] [--width N --height N] [--scale N]
+     [--client web|gpu|tui|svg|png] [--theme NAME]
+     [--width N --height N] [--scale N]
      [--t MS] [--dur S --fps N] [--state a,b] [--env portrait,dark,coarse]
      [--set param=value]... [--plain]
-slab gen wc   FILE -o DIR [--tag NAME] [--separate-ir]   # web-component module
-slab gen rust FILE -o OUT.rs                             # typed Rust module
+slab gen wc    FILE -o DIR [--tag NAME] [--separate-ir]  # web-component module
+slab gen react FILE -o DIR [--tag NAME] [--separate-ir]  # typed React wrapper
+slab gen rust  FILE -o OUT.rs                             # typed Rust module
 ```
 
 Native-only: `slab conformance [--update]`, `slab lsp` (stdio LSP:
-diagnostics, completion, hover, preview), `--theme NAME`, `--font NAME=PATH`.
+diagnostics, completion, hover, preview), and `--font NAME=PATH`.
 
 - `check` is compile-only and env-independent (env flags accepted, ignored).
 - `render` defaults 800u × unbounded; client infers from the extension
@@ -203,6 +212,8 @@ diagnostics, completion, hover, preview), `--theme NAME`, `--font NAME=PATH`.
   `--set` coerces scalar params and accepts recursive list JSON:
   `--set 'roots=[{"label":"src","children":[{"label":"main.rs"}]}]'`.
   Invalid JSON, nested fields, keys, or types reject the whole assignment.
+- `--state` enables document-global preview states only. It cannot target a
+  single node; use the host node-state API for that.
 - Authored image assets resolve relative to `.slab`; missing files warn.
   Runtime image registration is an Instance/Web/Rust host API, not a CLI
   `--set` payload.

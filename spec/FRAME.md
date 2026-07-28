@@ -6,6 +6,10 @@ enums, and functions; native clients decode SLIR into `slir::Doc`, initialize
 `frame::Instance`, and call this API directly. The browser and Node runtimes
 use the wasm-bindgen bridge in `crates/slab-kernel-wasm`, which owns the same
 Rust `Instance` and preserves the contract across the WebAssembly boundary.
+SDP exposes this same instance and frame contract to deterministic automation;
+see [SDP.md](SDP.md) for framing, canonical key addressing, input, queries,
+rendering, and host-mount policy.
+
 
 ## Instance API
 
@@ -56,11 +60,15 @@ fn inst_set_node_state(i: &mut Instance, key: &str, name: &str, on: bool) -> boo
     // Dispatch owns hover/pressed/focus/focus-visible/composing; hosts
     // drive app states (disabled, selected, …) here. false = unknown key.
 fn inst_set_focus(i: &mut Instance, key: &str, visible: bool) -> bool
-    // Move focus to a keyed node; an empty key clears focus. The node must
-    // be focusable in the CURRENT scene (present, not inert) — false =
-    // unknown, absent, or non-focusable key, with no side effects. visible
-    // selects the keyboard-grade focus ring exactly as Tab does; a field=
-    // target binds its EditState on focus (§15.6).
+    // Move focus to a keyed node in the CURRENT painted scene. false means
+    // unknown/ambiguous, absent, inert, disabled, collapsed, clipped away, or
+    // otherwise non-focusable. visible selects the keyboard-grade ring. This
+    // explicit API does not reveal; use inst_reveal or inst_focus_item.
+fn inst_clear_focus(i: &mut Instance) -> bool
+    // Clear focus while retaining EditState; true only when state changed.
+fn inst_focus_note(i: &Instance) -> &str
+    // Actionable explanation of the last failed focus/focus_item request.
+    // A successful focus or clear request resets it.
 fn inst_set_field_text(i: &mut Instance, key: &str, text: &str) -> bool
     // Replace or create the keyed field EditState while focused or blurred.
     // Reset composition, selection, and undo/redo; place the caret at the end.
@@ -87,6 +95,10 @@ fn inst_reveal_item(i: &mut Instance, each_key: &str, index: i32,
                     align: u32) -> bool
     // Virtual item alignment: 0 start | 1 center | 2 end | 3 nearest.
     // false = unknown/non-virtual each, invalid index, or invalid alignment.
+fn inst_focus_item(i: &mut Instance, each_key: &str, index: i32) -> bool
+    // Reveal a virtual item with nearest alignment and keyboard-focus its first
+    // active focusable descendant, materializing it when needed. Failure is
+    // explained by inst_focus_note.
 fn inst_each_window(i: &Instance, each_key: &str) -> (i32, i32)
     // Half-open materialized virtual range; (-1, -1) for unknown/non-virtual.
 fn inst_set_param(i: &mut Instance, param: u32, v: &ParamValue) -> bool
@@ -151,14 +163,16 @@ fn text_glyphs(i: &Instance, fr: &Frame, op: i32) -> Vec<GlyphPos>
 cannot decode them. The bridge mirrors the native contract with
 JavaScript-safe arguments. List methods (`list_len`, `set_list_len`,
 `set_list_key`, `set_list_field`) include `path`; `set_scroll` and `get_scroll`
-include `axis`. It also exposes `reveal`, `reveal_item`, `each_window_json`,
-`set_divider`, `get_divider`, `img_register`, `img_unregister`,
-`image_info_json`, and unified-index `image_data`, in addition to the existing
-environment, parameter, state, focus, theme, font, and hole methods.
+include `axis`. It also exposes `reveal`, `reveal_item`, `focus_item`,
+`each_window_json`, `set_divider`, `get_divider`, `img_register`,
+`img_unregister`, `image_info_json`, and unified-index `image_data`, plus
+`clear_focus` and `focus_note` alongside the existing environment, parameter,
+state, focus, theme, font, and hole methods.
 
 Cold structured results cross the boundary as JSON: `holes_json`,
-`dispatch_json`, `caret_effects_json`, `statics_json`, `scene_json`, and
-`chain_json`; retained-scene queries use `hit_contains`. `dispatch_json` takes
+`dispatch_json`, `caret_effects_json`, `statics_json`, `scene_json`,
+`chain_json`, and active-theme `get_token_json`; retained-scene queries use
+`hit_contains`. `dispatch_json` takes
 all ten `Event` fields as flat arguments and returns the complete `Effects`
 object described below. In `scene_json`, accessibility references are resolved
 to strings rather than exposing the native scene-string pool.
@@ -166,7 +180,8 @@ to strings rather than exposing the native scene-string pool.
 The paint hot path is `frame(t_ms) -> FrameBuf`, not frame JSON. `FrameBuf`
 provides an operation-tag/payload `u32s()` stream, an `f64s()` stream beginning
 with frame width and height, the frame-local text pool through `strs_json()`,
-runtime paths through `rt_paths_json()`, and the `dirty()` and
+runtime paths through `rt_paths_json()`, complete current-solve layout and
+runtime evidence through `diagnostics_json()`, and the `dirty()` and
 `motion_active()` liveness flags. ScalePush and ScalePop use tags 11 and 12;
 ScalePush contributes four floats (`cx, cy, sx, sy`) and ScalePop contributes
 none. TiltPush and TiltPop use tags 13 and 14; TiltPush contributes five
@@ -219,9 +234,12 @@ the instance dirty for one settling frame.
 non-finite margin is treated as zero. It processes scroll ancestors from inner
 to outer, carrying each inner displacement into the next calculation, so every
 write is the minimal main-axis move. A known already-visible target still
-returns `true`. `inst_reveal_item` and `inst_each_window` apply only to a
-virtual `each`; a non-virtual or unknown key returns `false` / `(-1, -1)`
-without mutation.
+returns `true`. `inst_reveal_item`, `inst_focus_item`, and `inst_each_window`
+apply only to a virtual `each`; a non-virtual or unknown key fails without
+mutation. Alignment is relative to the scroll node's **content box**, not its
+outer border. Start alignment can therefore leave a nonzero raw scroll offset
+for leading padding or preceding in-flow content; assert visibility/alignment,
+not `offset == 0`.
 
 A divider key is valid only when its base node is a non-first, non-last direct
 child of a row or column. The divider API stores a finite keyed extent overlay;
@@ -244,6 +262,46 @@ state maps retain that synthetic id while every SLIR/document read uses its
 template base node. The public descendant key is
 `<each-key>~<item-key>/<template-relative-key>`. Truncation prunes values,
 keys, registry entries, and keyed state for removed identities.
+
+### Canonical scene keys and locators
+
+Every scene node has one canonical full key. Its grammar is:
+
+```text
+full-key       = segment *("/" segment)
+segment        = explicit | "#" id | kind "@" index
+item-node-key  = each-full-key "~" item-key "/" template-relative-key
+nested-item    = item-node-key "~" item-key "/" template-relative-key
+```
+
+For each authored sibling, segment precedence is explicit `key=v`, then
+`#id`, then the anonymous lower-case node kind plus its zero-based ordinal
+among unkeyed same-kind siblings (`col@0`, `rect@2`, `each@0`). A component
+call contributes its own segment; every expanded body root and slotted child
+continues beneath it. Thus `Button#save` whose first body root is an anonymous
+row produces a path containing `#save/row@0`: the call id is a segment, while
+the actual focus/click target is the body root.
+
+An `each` uses the same explicit/`#id`/`each@index` precedence. A concrete
+descendant inserts `~<item-key>/` between the each's full key and the detached
+template-relative key. Every nested each repeats that marker. Before a host
+assigns a stable item key, its decimal item index is used. `sig_item` remains
+the raw innermost item key; `SigMeta.key`, scene snapshots, and all node APIs
+use the canonical escaped full key.
+
+`%`, `/`, and `~` are structural bytes. Literal occurrences inside explicit
+`key=` values or stable item keys are emitted as uppercase `%25`, `%2F`, and
+`%7E`; a literal `%2F` value therefore appears as `%252F`. `#id` and generated
+`kind@index` segments are grammar-safe. Hosts should copy returned/generated
+canonical keys rather than manually concatenate them.
+
+Kernel key locators accept an exact canonical full key. For author ergonomics,
+a bare `#id` or `id` may resolve only when unique, and an authored suffix rooted
+at an id (for example `#list/rows`) may resolve only when unique. Component-call
+ids resolve to their actual first body root. Ambiguous shorthands fail rather
+than selecting arbitrarily; `scene::resolve_key` returns deterministic
+`Found`, `Missing { candidates }`, or `Ambiguous { candidates }`, and failed
+focus calls expose the same actionable result through `inst_focus_note`.
 
 ## Event (module `dispatch`)
 
@@ -284,11 +342,23 @@ reports Effects); pointer capture lasts from pointer-down until release;
 `pressed` lands on the nearest focusable in the hit path, else the raw target;
 hover enter/leave states cover the whole hit path. Pointer-up over the
 still-pressed focusable, or Enter/Space on a focused non-edit node, synthesizes
-Activate; `disabled` suppresses it. Escape cancels an armed or active drag,
-emits cancelled DragEnd without Drop, clears capture, and is consumed before
-authored activation. Wheel scrolls the deepest `scroll` node in the path with
-the retained-scene clamp. `resize` (dx/dy > 0) updates env; `blur` clears hover
-and pressed; `copy` / `inspect` are host territory.
+Activate; `disabled` suppresses it. Escape first cancels an armed or active
+drag, emits cancelled DragEnd without Drop, clears capture, and is consumed.
+Otherwise an editable node with authored `escape-blur` consumes Escape and
+clears focus while retaining its EditState; without that explicit opt-in,
+Escape remains available to authored `keys=` mappings and app semantics.
+Wheel scrolls the deepest `scroll` node in the path with the retained-scene
+clamp. `resize` (dx/dy > 0) updates env; `blur` clears hover and pressed;
+`copy` / `inspect` are host territory.
+
+Tab, Shift-Tab, and kernel-owned directional traversal use materialized
+authored order. Effective inert/disabled/non-focusable nodes, empty painted
+rectangles, and descendants wholly removed by a non-scroll clip are excluded.
+An off-screen descendant of a scroll viewport remains eligible: after
+traversal changes focus, the kernel minimally reveals it through every scroll
+ancestor before the next solve. Virtual-list overscan plus that scroll update
+materializes the continuing focus ring without host-computed offsets. Explicit
+`inst_set_focus` intentionally does not reveal.
 
 Signal trigger codes (SPEC §13) are `0 Activate`, `1 Change`, `2 Submit`,
 `3 Press`, `4 Context`, `5 Dblclick`, `6 DragStart`, `7 Drop`, `8 Resize`,
@@ -396,8 +466,15 @@ struct Frame {
     scene: Vec<SceneNode>,
     strings: Vec<String>,
     paths_rt: Vec<RtPath>,
+    diagnostics: Vec<FrameDiagnostic>,
 }
 ```
+
+`FrameDiagnostic` is `{ code: String, line: u32, msg: String }`. Layout
+diagnostics describe the current solve. Runtime `glyph-missing` diagnostics are
+one-shot notes: an `Instance` emits at most one for each `(authored family,
+codepoint)` pair, on the first frame whose text uses that missing glyph. Hosts
+MUST surface these notes even when they do not repaint a missing glyph.
 
 `width`/`height` are the solved root box. `strings` is the per-frame text pool
 addressed by `OpText.str_ref`. `paths_rt` contains only runtime paths referenced
@@ -517,7 +594,18 @@ ascent_in_line = asc·size/upem + (line_h − (asc − desc)·size/upem) / 2
 baselines aligned with browser-painted glyphs in the web driver). The wrap
 algorithm is the research metrics.py port verbatim: greedy break on spaces
 (NBSP glues), hard-break of over-long words, ellipsis cut/append with
-rstrip, `max_lines` from the height budget.
+rstrip, `max_lines` from the height budget. A nowrap paragraph is one
+composite line across its styled segments; ellipsis truncation crosses segment
+boundaries and appends `…` to the last retained segment so paint style is
+preserved without changing the line's layout model.
+
+The selected SLIR `FONT` cmap is the authoritative glyph-coverage contract for
+measurement and every rasterizer. A cmap miss has glyph id 0: it advances by
+`default_advance` but paints no `.notdef` box or platform fallback glyph.
+Runtime text emits the one-shot `glyph-missing` frame diagnostic defined above.
+Compiler-known literal, parameter-default, and list item-property-default text
+is checked against the same cmap at compile time; host-supplied content remains
+runtime-checked.
 
 ## Motion (as built in `motion`)
 

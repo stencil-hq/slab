@@ -28,7 +28,7 @@ Closed set; everything else is composition.
 | `mask` | any node | any paint — subtree alpha-faded over the node's border box; ink outside vanishes |
 | `opacity` | any | 0–1; composites as a GROUP (children blend first, fade as one) |
 | `color` | text, icon usage | text: color/gradient over content box; icon: solid `current` tint. Inherits |
-| `family size weight leading tracking` | text | inherit; leading = multiplier (1.4); tracking = u per glyph |
+| `family size weight leading tracking strike` | text | inherit; leading = multiplier (1.4); tracking = u per glyph; `strike` is boolean line-through |
 | `style` | any | token group as attr bundle (`style=fx.card`); explicit attrs win |
 | `align-text` | text | `start\|center\|end` |
 | `fit` | img | `cover\|contain\|stretch` |

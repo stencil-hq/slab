@@ -56,7 +56,7 @@ paths translate the decoded protobuf directly into the public
 | `cond_*`, `patch_*`, `wattr_*`, `patch_children` | `when` conditions and patch payloads. |
 | `anim_*`, `aattr_*`, `bind_*`, `trans_*` | Keyframes, animation bindings, and transitions. |
 | `parm_*`, `list_*` | Scalar parameters, recursive list schemas, and normalized list defaults. `list_field_sub` is zero for scalar fields and one plus a nested schema row otherwise. |
-| `theme_*`, `hole_*`, `sign_*` | Themes, host holes, and signals. |
+| `theme_*`, `token_*`, `hole_*`, `sign_*` | Themes, active-theme token rows, host holes, and signals. |
 | `icon_*` | Icon names, detached subtree roots, and square design-box sizes. |
 | `img_*`, `img_data` | Image metadata and payloads. |
 
@@ -117,6 +117,7 @@ The value tags and payload meanings are:
 | 17 | `ListDefault` | `lo` = list-item offset, `hi` = count |
 | 18 | `TupleDyn` | `lo` = `tup_dyn_*` offset, `hi` = count |
 | 19 | `PaintCurrent` | inherited text color |
+| 20 | `TokenRef` | token row index |
 
 The writer may deduplicate equal AVALs and tuple runs; readers must not depend
 on that optimization.
@@ -127,6 +128,24 @@ parallel arrays `tup_dyn_tag` (0 literal, 1 param), `tup_dyn_num` (the
 literal value, else 0), and `tup_dyn_param` (the parameter index, else 0);
 the kernel reads the current parameter value per solve.
 
+### Active-theme token rows
+
+`token_name`, `token_base`, `token_base_repr`, `token_theme_off`, and
+`token_theme_len` are parallel per-token arrays. `token_name` is the dotted
+path STRS reference, `token_base` is the authored-base AVAL reference, and
+`token_base_repr` is its canonical host-text STRS reference. Each offset/length
+slices the parallel flattened `token_theme_name`, `token_theme_val`, and
+`token_theme_repr` arrays. Theme names and representations are STRS references;
+values are AVAL references. Every range is in bounds and every parallel family
+has equal length.
+
+`TokenRef` is emitted at a typed value use site. The kernel selects the matching
+named-theme AVAL, falling back to `token_base`, before ordinary parameter or
+property substitution. Public scalar-token rows precede typed use-site rows so
+host lookup by dotted path finds the context-independent representation first.
+Selection uses the instance's cached numeric theme row and performs no
+per-frame allocation.
+
 ### Nodes, conditions, and pools
 
 Node kinds are `Row=0`, `Col=1`, `Wrap=2`, `Grid=3`, `Stack=4`, `Canvas=5`,
@@ -134,7 +153,7 @@ Node kinds are `Row=0`, `Col=1`, `Wrap=2`, `Grid=3`, `Stack=4`, `Canvas=5`,
 `Spacer=13`, `Hole=14`, `Each=15`, `Divider=16`, and `Icon=17`. Node flags
 retain the kernel bit assignments: `clip`, `bleed`, `scroll`, `nowrap`,
 `ellipsis`, `inert`, `focusable`, `detached`, `multiline`, `scroll-cross`,
-`virtual`, and `sticky`.
+`virtual`, `sticky`, `drag-ghost`, and `escape-blur`.
 
 Base attribute runs are sorted by attribute id and contain authored values
 only. Layout defaults and inherited text style remain the kernel's job.
@@ -165,7 +184,7 @@ scalar for backward-compatible 2.0 decoding.
 
 ## Font tables and runtime faces
 
-A `font_*` row supplies layout metrics only:
+A `font_*` row supplies layout metrics and authoritative glyph coverage:
 
 ```text
 family, class, weight, upem, ascent, descent, line_gap, default_advance,
@@ -176,7 +195,9 @@ It never contains TTF or OTF bytes. `family` is the authored `family=` string
 verbatim; string reference 0 means the generic default. `class` is the
 fallback metric class (`0` sans, `1` mono), and `weight` is one of the snapped
 fallback weights 400, 500, 600, or 700. Cmap and advance entries are parallel,
-sorted by codepoint, and cover document-reachable text plus printable ASCII.
+sorted by codepoint, and cover the complete selected face. Complete coverage is
+required because host strings may introduce any supported codepoint after
+compilation.
 
 The compiler emits a table for each authored family and snapped weight used by
 the document, including the implicit default family and weight 400. Its
@@ -191,10 +212,12 @@ face overrides the equal compiled fallback. If no matching family exists, it
 falls back to the generic family table. A registered face that is far from all
 compiled weights still supplies the nearest match.
 
-Hosts use the matching registered bytes to paint text. Without a matching
-registered face, native and static exporters use the bundled class fallback;
-web uses its registered `FontFace` or its platform fallback. Thus SLIR is
-self-contained for layout metrics but deliberately not for font bytes.
+The selected `FONT` cmap is authoritative for glyph coverage as well as
+metrics. Hosts use matching registered or bundled bytes to paint only nonzero
+glyph ids from that cmap. A missing codepoint advances by `default_advance` but
+paints no `.notdef` box and MUST NOT fall through to a platform font. Native,
+web, terminal, SVG, and PNG paths therefore agree on coverage. Runtime strings
+surface a once-per-family-and-codepoint `glyph-missing` frame diagnostic.
 
 ## Icons
 
@@ -248,6 +271,10 @@ signal or binding pools and also encode their selected name as a `Str` in the
 corresponding base or `when` patch attribute channel. Attribute 89 is the
 internal animation-binding channel. Attribute 90 is the authorable inherited
 boolean `strike` text style. `each` is `Num(parameter index)` on an `Each` node.
+`sign_trigger=13` is an internal discriminator for typed
+`keys=Key:signal` entries. It has the same host-facing Activate payload as
+trigger 0, but keeps default Enter/Space activation from selecting an arbitrary
+mapped signal; dispatch selects it only after matching the active `keys` map.
 
 `family` is `Str` carrying the authored family name. `src` is `Str` and has a
 matching image row. The remaining AVAL forms follow the source-language rules:

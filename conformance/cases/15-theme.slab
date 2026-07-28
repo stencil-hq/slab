@@ -1,13 +1,35 @@
-// Theme selection changes token-backed paint while preserving geometry.
+// Active-theme token identity is identical at direct, deferred, and component sites.
 tokens {
-  color { surface #102030; ink #f4f7fb; accent #36c2b4 }
+  color {
+    surface #102030
+    ink #f4f7fb
+    direct #36c2b4
+    state #e06c75
+    default #d19a66
+    arg #61afef
+  }
 }
 
 theme dusk {
-  color { surface #382040; ink #fff1d6; accent #f29a52 }
+  color {
+    surface #382040
+    ink #fff1d6
+    direct #f29a52
+    state #c678dd
+    default #98c379
+    arg #56b6c2
+  }
 }
+
+params { selected bool = true }
+def Chip(tone=color.default) { rect w=40 h=8 radius=4 bg=tone }
 
 col w=240 h=96 pad=16 gap=10 bg=color.surface {
   text "Theme preview" size=16 weight=600 color=color.ink
-  rect w=88 h=8 radius=4 bg=color.accent
+  row gap=4 {
+    rect w=40 h=8 radius=4 bg=color.direct
+    rect w=40 h=8 radius=4 { when selected { bg=color.state } }
+    Chip
+    Chip tone=color.arg
+  }
 }

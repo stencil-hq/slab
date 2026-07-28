@@ -1,0 +1,5 @@
+params { dynamic text = "✓ ✔ ✗ × ⏰ ↻ ↩ – — “ ” • · ▸ ► ○ ◌ ⟳ ↺ ⌛ ! ~ @ OK" }
+col w=520 h=64 gap=4 family="sans" size=14 {
+  text "✓ ✔ ✗ × ⏰ ↻ ↩ – — “ ” • · ▸ ► ○ ◌ ⟳ ↺ ⌛ ! ~ @ OK"
+  text param.dynamic
+}

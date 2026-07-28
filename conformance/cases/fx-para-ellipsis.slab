@@ -1,0 +1,10 @@
+col w=320 h=80 gap=8 {
+  para w=90 nowrap ellipsis {
+    span text="Alpha " color=#FF0000
+    span text="Beta Gamma Delta" color=#00FF00
+  }
+  para w=300 nowrap ellipsis {
+    span text="Alpha " color=#FF0000
+    span text="Beta Gamma Delta" color=#00FF00
+  }
+}

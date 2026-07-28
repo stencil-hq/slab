@@ -1,0 +1,13 @@
+def Task(label="Default item", done=true) export {
+  text label strike=done
+}
+params {
+  completed bool = true
+  tasks list(Task) = [Task()]
+}
+col w=220 h=120 gap=6 family="sans" size=16 {
+  text "Normal text"
+  text "Completed text" strike
+  text "Runtime style" strike=param.completed
+  each param.tasks
+}

@@ -63,7 +63,7 @@ with no `-o` prints cells to stdout. `check` validates the main document and
 each `export` definition through its standalone path. Code generators produce
 typed web components (`slab gen wc`), React wrappers (`slab gen react`), or
 Rust modules (`slab gen rust`). In this repo the native CLI is
-`cargo run -p slab-cli --` (adds `fmt`, `conformance`, `lsp`, `--theme`,
+`cargo run -p slab-cli --` (adds `fmt`, `conformance`, `lsp`, and
 `--font`).
 
 Fresh releases: bun's minimum-release-age gate blocks packages younger than
@@ -83,7 +83,7 @@ bunfig — use `bun add @stencil-hq/slab` then `./node_modules/.bin/slab`.
   everything hugs.
 - **Style**: `bg stroke stroke-w stroke-align stroke-sides stroke-dash radius
   smooth shadow blur backdrop backdrop-mask grain mask opacity color family
-  size weight leading tracking style= align-text rotate scale tilt fit pad
+  size weight leading tracking strike style= align-text rotate scale tilt fit pad
   gap animate transition scrollbar scrollbar-w scrollbar-fg scrollbar-bg` —
   closed set, nothing else. `current` is icon-declaration paint, not a
   general color token.
@@ -95,8 +95,9 @@ bunfig — use `bun add @stencil-hq/slab` then `./node_modules/.bin/slab`.
   field/submit, resize), `keys=`, a11y metadata/state/relation/value attrs,
   and overlay placement `attach= gravity= collide=`.
 - **Conditionals**: `when hover|dragging|drop|tui|dark|w<600|prop|theme(name)
-  { … }` patches its node with attrs/children. Signal binders are node-static
-  and cannot be introduced inside `when`.
+  { … }` patches its node with attrs/children. Binders on the patched node are
+  statically registered, active only while the condition holds, and stop
+  contributing focus/hit behavior when false.
 - **Components/data**: `def Name(params) { body }`, Capitalized calls,
   children splice at `slot`, and `export` defs become standalone documents
   and recursive `list(Def)` schemas. `each param.rows` consumes a root list;

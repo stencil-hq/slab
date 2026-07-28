@@ -33,7 +33,8 @@ dparam   := IDENT ["=" (scalar | "list" "(" UIDENT ")")]
 icon     := "icon" IDENT ["viewbox" "=" NUMBER] "{" path+ "}"
 node     := NAME ["#" IDENT] (arg | IDENT "=" value | flag)* [block]
 each     := "each" (REF | IDENT) ["#" IDENT] (IDENT "=" value | flag)*
-value    := scalar ("," scalar)*              // 2+ scalars form a tuple
+value    := keymap | scalar ("," scalar)*      // 2+ scalars form a tuple
+keymap   := (IDENT|STRING) ":" (IDENT|STRING) ("," …)*
 scalar   := NUMBER | PCT | STRING | #HEX | REF | IDENT | IDENT ":" NUM | fn(...)
 when     := "when" cond block
 cond     := IDENT | "!"IDENT | ("w"|"h") OP NUM | "theme" "(" IDENT ")"
@@ -54,17 +55,23 @@ for the complete grammar, especially recursive list defaults and token forms.
   `act=`, `field=`, `submit=`, `press=`, `context=`, `dblclick=`,
   `pointer-move=`, `pointer-up=`, `drag=`, `drag-update=`, `drag-end=`,
   `drop=`, `resize=`. `act`/`field`/`press`/`drag` imply `focusable`;
-  placement and payload rules are in hosts.md. `keys=Escape,F2` declares
-  extra activation keys and implies `focusable`. Keyboard Activate places the
-  fired key name in `SigMeta.key`; pointer Activate keeps the full node key.
+  placement and payload rules are in hosts.md. Use
+  `keys=Escape,F2 act=cancel` when several keys share one action, or the typed
+  `keys=Escape:close,F2:rename` map for distinct actions. A mapped `keys=`
+  owns activation routing and cannot be combined with `act=`. Both imply
+  `focusable`; the fired key is in `SignalMeta.key`.
+  `field-sync=host` is the compiler-only opt-out when a differently named
+  field signal is intentionally reconciled by the host.
 - Accessibility attrs start with `role= label= desc=` and include checked,
   disclosure/selection, exact-key relations, value/range, modal/live, and
   level/set metadata; the complete typed list is below.
 - `attach=`, `gravity=`, and `collide=` place an anchored child of
   `stack`/`canvas`.
-- `multiline` is legal only on a `field=` text node. `drag-update=`,
-  `drag-end=`, and `drag-ghost` require `drag=` on that same node. `virtual`,
-  `item-extent`, `overscan`, and `sticky` are context-restricted below.
+- `multiline` is legal only on a `field=` text node. `escape-blur` is an
+  explicit editable-node opt-in: Escape clears focus while retaining the edit
+  buffer. `drag-update=`, `drag-end=`, and `drag-ghost` require `drag=` on that
+  same node. `virtual`, `item-extent`, `overscan`, and `sticky` are
+  context-restricted below.
 - A `cond` ident resolves in order: client classes `web gpu tui svg png` →
   env idents `portrait landscape dark coarse` → component props → bool
   params → state idents (per-node, then global).
@@ -155,6 +162,10 @@ space directly. Explicit `w=fill` or `h=fill` there resolves as hug and emits
 `fill-unbounded`. Wrap the leaf in a fill-sized `row` or `col`.
 
 ## Layout algorithm
+
+Padding follows CSS direction order without CSS shorthands: one value applies
+to all sides; two values are `pad=vertical,horizontal`; four values are
+`pad=top,right,bottom,left`. Three values are not accepted.
 
 `measure(node, cons)` — constraints down, sizes up, parent places.
 A child is never given more space than actually remains.
@@ -251,10 +262,14 @@ stroke halves) are exempt — ink, not geometry.
 
 Wraps at word boundaries; over-long words hard-break. `nowrap` disables
 wrapping (truncates + `clipped` unless `ellipsis`). `ellipsis` truncates
-the last line with `…`. `align-text=start|center|end`. Inheritance
+the last line with `…`. A `para nowrap ellipsis` is one composite line across
+all spans; the ellipsis inherits the last retained span's style.
+`align-text=start|center|end`. Inheritance
 whitelist (the ONLY inheritance in Slab): `color family size weight
-leading`. `leading` = line-height multiplier (default 1.4); `tracking` =
-letter-spacing in u after every glyph.
+leading tracking strike`. `leading` = line-height multiplier (default 1.4);
+`tracking` = letter-spacing in u after every glyph. `strike` is a boolean,
+defaults to false, and bare `strike` means true; it changes paint only, never
+measurement, wrapping, or line height.
 
 For host-supplied rich text, put `each` directly inside `para` and make its
 exported schema body exactly one `span`:
@@ -275,15 +290,27 @@ para { each param.runs }
 Any other run-template body is `each-span`. Runs participate in one paragraph
 layout; do not render them as separate `text` nodes.
 Bind run props directly to span content, `color`, `size`, `weight`, `family`,
-and `tracking`; the whole run list reflows as one paragraph.
+`tracking`, and `strike`; the whole run list reflows as one paragraph.
 
-Fonts: the compiler embeds subset metric tables (SLIR `FONT`) for the
-vendored faces — an authored `family` containing `mono`
+Conditional display strings are host-computed: project state into a text param
+or list field (`"✓"`, `"due in 3m"`, timer captions) rather than looking for a
+ternary/content expression. For 1 Hz displays, rebuild the typed visible-row
+projection once per second and call the generated `set_rows`; equal-key,
+equal-field diffing preserves retained item state and avoids needless work.
+
+Fonts: the compiler embeds complete metric/coverage tables (SLIR `FONT`) for
+the vendored faces — an authored `family` containing `mono`
 (ASCII-case-insensitive) maps to JetBrains Mono, everything else to Inter;
 weights snap to 400/500/600/700 (ties up). The authored name is preserved;
 a runtime-registered face of the same name overrides metrics and paint.
 Every client solves from the same real font tables. Shaping is
 per-codepoint advances; complex scripts (Arabic, RTL) are out of scope.
+
+The selected SLIR font cmap is authoritative coverage on every client.
+Codepoints absent from it keep their deterministic fallback advance but paint no
+platform fallback or tofu glyph. Static literals and known parameter/list-field
+defaults receive `glyph-missing` compiler warnings. Host-provided runtime text
+emits the same code as a frame diagnostic once per family and codepoint.
 
 ## Components
 
@@ -328,9 +355,25 @@ Shadow tokens are tuple entries: `shadow { crisp 0,2,6,#00000040 }`.
 **Themes** are named, compiler-checked token override sets. The host selects
 one by name (`inst_set_theme`, web `theme` attribute, CLI `--theme`);
 unknown names are rejected; the empty name restores the authored base.
-`when theme(dusk) { … }` also works directly on a node. Theme overrides use
-site expansion against BASE tokens — compound theme×client token overrides
-are not representable; use explicit per-node `when theme(NAME)` patches.
+Every scalar token reference retains its dotted path and resolves through the
+active theme at evaluation time: direct attrs, values in deferred `when`
+patches/animations, and values passed through def defaults or explicit args all
+behave identically. Missing theme leaves fall back to authored base.
+
+Use the simple state form:
+
+```slab
+when hover { bg=color.bg }
+```
+
+Do not duplicate it under `when theme(NAME)`. That old workaround is removed.
+Nested `when` blocks report `error[when-compose]`; direct
+`when theme(dusk) { … }` remains for genuinely theme-specific structure or
+behavior, not palette selection.
+Rust hosts can query the same resolved table without allocation via
+`inst_get_token(&instance, "color.bg") -> Option<TokenValue<'_>>`; colors are
+the usual packed RGBA word, numbers are `f64`, and other scalar forms are
+borrowed canonical text.
 
 `when` is the ONE mechanism for variants/states/media/responsiveness,
 lexically attached, last patch wins:
@@ -353,29 +396,60 @@ hover/pressed/focus/composing and the drag states. Hosts drive app states
 (`disabled`, `selected`, …); the global set is for previews (`--state`) and
 document-wide conditions. Author drag feedback with `when dragging` on the
 source and `when drop` on a target.
+The CLI `--state a,b` flag populates only that global preview set; it cannot
+target one node. Use host-driven node state for per-node previews.
 
-Binders and `animate=` may appear inside `when`. The compiler registers them
-statically, but the active patch cascade gates them at runtime. A false binder
-condition suppresses dispatch, pointer behavior, editing, and tab focus. A
-false animation condition stops its motion clock, so idle repaint reaches zero.
+Binders and `animate=` may appear inside `when` on the node the block patches.
+The compiler registers the union of every branch's signal names statically,
+then the active patch cascade gates them at runtime. A false binder condition
+suppresses dispatch, pointer behavior, editing, and tab focus. If deactivation
+invalidates current focus, focus is restored or cleared in that solve; the
+node's edit buffer, selection, and undo history remain retained for a later
+reactivation. Overlapping active branches use source order: the last binding
+for a trigger channel wins. A false animation condition stops its motion clock,
+so idle repaint reaches zero.
+
+```slab
+params { editing bool = false; draft text = "Rename me" }
+text#title param.draft color=color.ink {
+  when editing {
+    field=draft
+    submit=commit
+    bg=color.inset
+    pad=6,10
+    radius=6
+  }
+}
+```
+
+This is the preferred conditional-edit pattern: author one stable text node,
+then conditionally activate its field and submit binders. Do not collapse a
+permanently bound field to `h=0`; inactive conditional binders are absent from
+hit testing and focus traversal while retained editing state survives.
 
 ## Identity & keys
 
 Every node gets a stable key path at compile time. Segment precedence:
-explicit `key=v` → `#id` → `<kind>@<n>` (ordinal among unkeyed same-kind
-siblings). Full key = `parent/segment`. Component calls contribute their own
-segment; body roots and slot children continue under the call's key. A
-call-site `#id` is therefore a segment ABOVE the component root's own
+explicit `key=v` (escaped) → `#id` → `<kind>@<n>` (ordinal among unkeyed
+same-kind siblings). Full key = `parent/segment`. Component calls contribute
+their own segment; body roots and slot children continue under the call's key.
+A call-site `#id` is therefore a segment ABOVE the component root's own
 segment: `Filter#factive …` whose body root is a `row` yields
-`…/#factive/row@0`, not `…/#factive`. Host-side lookups must match the
-`#factive` segment (`key.split('/').includes('#factive')`), never
-`endsWith('#factive')`.
+`…/#factive/row@0`, not `…/#factive`.
 
-An `each` descendant inserts `<each-key>~<item-key>/…`; nested eaches extend
-that path at every level. `sig_item` is only the innermost item key, while
-signal `meta.key` carries the unambiguous full path. Node state, scroll,
-focus, edits, and animation are keyed and survive re-solve. Use `#id` for
-singletons and stable host-provided keys for list items.
+An `each` descendant inserts
+`<each-full-key>~<item-key>/<template-relative-key>`; nested eaches repeat the
+marker at every level. Literal `%`, `/`, and `~` in explicit `key=` or stable
+item-key values are escaped as uppercase `%25`, `%2F`, and `%7E` in full keys.
+`sig_item` remains the raw innermost item key; signal `meta.key` carries the
+escaped unambiguous full path.
+
+Node APIs accept an exact full key, a unique bare `#id`/`id`, or a unique
+authored suffix rooted at an id (`#list/rows`). Component call ids resolve to
+the actual first body root. Ambiguous shorthand fails with candidates. Prefer
+generated constants or copy `sceneSnapshot().key`/`scene::key_of` rather than
+hand-building anonymous segments. Node state, scroll, focus, edits, and
+animation survive re-solve by canonical identity.
 
 ## Accessibility semantics
 
