@@ -36,7 +36,18 @@ export interface SlabSignalDetail {
    readonly text?: string;
 }
 
-await init({ module_or_path: new URL('./wasm/slab_kernel_bg.wasm', import.meta.url) });
+const KERNEL_WASM_URL = new URL('./wasm/slab_kernel_bg.wasm', import.meta.url);
+let kernelLoadError: unknown = null;
+try {
+   await init({ module_or_path: KERNEL_WASM_URL });
+} catch (error) {
+   kernelLoadError = error;
+   console.error(
+      `slab: kernel WASM failed to load from ${KERNEL_WASM_URL.href}. ` +
+         'Bundlers move modules; copy the wasm dir or map /wasm/*.',
+      error,
+   );
+}
 
 const BASE_CSS = `
 :host { display: block; position: relative; contain: layout style; }
@@ -65,6 +76,11 @@ const BASE_CSS = `
    border: 0; padding: 0; margin: 0; background: transparent;
    color: transparent; caret-color: transparent; outline: none;
    pointer-events: none; resize: none; overflow: hidden;
+}
+.slab-error {
+   position: relative; box-sizing: border-box; padding: 12px;
+   border: 1px solid #b42318; color: #b42318; background: #fef3f2;
+   font: 600 14px/1.4 system-ui, sans-serif; white-space: pre-wrap;
 }
 `;
 
@@ -371,6 +387,8 @@ export class SlabElement extends HTMLElement {
    /** Generated subclasses embed SLIR as base64 here (or a URL with slirIsUrl). */
    static slir: string | Uint8Array = '';
    static slirIsUrl = false;
+   /** Resolved token tables injected by generated subclasses, keyed by theme name. */
+   static tokenTables: Readonly<Record<string, Readonly<Record<string, string | number>>>> = {};
    /** Generated subclasses describe list element fields here. */
    static listSchemas: Readonly<Record<string, ListSchema>> = {};
    /** Generated schema rows referenced by nested list fields. */
@@ -398,6 +416,11 @@ export class SlabElement extends HTMLElement {
    #vw = 0;
    #vh = 0;
    #suppressInput = false;
+   #composing = false;
+   #imeFieldKey = '';
+   #focusNode = 0xffffffff;
+   #contextSelection: [number, number] | null = null;
+   #tokensAvailable = true;
    #ownImageUrls: string[] = [];
    #appliedFonts = new Set<string>();
    #ro: ResizeObserver | null = null;
@@ -433,7 +456,11 @@ export class SlabElement extends HTMLElement {
       this.#a11yLayer.className = 'slab-a11y';
       this.#a11yLayer.addEventListener('focusin', (event) => {
          const target = event.target;
-         if (target instanceof HTMLElement && target.dataset.slabKey) {
+         if (
+            target instanceof HTMLElement &&
+            target.dataset.slabKey &&
+            target.dataset.slabKey !== this.#imeFieldKey
+         ) {
             this.setFocus(target.dataset.slabKey, true);
          }
       });
@@ -449,6 +476,10 @@ export class SlabElement extends HTMLElement {
          // The semantic control remains the AT focus target and acts as the
          // browser's editable proxy; kernel edit state remains authoritative.
          event.preventDefault();
+         if (this.#suppressInput) {
+            this.#suppressInput = false;
+            return;
+         }
          if (!event.isComposing && event.inputType.startsWith('insert') && event.data) {
             this.#dispatch(kernelEvent(E_TEXT, { text: event.data }));
          }
@@ -518,6 +549,11 @@ export class SlabElement extends HTMLElement {
     * Returns false when the bytes fail to decode (previous content is
     * already torn down). Fires `slab-frame` after every subsequent paint. */
    loadSlir(bytes: Uint8Array): boolean {
+      if (kernelLoadError !== null) {
+         this.#showKernelError();
+         return false;
+      }
+      this.#tokensAvailable = false;
       this.#inited = true; // supersedes any pending static-slir boot
       this.#teardown();
       if (!this.#mount(bytes, false)) return false;
@@ -531,6 +567,10 @@ export class SlabElement extends HTMLElement {
    async #init(): Promise<void> {
       if (this.#inited) return;
       this.#inited = true;
+      if (kernelLoadError !== null) {
+         this.#showKernelError();
+         return;
+      }
       const cls = slabConstructor(this);
       const bytes = await SlabElement.#loadSlir(cls);
       // Subclasses without embedded SLIR (live-preview hosts) mount later
@@ -540,6 +580,17 @@ export class SlabElement extends HTMLElement {
       this.#wire();
       this.#measure();
       this.#registerDebug();
+   }
+
+   #showKernelError(): void {
+      if (this.shadowRoot?.querySelector('.slab-error')) return;
+      const error = document.createElement('div');
+      error.className = 'slab-error';
+      error.setAttribute('role', 'alert');
+      error.textContent =
+         `Slab could not load its kernel WASM from ${KERNEL_WASM_URL.href}.\n` +
+         'Bundlers move modules; copy the wasm dir or map /wasm/*.';
+      this.shadowRoot?.append(error);
    }
 
    /** Decode SLIR and build painter + holes; re-applies buffered attrs, props,
@@ -913,13 +964,17 @@ export class SlabElement extends HTMLElement {
    #listen(): void {
       this.addEventListener('pointerdown', (event) => {
          if (this.#overHole(event)) return;
-         event.preventDefault();
+         const contextSelection: [number, number] | null =
+            event.button === 2 && this.#focusNode !== 0xffffffff
+               ? [this.#ime.selectionStart, this.#ime.selectionEnd]
+               : null;
          if (event.button === 0) {
+            event.preventDefault();
             this.setPointerCapture(event.pointerId);
             this.#ime.focus({ preventScroll: true });
          }
          const { x, y } = this.#xy(event);
-         this.#dispatch(
+         const effects = this.#dispatch(
             kernelEvent(E_POINTER_DOWN, {
                x,
                y,
@@ -928,6 +983,11 @@ export class SlabElement extends HTMLElement {
                modifiers: modsOf(event),
             }),
          );
+         if (contextSelection && (effects.has_ime || this.#focusNode !== 0xffffffff)) {
+            this.#contextSelection = contextSelection;
+            event.preventDefault();
+            this.#restoreContextSelection();
+         }
       });
       this.addEventListener('pointermove', (event) => {
          const { x, y } = this.#xy(event);
@@ -965,13 +1025,21 @@ export class SlabElement extends HTMLElement {
                modifiers: modsOf(event),
             }),
          );
+         if (event.button === 2 && this.#contextSelection) {
+            event.preventDefault();
+            this.#restoreContextSelection();
+         }
       };
       this.addEventListener('pointerup', pointerUp);
+      this.addEventListener('contextmenu', () => {
+         if (!this.#contextSelection) return;
+         setTimeout(() => {
+            this.#restoreContextSelection();
+            this.#contextSelection = null;
+         }, 0);
+      });
       this.addEventListener('pointercancel', () => {
          this.#dispatch(kernelEvent(E_BLUR));
-      });
-      this.addEventListener('contextmenu', (event) => {
-         if (!this.#overHole(event)) event.preventDefault();
       });
       this.addEventListener(
          'wheel',
@@ -992,12 +1060,13 @@ export class SlabElement extends HTMLElement {
          { passive: false },
       );
       this.addEventListener('keydown', (event) => {
-         if (event.isComposing || event.keyCode === 229) return;
+         if (this.#overHole(event)) return;
+         if (this.#composing || event.isComposing || event.keyCode === 229) return;
          const effects = this.#dispatch(
             kernelEvent(E_KEY_DOWN, { key: event.key, modifiers: modsOf(event) }),
          );
-         // Printable keys reach the textarea and return as E_TEXT. Enter is
-         // always kernel-owned to avoid a duplicate textarea insertion.
+         // Printable keys reach the textarea and return through beforeinput.
+         // Enter is always kernel-owned to avoid a duplicate insertion.
          if (
             event.key === 'Enter' ||
             (effects.repaint && (event.key.length > 1 || event.key === ' '))
@@ -1005,42 +1074,80 @@ export class SlabElement extends HTMLElement {
             event.preventDefault();
          }
       });
-      this.#ime.addEventListener('input', (event) => {
-         if (!(event instanceof InputEvent) || event.isComposing) return;
+      this.#ime.addEventListener('beforeinput', (event) => {
+         if (event.isComposing || this.#composing) return;
          if (this.#suppressInput) {
+            event.preventDefault();
             this.#suppressInput = false;
-            this.#ime.value = '';
+            this.#syncImeText();
             return;
          }
-         const text = event.data ?? this.#ime.value;
-         this.#ime.value = '';
-         if (text !== '') this.#dispatch(kernelEvent(E_TEXT, { text }));
+         if (
+            (event.inputType === 'insertText' || event.inputType === 'insertReplacementText') &&
+            event.data
+         ) {
+            const start = this.#ime.selectionStart;
+            event.preventDefault();
+            this.#dispatch(kernelEvent(E_TEXT, { text: event.data }));
+            const caret = start + event.data.length;
+            this.#ime.setSelectionRange(caret, caret);
+         }
       });
-      this.addEventListener('compositionstart', () => {
+      this.#ime.addEventListener('input', (event) => {
+         if (!(event instanceof InputEvent) || event.isComposing || this.#composing) return;
+         if (this.#suppressInput) this.#suppressInput = false;
+         this.#syncImeText();
+      });
+      this.addEventListener('compositionstart', (event) => {
+         if (!this.#editingEvent(event) || this.#composing) return;
+         this.#composing = true;
          this.#dispatch(kernelEvent(E_COMPOSITION_START));
       });
       this.addEventListener('compositionupdate', (event) => {
+         if (!this.#editingEvent(event)) return;
+         if (!this.#composing) return;
          this.#dispatch(kernelEvent(E_COMPOSITION_UPDATE, { text: event.data ?? '' }));
       });
       this.addEventListener('compositionend', (event) => {
+         if (!this.#editingEvent(event)) return;
+         if (!this.#composing) return;
+         this.#dispatch(kernelEvent(E_COMPOSITION_END, { text: event.data ?? '' }));
+         this.#composing = false;
+         const imeOwned = event.composedPath()[0] === this.#ime;
+         if (imeOwned) this.#ime.focus({ preventScroll: true });
+         // Chromium emits a final insertText after compositionend. The kernel
+         // already committed this text, so consume that browser echo.
          this.#suppressInput = true;
          setTimeout(() => {
             this.#suppressInput = false;
+            if (imeOwned && this.#focusNode !== 0xffffffff) {
+               this.#ime.focus({ preventScroll: true });
+            }
+            this.#syncImeText();
          }, 0);
-         this.#ime.value = '';
-         this.#dispatch(kernelEvent(E_COMPOSITION_END, { text: event.data ?? '' }));
       });
       this.addEventListener('paste', (event) => {
+         if (!this.#editingEvent(event)) return;
          const text = event.clipboardData?.getData('text/plain') ?? '';
          event.preventDefault();
          if (text !== '') this.#dispatch(kernelEvent(E_PASTE, { text }));
       });
       this.addEventListener('cut', (event) => {
-         event.preventDefault();
+         if (!this.#editingEvent(event)) return;
+         const text = this.#ime.value.slice(this.#ime.selectionStart, this.#ime.selectionEnd);
+         if (event.clipboardData) {
+            event.clipboardData.setData('text/plain', text);
+            event.preventDefault();
+         }
          this.#dispatch(kernelEvent(E_CUT));
       });
-      this.addEventListener('copy', () => {
-         // Kernel copy is a no-op (§15.6): clipboard is embedding territory.
+      this.addEventListener('copy', (event) => {
+         if (!this.#editingEvent(event)) return;
+         const text = this.#ime.value.slice(this.#ime.selectionStart, this.#ime.selectionEnd);
+         if (event.clipboardData) {
+            event.clipboardData.setData('text/plain', text);
+            event.preventDefault();
+         }
          this.#dispatch(kernelEvent(E_COPY));
       });
       this.addEventListener('focusout', (event) => {
@@ -1066,6 +1173,21 @@ export class SlabElement extends HTMLElement {
          if (node instanceof HTMLElement && node.classList.contains('slab-hole')) return true;
       }
       return false;
+   }
+
+   #restoreContextSelection(): void {
+      const selection = this.#contextSelection;
+      if (!selection || this.#focusNode === 0xffffffff) return;
+      this.#ime.focus({ preventScroll: true });
+      this.#ime.setSelectionRange(selection[0], selection[1]);
+   }
+
+   #editingEvent(event: Event): boolean {
+      const target = event.composedPath()[0];
+      return (
+         target === this.#ime ||
+         (target instanceof HTMLElement && target.dataset.slabEditor === 'true')
+      );
    }
 
    #dispatch(event: KernelEvent): Effects {
@@ -1148,12 +1270,33 @@ export class SlabElement extends HTMLElement {
       } else {
          this.#caret.hidden = true;
       }
-      this.#editFocus = effects.has_ime ? effects.focus : 0xffffffff;
+      this.#focusNode = effects.has_ime ? effects.focus : 0xffffffff;
+      this.#editFocus = this.#focusNode;
       if (effects.has_ime) {
          this.#ime.style.left = `${effects.ime_x}px`;
          this.#ime.style.top = `${effects.ime_y}px`;
-         this.#ime.style.height = `${effects.ime_h}px`;
+         this.#ime.style.width = `${Math.max(1, effects.ime_w)}px`;
+         this.#ime.style.height = `${Math.max(1, effects.ime_h)}px`;
+         if (!this.#composing) this.#syncImeText();
+      } else {
+         this.#imeFieldKey = '';
+         this.#ime.value = '';
       }
+   }
+
+   #syncImeText(): void {
+      const inst = this.#inst;
+      if (!inst || this.#focusNode === 0xffffffff) return;
+      const node = this.sceneSnapshot().find((candidate) => candidate.node === this.#focusNode);
+      if (!node) return;
+      const text = inst.field_text(node.key);
+      if (text === undefined) return;
+      const changedField = this.#imeFieldKey !== node.key;
+      const start = changedField ? text.length : Math.min(this.#ime.selectionStart, text.length);
+      const end = changedField ? text.length : Math.min(this.#ime.selectionEnd, text.length);
+      this.#imeFieldKey = node.key;
+      if (this.#ime.value !== text) this.#ime.value = text;
+      this.#ime.setSelectionRange(start, end);
    }
 
    // ----------------------------------------------------------------- params
@@ -1228,6 +1371,26 @@ export class SlabElement extends HTMLElement {
    /** Last value set through the property/attribute surface (not kernel state). */
    getParam(name: string): unknown {
       return this.#props.get(name);
+   }
+
+   /** Replace or create one keyed field buffer and place its caret at the end. */
+   setFieldText(key: string, text: string): boolean {
+      const inst = this.#inst;
+      if (!inst?.set_field_text(key, text)) return false;
+      this.#schedule();
+      return true;
+   }
+
+   /** Read one keyed field buffer, or undefined when the key is not an editable field. */
+   fieldText(key: string): string | undefined {
+      return this.#inst?.field_text(key);
+   }
+
+   /** Read one resolved generated token for the active theme. */
+   getToken(path: string): string | number | undefined {
+      if (!this.#tokensAvailable) return undefined;
+      const tables = slabConstructor(this).tokenTables;
+      return tables[this.getTheme()]?.[path];
    }
 
    /** Validate, then replace a root or nested declared list and its descendants. */
@@ -1672,19 +1835,25 @@ export class SlabElement extends HTMLElement {
          element.toggleAttribute('data-slab-focused', node.focused);
          const editor = node.focused && node.node === this.#editFocus;
          element.dataset.slabEditor = editor ? 'true' : 'false';
-         if (editor) element.setAttribute('contenteditable', 'plaintext-only');
-         else element.removeAttribute('contenteditable');
+         if (editor && element.getAttribute('contenteditable') !== 'plaintext-only') {
+            element.setAttribute('contenteditable', 'plaintext-only');
+         } else if (!editor && element.hasAttribute('contenteditable')) {
+            element.removeAttribute('contenteditable');
+         }
          const acceptsFocus =
             (node.flags & F_FOCUSABLE) !== 0 && (node.flags & F_INERT) === 0 && !node.disabled;
          if (acceptsFocus) {
             focusable.push(element);
             if (node.focused) focused = element;
          } else {
-            element.removeAttribute('tabindex');
+            if (element.hasAttribute('tabindex')) element.removeAttribute('tabindex');
          }
       }
       const entry = focused ?? focusable[0] ?? null;
-      for (const element of focusable) element.tabIndex = element === entry ? 0 : -1;
+      for (const element of focusable) {
+         const tabIndex = element === entry ? 0 : -1;
+         if (element.tabIndex !== tabIndex) element.tabIndex = tabIndex;
+      }
 
       const activeElement = this.shadowRoot?.activeElement;
       if (focused && activeElement !== this.#ime && activeElement !== focused) {

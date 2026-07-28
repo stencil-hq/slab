@@ -81,6 +81,14 @@ export class KInst {
      */
     each_window_json(each: string): string;
     /**
+     * Returns one keyed field's committed text.
+     */
+    field_text(key: string): string | undefined;
+    /**
+     * Returns the focused node, or `u32::MAX` when focus is clear.
+     */
+    focus(): number;
+    /**
      * Registers runtime font metrics and returns the selected font-table index.
      */
     font_register(family: string, weight: number, upem: number, ascent: number, descent: number, line_gap: number, default_advance: number, codepoints: Uint32Array, glyphs: Uint32Array, advances: Uint32Array): number;
@@ -144,6 +152,10 @@ export class KInst {
      */
     constructor(slir: Uint8Array);
     /**
+     * Returns one current parameter value as JSON.
+     */
+    param_json(name: string): string | undefined;
+    /**
      * Scrolls ancestors minimally to reveal a keyed node.
      */
     reveal(key: string, margin: number): boolean;
@@ -167,6 +179,10 @@ export class KInst {
      * Updates viewport and client environment inputs.
      */
     set_env(vw: number, vh: number, client: number, dark: boolean, coarse: boolean): void;
+    /**
+     * Replaces one keyed field edit buffer and queues its Change signal.
+     */
+    set_field_text(key: string, text: string): boolean;
     /**
      * Moves focus to a keyed focusable node; an empty key clears focus.
      */
@@ -242,6 +258,8 @@ export interface InitOutput {
     readonly kinst_dispatch_dump_json: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number) => [number, number];
     readonly kinst_dispatch_json: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number) => [number, number];
     readonly kinst_each_window_json: (a: number, b: number, c: number) => [number, number];
+    readonly kinst_field_text: (a: number, b: number, c: number) => [number, number];
+    readonly kinst_focus: (a: number) => number;
     readonly kinst_font_register: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number, o: number) => number;
     readonly kinst_frame: (a: number, b: number) => number;
     readonly kinst_frame_json: (a: number, b: number) => [number, number];
@@ -257,12 +275,14 @@ export interface InitOutput {
     readonly kinst_lift_animations_json: (a: number) => [number, number];
     readonly kinst_list_len: (a: number, b: number, c: number, d: number) => number;
     readonly kinst_new: (a: number, b: number) => [number, number, number];
+    readonly kinst_param_json: (a: number, b: number, c: number) => [number, number];
     readonly kinst_reveal: (a: number, b: number, c: number, d: number) => number;
     readonly kinst_reveal_item: (a: number, b: number, c: number, d: number, e: number) => number;
     readonly kinst_scene_json: (a: number) => [number, number];
     readonly kinst_selftest_counts_json: (a: number, b: number) => [number, number];
     readonly kinst_set_divider: (a: number, b: number, c: number, d: number) => number;
     readonly kinst_set_env: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
+    readonly kinst_set_field_text: (a: number, b: number, c: number, d: number, e: number) => number;
     readonly kinst_set_focus: (a: number, b: number, c: number, d: number) => number;
     readonly kinst_set_hole_size: (a: number, b: number, c: number, d: number) => void;
     readonly kinst_set_list_field: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number) => number;

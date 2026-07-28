@@ -19,9 +19,20 @@ bunx @stencil-hq/slab gen wc doc.slab -o dist --tag my-doc
 <my-doc style="display:block;width:800px;height:600px"></my-doc>
 ```
 
-Set attributes/properties for document params; listen for `CustomEvent`s for
-signals. Keep the emitted runtime and `slab_kernel_bg.wasm` sidecar next to the
-generated module when deploying.
+Set attributes or properties for document params. Use `setFieldText` and
+`fieldText` for keyed edit buffers, and use `getToken` for generated
+active-theme tokens. Listen for authored signals as `CustomEvent`s.
+
+Keep the emitted runtime and `wasm/slab_kernel_bg.wasm` sidecar at their
+generated relative paths. Bundlers change `import.meta.url`; copy the `wasm/`
+directory next to the served bundle or map `/wasm/*` to it. A missing kernel
+WASM logs its attempted URL and renders a visible element error.
+
+Web fields forward IME composition through the kernel and position the hidden
+textarea at the kernel IME rectangle. Secondary clicks stay available to
+authored `context=` signals and do not clear field editing. Browser-native
+text menus are not dependable because the painted node, not the textarea, is
+the context-menu target. Build a host menu from the Context `CustomEvent`.
 
 ## Direct use
 

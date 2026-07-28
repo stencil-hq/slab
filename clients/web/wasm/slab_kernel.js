@@ -284,6 +284,30 @@ export class KInst {
         }
     }
     /**
+     * Returns one keyed field's committed text.
+     * @param {string} key
+     * @returns {string | undefined}
+     */
+    field_text(key) {
+        const ptr0 = passStringToWasm0(key, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.kinst_field_text(this.__wbg_ptr, ptr0, len0);
+        let v2;
+        if (ret[0] !== 0) {
+            v2 = getStringFromWasm0(ret[0], ret[1]).slice();
+            wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+        }
+        return v2;
+    }
+    /**
+     * Returns the focused node, or `u32::MAX` when focus is clear.
+     * @returns {number}
+     */
+    focus() {
+        const ret = wasm.kinst_focus(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
      * Registers runtime font metrics and returns the selected font-table index.
      * @param {string} family
      * @param {number} weight
@@ -506,6 +530,22 @@ export class KInst {
         return this;
     }
     /**
+     * Returns one current parameter value as JSON.
+     * @param {string} name
+     * @returns {string | undefined}
+     */
+    param_json(name) {
+        const ptr0 = passStringToWasm0(name, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.kinst_param_json(this.__wbg_ptr, ptr0, len0);
+        let v2;
+        if (ret[0] !== 0) {
+            v2 = getStringFromWasm0(ret[0], ret[1]).slice();
+            wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+        }
+        return v2;
+    }
+    /**
      * Scrolls ancestors minimally to reveal a keyed node.
      * @param {string} key
      * @param {number} margin
@@ -585,6 +625,20 @@ export class KInst {
      */
     set_env(vw, vh, client, dark, coarse) {
         wasm.kinst_set_env(this.__wbg_ptr, vw, vh, client, dark, coarse);
+    }
+    /**
+     * Replaces one keyed field edit buffer and queues its Change signal.
+     * @param {string} key
+     * @param {string} text
+     * @returns {boolean}
+     */
+    set_field_text(key, text) {
+        const ptr0 = passStringToWasm0(key, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(text, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.kinst_set_field_text(this.__wbg_ptr, ptr0, len0, ptr1, len1);
+        return ret !== 0;
     }
     /**
      * Moves focus to a keyed focusable node; an empty key clears focus.
