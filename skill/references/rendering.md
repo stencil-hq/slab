@@ -146,6 +146,7 @@ driver must report the generated `cap-*` note once, never invent a fallback.
 | recursive/virtual lists, para runs, themes | full | full | full | full | full |
 | anchored popover / a11y scene | full | full | full | full | full |
 | holes | full | full | `cap-hole` | empty box | empty box |
+| glyph fallback (uncovered runs) | system font stack | tofu boxes | raw codepoint passthrough (terminal fonts) | viewer-resolved text | blank at charged advance |
 
 “A11y full” means complete retained scene semantics on every client. Shipped
 web and native/GPU adapters materialize platform trees; TUI and static output
@@ -167,11 +168,19 @@ multiples. Borders paint inside shared cells, so bordered boxes need
 Omitted text color uses the terminal foreground without an SGR color. Authored
 low-alpha color can vanish when the terminal background is unknown.
 
-Make glyph advance equal one cell or text paints wider than layout measured
-(collided gaps, clipped right-aligned siblings): set
-`when tui { family="mono" size=13.333 }` at the root. JetBrains Mono's
-600/1000em advance × 13.333 = 8.0u = exactly one cell, so vector metrics
-match the grid.
+Match glyph advance to the cell grid on BOTH axes or text drifts off it: set
+the full triplet `when tui { family="mono" size=13.333 leading=1.2 }` at the
+root. Columns: JetBrains Mono's 600/1000em advance × 13.333 = 8.0u = exactly
+one cell, so vector metrics match the grid. Rows: 13.333 × leading 1.2 = 16.0u
+= exactly one row; the default leading 1.4 yields 18.67u line boxes, so any
+stacked text column straddles cell boundaries and degrades (a progress track
+astride a row boundary paints as a hairline `────`). Wider spacing belongs in
+cell-multiple `gap`/`pad`, not leading.
+
+Codepoints missing from the resolved embedded family pass through to the
+terminal raw — the terminal paints CJK/emoji with its own font stack while the
+grid charges East-Asian-Width cell advances — and still emit `glyph-missing`
+diagnostics.
 
 Runtime paths use the same cell approximation as compiled paths. Icons ignore
 their scale transform and render in design-box coordinates; provide a

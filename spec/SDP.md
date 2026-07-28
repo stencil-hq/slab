@@ -14,8 +14,11 @@ request object and produces exactly one response line, in input order. A server
 MUST NOT emit unsolicited protocol lines. Blank input lines are ignored.
 
 The standalone command uses stdin/stdout by default. With `--port N`, it listens
-on `127.0.0.1:N`, accepts one connection at a time, and retains the session
-across sequential connections. `protocol.quit` terminates either transport.
+on `127.0.0.1:N`, serves one connection at a time, and retains the session
+across sequential connections. While a connection is being served, any
+additional connection receives exactly one `-32000` error line with a null id
+(`session busy: another client holds this SDP session`) and is then closed; a
+client MUST NOT wait for the slot. `protocol.quit` terminates either transport.
 Binary payloads embedded in JSON use padded RFC 4648 base64. SVG and terminal
 cell payloads remain UTF-8 strings.
 
@@ -24,6 +27,9 @@ A request has this form:
 ```json
 {"id": 17, "method": "input.click", "params": {"key": "#toolbar/#save"}}
 ```
+
+The `key` value above is an id-rooted locator; §4 defines the full addressing
+grammar.
 
 - `method` MUST be a string.
 - `params`, when present, MUST be an object. Omission is equivalent to `{}`.
@@ -101,6 +107,14 @@ Bare ids and id-rooted suffixes MUST be unique. For a component-call id, a
 unique match resolves to the first actual node under the call segment: the
 expanded definition root. Exact full keys always take precedence.
 
+Id-rooted suffixes tunnel through `~item` markers: the suffix is matched
+against the full canonical key of every retained node, including concrete list
+descendants, so `#rows~t2/#task/#toggle` uniquely addresses one item's toggle
+without spelling the whole path from the root. Unmaterialized virtual items
+have no retained node and cannot be addressed this way; the exception is
+`scroll.reveal`, which resolves a trailing `each~key` locator through list
+data (§5.2).
+
 Every SDP `each` parameter accepts the same canonical full-key, unique bare-id,
 and unique id-rooted-suffix forms, but the resolved node MUST be an `each` node
 valid for the requested operation. Thus a document whose canonical each key is
@@ -125,14 +139,15 @@ constants. Human-authored probes MAY use unique ids and id-rooted suffixes.
 | `doc.open_slir` | `{slir:base64,name:string?}` | Installs precompiled SLIR with `doc.load` semantics; skips the compiler. |
 | `doc.reload` | none | Reloads the current path with `doc.load` semantics. |
 | `doc.info` | none | File, declarations, themes, holes, signals, environment, and clock. |
+| `doc.diags` | none | Cumulative `{diags:[{code,line,msg}...]}` runtime diagnostics; deduplicated, ordered by first occurrence, cleared only by a successful load. |
 | `env.get` | none | `{width,height,client,dark,coarse,theme}`. |
 | `env.set` | any `env.get` fields | Atomically merges supplied fields; theme validation runs last. |
 | `clock.get` | none | `{t}` in milliseconds. |
 | `clock.advance` | `{ms:number}` | Requires finite `ms >= 0`; returns the new `{t}`. |
 | `param.set` | `{name,value}` or `{sets:{...}}` | Validates the entire write atomically and returns `{ok:true}`. |
 | `param.get` | `{name}` | Returns the live kernel `{value}`. |
-| `field.set` | `{key,text}` | Returns `{ok:true,changed}`. |
-| `field.get` | `{key}` | Returns committed edit text or resolved initial content. |
+| `field.set` | `{key,text}` | Returns `{ok:true,changed}`; a key that is not a field is a `-32000` error. |
+| `field.get` | `{key}` | Returns committed edit text or resolved initial content; same non-field error. |
 | `state.set` | `{name,on}` | Sets a global runtime state. |
 | `state.node` | `{key,name,on}` | Sets state on one resolved node. |
 | `focus.get` | none | `{focus,key,visible}`; `slir::NONE` represents no focus. |
@@ -144,6 +159,14 @@ states, focus, edits, scroll offsets, image registrations, and hole sizes reset.
 A compile failure is returned as `{ok:false,diags}` and leaves the prior document
 running. If a requested theme does not exist, the authored base theme is used
 and `theme_reset:true` is returned.
+
+A `pct` parameter accepts the number `60` or the string `"60%"` on write.
+`param.get` always returns the bare number (`60`), so the numeric spelling is
+the canonical round-trip form and the `%` string is write-side convenience
+only. `pct` is the generic parent-relative percentage type and is deliberately
+unclamped — `150%` is a legitimate sizing value. A host that projects a pct
+param with progress-bar semantics MUST clamp in its own model; the kernel does
+not.
 
 `doc.open` is the load path for embedders without a filesystem, such as a
 WebAssembly host that reads `.slab` text itself and passes it in. `name` only
@@ -169,20 +192,25 @@ Both methods return the same result shape as `doc.load` and appear in
 | `img.data` | `{img}` | Base64 `{data,bytes}`. |
 | `scroll.get` | `{key,axis:0|1}` | `{axis,off}`. |
 | `scroll.set` | `{key,axis:0|1,off}` | Sets and returns the clamped offset. |
-| `scroll.reveal` | `{key,margin}` | Minimally reveals a node through all scroll ancestors. |
+| `scroll.reveal` | `{key,margin}` | Minimally reveals a node through all scroll ancestors; a trailing `each~key` locator resolves through list data even when the item is unmaterialized. |
 | `list.get_len` | `{param,path}` | `{len}` for a typed list path. |
 | `list.set_len` | `{param,path,n}` | Resizes one list. |
 | `list.set_field` | `{param,path,index,field,kind,value}` | Sets one typed item field. |
 | `list.set_key` | `{param,path,index,key}` | Sets one stable item key. |
-| `list.reveal_item` | `{each,index,align}` | Reveals a virtual item; align is 0 nearest, 1 start, 2 center, 3 end. |
+| `list.reveal_item` | `{each,index,align}` | Reveals a virtual item; align is 0 start, 1 center, 2 end, 3 nearest. |
 | `list.window` | `{each}` | Returns materialized half-open `{start,end}`. |
-| `divider.get` | `{key}` | `{extent}`. |
+| `divider.get` | `{key}` | `{extent}`; `-1` is the unset sentinel: the divider still sits at its authored position and no overlay extent has been recorded. |
 | `divider.set` | `{key,extent}` | Sets the divider overlay. |
 | `hole.list` | none | Visible hole geometry and clipping. |
 | `hole.size` | `{name,w,h}` or `{hole,w,h}` | Records host-content size. |
 
 List data paths such as `0.children` address values inside a typed list
 parameter; they are not scene keys. `each` locators use the grammar in §4.
+
+`list.reveal_item` alignment values are the kernel's `inst_reveal_item` enum
+(`0 start | 1 center | 2 end | 3 nearest`); `skill/references/hosts.md`
+documents the same mapping for embedded hosts. A keyed `scroll.reveal` on a
+virtual item uses nearest alignment.
 
 ### 5.3 Scene, frame, input, and rendering
 
@@ -209,9 +237,20 @@ parameter; they are not scene keys. `each` locators use the grammar in §4.
 
 Modifiers are `shift`, `alt`, `ctrl`, and `meta`. Input success returns
 `{effects,t}`. Effects contain repaint, ordered signals and metadata, changed
-scroll offsets, caret and IME rectangles, cursor, and focus. A host-consumed
-key/text result additionally contains `host_consumed:true` and is not dispatched
-to the kernel.
+scroll offsets, caret and IME rectangles, cursor, and focus. Signal metadata
+`key` is always the emitter node path; pointer-derived signals additionally
+carry `hit_key` (the deepest hit-target canonical key) and keyboard-driven
+activations carry `pressed_key` (the key name). Both fields are omitted when
+absent; `spec/FRAME.md` is normative for their composition. A host-consumed
+key/text result additionally contains `host_consumed:true` and is not
+dispatched to the kernel.
+
+`input.key` dispatches key-downs only: a printable key with focus inside an
+editing field neither inserts text (text arrives exclusively through
+`input.text`) nor falls through to `keys=` shortcut maps, because the focused
+editor claims printable keys first. Automation that wants typing sends
+`input.text`; automation that wants a shortcut ensures focus is not composing
+in a field.
 
 `render.cells` accepts `caret`, defaulting to false. When true, the returned
 grid carries the kernel caret overlaid on the cell it occupies, which is what a
@@ -220,11 +259,16 @@ live terminal client paints.
 ### 5.4 Accessibility and diagnostics
 
 A render `path` writes the payload and returns its path and byte count instead
-of embedding data. `doc.load` diagnostics have ordered
+of embedding data. A relative `path` resolves against the SDP server's working
+directory, not the client's. `doc.load` diagnostics have ordered
 `{level,code,msg,line,remedy?}` entries. Render `notes` and diagnostics embedded
 in `frame.dump` are ordered deterministic runtime observations, including
-layout degradation and missing-resource reports. Automation MUST inspect them;
-hosts SHOULD expose them to developers rather than silently dropping them.
+layout degradation and missing-resource reports; each is reported once per
+solve, so an intermediate solve consumes that solve's stream. `doc.diags`
+(§5.1) is the cumulative alternative: it retains every distinct runtime
+diagnostic since the current document loaded and can be queried at any time.
+Automation MUST inspect diagnostics; hosts SHOULD expose them to developers
+rather than silently dropping them.
 
 `scene.tree` and `scene.node` expose the resolved accessibility contract:
 role, label, description, disabled/focused state, checked, expanded, selected,
@@ -275,6 +319,27 @@ host explicitly delegates to SDP.
 The host processes each `PumpResponse.effects` through the same ordered signal
 handler used for local input. It MUST NOT run a second solver or bypass the
 shared kernel to emulate SDP behavior.
+
+### 6.3 Window-mounted viewer (`slab-native --port`)
+
+`slab-native FILE.slab --port N` mounts the viewer's live window kernel as an
+SDP session on `127.0.0.1:N` (`--port 0` picks a free port and prints it).
+Requests are drained on the window's event loop through a `RequestPump`, so
+automation drives exactly the instance the window paints: every mutating
+request repaints the window, and window input (pointer, keyboard, IME) and SDP
+requests interleave on one kernel. Framing, ordering, and the one-client
+`session busy` rule are identical to `slab drive --port` (§1).
+
+Divergences from a standalone `slab drive` session:
+
+- The document is compiled from `FILE.slab` at startup; `doc.load`, `doc.open`,
+  `doc.open_slir`, and `doc.reload` are denied per §6.1 (the window's renderer
+  registers image and font resources once).
+- The environment (viewport, scale, dark) tracks the real window; `env.set`
+  cannot resize the OS window.
+- Signals dispatched by SDP requests print to the viewer's stdout exactly like
+  window-originated signals.
+- `protocol.quit` closes the window and the process exits with status 0.
 
 ## 7. In-process embedding
 

@@ -132,12 +132,13 @@ cond       := IDENT | REF | "!" (IDENT | REF)
   never reaches styling. Values may be strings, numbers, or idents.
 - A newline ends a node header. A backslash immediately before the newline
   continues it. Indentation alone never continues a header.
-- `act=`, `field=`, `submit=`, `press=`, `context=`, `dblclick=`, `drag=`,
-  `drop=`, `resize=`, `pointer-move=`, `pointer-up=`, `drag-update=`, and
-  `drag-end=` are **reserved attributes** binding signals (§13.3). `act=`,
-  `field=`, `press=`, and `drag=` imply `focusable`; `submit=` is legal only
-  on a `field=` text node, `resize=` is emitted by a divider (§6.11), and the
-  two drag companion bindings require `drag=` on the same node.
+- `act=`, `field=`, `submit=`, `cancel=`, `press=`, `context=`, `dblclick=`,
+  `drag=`, `drop=`, `resize=`, `pointer-move=`, `pointer-up=`, `drag-update=`,
+  and `drag-end=` are **reserved attributes** binding signals (§13.3). `act=`,
+  `field=`, `press=`, and `drag=` imply `focusable`; `submit=` and `cancel=`
+  are legal only on a `field=` text node, `resize=` is emitted by a divider
+  (§6.11), and the two drag companion bindings require `drag=` on the same
+  node.
 - `field-sync=host` is a compiler-only reserved attribute on a field whose
   Change signal is intentionally reconciled by its host. It suppresses the
   otherwise actionable `warn[field-sync]`; `field-sync=implicit` restores the
@@ -148,6 +149,8 @@ cond       := IDENT | REF | "!" (IDENT | REF)
   duplicates the source subtree above normal content while the drag is active.
 - `escape-blur` is an opt-in flag legal on an editable node. Escape clears
   focus while retaining its EditState; without it Escape stays app-owned.
+  When the node also binds `cancel=`, the kernel emits that signal on the
+  escape-blur with the retained buffer text (§13.3).
 - `keys=` is an authorable reserved-meaning attribute. The concise
   `keys=Escape,F2 act=cancel` form routes every listed key to one `act=`
   signal. The typed `keys=Escape:close,F2:rename` form routes each key to its
@@ -944,7 +947,7 @@ Compile time (`slab-syntax` + `slab-compile`):
 | `dup-hole` | error | one hole name declared twice |
 | `attr` | warning | unknown/ignored attribute for this node (also emitted at layout time) |
 | `dup-param` | warning | duplicate param declaration; the first wins |
-| `dup-signal` | warning | one signal name is bound to both a non-text trigger and a text-payload trigger; same-shape fan-in is legal (Change, Submit, and Resize all carry text; §13.3) |
+| `dup-signal` | warning | one signal name is bound to both a non-text trigger and a text-payload trigger; same-shape fan-in is legal (Change, Submit, Resize, and Cancel all carry text; §13.3) |
 | `list-def` | error | `list(Def)` does not name an exported def schema (§13.4) |
 | `each-target` | error | `each` does not reference a root List param or an enclosing List-typed item prop |
 | `each-nest` | error | an `each` template contains a `hole` |
@@ -952,6 +955,8 @@ Compile time (`slab-syntax` + `slab-compile`):
 | `virtual-ctx` | error | `virtual` is nested or not a direct child of a main-axis scroll row/col |
 | `virtual-extent` | error | `virtual` has no positive numeric `item-extent` |
 | `shadow` | warning | a def param shadows an attribute/flag name or the `fill`/`hug` keywords (rule 8, §18) |
+| `a11y-name` | warning | a focusable or activation-bearing node has neither `label=` nor name-yielding text content; assistive technology announces an unnamed generic |
+| `inert-binder` | warning | a signal binder sits inside a statically `inert` subtree and can never fire |
 | `dup-token` | warning | token path redefined; last definition wins |
 | `dup-def` | warning | component redefined; last definition wins |
 | `dup-id` | warning | one `#id` resolves more than once (second site reported) |
@@ -1105,6 +1110,9 @@ hit behavior, pointer cursor, edit behavior, or tab stop.
   after every mutation. Caret-only moves repaint without a signal (§15.6).
 - `submit=NAME` — Submit (2); legal only on a `field=` text node, with the
   full committed text according to the Enter matrix (§15.6).
+- `cancel=NAME` — Cancel (14); legal only on a `field=` text node, emitted on
+  an escape-blur discard with the retained committed (never-submitted) buffer
+  text, so hosts observe cancelled edits without polling focus.
 - `press=NAME` — Press (3), on primary pointer-down before capture.
 - `context=NAME` — Context (4), on secondary pointer-down.
 - `dblclick=NAME` — Dblclick (5), on a host-counted double pointer-down.
@@ -1123,15 +1131,20 @@ hit behavior, pointer cursor, edit behavior, or tab stop.
 
 `act=`, `field=`, `press=`, and `drag=` imply `focusable`; the other bindings
 do not. One name may fan in from sites with the same payload shape. Change,
-Submit, and Resize are text-bearing; the other triggers are non-text. Reusing
-one name across those shapes warns `dup-signal`.
+Submit, Resize, and Cancel are text-bearing; the other triggers are non-text.
+Reusing one name across those shapes warns `dup-signal`.
 
 Every emitted signal carries an innermost list item key (or `""` outside an
 `each`) and a `SigMeta` in the parallel
 `Effects.sig_name/sig_text/sig_item/sig_meta` arrays. `SigMeta` is
-`{x,y,dx,dy,drag_dx,drag_dy,mods,button,clicks,key,src_key,src_item,cancelled,dropped}`:
-`key` is the emitter's full node-key path for pointer and direct-helper
-signals. Keyboard-driven Activate instead stores the fired key name in `key`.
+`{x,y,dx,dy,drag_dx,drag_dy,mods,button,clicks,key,hit_key,pressed_key,src_key,src_item,cancelled,dropped}`:
+`key` is ALWAYS the emitter's full node-key path, for every trigger and
+origin. Pointer-derived signals additionally carry `hit_key`, the full key of
+the deepest hit-target node under the pointer, so hosts can distinguish a
+press on a row body from one on a child control without timing hacks.
+Keyboard-driven activation (default Enter/Space and authored `keys=`) carries
+the fired key name in `pressed_key`. Both fields are `""` (omitted on JSON
+surfaces) when they do not apply.
 Keyboard-originated `x/y` are `-1/-1`; `dx/dy` are the originating event
 deltas; `drag_dx/drag_dy` are the current pointer displacement from the armed
 pointer-down origin when a drag is active (otherwise zero); and
@@ -1529,7 +1542,11 @@ signals and policy.
 
 ### 15.3 Focus
 
-`focusable` nodes participate in tab order; **document order IS tab order**.
+`focusable` nodes participate in tab order; **document order IS tab order**,
+with one exception: an `attach=` overlay subtree (§6.10) inserts into
+traversal immediately after its anchor node, before the anchor's own
+focusable descendants and following siblings, regardless of where the overlay
+is declared. Nested overlays resolve through their anchors recursively.
 `Tab`/`Shift-Tab` walk the ring, and arrow keys walk it whenever the focused
 node is neither an edit field nor a scrollable on that arrow's main axis
 (`Right`/`Down` forward, `Left`/`Up` back). Keyboard traversal minimally
@@ -1540,9 +1557,12 @@ Eligibility uses the current painted scene: effective inert, disabled, or
 non-focusable nodes, empty painted rectangles, and nodes wholly removed by a
 non-scroll clip are excluded. Merely off-screen descendants of scroll clips
 remain eligible so traversal can reveal them. When current focus becomes
-ineligible, restoration chooses the nearest following entry in the previous
-focusables list (then nearest preceding), else clears. A conditionally
-deactivated binder follows this rule while its retained EditState survives.
+ineligible, restoration first checks whether the focus sat inside an
+`attach=` overlay subtree that left the scene: if so, focus returns to the
+overlay's **anchor** node. Otherwise restoration chooses the nearest
+following entry in the previous focusables list (then nearest preceding),
+else clears. A conditionally deactivated binder follows this rule while its
+retained EditState survives.
 
 Keyboard focus sets `focus-visible`; pointer focus sets only `focus`. Focusing
 a `field=` node binds its EditState on first focus, seeded from content (§15.6).
@@ -1566,14 +1586,22 @@ directly to its paired signal and no `act=` is present. Both imply `focusable`.
 On key-down, dispatch walks from the focused scene node through its parents;
 the first enabled node whose active `keys` binding contains the event key
 receives the synthesized activate event for the selected signal. Its
-`SigMeta.key` is the fired key name. A disabled or conditionally inactive match
-is skipped so an enabled ancestor may handle it. Routing precedence is
-drag cancellation by Escape, editable `escape-blur`, field-edit commands,
-focused divider adjustment, focused scrolling, `keys=`, default Enter/Space
+`SigMeta.key` is the emitter's node path and `SigMeta.pressed_key` is the
+fired key name. A disabled or conditionally inactive match
+is skipped so an enabled ancestor may handle it. With **empty focus**, key
+dispatch starts directly at the document root's `keys=` map; when a focused
+walk leaves the key unhandled, it likewise falls back to the root map, so
+global shortcuts work before anything is focused. Routing precedence is
+drag cancellation by Escape, editable `escape-blur` (which also fires a
+`cancel=` binder with the retained buffer, §13.3), field-edit commands,
+focused divider adjustment, focused scrolling, page scrolling
+(PageUp/PageDown/Home/End against the nearest scroll ancestor, §15.5),
+`keys=` (focused walk, then the root-map fallback), default Enter/Space
 activation, then Tab/arrow focus navigation. `escape-blur` consumes Escape and
 clears focus; without that authored opt-in it remains available to `keys=` and
 application cancel/close semantics. While an edit field is focused, single
-printable keys stay in the text-input path; unconsumed named keys may bubble.
+printable keys stay in the text-input path and never reach any `keys=` map;
+unconsumed named keys may bubble.
 
 The portable named-key vocabulary is `Enter Space Escape Tab Backspace Delete
 Insert Home End PageUp PageDown ArrowLeft ArrowRight ArrowUp ArrowDown` and
@@ -1591,7 +1619,7 @@ Authored `Space` is canonicalized to the event key `" "`. Unknown names produce
   selection when the hit caret lies inside it; otherwise it collapses the
   selection at the hit caret. Other secondary and auxiliary downs do not focus
   or activate.
-- A primary down with `clicks == 2` fires the deepest enabled `dblclick=`
+- A primary down with `clicks >= 2` fires the deepest enabled `dblclick=`
   binding. When one is found, that gesture's later Activate is suppressed;
   ordinary single-click activation remains pointer-up over the captured node.
 - Each pointer move emits PointerMove on the deepest enabled `pointer-move=`
@@ -1659,11 +1687,19 @@ Wheel dispatch treats `dy` as the main-axis delta and `dx` as the cross-axis
 delta; Shift swaps them. Each delta routes to the deepest hit-path node with
 that axis active, so nested owners may consume different deltas and a
 `scroll=both` node may consume both in one dispatch. Every actual change emits
-one axis-qualified `Effects.scrolls` entry; a clamped no-op emits none. Keyboard
-scrolling remains main-axis only: focused columns consume `Up`/`Down`, focused
-rows consume `Left`/`Right`, and the off-axis pair may walk the focus ring.
-Arrow steps are 40u (200u with Shift), `PageUp`/`PageDown` step by viewport
-minus 40u, and `Home`/`End` select zero/maximum.
+one axis-qualified `Effects.scrolls` entry; a clamped no-op emits none.
+
+Keyboard scrolling is main-axis only. Arrow keys act on a **focused** scroll
+container: focused columns consume `Up`/`Down`, focused rows consume
+`Left`/`Right`, and the off-axis pair may walk the focus ring. Arrow steps are
+40u (200u with Shift). `PageUp`/`PageDown`/`Home`/`End` instead target the
+**nearest scroll-container ancestor of the focus** (including the focused
+node itself), or the **primary root scroller** — the first scroll container
+in materialized authored order — when nothing is focused. Page steps are
+deterministic: exactly one viewport extent per keypress; `Home`/`End` select
+zero/maximum. A page key that finds a scroll container is consumed even at
+the clamp edge; with no scroll container it stays available to `keys=`
+routing.
 
 `scrollbar=never|auto|always` controls geometry for every active axis (default
 `never`; `auto` requires overflow). `scrollbar-w` defaults to 4u and
@@ -1752,9 +1788,20 @@ unless they carry the `multiline` flag.
   `param.draft` under a differently named binder such as `field=draft_change`
   receives `warn[field-sync]` with two explicit choices: use `field=draft` for
   implicit synchronization, or, when the host intentionally handles
-  `draft_change`, add `field-sync=host` on that node. Diagnostics are emitted
-  once per authored field/param mismatch even when component/export expansion
-  visits the source repeatedly. Name equality is exact and intentional.
+  `draft_change`, add `field-sync=host` on that node. When the mismatched
+  content is a promoted prop of an exported def, the warning names the prop
+  and its export (`prop 'title' of export 'TaskRow'`) with the def's
+  declaration line instead of claiming a document text param. Diagnostics are
+  emitted once per authored field/param mismatch even when component/export
+  expansion visits the source repeatedly. Name equality is exact and
+  intentional.
+- The synchronization is bidirectional with a composition guard: a **host
+  write** to that same-named `text` param resets the field's edit buffer to
+  the new value whenever the field is **not composing** — the caret collapses
+  at the end, the replaced text remains one undo step, and no Change echoes
+  back. While an IME composition is active, the kernel buffer keeps priority
+  and the host value is ignored. This is the clear-on-submit contract: a host
+  answering Submit by writing `""` into the synced param empties the field.
 - The embedding owns IME plumbing and the clipboard. Web uses a hidden
   `<textarea>` for field focus and prevents its native Enter behavior after
   forwarding one key event, so the browser cannot duplicate a kernel newline
@@ -1957,6 +2004,7 @@ exporters print to stderr). Machine-readable source:
 | text-edit | full | degraded — cut/copy/paste do not reach the system clipboard (winit has no clipboard API) | full | none (`cap-edit`) | none (`cap-edit`) |
 | text-strike | full | full | full | full | full |
 | text-raster | degraded — browser-rasterized glyphs; kernel line breaks and advances are authoritative | full | degraded — wide clusters (EAW W/F, emoji presentation) occupy two cells; runs re-quantize to columns under the real font metrics | degraded — viewer-rasterized glyphs; textLength force-fits each run to the kernel-measured width | full |
+| glyph-fallback | degraded — uncovered runs paint with the browser's system font stack at kernel-charged fallback advances | degraded — uncovered runs paint as tofu boxes filling the kernel-charged fallback advances | degraded — uncovered codepoints pass through raw so the terminal paints them with its own fonts; the grid charges East-Asian-Width cell advances | degraded — uncovered runs render as viewer-resolved text force-fit to the kernel-charged fallback advances | degraded — uncovered runs reserve kernel-charged fallback advances but rasterize blank (no embedded fallback face) |
 
 <!-- support-chart:end -->
 

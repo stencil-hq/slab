@@ -121,9 +121,11 @@ bunfig — use `bun add @stencil-hq/slab` then `./node_modules/.bin/slab`.
 7. One shadow inline (`shadow=0,2,6,#0004`); layered shadows must be a list
    of presets/token refs (`shadow=shadow.crisp,shadow.lift`).
 8. TUI paints one cell per grapheme, but layout uses vector font metrics.
-   Use cell-multiple geometry and `pad=16,8`+ inside borders. Set
-   `when tui { family="mono" size=13.333 }`: the 600/1000em mono advance
-   becomes exactly 8u, so measured text matches the cell grid.
+   Use cell-multiple geometry and `pad=16,8`+ inside borders. Set the full
+   triplet `when tui { family="mono" size=13.333 leading=1.2 }`: the
+   600/1000em mono advance becomes exactly 8u (one column) and the line box
+   13.333 × 1.2 = 16u (one row). The default leading 1.4 yields 18.67u lines,
+   so any stacked text column drifts off the 16u row grid.
 9. Quarter-turn `rotate` (±90/270) participates in layout; any other angle is
    ink-only. TUI skips rotated subtrees.
 10. Dynamic rows come from `list(Def)` + `each`, including recursive child

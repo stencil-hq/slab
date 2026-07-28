@@ -52,9 +52,10 @@ for the complete grammar, especially recursive list defaults and token forms.
   `text`/`span` they set the content).
 - `\_` in strings = non-breaking space (widow control).
 - Reserved attrs on any node: `key=` (identity, never style). Signal binders:
-  `act=`, `field=`, `submit=`, `press=`, `context=`, `dblclick=`,
+  `act=`, `field=`, `submit=`, `cancel=`, `press=`, `context=`, `dblclick=`,
   `pointer-move=`, `pointer-up=`, `drag=`, `drag-update=`, `drag-end=`,
   `drop=`, `resize=`. `act`/`field`/`press`/`drag` imply `focusable`;
+  `submit=` and `cancel=` are legal only on a `field=` text node;
   placement and payload rules are in hosts.md. Use
   `keys=Escape,F2 act=cancel` when several keys share one action, or the typed
   `keys=Escape:close,F2:rename` map for distinct actions. A mapped `keys=`
@@ -69,8 +70,9 @@ for the complete grammar, especially recursive list defaults and token forms.
   `stack`/`canvas`.
 - `multiline` is legal only on a `field=` text node. `escape-blur` is an
   explicit editable-node opt-in: Escape clears focus while retaining the edit
-  buffer. `drag-update=`, `drag-end=`, and `drag-ghost` require `drag=` on that
-  same node. `virtual`, `item-extent`, `overscan`, and `sticky` are
+  buffer; with `cancel=NAME` the discard also emits that signal carrying the
+  retained text. `drag-update=`, `drag-end=`, and `drag-ghost` require `drag=`
+  on that same node. `virtual`, `item-extent`, `overscan`, and `sticky` are
   context-restricted below.
 - A `cond` ident resolves in order: client classes `web gpu tui svg png` →
   env idents `portrait landscape dark coarse` → component props → bool
@@ -531,6 +533,8 @@ Compile time:
 | `icon-body` / `icon-dup` | error | icon body is empty/non-static-path, or a name repeats |
 | `attr` | warning | unknown/ignored attr or misplaced reserved attr |
 | `shadow` | warning | def param shadows an attr/flag name or `fill`/`hug` |
+| `a11y-name` | warning | focusable/activation node has neither `label=` nor name-yielding text content — screen readers announce an unnamed generic |
+| `inert-binder` | warning | a signal binder sits inside a statically `inert` subtree and can never fire |
 | `dup-param` | warning | duplicate param declaration; first wins |
 | `dup-signal` | warning | one name bound to both Activate and a text-payload trigger (same-shape fan-in is legal) |
 | `dup-token` / `dup-def` | warning | token path / component redefined; last wins |

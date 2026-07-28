@@ -262,7 +262,7 @@ The attribute id mapping is shared by `crates/slab-slir/src/attrs.rs` and
 74 checked      75 expanded      76 selected      77 active-descendant
 78 controls     79 value-now     80 value-min     81 value-max     82 value-text
 83 modal        84 live          85 live-atomic   86 level         87 pos-in-set
-88 set-size      89 animate       90 strike
+88 set-size      89 animate       90 strike        91 cancel
 ```
 
 `style=`, `key=`, and `transition=` do not appear in attribute runs: styles
@@ -276,6 +276,9 @@ boolean `strike` text style. `each` is `Num(parameter index)` on an `Each` node.
 `keys=Key:signal` entries. It has the same host-facing Activate payload as
 trigger 0, but keeps default Enter/Space activation from selecting an arbitrary
 mapped signal; dispatch selects it only after matching the active `keys` map.
+`sign_trigger=14` is the `cancel=` binder (attribute 91): the kernel fires it
+on escape-blur of the bound field with the retained buffer text as its text
+payload, so it is text-bearing like Change, Submit, and Resize.
 
 `family` is `Str` carrying the authored family name. `src` is `Str` and has a
 matching image row. The remaining AVAL forms follow the source-language rules:

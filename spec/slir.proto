@@ -113,6 +113,10 @@ message Doc {
   repeated uint32 hole_node = 108;
   repeated uint32 sign_name = 109;
   repeated uint32 sign_node = 110;
+  // Binder kind per signal: 0 activate, 1 change, 2 submit, 3 press,
+  // 4 context, 5 dblclick, 6 drag-start, 7 drop, 8 resize, 9 pointer-move,
+  // 10 pointer-up, 11 drag-update, 12 drag-end, 13 typed-keys activate,
+  // 14 cancel (escape-blur discard; carries the retained buffer text).
   repeated uint32 sign_trigger = 111;
   repeated uint32 img_src = 112;
   repeated uint32 img_w = 113;

@@ -305,3 +305,14 @@ gpu = "full"
 tui = "degraded:wide clusters (EAW W/F, emoji presentation) occupy two cells; runs re-quantize to columns under the real font metrics"
 svg = "degraded:viewer-rasterized glyphs; textLength force-fits each run to the kernel-measured width"
 png = "full"
+
+# Kernel marks grapheme clusters the resolved font's cmap cannot map as
+# uncovered runs on frame Text ops and charges deterministic fallback
+# advances (mono-class families charge EAW cell counts; vector families the
+# font's default advance). Runtime `glyph-missing` diagnostics remain.
+[feature.glyph-fallback]
+web = "degraded:uncovered runs paint with the browser's system font stack at kernel-charged fallback advances"
+gpu = "degraded:uncovered runs paint as tofu boxes filling the kernel-charged fallback advances"
+tui = "degraded:uncovered codepoints pass through raw so the terminal paints them with its own fonts; the grid charges East-Asian-Width cell advances"
+svg = "degraded:uncovered runs render as viewer-resolved text force-fit to the kernel-charged fallback advances"
+png = "degraded:uncovered runs reserve kernel-charged fallback advances but rasterize blank (no embedded fallback face)"

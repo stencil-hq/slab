@@ -118,6 +118,7 @@ client-side on resize, dark-scheme, and pointer changes — no server.
 ```sh
 cargo install --git https://github.com/stencil-hq/slab slab-cli    # native `slab` binary
 cargo run -p slab-native -- --demo settings                        # wgpu window
+cargo run -p slab-native -- examples/10-settings.slab --port 4242  # window + live SDP session (drive what you watch)
 cargo run -p slab-tui -- examples/10-settings.slab --theme dusk    # interactive TUI
 cargo run -p slab-tui -- --examples                                # browse all examples
 cargo run -p slab-cli -- render examples/07-monitor.slab -o monitor.apng --dur 3 --fps 12

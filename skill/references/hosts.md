@@ -185,7 +185,9 @@ and JSON attributes accept nested plain objects; use
 nested synthetic path.
 
 For virtual navigation, call `inst_reveal_item` / `revealItem` with alignment
-`0 start | 1 center | 2 end | 3 nearest`. Query the materialized half-open
+`0 start | 1 center | 2 end | 3 nearest`. This is the kernel enum from
+`slab_kernel::frame::inst_reveal_item` and is identical over SDP
+(`list.reveal_item`, spec/SDP.md §5.2). Query the materialized half-open
 range with `inst_each_window` / `eachWindow`. Unknown/non-virtual keys,
 invalid indices, and invalid alignments make reveal return `false`; an
 unknown/non-virtual window is `(-1,-1)`.
@@ -215,9 +217,12 @@ node or in a `when` patch on that same node. Conditional signal names are
 registered statically and dispatch only while their branch is active.
 - `act=NAME`: Activate (trigger 0), ordinary keyboard/pointer activation.
 - `field=NAME`, `submit=NAME`: Change (1) / Submit (2), committed text.
+- `cancel=NAME`: Cancel (14), on escape-blur of that field, with the retained
+  buffer text; requires `field=` and the `escape-blur` flag.
 - `press=NAME`: Press (3), primary pointer-down before capture.
 - `context=NAME`: Context (4), secondary down without focus/pressed effects.
-- `dblclick=NAME`: Dblclick (5), double down; suppresses that gesture's Activate.
+- `dblclick=NAME`: Dblclick (5), down with `clicks >= 2`; suppresses that
+  gesture's Activate.
 - `drag=NAME`: DragStart (6), after captured movement exceeds 4u.
 - `drop=NAME`: Drop (7), on the deepest eligible target.
 - `resize=NAME`: Resize (8), `fmt3(final_extent)` as text.
@@ -243,10 +248,14 @@ Use a typed map for document/global shortcut owners with distinct actions:
 col#shortcuts keys=Escape:clear,F2:rename,"/":search { … }
 ```
 
-The focused-node ancestor walk selects the nearest active match. A mapped
-`keys=` binding owns activation routing and is not combined with `act=`.
-Mapped signals are generated into the same typed host signal union; every
-Activate carries the fired key name in `SignalMeta.key`.
+The focused-node ancestor walk selects the nearest active match; with empty
+focus, or when the focused walk leaves the key unhandled, dispatch falls back
+to the document root's `keys=` map, so a root-level shortcut owner works
+before anything is focused. A mapped `keys=` binding owns activation routing
+and is not combined with `act=`. Mapped signals are generated into the same
+typed host signal union; every keyboard-driven Activate carries the fired key
+name in `SignalMeta.pressed_key` while `meta.key` stays the emitter's node
+path.
 
 Drivers may coalesce hardware motion, so “every move” means every forwarded
 dispatch. Use `when hover` for paint-only feedback. On an ordinary click,
@@ -260,17 +269,31 @@ carry `text`; all signals carry `item` and typed `meta`. The exact metadata is:
 SignalMeta {
   x,y,dx,dy,drag_dx,drag_dy: f64;
   mods,button,clicks: u32;
-  key,src_key,src_item: String;
+  key,hit_key,pressed_key,src_key,src_item: String;
   cancelled,dropped: bool;
 }
 ```
 
-`key` is the emitter's full node path. `dx/dy` are this event's deltas;
-`drag_dx/drag_dy` are cumulative from the arming down and DragEnd carries the
-final displacement, including on cancellation. Nonapplicable numbers are zero
-except keyboard `x/y=-1`; booleans default false. `item` is the emitter's
-innermost item, so Drag* source identity is `key` + `item`. Only Drop fills
-`src_key/src_item`; both Drop and a successful DragEnd set `dropped=true`.
+`key` is ALWAYS the emitter's full node path. Pointer-derived signals also
+fill `hit_key` with the deepest hit-target node's full path — use it to tell
+a row-body press from a press on a child control without timing hacks:
+
+```js
+host.addEventListener('select', ({ detail: { meta } }) => {
+  // Press bound on the row; ignore presses that landed on the delete button.
+  if (meta.hit_key.startsWith(`${meta.key}/#delete`)) return;
+  openRow(meta.key);
+});
+```
+
+Keyboard-driven activation fills `pressed_key` with the fired key name
+(`"Enter"`, `"F2"`, …). Both are empty when not applicable. `dx/dy` are this
+event's deltas; `drag_dx/drag_dy` are cumulative from the arming down and
+DragEnd carries the final displacement, including on cancellation.
+Nonapplicable numbers are zero except keyboard `x/y=-1`; booleans default
+false. `item` is the emitter's innermost item, so Drag* source identity is
+`key` + `item`. Only Drop fills `src_key/src_item`; both Drop and a successful
+DragEnd set `dropped=true`.
 
 ```slab
 row#card press=select pointer-move=card_move pointer-up=card_up \
@@ -347,17 +370,25 @@ bunx @stencil-hq/slab gen wc doc.slab -o dist --tag my-doc
 ```
 
 The generated module exports `<ElementClass>Keys` with canonical full paths
-for every authored `#id`, plus a `SignalName` union derived from the document:
+for every authored `#id`, `<ElementClass>ItemKeys` with per-`each`
+template-relative keys, the `itemKey` join helper, and a `SignalName` union
+derived from the document:
 
 ```ts
 import {
   SlabDocElementKeys,
+  SlabDocElementItemKeys,
+  itemKey,
   type SignalName,
 } from './dist/doc.js';
 
 host.setFocus(SlabDocElementKeys.draft);
 const signal: SignalName = 'save';
 host.addEventListener(signal, save);
+
+// Full canonical key of one list item's #title node:
+const { each, item } = SlabDocElementItemKeys.rows;
+host.setFocus(itemKey(each, ev.detail.item, item.title));
 ```
 
 Keep the generated module, `slab-runtime.js`, and kernel WASM together. The
@@ -424,6 +455,7 @@ focusItem(each: string, index: number): boolean
 focusNote(): string
 sceneSnapshot(): readonly SceneNode[]
 lastFrame: Frame | null // includes complete current-frame diagnostics
+diagnostics: readonly FrameDiagnostic[] // cumulative since mount
 ```
 
 `imgInfo` tuple order is width, height, format, generation. `imgRegister`
@@ -433,6 +465,12 @@ List item `key` is optional (`string | number`) and defaults to the array
 index; provide it whenever rows can reorder so identity and focus remain stable.
 `SlabDocElementKeys` values follow the canonical scene-key grammar, including
 anonymous and component-root segments, so hosts never hand-assemble them.
+List item paths compose the same way: `<ElementClass>ItemKeys.<each>` carries
+the each node's canonical key plus the template-relative key of every authored
+`#id` in its item template, and `itemKey(each, item, rel?)` joins them as
+`each~item/rel`, escaping the raw item key (`%` → `%25`, `/` → `%2F`,
+`~` → `%7E`). Feed it the raw `detail.item` from signals — never build
+`each~item` strings by hand.
 Writes stay cheap and synchronous. Call `whenSettled()` only when a following
 operation depends on the retained scene produced by that write; it resolves
 after the next solve has painted and `lastFrame`/`sceneSnapshot()` describe it.
@@ -449,8 +487,12 @@ named slots; scene snapshots resolve a11y fields to strings.
 When it changes to a non-empty value, the element emits a bubbling, composed
 `slab-diagnostics` `CustomEvent` with
 `detail={diagnostics: frame.diagnostics}`. Repeated animation frames with the
-same evidence are deduplicated; consumers that attach later inspect
-`lastFrame?.diagnostics`.
+same evidence are deduplicated. The element's `diagnostics` property is the
+cumulative per-instance set: every distinct diagnostic since the document
+mounted, in first-occurrence order, queryable at any time (an intermediate
+clean solve never consumes it; SLIR swaps reset it). Late-attaching consumers
+read `diagnostics` for history and `lastFrame?.diagnostics` for the current
+solve.
 
 Deferred conditional subtrees require an explicit settlement boundary. Reveal,
 settle, then focus/seed using only typed APIs:
@@ -541,6 +583,11 @@ signal-name union.
 `slab gen rust FILE -o OUT.rs` emits a typed `Doc` with scalar setters,
 recursive `<Param>Item` structs plus `set_<param>`, a typed `Signal` enum with
 shared `SignalMeta`, a `SignalName` enum, and canonical full paths in `keys`.
+`keys` also carries one submodule per `each` (named after its key segment)
+with the each's canonical key as `EACH` plus template-relative constants for
+authored `#id`s, and `keys::item_key(each, item, rel)` joins them into full
+`each~item/rel` paths with canonical escaping — never hand-assemble item
+paths.
 Generated list items derive `Default`: omit identity with
 `RowsItem { title, ..Default::default() }`, or attach one without an
 `Option<String>` type annotation using `.with_key(todo.id.to_string())`.
@@ -998,7 +1045,8 @@ struct Event {
 struct SigMeta {
   x: f64, y: f64, dx: f64, dy: f64, drag_dx: f64, drag_dy: f64,
   mods: u32, button: u32, clicks: u32,
-  key: String, src_key: String, src_item: String,
+  key: String, hit_key: String, pressed_key: String,
+  src_key: String, src_item: String,
   cancelled: bool, dropped: bool,
 }
 struct ScrollChange { key: String, axis: u32, off: f64 }
@@ -1036,14 +1084,15 @@ is no DOM-style capture/bubble or handler registration.
 11 composition-end | 12 blur | 13 resize | 14 close | 15 inspect`;
 `16 activate` is internal and ignored from outside.
 
-Forward host-computed `clicks` on pointer-down (`0/1` single, exactly `2`
-double); web uses `PointerEvent.detail`. A native counter should match the
-reference window: same button, at most 500ms, and at most 4u from the previous
-down.
+Forward host-computed `clicks` on pointer-down (`0/1` single, `>= 2`
+double/triple); web uses `PointerEvent.detail`. A native counter should match
+the reference window: same button, at most 500ms, and at most 4u from the
+previous down.
 
 Primary (`button=0`) down fires `press`, arms the deepest `drag`, captures,
 and focuses. Secondary (`button=2`) down fires `context` without press/focus.
-A bound double down fires `dblclick` and suppresses later Activate. Forward
+A bound down with `clicks >= 2` fires `dblclick` and suppresses later
+Activate. Forward
 each move's event-local `dx/dy`; the kernel routes PointerMove, computes
 cumulative drag displacement, starts DragStart beyond 4u, and emits
 DragUpdate. Primary up routes PointerUp, may Drop, then emits DragEnd and
@@ -1051,9 +1100,13 @@ clears gesture state. Blur/close cancel an active drag. Always forward
 document-space coordinates and current modifier/button/click fields so
 `SignalMeta` is trustworthy.
 
-Key routing precedence is drag cancellation by Escape → opted-in field blur →
-field editing → focused divider adjustment → focused scrolling → `keys=` →
-Enter/Space activation → focus navigation. `escape-blur` on an editable node
+Key routing precedence is drag cancellation by Escape → opted-in field blur
+(which fires the field's `cancel=` binder with the retained buffer) →
+field editing → focused divider adjustment → focused scrolling → page
+scrolling (PageUp/PageDown/Home/End on the nearest scroll ancestor of focus,
+or the primary root scroller when nothing is focused) → `keys=` (focused
+walk, then the document-root map as fallback) → Enter/Space activation →
+focus navigation. `escape-blur` on an editable node
 consumes Escape and clears focus while preserving its edit buffer; without the
 flag, Escape remains app-owned. Both `keys=Escape,F2 act=cancel` and
 `keys=Escape:clear,F2:rename` walk from the focused node through ancestors to
@@ -1063,17 +1116,21 @@ Interaction styling stays in the template with
 
 ## Focus
 
-Document order is tab order. Tab/Shift-Tab walk the ring; arrows also walk
+Document order is tab order, except that an `attach=` overlay subtree
+traverses immediately after its anchor node regardless of where it is
+declared. Tab/Shift-Tab walk the ring; arrows also walk
 when the focused node is neither an edit field, divider, nor scrollable on
 that axis. Keyboard focus sets `focus-visible`; pointer focus sets only
 `focus`. Keyboard traversal automatically minimally reveals the new target
 through every scroll ancestor; the resulting virtual window materializes the
 continuing ring without host offsets. Empty painted rectangles, conditionally
 inactive focusability, and content wholly removed by a non-scroll clip are
-skipped. Merely off-screen scroll children remain eligible. Invalidated focus
+skipped. Merely off-screen scroll children remain eligible. When an overlay
+containing the focus is removed, focus returns to the overlay's anchor;
+otherwise invalidated focus
 restores to the nearest following, then preceding, eligible target. Use
 `inst_set_focus(i,key,visible)` / web `setFocus` for host-driven dialogs;
-focus traps and restoration policy remain host-owned.
+focus traps remain host-owned.
 
 **Host key layer** (per-key actions on the focused row, the TUI list-app
 staple): intercept printable keys before dispatch when focus is not in an edit
@@ -1109,7 +1166,11 @@ An each item descendant is
 `~item/relative` marker. Positional item identity is its decimal index until
 the host assigns a stable key. In full scene keys, literal `%`, `/`, and `~`
 inside explicit `key=` values or item keys are escaped as `%25`, `%2F`, and
-`%7E` (uppercase). Signal `item` remains the raw innermost item key.
+`%7E` (uppercase). Signal `item` remains the raw innermost item key. Compose
+item paths with the generated constants and join helpers — web
+`itemKey(each, item, rel?)` with `<ElementClass>ItemKeys`, Rust
+`keys::item_key(each, item, rel)` with the per-each `keys` submodules — which
+apply this escaping for you.
 
 All node APIs accept exact canonical keys. They also accept a unique bare
 `#id`/`id`, or a unique authored suffix rooted at an id such as `#list/rows`.
@@ -1123,9 +1184,11 @@ argument.
 Offsets are kernel-owned and key-addressed per axis: `0` main, `1` cross.
 Bare `scroll` activates main; `scroll=cross` cross; `scroll=both` both. Wheel
 routes `dy` to the deepest main owner and `dx` to the deepest cross owner;
-Shift swaps the deltas. Focused keyboard scrolling remains main-axis only.
-Main-axis arrows step 40u (200u with Shift); PageUp/Down use
-`viewport-40u`, and Home/End select zero/maximum.
+Shift swaps the deltas. Keyboard scrolling is main-axis only.
+Main-axis arrows step 40u (200u with Shift) on a focused scroll container.
+PageUp/PageDown page the nearest scroll ancestor of the focus (or the primary
+root scroller when focus is empty) by exactly one viewport per press;
+Home/End select zero/maximum on the same target.
 Every actual dispatch change appends
 `ScrollChange {key,axis,off}` to `Effects.scrolls`; direct setters do not.
 
@@ -1160,7 +1223,10 @@ Do not implement a parallel host drag loop. Express collapse with params and
 
 Author the overlay as a direct `stack`/`canvas` child with
 `attach=param.anchor`. On its opening signal, feed back the emitter's exact
-full key and toggle a Bool param:
+full key and toggle a Bool param. `meta.key` is always the emitter node path
+— for pointer AND keyboard activation — so the same recipe covers Enter/Space
+and `keys=` opens (the fired key name, when you need it, is
+`meta.pressed_key`):
 
 ```js
 host.addEventListener('open_menu', ev => {
@@ -1169,22 +1235,49 @@ host.addEventListener('open_menu', ev => {
 });
 ```
 
+When the press is bound on a container and you want to anchor to the exact
+control under the pointer, use `meta.hit_key` (deepest hit-target key) instead
+of `meta.key`.
+
 The kernel follows scrolled anchors and omits a missing-anchor subtree from
-paint and hit testing. Keep outside-click dismissal, focus trapping, and
-focus restoration in the host; use `setFocus` and the retained scene rather
+paint and hit testing. The overlay subtree participates in tab order
+immediately after its anchor, and closing an overlay that contains focus
+hands focus back to the anchor automatically. Keep outside-click dismissal
+and focus trapping in the host; use `setFocus` and the retained scene rather
 than inventing overlay coordinates.
 
 ## Accessibility adapters & scene
 
 Author the full semantic contract (`role`, name/description, state, relations,
 values, set metadata, modal/live metadata) in Slab; see language.md. This does
-not add visuals, focusability, or actions—bind those explicitly.
+not add visuals, focusability, or actions—bind those explicitly. Four
+semantics arrive automatically, without host or author boilerplate:
+
+- **Text.** The web adapter mirrors each node's painted frame text into its
+  semantic node, so `role=status live=polite` regions announce and
+  containers aggregate descendant text through DOM nesting. Custom drivers
+  mirror painted text the same way (SDP exposes it as `scene.text`).
+- **Names.** Controls (focusable or `act=`) without an authored `label=` get
+  a kernel-computed name from their descendant painted text; every adapter
+  inherits it through the ordinary `label` slot.
+- **Fields.** Nodes with an ACTIVE `field=` binder are `editable` in the
+  scene; the web adapter exposes them as `role=textbox` (an authored role
+  wins) with the current buffer as their value.
+- **List context.** On web, materialized virtual-list item roots without
+  authored set metadata expose `aria-posinset`/`aria-setsize` from kernel
+  list state, so a 16-row window of a 306-item list still reads as
+  "1 of 306".
 
 Application hosts do **not** rebuild platform nodes from `sceneSnapshot()`.
 The shipped web component maintains a retained, pointer-transparent,
 opacity-zero shadow semantic DOM, maps scene state to ARIA, assigns
-deterministic DOM ids, resolves exact-key relationships, and mirrors kernel
-focus. The shipped native client maintains the equivalent AccessKit tree.
+deterministic DOM ids, resolves exact-key relationships, and tracks kernel
+focus for assistive tech: kernel focus on an ordinary node moves real DOM
+focus to its semantic node, and during field editing the IME textarea remains
+the focus holder while dropping `aria-hidden`, mirroring the field's label,
+and pointing `aria-activedescendant` at the field's semantic node. The
+component never steals focus from outside its shadow tree.
+The shipped native client maintains the equivalent AccessKit tree.
 Native publication also includes parent/children, bounds/scale,
 focusability/inertness, and keyed scroll offsets/ranges from the same scene.
 
@@ -1203,7 +1296,7 @@ parent hierarchy, bounds, focus, and these exact `SceneNode` fields:
 ```text
 role label desc checked expanded selected active_descendant controls
 value_now value_min value_max value_text modal live live_atomic
-level pos_in_set set_size disabled focused
+level pos_in_set set_size disabled focused editable
 ```
 
 Native `role/label/desc/active_descendant/controls/value_text` are refs into
@@ -1214,10 +1307,11 @@ Native `role/label/desc/active_descendant/controls/value_text` are refs into
 Value/range/level/set numbers are `Option<f64>`; `disabled/focused` are
 kernel-derived Bool.
 WASM scene JSON resolves refs to strings and optionals to values/null;
-generated `sceneSnapshot()` exposes the typed form.
+generated `sceneSnapshot()` exposes the typed form, plus a driver-annotated
+`text` field carrying each subtree's painted text for automation.
 Web uses `boolean|'mixed'|null` for checked, `boolean|null` for optional
 Bool state, the named live union or null, `number|null` for optional numbers,
-and `""` for absent strings.
+and `""` for absent strings; `editable` is a plain Bool.
 Use snapshots for inspectors/app queries, not to duplicate the shipped AT
 tree. `spec/FRAME.md` is the normative custom-driver ABI.
 
@@ -1243,15 +1337,29 @@ Kernel-owned on `field=` text nodes; single-line unless flagged `multiline`.
   kernel cut/copy touch no system clipboard, and GPU clipboard degradation is
   charted. Composition drives the `composing` node state. Caret/IME rects in
   `Effects` describe the LAST solve — refresh after the next frame.
-- Clearing or seeding a field: `field=draft` binds an INITIAL value. The
-  EditState is keyed persistent state, so ordinary param writes never reseed
-  it. Blur/refocus also preserves it. Use
+- Field lifecycle (`field=draft` synced to `param.draft`):
+  1. **Seed** — content binds the INITIAL value; the EditState is keyed
+     persistent state created on first focus and preserved across
+     blur/refocus.
+  2. **Edit** — every committed mutation fires Change and writes the
+     same-named Text param. Do not echo Change back into the param.
+  3. **Host write** — writing the synced param (`setParam('draft', …)`)
+     while the field is NOT composing resets the edit buffer to the new
+     value: caret at the end, one undo step, no Change echo. During an IME
+     composition the kernel buffer keeps priority and the write only lands
+     in the param.
+  4. **Submit / clear-on-submit** — Submit carries the full text and does
+     not also fire Change; a host answering Submit with
+     `setParam('draft', '')` empties the field.
+  5. **Cancel** — with `escape-blur` (+ optional `cancel=NAME`), Escape
+     clears focus, retains the buffer, and fires Cancel with the retained
+     text so the host can decide whether to revert the param.
   `inst_set_field_text(i, key, text)` / web `setFieldText(key, text)` /
-  generated Rust `set_field_text` to replace the buffer. The call works while
-  focused or blurred. It resets selection and undo/redo, moves the caret to
-  the end, synchronizes the same-named Text param, and emits Change through
-  the next `inst_take_signals` Effects. Normal field mutations also synchronize
-  that param. Do not echo Change into the param or rotate item keys.
+  generated Rust `set_field_text` remains for replacing the buffer of a field
+  whose Change name does not match any param: it works focused or blurred,
+  resets selection and undo/redo, moves the caret to the end, synchronizes a
+  same-named Text param when one exists, and emits Change through the next
+  `inst_take_signals` Effects. Do not rotate item keys to force a reseed.
 
 For a `when`-gated field, first make its controlling param true and await
 `whenSettled()`. If it must be scrolled into view, call `reveal`, await

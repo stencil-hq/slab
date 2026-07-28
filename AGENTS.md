@@ -135,6 +135,20 @@ cd packages/pyslab && uv run --extra dev pytest -q
 - Keep tests near their crate when exercising runtime/compiler behavior; use
   `crates/*/tests/` for integration-level contracts.
 
+### Performance
+
+Aim for optimal code by default; these are guidelines, not hard gates.
+
+- Research and apply techniques from retained-mode GUIs (e.g. Chrome's
+  compositor/layout pipeline): retained trees, dirty-flag invalidation,
+  incremental relayout/repaint, caching across frames.
+- Eliminate unnecessary copies: prefer copy-on-write or interned strings,
+  borrow instead of cloning where lifetimes allow, and pass handles/indices
+  instead of copying data.
+- Choose optimal data structures: replace hashmaps with vecs when keys are
+  dense indices, prefer flat/cache-friendly structures the optimizer handles
+  well, and convert string comparisons over known value sets into enums.
+
 ### TypeScript and browser code
 
 - Use strict, explicit types at Rust/WASM and wire-protocol boundaries. Preserve

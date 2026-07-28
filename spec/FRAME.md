@@ -180,15 +180,21 @@ to strings rather than exposing the native scene-string pool.
 The paint hot path is `frame(t_ms) -> FrameBuf`, not frame JSON. `FrameBuf`
 provides an operation-tag/payload `u32s()` stream, an `f64s()` stream beginning
 with frame width and height, the frame-local text pool through `strs_json()`,
+the flat uncovered-glyph run pool through `uncovered_u32s()`,
 runtime paths through `rt_paths_json()`, complete current-solve layout and
 runtime evidence through `diagnostics_json()`, and the `dirty()` and
-`motion_active()` liveness flags. ScalePush and ScalePop use tags 11 and 12;
+`motion_active()` liveness flags. The cumulative per-instance diagnostic set is
+`KInst.diags_json()` (same `{code, line, msg}` entry shape). ScalePush and
+ScalePop use tags 11 and 12;
 ScalePush contributes four floats (`cx, cy, sx, sy`) and ScalePop contributes
 none. TiltPush and TiltPop use tags 13 and 14; TiltPush contributes five
 floats (`cx, cy, rx, ry, depth`) and TiltPop contributes none. The FX-kit
 fields extend existing payloads at the END of each op's record: RECT appends
-`smooth, grain_amount, grain_size` (floats); TEXT appends `color_kind` (u32)
-and `gx, gy, gw, gh` (floats); IMAGE and CLIP_PUSH append `smooth`;
+`smooth, grain_amount, grain_size` (floats); TEXT appends `color_kind` (u32),
+`strike` (u32), `uncov_off` and `uncov_len` (signed u32 words) after its fixed
+words, and `gx, gy, gw, gh` (floats) — a TEXT record is ten u32s
+(`tag, node, str_ref, font, weight, color, color_kind, strike, uncov_off,
+uncov_len`) and ten floats; IMAGE and CLIP_PUSH append `smooth`;
 GROUP_PUSH contributes `node, mask_kind, mask` (u32s) and
 `opacity, blur, mx, my, mw, mh` (floats); BACKDROP appends
 `mask_kind, mask` (u32s) and `brightness, smooth` (floats). Every operation
@@ -331,7 +337,8 @@ struct Event {
   coordinates. `dx`/`dy` are wheel deltas for type 3 and the new viewport
   width/height for type 13.
 - `button` is the host pointer-button code. `clicks` is the host-computed click
-  count on pointer-down; 0 and 1 are single clicks, 2 is a double click.
+  count on pointer-down; 0 and 1 are single clicks, any count >= 2 is a
+  multi-click and drives Dblclick.
 - `key` is the host named key (`"Tab"`, `"Enter"`, `" "`, `"ArrowLeft"`,
   `"Backspace"`, `"Home"`, `"End"`, `"a"`, …), not a document STRS reference.
   `text` carries text, paste, and composition payloads.
@@ -342,33 +349,50 @@ reports Effects); pointer capture lasts from pointer-down until release;
 `pressed` lands on the nearest focusable in the hit path, else the raw target;
 hover enter/leave states cover the whole hit path. Pointer-up over the
 still-pressed focusable, or Enter/Space on a focused non-edit node, synthesizes
-Activate; `disabled` suppresses it. Escape first cancels an armed or active
+Activate; `disabled` suppresses it. A pointer-down with `clicks >= 2` fires
+Dblclick on the deepest enabled binding and suppresses that gesture's
+Activate. Escape first cancels an armed or active
 drag, emits cancelled DragEnd without Drop, clears capture, and is consumed.
-Otherwise an editable node with authored `escape-blur` consumes Escape and
-clears focus while retaining its EditState; without that explicit opt-in,
-Escape remains available to authored `keys=` mappings and app semantics.
+Otherwise an editable node with authored `escape-blur` consumes Escape, fires
+its `cancel=` binder (trigger 14) with the retained committed buffer as
+`sig_text`, and clears focus while retaining its EditState; without that
+explicit opt-in, Escape remains available to authored `keys=` mappings and app
+semantics. Key-down routing with empty focus starts at the document root's
+`keys=` map, and an unhandled focused walk falls back to that root map;
+printable keys never leave a focused editor. PageUp/PageDown/Home/End scroll
+the nearest scroll-container ancestor of the focus (or the primary root
+scroller when focus is empty) by exactly one viewport extent per page step.
 Wheel scrolls the deepest `scroll` node in the path with the retained-scene
 clamp. `resize` (dx/dy > 0) updates env; `blur` clears hover and pressed;
 `copy` / `inspect` are host territory.
 
 Tab, Shift-Tab, and kernel-owned directional traversal use materialized
-authored order. Effective inert/disabled/non-focusable nodes, empty painted
-rectangles, and descendants wholly removed by a non-scroll clip are excluded.
-An off-screen descendant of a scroll viewport remains eligible: after
-traversal changes focus, the kernel minimally reveals it through every scroll
-ancestor before the next solve. Virtual-list overscan plus that scroll update
-materializes the continuing focus ring without host-computed offsets. Explicit
-`inst_set_focus` intentionally does not reveal.
+authored order, except that an `attach=` overlay subtree inserts into
+traversal immediately after its anchor node (nested overlays resolve through
+their anchors recursively). When an overlay containing the focus leaves the
+scene, focus restoration returns to the overlay's anchor before the ordinary
+nearest-neighbor rule. Effective inert/disabled/non-focusable nodes, empty
+painted rectangles, and descendants wholly removed by a non-scroll clip are
+excluded. An off-screen descendant of a scroll viewport remains eligible:
+after traversal changes focus, the kernel minimally reveals it through every
+scroll ancestor before the next solve. Virtual-list overscan plus that scroll
+update materializes the continuing focus ring without host-computed offsets.
+Explicit `inst_set_focus` intentionally does not reveal.
 
 Signal trigger codes (SPEC §13) are `0 Activate`, `1 Change`, `2 Submit`,
 `3 Press`, `4 Context`, `5 Dblclick`, `6 DragStart`, `7 Drop`, `8 Resize`,
-`9 PointerMove`, `10 PointerUp`, `11 DragUpdate`, and `12 DragEnd`.
-`sig_text` carries committed text for Change/Submit and the canonical final
-extent for Resize; other triggers use `""`. Every signal carries the innermost
-synthetic item key of its emitting node (or `""`) and the `SigMeta` below.
+`9 PointerMove`, `10 PointerUp`, `11 DragUpdate`, `12 DragEnd`, and
+`14 Cancel` (`13` is the internal typed-`keys=` activation discriminator).
+`sig_text` carries committed text for Change/Submit, the retained buffer for
+Cancel, and the canonical final extent for Resize; other triggers use `""`.
+Every signal carries the innermost synthetic item key of its emitting node
+(or `""`) and the `SigMeta` below.
 
 Focusing a field binds an EditState seeded from CONTENT on FIRST bind only.
-The EditState persists across blur/refocus and ordinary param writes.
+The EditState persists across blur/refocus. A host write to the field's
+same-named synced Text param resets the buffer to the written value while the
+field is not composing (caret at the end, one undo step, no Change echo); an
+active IME composition keeps kernel priority.
 `inst_set_field_text` replaces it while focused or blurred, resets selection
 and undo/redo, places the caret at the end, synchronizes a same-named Text
 param, and queues Change in Effects when the value changes. Normal field
@@ -402,6 +426,8 @@ struct SigMeta {
   button: u32,
   clicks: u32,
   key: String,
+  hit_key: String,
+  pressed_key: String,
   src_key: String,
   src_item: String,
   cancelled: bool,
@@ -424,21 +450,24 @@ struct Effects {
 ```
 
 `sig_name`, `sig_text`, `sig_item`, and `sig_meta` always have equal length
-and matching order. For pointer and direct-helper signals, `SigMeta.key` is
-the full key path of the emitting node. For keyboard-driven Activate, it is
-the fired key name, including default Enter/Space activation and authored
-`keys=` activation. Pointer-originated dispatch carries document-space `x`/`y`;
-keyboard and direct helper emissions use `(-1, -1)`. `dx`/`dy` are the
-authoritative or derived event-local deltas; `drag_dx`/`drag_dy` are cumulative
-displacement from the armed pointer-down origin while a drag is active.
-`mods`, `button`, and `clicks` come from the current event. `src_key` and
-`src_item` identify a drag source only for Drop and are otherwise empty.
-`cancelled` marks abnormal DragEnd; `dropped` marks Drop and the corresponding
-successful DragEnd.
+and matching order. `SigMeta.key` is ALWAYS the full key path of the emitting
+node, for every trigger and origin. Pointer-derived signals also carry
+`hit_key`, the full key of the deepest hit-target node under the pointer;
+keyboard-driven activation (default Enter/Space and authored `keys=`) carries
+the fired key name in `pressed_key`. Both are `""` when they do not apply and
+are omitted from JSON dump surfaces. Pointer-originated dispatch carries
+document-space `x`/`y`; keyboard and direct helper emissions use `(-1, -1)`.
+`dx`/`dy` are the authoritative or derived event-local deltas;
+`drag_dx`/`drag_dy` are cumulative displacement from the armed pointer-down
+origin while a drag is active. `mods`, `button`, and `clicks` come from the
+current event. `src_key` and `src_item` identify a drag source only for Drop
+and are otherwise empty. `cancelled` marks abnormal DragEnd; `dropped` marks
+Drop and the corresponding successful DragEnd.
 
 `scrolls` is ordered by dispatch execution and contains one entry for each
-offset actually changed by wheel, scroll-key, or caret-follow handling.
-`axis` is 0 main or 1 cross and `off` is the stored clamped offset. Direct host
+offset actually changed by wheel, scroll-key, page-key, or caret-follow
+handling. `axis` is 0 main or 1 cross and `off` is the stored clamped offset.
+Direct host
 calls to `inst_set_scroll` do not synthesize an `Effects` value.
 
 Caret/IME rects are emitted whenever the focused node is a bound field and
@@ -465,6 +494,7 @@ struct Frame {
     ops: Vec<FrameOp>,
     scene: Vec<SceneNode>,
     strings: Vec<String>,
+    uncovered: Vec<u32>,
     paths_rt: Vec<RtPath>,
     diagnostics: Vec<FrameDiagnostic>,
 }
@@ -475,6 +505,13 @@ diagnostics describe the current solve. Runtime `glyph-missing` diagnostics are
 one-shot notes: an `Instance` emits at most one for each `(authored family,
 codepoint)` pair, on the first frame whose text uses that missing glyph. Hosts
 MUST surface these notes even when they do not repaint a missing glyph.
+
+Alongside the per-solve stream, every distinct diagnostic accumulates on the
+instance: `frame::inst_diags(&Instance) -> &[FrameDiagnostic]` returns the
+cumulative set — deduplicated by `(code, line, msg)`, in first-occurrence
+order — queryable at any time. It resets only when a new document initializes
+(`inst_init`). Hosts expose it as `doc.diags` (SDP), `KInst.diags_json()`
+(wasm), and the web element's cumulative diagnostics list.
 
 `width`/`height` are the solved root box. `strings` is the per-frame text pool
 addressed by `OpText.str_ref`. `paths_rt` contains only runtime paths referenced
@@ -497,9 +534,10 @@ Text(OpText)         { node, x, y_baseline, str_ref, measured_w,
                        tracking, color, opacity, strike,   // one op PER LINE
                        color_kind (1 solid: color = rgba8 |
                                    2 gradient: color = GRAD index),
-                       gx, gy, gw, gh }   // gradient box = the text NODE's
+                       gx, gy, gw, gh,    // gradient box = the text NODE's
                                           // content box, shared by every
                                           // line; all 0 when solid
+                       uncov_off, uncov_len }  // uncovered-glyph runs, see below
 Image(OpImage)       { node, x, y, w, h,
                        img (unified image index, -1 unresolved),
                        fit, radius, opacity, smooth }
@@ -532,6 +570,18 @@ SceneNode { node, parent_ix (scene index, -1 root), kind (SLIR kind),
 line-through across `measured_w`. A renderer without native deterministic text
 decoration draws a horizontal rule centered at `y_baseline - 0.3·size`, with
 thickness `max(1 device pixel, size/16)`, using the text paint and opacity.
+
+`OpText.uncov_len` counts this op's uncovered-glyph runs; run `i` is the
+half-open codepoint range `[Frame.uncovered[uncov_off + 2i],
+Frame.uncovered[uncov_off + 2i + 1])` into `strings[str_ref]`. Runs are sorted,
+non-overlapping, and coalesced at grapheme-cluster granularity: a cluster is
+uncovered when any of its codepoints requires a glyph (`requires_glyph`) that
+the op's font cmap does not map. `uncov_len` is `0` for fully covered strings
+and whenever `font < 0`. Fallback painters draw exactly these slices — the web
+driver with the platform font stack, the native GPU driver as tofu boxes —
+inside the kernel-charged fallback advances, so layout never depends on host
+fonts. Frame JSON dumps carry the resolved ranges as an optional
+`"uncovered":[[start,end),…]` key on Text ops, present only when non-empty.
 
 - **Paint** is a `(kind, handle)` pair instead of a nested enum:
   `0 none | 1 solid (handle = rgba8) | 2 gradient (handle = GRAD index)`.
@@ -600,12 +650,19 @@ boundaries and appends `…` to the last retained segment so paint style is
 preserved without changing the line's layout model.
 
 The selected SLIR `FONT` cmap is the authoritative glyph-coverage contract for
-measurement and every rasterizer. A cmap miss has glyph id 0: it advances by
-`default_advance` but paints no `.notdef` box or platform fallback glyph.
-Runtime text emits the one-shot `glyph-missing` frame diagnostic defined above.
-Compiler-known literal, parameter-default, and list item-property-default text
-is checked against the same cmap at compile time; host-supplied content remains
-runtime-checked.
+measurement and every rasterizer. A cmap miss has glyph id 0 and charges a
+deterministic fallback advance: mono-class families (`FONT.class == 1`) charge
+`default_advance` per East-Asian-Width cell — doubled for EAW wide codepoints —
+so uncovered CJK and emoji reserve the two terminal cells the cell grid gives
+them; every other family charges the single `default_advance`. Glyph modifiers
+(ZWJ, variation selectors) still advance zero. The kernel paints no `.notdef`
+box itself; instead it marks the affected clusters as uncovered runs on the
+Text op (see Frame above) for driver-side fallback paint, and the TUI cell
+medium passes the raw codepoints through so the terminal renders them natively.
+Runtime text emits the one-shot `glyph-missing` frame diagnostic defined above,
+and the cumulative instance set retains it. Compiler-known literal,
+parameter-default, and list item-property-default text is checked against the
+same cmap at compile time; host-supplied content remains runtime-checked.
 
 ## Motion (as built in `motion`)
 
