@@ -1,0 +1,47 @@
+================================================================================
+imports, named params, and dotted conditions
+================================================================================
+import "ui/panel.slab"
+params panel {
+  open bool = true
+  rows list(Row) = []
+}
+col {
+  when panel.open { text "open" }
+  when !panel.open { text "closed" }
+  each param.panel.rows
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (import_declaration
+    (string))
+  (params_declaration
+    (identifier)
+    (param_declaration
+      (identifier)
+      (param_type)
+      (identifier))
+    (param_declaration
+      (identifier)
+      (param_type
+        (identifier))
+      (list_literal)))
+  (node
+    (identifier)
+    (block
+      (when_block
+        (condition
+          (reference))
+        (node
+          (identifier)
+          (string)))
+      (when_block
+        (condition
+          (reference))
+        (node
+          (identifier)
+          (string)))
+      (each_statement
+        (reference)))))

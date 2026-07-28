@@ -234,6 +234,10 @@
         {
           "type": "identifier",
           "named": true
+        },
+        {
+          "type": "reference",
+          "named": true
         }
       ]
     }
@@ -441,6 +445,22 @@
             "type": "reference",
             "named": true
           },
+          {
+            "type": "string",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "import_declaration",
+    "named": true,
+    "fields": {
+      "path": {
+        "multiple": false,
+        "required": true,
+        "types": [
           {
             "type": "string",
             "named": true
@@ -888,7 +908,18 @@
   {
     "type": "params_declaration",
     "named": true,
-    "fields": {},
+    "fields": {
+      "name": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      }
+    },
     "children": {
       "multiple": true,
       "required": false,
@@ -919,6 +950,10 @@
         },
         {
           "type": "icon_declaration",
+          "named": true
+        },
+        {
+          "type": "import_declaration",
           "named": true
         },
         {
@@ -1301,6 +1336,10 @@
   {
     "type": "identifier",
     "named": true
+  },
+  {
+    "type": "import",
+    "named": false
   },
   {
     "type": "list",

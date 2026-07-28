@@ -26,6 +26,7 @@
 
 ; keyword: structural keywords (anonymous tokens)
 [
+  "import"
   "tokens"
   "params"
   "def"
@@ -62,6 +63,8 @@
   name: (identifier) @variable)
 (param_declaration
   name: (identifier) @variable)
+(params_declaration
+  name: (identifier) @namespace)
 
 (list_item
   name: (identifier) @type)

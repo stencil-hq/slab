@@ -47,6 +47,7 @@ module.exports = grammar({
     source_file: $ => repeat(choice($._statement, $._newline)),
 
     _statement: $ => choice(
+      $.import_declaration,
       $.tokens_declaration,
       $.theme_declaration,
       $.params_declaration,
@@ -55,6 +56,14 @@ module.exports = grammar({
       $.anim_declaration,
       $.when_top,
       $.node,
+    ),
+
+    // -- imports -----------------------------------------------------------
+
+    // import := "import" STRING
+    import_declaration: $ => seq(
+      'import',
+      field('path', $.string),
     ),
 
     // -- tokens ------------------------------------------------------------
@@ -96,9 +105,10 @@ module.exports = grammar({
 
     // -- params (1.0) --------------------------------------------------------
 
-    // params := "params" "{" (IDENT type "=" scalar)* "}"
+    // params := "params" [IDENT] "{" (IDENT type "=" scalar)* "}"
     params_declaration: $ => seq(
       'params',
+      optional(field('name', $.identifier)),
       repeat($._newline),
       '{',
       repeat(choice($.param_declaration, $._newline)),
@@ -265,11 +275,12 @@ module.exports = grammar({
       '}',
     ),
 
-    // cond := IDENT | "!" IDENT | ("w"|"h") CMP NUMBER | "theme(" IDENT ")"
+    // cond := IDENT | reference | "!" (IDENT | reference)
+    //       | ("w"|"h") CMP NUMBER | "theme(" IDENT ")"
     condition: $ => choice(
       seq('theme', '(', field('name', $.identifier), ')'),
-      $.identifier,
-      seq('!', $.identifier),
+      choice($.identifier, $.reference),
+      seq('!', choice($.identifier, $.reference)),
       $.comparison,
     ),
 
