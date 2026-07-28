@@ -5,7 +5,8 @@
 //! (fill, aligned stroke, in-shader linear/radial gradients, blurred-SDF
 //! shadows, rounded clip). Text is hinted into independent A8 mask and RGBA
 //! color atlases from kernel `text_glyphs`; quarter-pixel x/y bins preserve
-//! fractional tracking while the original gamma-compensated blend is retained.
+//! fractional tracking; small A8 glyphs add polarity-aware coverage dilation
+//! before the original gamma-compensated blend.
 //! Paths are lyon meshes tessellated at first use.
 //! GroupPush/Pop composite through pooled offscreen layers with opacity and
 //! two-pass gaussian blur; Backdrop copies the current target region, blurs
@@ -22,7 +23,7 @@ use bytemuck::Zeroable;
 use slab_kernel::{
 	flatten::{Frame, FrameOp, RtPath},
 	frame::Instance,
-	slir::Doc,
+	slir::{self, Doc},
 	textm,
 };
 use wgpu::util::DeviceExt;
@@ -67,6 +68,8 @@ struct GlyphI {
 	color: [f32; 4],
 	/// grad box center xy | grad tag | opacity
 	g2:    [f32; 4],
+	/// nominal device px | reserved
+	ink:   [f32; 4],
 }
 
 #[repr(C)]
@@ -151,6 +154,40 @@ struct GradGpu {
 	col:  [[f32; 4]; 8],
 }
 
+/// Resolves the sfnt bytes one FONT table must be rasterized with.
+///
+/// The table's own embedded data wins: the kernel shaped this frame's glyph
+/// ids against exactly those bytes, so any other face would paint mismatched
+/// outlines. Tables from documents that carry no embedded sfnt data fall back
+/// to a host-registered face of the same family — nearest weight, later
+/// registration breaking ties — and finally to the bundled class asset.
+fn face_bytes<'a>(doc: &'a Doc, font: usize, registered: &'a [RegisteredFont]) -> &'a [u8] {
+	let embedded = slir::font_data(doc, i32::try_from(font).expect("font index fits i32"));
+	if !embedded.is_empty() {
+		return embedded;
+	}
+	let family = doc
+		.strs
+		.get(doc.font_family[font] as usize)
+		.map_or("", String::as_str);
+	let weight = doc.font_weight[font];
+	registered
+		.iter()
+		.enumerate()
+		.filter(|(_, face)| face.name.eq_ignore_ascii_case(family))
+		.min_by_key(|(index, face)| (face.weight.abs_diff(weight), std::cmp::Reverse(*index)))
+		.map_or_else(
+			|| {
+				slab_fonts::asset(
+					u8::try_from(doc.font_class[font]).expect("SLIR font class fits u8"),
+					u16::try_from(weight).expect("SLIR font weight fits u16"),
+				)
+				.bytes
+			},
+			|(_, face)| face.bytes.as_slice(),
+		)
+}
+
 fn gradient_gpu(doc: &Doc, gradient: usize) -> GradGpu {
 	let lo = doc.grad_stop_off[gradient] as usize;
 	let n = (doc.grad_stop_len[gradient] as usize).min(MAX_GRAD_STOPS);
@@ -182,9 +219,9 @@ const RECT_ATTRS: [wgpu::VertexAttribute; 9] = wgpu::vertex_attr_array![
 	 4 => Float32x4, 5 => Float32x4, 6 => Float32x4, 7 => Float32x4,
 	 8 => Float32x4
 ];
-const GLYPH_ATTRS: [wgpu::VertexAttribute; 7] = wgpu::vertex_attr_array![
+const GLYPH_ATTRS: [wgpu::VertexAttribute; 8] = wgpu::vertex_attr_array![
 	 0 => Float32x4, 1 => Float32x4, 2 => Float32x4, 3 => Float32x4,
-	 4 => Float32x4, 5 => Float32x4, 6 => Float32x4
+	 4 => Float32x4, 5 => Float32x4, 6 => Float32x4, 7 => Float32x4
 ];
 const MESH_VTX_ATTRS: [wgpu::VertexAttribute; 1] = wgpu::vertex_attr_array![0 => Float32x2];
 const MESH_INST_ATTRS: [wgpu::VertexAttribute; 5] = wgpu::vertex_attr_array![
@@ -985,27 +1022,7 @@ impl Renderer {
 
 		let mut fonts = Vec::with_capacity(doc.font_upem.len());
 		for f in 0..doc.font_upem.len() {
-			let family = usize::try_from(doc.font_family[f])
-				.ok()
-				.and_then(|index| doc.strs.get(index))
-				.map_or("", String::as_str);
-			let target_weight = doc.font_weight[f];
-			let registered = registered_fonts
-				.iter()
-				.enumerate()
-				.filter(|(_, face)| face.name.eq_ignore_ascii_case(family))
-				.min_by_key(|(index, face)| {
-					(face.weight.abs_diff(target_weight), std::cmp::Reverse(*index))
-				})
-				.map(|(_, face)| face.bytes.as_slice());
-			let bytes = registered.unwrap_or_else(|| {
-				slab_fonts::asset(
-					u8::try_from(doc.font_class[f]).expect("SLIR font class fits u8"),
-					u16::try_from(target_weight).expect("SLIR font weight fits u16"),
-				)
-				.bytes
-			});
-			let face = Face::from_bytes(bytes);
+			let face = Face::from_bytes(face_bytes(doc, f, registered_fonts));
 			if face.is_none() {
 				self.note("cap-font", "a FONT table has no usable native face; its glyphs are skipped");
 			}
@@ -1080,23 +1097,9 @@ impl Renderer {
 		};
 		resources.fonts.truncate(first_font);
 		for f in first_font..doc.font_upem.len() {
-			let family = doc
-				.strs
-				.get(doc.font_family[f] as usize)
-				.map_or("", String::as_str);
-			let target_weight = doc.font_weight[f];
-			let bytes = registered_fonts
-				.iter()
-				.enumerate()
-				.filter(|(_, face)| face.name.eq_ignore_ascii_case(family))
-				.min_by_key(|(index, face)| {
-					(face.weight.abs_diff(target_weight), std::cmp::Reverse(*index))
-				})
-				.map_or_else(
-					|| slab_fonts::asset(doc.font_class[f] as u8, target_weight as u16).bytes,
-					|(_, face)| face.bytes.as_slice(),
-				);
-			resources.fonts.push(Face::from_bytes(bytes));
+			resources
+				.fonts
+				.push(Face::from_bytes(face_bytes(doc, f, registered_fonts)));
 		}
 		self.atlas.invalidate_doc_fonts(doc_id, first_font as i32);
 	}
@@ -1596,6 +1599,7 @@ impl Renderer {
 						color = rgba(t.color, t.opacity);
 					}
 					let px = (t.size * self.scale) as f32;
+					let device_px = px * mat.a.mul_add(mat.d, -mat.b * mat.c).abs().sqrt();
 					let mut glyph_mabcd = [mat.a, mat.b, mat.c, mat.d];
 					let mut glyph_mt = [mat.tx, mat.ty];
 					if t.italic {
@@ -1640,6 +1644,7 @@ impl Renderer {
 							],
 							clip: clip.sdf,
 							color,
+							ink: [device_px, 0.0, 0.0, 0.0],
 							g2: tg2,
 						};
 						fb.push_glyph(clip.scissor, inst);
