@@ -585,6 +585,7 @@ Small closed set; everything else is composition.
 | `virtual` flag | root-param `each` in a main-scroll row/col | materialize a bounded uniform window (§13.6) |
 | flags | box | `clip`, `bleed`, `sticky` (direct main-scroll child only), `nowrap`, `ellipsis`, `inert` (subtree ignored by hit testing and focus, §15.2), `focusable` (participates in tab order, §15.3) |
 | `pad` | any box | `pad=16` (all) · `pad=v,h` (vertical, horizontal) · `pad=t,r,b,l` |
+| `pad-t` `pad-r` `pad-b` `pad-l` | any box | per-side padding overrides applied after `pad`; single numbers (param/prop-drivable, unlike the tuple members) |
 | `gap` | containers | `gap=8` or `gap=main,cross`: second value = grid row gap / wrap line gap (`gap=16,0` gives table gutters with tight rows) |
 | `attach`, `gravity`, `collide` | direct child of `stack`/`canvas` | keyed anchored-overlay placement and viewport collision policy (§6.10) |
 

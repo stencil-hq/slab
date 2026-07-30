@@ -267,6 +267,7 @@ The attribute id mapping is shared by `crates/slab-slir/src/attrs.rs` and
 83 modal        84 live          85 live-atomic   86 level         87 pos-in-set
 88 set-size      89 animate       90 strike        91 cancel        92 italic
 93 underline     94 code-color    95 code-bg
+96 pad-t         97 pad-r        98 pad-b         99 pad-l
 ```
 
 `style=`, `key=`, and `transition=` do not appear in attribute runs: styles
