@@ -1,0 +1,20 @@
+[package]
+name = "slab-perf"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+slab-compile = { workspace = true }
+slab-kernel = { workspace = true }
+slab-slir = { workspace = true }
+
+[dev-dependencies]
+criterion = { workspace = true }
+
+[[bench]]
+name = "editor"
+harness = false

@@ -15,6 +15,7 @@ members = [
    "crates/slab-syntax",
    "crates/slab-tui",
    "crates/slab-wasm",
+   "bench/perf",
    "bench/slate",
    "crates/xtask",
 ]
@@ -32,6 +33,13 @@ opt-level = 3
 lto = "fat"
 codegen-units = 1
 strip = true
+
+[profile.bench]
+inherits = "release"
+lto = "thin"
+codegen-units = 16
+incremental = true
+strip = false
 
 [profile.ci]
 inherits = "release"
@@ -204,6 +212,7 @@ accesskit_winit = "0.33.2"
 anyhow = "1"
 arboard = { version = "3.6.1", default-features = false }
 bytemuck = { version = "1", features = ["derive"] }
+criterion = "0.7"
 crossterm = "0.29"
 logos = "0.16"
 etagere = "0.2"

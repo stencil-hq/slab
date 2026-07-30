@@ -45,6 +45,10 @@ check: web-runtime
     sh -c 'cd tree-sitter-slab && bun x tree-sitter test'
     sh -c 'cd tree-sitter-slab && bun x tree-sitter query queries/highlights.scm ../examples/12-tracklist.slab > /dev/null'
 
+# editor-scale kernel performance benchmarks
+bench: web-runtime
+    cargo bench -p slab-perf
+
 # Rust workspace unit tests
 test: web-runtime
     cargo test --workspace
