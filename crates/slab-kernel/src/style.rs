@@ -2324,6 +2324,23 @@ pub fn build_rstyle(
 		st.rs[ri].pad_b = crate::style::tup_at(d, st, &pad, 2i32);
 		st.rs[ri].pad_l = crate::style::tup_at(d, st, &pad, 3i32);
 	}
+	// Per-side overrides apply after the tuple (and are prop-drivable).
+	for (attr, side) in [
+		(crate::slir::A_PAD_T, 0i32),
+		(crate::slir::A_PAD_R, 1i32),
+		(crate::slir::A_PAD_B, 2i32),
+		(crate::slir::A_PAD_L, 3i32),
+	] {
+		if crate::style::attr_ix(d, st, node, attr) >= 0 {
+			let value = crate::style::attr_num(d, st, node, attr, f64::NAN);
+			match side {
+				0 => st.rs[ri].pad_t = value,
+				1 => st.rs[ri].pad_r = value,
+				2 => st.rs[ri].pad_b = value,
+				_ => st.rs[ri].pad_l = value,
+			}
+		}
+	}
 	// Gap is either one number or a (main, cross) tuple.
 	let gap = crate::style::attr_val(d, st, node, crate::slir::A_GAP);
 	if crate::style::is_tuple_v(gap.tag) {
@@ -2919,11 +2936,11 @@ mod attribute_cache_tests {
 			slab_slir::attrs::ATTR_COUNT,
 			"kernel ATTR_COUNT must match normative slab-slir table size"
 		);
-		let highest_id = crate::slir::A_CODE_BG;
+		let highest_id = crate::slir::A_PAD_L;
 		assert_eq!(
 			(highest_id as usize) + 1,
 			crate::slir::ATTR_COUNT,
-			"A_CODE_BG must be the highest attribute ID"
+			"A_PAD_L must be the highest attribute ID"
 		);
 		for &(id, name) in slab_slir::attrs::ATTRS {
 			assert!(
@@ -3057,5 +3074,64 @@ mod attribute_cache_tests {
 			7,
 			"attr_ix must observe the state-selected patch after the flip"
 		);
+	}
+}
+
+#[cfg(test)]
+mod pad_side_tests {
+	use super::*;
+
+	/// A `pad` tuple resolves all four sides; `pad-t`/`pad-b` override only
+	/// their own side of the resolved style.
+	#[test]
+	fn pad_side_attrs_override_the_tuple() {
+		let mut doc = crate::slir::doc_new();
+		doc.ok = true;
+		doc.strs.push(String::new());
+		doc.node_kind.push(crate::slir::K_RECT);
+		doc.node_flags.push(0);
+		doc.node_parent.push(crate::slir::NONE);
+		doc.node_first.push(crate::slir::NONE);
+		doc.node_next.push(crate::slir::NONE);
+		doc.node_key.push(0);
+		doc.node_id.push(0);
+		doc.node_line.push(1);
+		doc.f64s.extend([8.0, 8.0, 8.0, 8.0]);
+		// AVAL 0: pad tuple (8,8,8,8); 1: pad-t 20; 2: pad-b 4.
+		doc.aval_tag
+			.extend([crate::slir::T_TUPLE, crate::slir::T_NUM, crate::slir::T_NUM]);
+		doc.aval_lo.extend([0, 0, 0]);
+		doc.aval_hi.extend([4, 0, 0]);
+		doc.aval_num.extend([0.0, 20.0, 4.0]);
+		doc.attr_index.extend([0, 3]);
+		doc.attr_id
+			.extend([crate::slir::A_PAD, crate::slir::A_PAD_T, crate::slir::A_PAD_B]);
+		doc.attr_val.extend([0, 1, 2]);
+
+		let mut st = st_new();
+		init_params(&doc, &mut st);
+		begin_solve(&doc, &mut st);
+		let ri = build_rstyle(
+			&doc,
+			&mut st,
+			0,
+			crate::slir::NONE,
+			false,
+			0,
+			0,
+			0,
+			16.0,
+			400.0,
+			1.2,
+			0.0,
+			false,
+			false,
+			false,
+		);
+		let resolved = &st.rs[ri as usize];
+		assert_eq!(resolved.pad_t, 20.0, "pad-t overrides the tuple top");
+		assert_eq!(resolved.pad_r, 8.0, "tuple right survives");
+		assert_eq!(resolved.pad_b, 4.0, "pad-b overrides the tuple bottom");
+		assert_eq!(resolved.pad_l, 8.0, "tuple left survives");
 	}
 }

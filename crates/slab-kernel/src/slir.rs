@@ -317,11 +317,20 @@ pub const A_CODE_COLOR: u32 = 94u32;
 /// Optional rich inline-code background paint.
 pub const A_CODE_BG: u32 = 95u32;
 
+/// Top padding override (applied after `pad`).
+pub const A_PAD_T: u32 = 96u32;
+/// Right padding override (applied after `pad`).
+pub const A_PAD_R: u32 = 97u32;
+/// Bottom padding override (applied after `pad`).
+pub const A_PAD_B: u32 = 98u32;
+/// Left padding override (applied after `pad`).
+pub const A_PAD_L: u32 = 99u32;
+
 /// Field cancel binder channel fired on escape-blur.
 pub const A_CANCEL: u32 = 91u32;
 
 /// Total number of normative SLIR attributes (highest attribute ID + 1).
-pub const ATTR_COUNT: usize = (A_CODE_BG as usize) + 1;
+pub const ATTR_COUNT: usize = (A_PAD_L as usize) + 1;
 
 /// Parameter types stored in [`Doc::parm_type`] and host parameter values.
 pub const PARAM_TEXT: u32 = 0u32;
