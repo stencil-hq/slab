@@ -1,0 +1,15 @@
+// Viewport culling: the plain scroll column drops text lines fully outside
+// its 100px box, while the scaled sibling keeps every line — an ink
+// transform moves node coordinates out of the inherited clip space, so
+// transformed text never culls even when its untransformed extent leaves
+// the clip.
+row w=320 h=100 gap=8 bg=#0B0F14 {
+  col #plain w=140 h=100 scroll bg=#10151C {
+    text "alpha\nbravo\ncharlie\ndelta\necho\nfoxtrot\ngolf\nhotel\nindia\njuliett" \
+        size=12 leading=1.6 color=#DCE6F0
+  }
+  col #shrunk w=140 h=100 scroll bg=#10151C {
+    text "kilo\nlima\nmike\nnovember\noscar\npapa\nquebec\nromeo\nsierra\ntango" \
+        scale=1,0.4 size=12 leading=1.6 color=#F0E6DC
+  }
+}

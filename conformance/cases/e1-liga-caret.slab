@@ -1,0 +1,4 @@
+// Ligature shaping must retain one caret stop per grapheme.
+col w=320 h=72 family="Inter" {
+  text "office ffi fi" key=ligature field=ligature multiline size=24 w=300 h=48
+}

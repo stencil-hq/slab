@@ -1,0 +1,32 @@
+{"repaint":true,"signals":[],"caret":[0,0,1,33.6],"ime":[0,0,1,33.6],"cursor":0,"focus":"col@0/ligature","scrolls":[]}
+{"repaint":true,"signals":[],"caret":[14.391,0,1,33.6],"ime":[14.391,0,1,33.6],"cursor":0,"focus":"col@0/ligature","scrolls":[]}
+{"repaint":true,"signals":[],"caret":[23.273,0,1,33.6],"ime":[23.273,0,1,33.6],"cursor":0,"focus":"col@0/ligature","scrolls":[]}
+{"repaint":true,"signals":[],"caret":[32.156,0,1,33.6],"ime":[32.156,0,1,33.6],"cursor":0,"focus":"col@0/ligature","scrolls":[]}
+{"repaint":true,"signals":[],"caret":[37.969,0,1,33.6],"ime":[37.969,0,1,33.6],"cursor":0,"focus":"col@0/ligature","scrolls":[]}
+{"repaint":true,"signals":[],"caret":[51.68,0,1,33.6],"ime":[51.68,0,1,33.6],"cursor":0,"focus":"col@0/ligature","scrolls":[]}
+{"repaint":true,"signals":[],"caret":[65.672,0,1,33.6],"ime":[65.672,0,1,33.6],"cursor":0,"focus":"col@0/ligature","scrolls":[]}
+{"repaint":true,"signals":[],"caret":[72.422,0,1,33.6],"ime":[72.422,0,1,33.6],"cursor":0,"focus":"col@0/ligature","scrolls":[]}
+{"repaint":true,"signals":[],"caret":[81.305,0,1,33.6],"ime":[81.305,0,1,33.6],"cursor":0,"focus":"col@0/ligature","scrolls":[]}
+{"repaint":true,"signals":[],"caret":[90.188,0,1,33.6],"ime":[90.188,0,1,33.6],"cursor":0,"focus":"col@0/ligature","scrolls":[]}
+{"repaint":true,"signals":[],"caret":[96,0,1,33.6],"ime":[96,0,1,33.6],"cursor":0,"focus":"col@0/ligature","scrolls":[]}
+{"repaint":true,"signals":[],"caret":[102.75,0,1,33.6],"ime":[102.75,0,1,33.6],"cursor":0,"focus":"col@0/ligature","scrolls":[]}
+{"repaint":true,"signals":[],"caret":[111.633,0,1,33.6],"ime":[111.633,0,1,33.6],"cursor":0,"focus":"col@0/ligature","scrolls":[]}
+{"repaint":true,"signals":[],"caret":[117.445,0,1,33.6],"ime":[117.445,0,1,33.6],"cursor":0,"focus":"col@0/ligature","scrolls":[]}
+{"repaint":true,"signals":[],"caret":[111.633,0,1,33.6],"ime":[111.633,0,1,33.6],"cursor":0,"focus":"col@0/ligature","scrolls":[]}
+{"repaint":true,"signals":[],"caret":[102.75,0,1,33.6],"ime":[102.75,0,1,33.6],"cursor":0,"focus":"col@0/ligature","scrolls":[]}
+{"repaint":true,"signals":[],"caret":[96,0,1,33.6],"ime":[96,0,1,33.6],"cursor":0,"focus":"col@0/ligature","scrolls":[]}
+{"repaint":true,"signals":[],"caret":[90.188,0,1,33.6],"ime":[90.188,0,1,33.6],"cursor":0,"focus":"col@0/ligature","scrolls":[]}
+{"repaint":true,"signals":[],"caret":[81.305,0,1,33.6],"ime":[81.305,0,1,33.6],"cursor":0,"focus":"col@0/ligature","scrolls":[]}
+{"repaint":true,"signals":[],"caret":[72.422,0,1,33.6],"ime":[72.422,0,1,33.6],"cursor":0,"focus":"col@0/ligature","scrolls":[]}
+{"repaint":true,"signals":[],"caret":[65.672,0,1,33.6],"ime":[65.672,0,1,33.6],"cursor":0,"focus":"col@0/ligature","scrolls":[]}
+{"repaint":true,"signals":[],"caret":[51.68,0,1,33.6],"ime":[51.68,0,1,33.6],"cursor":0,"focus":"col@0/ligature","scrolls":[]}
+{"repaint":true,"signals":[],"caret":[37.969,0,1,33.6],"ime":[37.969,0,1,33.6],"cursor":0,"focus":"col@0/ligature","scrolls":[]}
+{"repaint":true,"signals":[],"caret":[32.156,0,1,33.6],"ime":[32.156,0,1,33.6],"cursor":0,"focus":"col@0/ligature","scrolls":[]}
+{"repaint":true,"signals":[],"caret":[23.273,0,1,33.6],"ime":[23.273,0,1,33.6],"cursor":0,"focus":"col@0/ligature","scrolls":[]}
+{"repaint":true,"signals":[],"caret":[14.391,0,1,33.6],"ime":[14.391,0,1,33.6],"cursor":0,"focus":"col@0/ligature","scrolls":[]}
+{"repaint":true,"signals":[],"caret":[0,0,1,33.6],"ime":[0,0,1,33.6],"cursor":0,"focus":"col@0/ligature","scrolls":[]}
+{"repaint":true,"signals":[],"caret":[23.273,0,1,33.6],"ime":[23.273,0,1,33.6],"cursor":0,"focus":"col@0/ligature","scrolls":[]}
+{"repaint":true,"signals":[],"caret":[51.68,0,1,33.6],"ime":[51.68,0,1,33.6],"cursor":0,"focus":"col@0/ligature","scrolls":[]}
+{"repaint":true,"signals":[],"caret":[90.188,0,1,33.6],"ime":[90.188,0,1,33.6],"cursor":0,"focus":"col@0/ligature","scrolls":[]}
+{"focus":"col@0/ligature","edits":[{"name":"ligature","text":"office ffi fi","item":""}],"scroll":[]}
+{"width":320,"height":72,"ops":[{"op":"ClipPush","x":0,"y":0,"w":300,"h":48,"radius":0},{"op":"Text","node":1,"x":0,"y_baseline":25.53,"str_ref":0,"measured_w":117.445,"font":1,"size":24,"weight":400,"tracking":0,"color":"#ff111111","opacity":1},{"op":"ClipPop"}],"scene":[{"node":0,"parent":-1,"kind":1,"x":0,"y":0,"w":320,"h":72,"radius":0,"rot":0,"cx":0,"cy":0,"flags":0,"content_main":48,"scroll_off":0,"line":2,"scroll_cross":0,"content_cross":300,"role":0,"label":0,"desc":0,"checked":0,"expanded":0,"selected":0,"active_descendant":0,"controls":0,"value_now":null,"value_min":null,"value_max":null,"value_text":0,"modal":0,"live":0,"live_atomic":0,"level":null,"pos_in_set":null,"set_size":null,"disabled":false,"focused":false},{"node":1,"parent":0,"kind":8,"x":0,"y":0,"w":300,"h":48,"radius":0,"rot":0,"cx":0,"cy":0,"flags":321,"content_main":0,"scroll_off":0,"line":3,"scroll_cross":0,"content_cross":0,"role":0,"label":0,"desc":0,"checked":0,"expanded":0,"selected":0,"active_descendant":0,"controls":0,"value_now":null,"value_min":null,"value_max":null,"value_text":0,"modal":0,"live":0,"live_atomic":0,"level":null,"pos_in_set":null,"set_size":null,"disabled":false,"focused":true,"editable":true}],"strings":["office ffi fi"],"paths_rt":[],"diags":[]}

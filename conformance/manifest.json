@@ -278,6 +278,22 @@
       "client": "web"
     },
     {
+      "name": "n6-transform-clip",
+      "level": 4,
+      "kind": "ops",
+      "width": 320,
+      "height": 100,
+      "client": "web"
+    },
+    {
+      "name": "n7-virtual-variable",
+      "level": 4,
+      "kind": "ops",
+      "width": 160,
+      "height": 100,
+      "client": "web"
+    },
+    {
       "name": "v2-lane-segments",
       "level": 4,
       "kind": "ops",
@@ -562,6 +578,22 @@
         "panel.open": true,
         "panel.title": "Imported at runtime"
       }
+    },
+    {
+      "name": "e1-liga-caret",
+      "level": 4,
+      "kind": "ops",
+      "width": 320,
+      "height": 72,
+      "client": "web"
+    },
+    {
+      "name": "e2-rtl-caret",
+      "level": 4,
+      "kind": "ops",
+      "width": 320,
+      "height": 72,
+      "client": "web"
     },
     {
       "name": "x1-showcase",

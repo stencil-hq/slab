@@ -1,0 +1,27 @@
+{
+  "doc": "e2-rtl-caret",
+  "env": { "vw": 320, "vh": 72, "client": "web", "dark": false, "coarse": false },
+  "steps": [
+    { "t": 0, "event": { "type": "pointer-down", "x": 127.383, "y": 12 } },
+    { "t": 16, "event": { "type": "key-down", "key": "ArrowRight" } },
+    { "t": 32, "event": { "type": "key-down", "key": "ArrowRight" } },
+    { "t": 48, "event": { "type": "key-down", "key": "ArrowRight" } },
+    { "t": 64, "event": { "type": "key-down", "key": "ArrowRight" } },
+    { "t": 80, "event": { "type": "key-down", "key": "ArrowRight" } },
+    { "t": 96, "event": { "type": "key-down", "key": "ArrowRight" } },
+    { "t": 112, "event": { "type": "key-down", "key": "ArrowRight" } },
+    { "t": 128, "event": { "type": "key-down", "key": "ArrowRight" } },
+    { "t": 144, "event": { "type": "key-down", "key": "ArrowLeft" } },
+    { "t": 160, "event": { "type": "key-down", "key": "ArrowLeft" } },
+    { "t": 176, "event": { "type": "key-down", "key": "ArrowLeft" } },
+    { "t": 192, "event": { "type": "key-down", "key": "ArrowLeft" } },
+    { "t": 208, "event": { "type": "key-down", "key": "ArrowLeft" } },
+    { "t": 224, "event": { "type": "key-down", "key": "ArrowLeft" } },
+    { "t": 240, "event": { "type": "key-down", "key": "ArrowLeft" } },
+    { "t": 256, "event": { "type": "key-down", "key": "ArrowLeft" } },
+    { "t": 272, "event": { "type": "pointer-down", "x": 95.883, "y": 12 } },
+    { "t": 288, "event": { "type": "pointer-down", "x": 80.133, "y": 12 } },
+    { "t": 304, "event": { "type": "pointer-down", "x": 28.172, "y": 12 } }
+  ],
+  "expect": { "focus_key": "col@0/rtl" }
+}

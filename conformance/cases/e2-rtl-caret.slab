@@ -1,0 +1,4 @@
+// Bidirectional shaping and combining marks retain grapheme-grain caret stops.
+col w=320 h=72 family="Inter" {
+  text "שָלום abc" key=rtl field=rtl multiline size=24 w=300 h=48
+}

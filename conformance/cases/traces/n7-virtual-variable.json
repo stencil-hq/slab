@@ -1,0 +1,59 @@
+{
+  "doc": "n7-virtual-variable",
+  "env": {
+    "vw": 160,
+    "vh": 100,
+    "client": "web",
+    "dark": false,
+    "coarse": false
+  },
+  "steps": [
+    {
+      "t": 0,
+      "list": {"param": "rows", "path": "", "op": "len", "n": 10000}
+    },
+    {
+      "t": 8,
+      "item_extent": {"each": "#viewport/rows", "index": 0, "extent": 20}
+    },
+    {"t": 16},
+    {
+      "t": 32,
+      "window": {"each": "#viewport/rows"}
+    },
+    {
+      "t": 40,
+      "item_extent": {"each": "#viewport/rows", "index": 1, "extent": 32}
+    },
+    {
+      "t": 48,
+      "list": {"param": "rows", "path": "", "op": "field", "index": 9999, "field": "label", "kind": "text", "value": "Last variable row"}
+    },
+    {
+      "t": 64,
+      "event": {"type": "wheel", "x": 80, "y": 50, "dx": 0, "dy": 1000}
+    },
+    {
+      "t": 80,
+      "window": {"each": "#viewport/rows"}
+    },
+    {
+      "t": 88,
+      "item_extent": {"each": "#viewport/rows", "index": 0, "extent": 40}
+    },
+    {
+      "t": 96,
+      "reveal_item": {"each": "#viewport/rows", "index": 9999, "align": 2}
+    },
+    {
+      "t": 112,
+      "window": {"each": "#viewport/rows"}
+    }
+  ],
+  "expect": {
+    "signals": [],
+    "scroll": [
+      {"key": "#viewport", "axis": 0, "off": 239850}
+    ]
+  }
+}

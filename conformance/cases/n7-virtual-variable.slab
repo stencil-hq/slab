@@ -1,0 +1,24 @@
+// Variable-extent virtualization: item-extent is the estimate while measured
+// row heights become retained per-key extents after the trace enables them.
+def VariableRow(label="", height=20) export {
+  row key=row w=160 h=height pad=2,6 bg=#111923 align=center {
+    text label size=11 color=#DCE6F0 nowrap
+  }
+}
+
+params {
+  rows list(VariableRow) = [
+    VariableRow(label="0", height=20),
+    VariableRow(label="1", height=32),
+    VariableRow(label="2", height=16),
+    VariableRow(label="3", height=44),
+    VariableRow(label="4", height=24),
+    VariableRow(label="5", height=36),
+    VariableRow(label="6", height=18),
+    VariableRow(label="7", height=28)
+  ]
+}
+
+col #viewport w=160 h=100 scroll scrollbar=always bg=#080D13 {
+  each param.rows key=rows virtual item-extent=24 overscan=4
+}
