@@ -97,7 +97,13 @@ fn pointer(instance: &frame::Instance, node: u32, offset: i32, mods: u32) -> dis
 	let entry = &instance.sc.entries[scene_index];
 	let text_layout = &instance.lay.tls[text_layout_index];
 	let mut event = event(dispatch::E_POINTER_DOWN, "", "", mods);
-	event.x = entry.x + textm::caret_x(text_layout, 0, offset);
+	event.x = entry.x
+		+ textm::caret_x(
+			textm::Shaper { d: &instance.doc, cache: &instance.lay.shape_cache },
+			text_layout,
+			0,
+			offset,
+		);
 	event.y = entry.y + entry.h / 2.0;
 	event.clicks = 1;
 	event

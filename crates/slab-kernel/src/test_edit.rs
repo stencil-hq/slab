@@ -138,7 +138,7 @@ pub fn test_word_forward_delete_at_end_is_noop() {
 	let mut at_end = edit::es_new(3, "done");
 	assert!(!edit::word_forward(&mut at_end), "forward deletion at text end is a no-op");
 	assert_eq!((at_end.text.as_str(), at_end.caret, at_end.anchor), ("done", 4, 4));
-	assert!(at_end.u_text.is_empty(), "a no-op does not open an undo group");
+	assert!(at_end.undo.is_empty(), "a no-op does not open an undo group");
 	assert_eq!(at_end.last_kind, edit::MUT_NONE, "a no-op does not alter coalescing");
 }
 
@@ -283,7 +283,50 @@ pub fn test_coalesced_undo_and_redo_invalidation() {
 		edit::history_barrier(&mut capped);
 		edit::insert(&mut capped, "x");
 	}
-	assert_eq!(capped.u_text.len(), 100, "undo history capped at 100");
+	assert_eq!(capped.undo.len(), 100, "undo history capped at 100");
+}
+/// Verifies editor-sized typing history retains only local reverse deltas.
+pub fn test_large_typing_history_uses_splices() {
+	let base = "x".repeat(12_000);
+	let mut state = edit::es_new(5, &base);
+	let mut expected = base;
+
+	for typed in ["a", "界", "c"] {
+		edit::history_barrier(&mut state);
+		assert!(edit::insert(&mut state, typed));
+		expected.push_str(typed);
+		assert_eq!(state.text, expected);
+		assert_eq!(state.caret, crate::rt::str_len(&expected));
+	}
+	assert_eq!(state.undo.len(), 3);
+	assert!(state.undo.iter().all(|step| !step.is_full_text()));
+
+	for _ in 0..3 {
+		expected.pop();
+		assert!(edit::undo(&mut state));
+		assert_eq!(state.text, expected);
+		assert_eq!(state.caret, crate::rt::str_len(&expected));
+	}
+	assert!(state.redo.iter().all(|step| !step.is_full_text()));
+
+	for typed in ["a", "界", "c"] {
+		expected.push_str(typed);
+		assert!(edit::redo(&mut state));
+		assert_eq!(state.text, expected);
+		assert_eq!(state.caret, crate::rt::str_len(&expected));
+	}
+	assert!(state.undo.iter().all(|step| !step.is_full_text()));
+
+	let mut fallback = edit::es_new(6, "abcdef");
+	edit::begin_mutation(&mut fallback, edit::MUT_INSERT);
+	assert!(edit::splice(&mut fallback, 0, 0, "X"));
+	edit::begin_mutation(&mut fallback, edit::MUT_INSERT);
+	assert!(edit::splice(&mut fallback, 7, 7, "Y"));
+	assert!(fallback.undo[0].is_full_text(), "disjoint grouped edits need a full fallback");
+	assert!(edit::undo(&mut fallback));
+	assert_eq!(fallback.text, "abcdef");
+	assert!(edit::redo(&mut fallback));
+	assert_eq!(fallback.text, "XabcdefY");
 }
 
 /// Verifies that movement, selection, and word kills split undo runs.
@@ -334,19 +377,21 @@ pub fn test_source_line_maps_and_layout_lookup() {
 pub fn test_visual_goal_x_survives_short_line() {
 	let doc = metric_doc();
 	let tl = textm::measure_text(&doc, 0, 10.0, 1.2, 0.0, "abcd\nx\nabcd", 1000.0, true, false, -1);
+	let cache = std::cell::RefCell::new(textm::ShapeCache::default());
+	let shaper = textm::Shaper { d: &doc, cache: &cache };
 	let mut es = edit::es_new(1, "abcd\nx\nabcd");
 	es.caret = 3;
 	es.anchor = 3;
-	edit::visual_move(&doc, &mut es, &tl, 0, 10.0, 0.0, 1, false);
+	edit::visual_move(shaper, &mut es, &tl, 1, false);
 	assert_eq!(es.caret, 6, "down clamps to short visual line end");
 	assert_eq!(es.goal_x, 15.0, "first vertical move captures goal x");
-	edit::visual_move(&doc, &mut es, &tl, 0, 10.0, 0.0, 1, false);
+	edit::visual_move(shaper, &mut es, &tl, 1, false);
 	assert_eq!(es.caret, 10, "second down restores goal column");
-	edit::visual_move(&doc, &mut es, &tl, 0, 10.0, 0.0, -1, false);
+	edit::visual_move(shaper, &mut es, &tl, -1, false);
 	assert_eq!(es.caret, 6, "up clamps but retains goal");
-	edit::visual_home(&mut es, &tl, false);
+	edit::visual_home(shaper, &mut es, &tl, false);
 	assert!(es.caret == 5 && es.goal_x < 0.0, "visual Home and goal reset");
-	edit::visual_end(&mut es, &tl, false);
+	edit::visual_end(shaper, &mut es, &tl, false);
 	assert_eq!(es.caret, 6, "visual End");
 }
 
@@ -606,8 +651,8 @@ pub fn test_field_set_submit_clear_then_type() {
 	let changed = frame::inst_take_signals(&mut inst);
 	assert_eq!(changed.sig_text, [""], "host clear emits Change");
 	let edit_index = usize::try_from(dispatch::ed_ix(&inst.ds, 0)).expect("field is bound");
-	assert!(inst.ds.ed[edit_index].u_text.is_empty(), "undo baseline reset");
-	assert!(inst.ds.ed[edit_index].r_text.is_empty(), "redo baseline reset");
+	assert!(inst.ds.ed[edit_index].undo.is_empty(), "undo baseline reset");
+	assert!(inst.ds.ed[edit_index].redo.is_empty(), "redo baseline reset");
 	assert_eq!(
 		(inst.ds.ed[edit_index].caret, inst.ds.ed[edit_index].anchor),
 		(0, 0),
@@ -695,11 +740,17 @@ pub fn test_host_caret_selection_direction() {
 }
 
 /// Verifies a vertical goal can cross from one multiline field to another.
+///
+/// Layouts are measured with each instance's own document: a retained
+/// [`textm::TextLayout`] is only valid against the font tables that
+/// measured it (font registration is append-only and document swaps clear
+/// every layout cache), so the fixture must not graft foreign-doc metrics.
 pub fn test_host_caret_goal_crosses_fields_at_visual_x() {
 	let mut field_a = host_field_instance();
 	field_a.doc.node_flags[0] = slir::F_FOCUSABLE | slir::F_MULTILINE;
 	assert!(frame::inst_set_field_text(&mut field_a, "field-key", "abcd\nx"));
-	let layout_a = text_layout("abcd\nx", 1000.0);
+	let layout_a =
+		textm::measure_text(&field_a.doc, 0, 10.0, 1.2, 0.0, "abcd\nx", 1000.0, true, false, -1);
 	let layout_a_index = i32::try_from(field_a.lay.tls.len()).expect("too many text layouts");
 	field_a.lay.tls.push(std::rc::Rc::new(layout_a));
 	field_a.lay.p_node.push(0);
@@ -708,13 +759,21 @@ pub fn test_host_caret_goal_crosses_fields_at_visual_x() {
 	frame::inst_dispatch(&mut field_a, &host_field_event(dispatch::E_KEY_DOWN, "ArrowDown", ""));
 	let source = frame::inst_get_caret(&field_a, "field-key").expect("source field is bound");
 	assert_eq!(source.caret, 6, "source short line clamps the caret to its end");
-	assert_eq!(source.goal_x, 15.0, "source retains the original visual x");
+	let cache_a = std::cell::RefCell::new(textm::ShapeCache::default());
+	let shaper_a = textm::Shaper { d: &field_a.doc, cache: &cache_a };
+	let expected_goal = textm::caret_x(
+		shaper_a,
+		&field_a.lay.tls[usize::try_from(layout_a_index).expect("negative layout index")],
+		0,
+		3,
+	);
+	assert_eq!(source.goal_x, expected_goal, "source retains the original visual x");
 
 	let mut field_b = host_field_instance();
 	field_b.doc.node_flags[0] = slir::F_FOCUSABLE | slir::F_MULTILINE;
 	assert!(frame::inst_set_field_text(&mut field_b, "field-key", "abcdef\nx"));
-	let layout_b = text_layout("abcdef\nx", 1000.0);
-	let expected_x = textm::caret_x(&layout_b, 0, 3);
+	let layout_b =
+		textm::measure_text(&field_b.doc, 0, 10.0, 1.2, 0.0, "abcdef\nx", 1000.0, true, false, -1);
 	let layout_b_index = i32::try_from(field_b.lay.tls.len()).expect("too many text layouts");
 	field_b.lay.tls.push(std::rc::Rc::new(layout_b));
 	field_b.lay.p_node.push(0);
@@ -722,16 +781,32 @@ pub fn test_host_caret_goal_crosses_fields_at_visual_x() {
 	assert!(frame::inst_set_caret_goal(&mut field_b, "field-key", 0, 0, source.goal_x,));
 	let destination =
 		frame::inst_get_caret(&field_b, "field-key").expect("destination field is bound");
-	assert_eq!(destination.caret, 3, "goal resolves on the destination's first visual line");
-	assert_eq!(destination.anchor, 3, "collapsed selection follows the resolved caret");
+	let cache_goal = std::cell::RefCell::new(textm::ShapeCache::default());
+	let expected_caret = textm::caret_for_visual_x(
+		textm::Shaper { d: &field_b.doc, cache: &cache_goal },
+		&field_b.lay.tls[usize::try_from(layout_b_index).expect("negative layout index")],
+		0,
+		source.goal_x,
+	);
+	assert_eq!(
+		destination.caret, expected_caret,
+		"goal resolves on the destination's first visual line"
+	);
+	assert_eq!(
+		destination.anchor, destination.caret,
+		"collapsed selection follows the resolved caret"
+	);
 	assert_eq!(destination.goal_x, source.goal_x, "goal survives the cross-field transfer");
+	let cache_b = std::cell::RefCell::new(textm::ShapeCache::default());
+	let shaper_b = textm::Shaper { d: &field_b.doc, cache: &cache_b };
 	assert_eq!(
 		textm::caret_x(
+			shaper_b,
 			&field_b.lay.tls[usize::try_from(layout_b_index).expect("negative layout index")],
 			0,
 			destination.caret,
 		),
-		expected_x,
+		source.goal_x,
 		"destination caret lands at the source visual x"
 	);
 }
@@ -826,7 +901,7 @@ pub fn test_context_caret_preserves_selection_only_for_inside_hit() {
 	let mut es = edit::es_new(0, text);
 	es.anchor = 2;
 	es.caret = 4;
-	let hit = dispatch::FieldHit { st: &st, lay: &lay, sc: &sc, node: 0 };
+	let hit = dispatch::FieldHit { d: &doc, st: &st, lay: &lay, sc: &sc, node: 0 };
 	assert!(!dispatch::place_context_caret(&hit, &mut es, inside_x, sc.entries[0].y,));
 	assert_eq!((es.anchor, es.caret), (2, 4));
 

@@ -55,6 +55,7 @@ kernel_tests! {
 	 test_edit__test_insert_preserves_newlines => slab_kernel::test_edit::test_insert_preserves_newlines;
 	 test_edit__test_inactive_conditional_field_paints_plain_text => slab_kernel::test_edit::test_inactive_conditional_field_paints_plain_text;
 	 test_edit__test_kills_and_word_deletes => slab_kernel::test_edit::test_kills_and_word_deletes;
+	 test_edit__test_large_typing_history_uses_splices => slab_kernel::test_edit::test_large_typing_history_uses_splices;
 	 test_edit__test_movement_selection_and_word_kill_break_undo_runs => slab_kernel::test_edit::test_movement_selection_and_word_kill_break_undo_runs;
 	 test_edit__test_overwide_field_stays_clipped_at_zero_scroll => slab_kernel::test_edit::test_overwide_field_stays_clipped_at_zero_scroll;
 	 test_edit__test_param_json_scalar_and_list_reads => slab_kernel::test_edit::test_param_json_scalar_and_list_reads;
@@ -78,6 +79,15 @@ kernel_tests! {
 	 test_divider__test_divider_overlay_prunes_with_synthetic_identity => slab_kernel::test_divider::test_divider_overlay_prunes_with_synthetic_identity;
 	 test_divider__test_divider_release_uses_fresh_layout_clamp => slab_kernel::test_divider::test_divider_release_uses_fresh_layout_clamp;
 	 test_divider__test_divider_reserves_nonfixed_handle_footprints => slab_kernel::test_divider::test_divider_reserves_nonfixed_handle_footprints;
+	 test_split__test_split_equal_default_and_ratio_seeding => slab_kernel::test_split::test_split_equal_default_and_ratio_seeding;
+	 test_split__test_split_host_api_reorder_and_removal_persistence => slab_kernel::test_split::test_split_host_api_reorder_and_removal_persistence;
+	 test_split__test_split_each_keys_persist_across_reorder_and_removal => slab_kernel::test_split::test_split_each_keys_persist_across_reorder_and_removal;
+	 test_split__test_split_inserted_unset_pane_takes_equal_share => slab_kernel::test_split::test_split_inserted_unset_pane_takes_equal_share;
+	 test_split__test_split_nested_each_pane_host_api_roundtrip => slab_kernel::test_split::test_split_nested_each_pane_host_api_roundtrip;
+	 test_split__test_split_drag_cascades_clamps_and_emits_resize => slab_kernel::test_split::test_split_drag_cascades_clamps_and_emits_resize;
+	 test_split__test_split_drag_clamps_to_snapshotted_bounds => slab_kernel::test_split::test_split_drag_clamps_to_snapshotted_bounds;
+	 test_split__test_split_double_click_evening_and_arrow_keys => slab_kernel::test_split::test_split_double_click_evening_and_arrow_keys;
+	 test_split__test_split_sash_hover_cursor_and_paint => slab_kernel::test_split::test_split_sash_hover_cursor_and_paint;
 
 	 test_fmt3__test_fmt3_half_even => slab_kernel::test_fmt3::test_fmt3_half_even;
 	 test_fmt3__test_fmt3_integers => slab_kernel::test_fmt3::test_fmt3_integers;
@@ -116,6 +126,11 @@ kernel_tests! {
 	 test_gesture__test_press_and_context_button_semantics => slab_kernel::test_gesture::test_press_and_context_button_semantics;
 	 test_gesture__test_pruned_drag_source_clears_surviving_drop_state => slab_kernel::test_gesture::test_pruned_drag_source_clears_surviving_drop_state;
 	 test_gesture__test_secondary_pointer_up_routes_without_releasing_primary_capture => slab_kernel::test_gesture::test_secondary_pointer_up_routes_without_releasing_primary_capture;
+	 test_gesture__test_static_selection_lifecycle_cross_node_copy_and_clear => slab_kernel::test_gesture::test_static_selection_lifecycle_cross_node_copy_and_clear;
+	 test_gesture__test_static_selection_paragraph_copy_preserves_unpainted_space => slab_kernel::test_gesture::test_static_selection_paragraph_copy_preserves_unpainted_space;
+	 test_gesture__test_static_selection_grapheme_clamping => slab_kernel::test_gesture::test_static_selection_grapheme_clamping;
+	 test_gesture__test_static_selection_requires_flag_and_excludes_inert => slab_kernel::test_gesture::test_static_selection_requires_flag_and_excludes_inert;
+	 test_gesture__test_static_selection_rects_precede_covered_text_ops => slab_kernel::test_gesture::test_static_selection_rects_precede_covered_text_ops;
 
 	 test_hit__test_activation_key_bubbles_to_ancestor => slab_kernel::test_hit::test_activation_key_bubbles_to_ancestor;
 	 test_hit__test_activation_key_map_routes_distinct_signals => slab_kernel::test_hit::test_activation_key_map_routes_distinct_signals;
@@ -150,6 +165,7 @@ kernel_tests! {
 	 test_list__test_recursive_list_defaults_and_reextension_are_clean => slab_kernel::test_list::test_recursive_list_defaults_and_reextension_are_clean;
 	 test_list__test_virtual_list_window_extent_identity_and_focus => slab_kernel::test_list::test_virtual_list_window_extent_identity_and_focus;
 	 test_list__test_virtual_list_frame_settle_reveal_and_op_bound => slab_kernel::test_list::test_virtual_list_frame_settle_reveal_and_op_bound;
+	 test_list__test_variable_virtual_extents_anchor_reorder_and_reveal => slab_kernel::test_list::test_variable_virtual_extents_anchor_reorder_and_reveal;
 	 test_list__test_retained_frame_update_reuses_output_and_reports_clean_frames => slab_kernel::test_list::test_retained_frame_update_reuses_output_and_reports_clean_frames;
 	 test_list__test_reveal_item_parks_below_pinned_sticky_header => slab_kernel::test_list::test_reveal_item_parks_below_pinned_sticky_header;
 
@@ -193,6 +209,7 @@ kernel_tests! {
 	 test_textm__test_cumulative_diagnostics_survive_resolves => slab_kernel::test_textm::test_cumulative_diagnostics_survive_resolves;
 	 test_textm__test_fallback_advance_eaw => slab_kernel::test_textm::test_fallback_advance_eaw;
 	 test_textm__test_font_fallback_splits_shaped_runs => slab_kernel::test_textm::test_font_fallback_splits_shaped_runs;
+	 test_textm__test_multifont_shaped_advance_contract => slab_kernel::test_textm::test_multifont_shaped_advance_contract;
 	 test_textm__test_hard_break_long_word => slab_kernel::test_textm::test_hard_break_long_word;
 	 test_textm__test_hard_newline => slab_kernel::test_textm::test_hard_newline;
 	 test_textm__test_max_lines => slab_kernel::test_textm::test_max_lines;
@@ -200,6 +217,9 @@ kernel_tests! {
 	 test_textm__test_metrics => slab_kernel::test_textm::test_metrics;
 	 test_textm__test_nowrap_clipped_no_ellipsis => slab_kernel::test_textm::test_nowrap_clipped_no_ellipsis;
 	 test_textm__test_nowrap_ellipsis => slab_kernel::test_textm::test_nowrap_ellipsis;
+	 test_textm__test_splice_differential_nowrap => slab_kernel::test_textm::test_splice_differential_nowrap;
+	 test_textm__test_splice_differential_wrapped => slab_kernel::test_textm::test_splice_differential_wrapped;
+	 test_textm__test_text_delta_merge => slab_kernel::test_textm::test_text_delta_merge;
 	 test_textm__test_wrap_basic => slab_kernel::test_textm::test_wrap_basic;
 	 test_textm__test_wrap_cjk_kinsoku => slab_kernel::test_textm::test_wrap_cjk_kinsoku;
 	 test_textm__test_wrap_mixed_cjk_latin => slab_kernel::test_textm::test_wrap_mixed_cjk_latin;
@@ -237,6 +257,7 @@ kernel_tests! {
 	 test_value__test_fmt_u32 => slab_kernel::test_value::test_fmt_u32;
 	 test_value__test_integer_power_of_two_arithmetic => slab_kernel::test_value::test_integer_power_of_two_arithmetic;
 	 test_value__test_string_ops => slab_kernel::test_value::test_string_ops;
+	 test_richfield__test_rich_ellipsis_cuts_with_span_widths => slab_kernel::test_richfield::test_rich_ellipsis_cuts_with_span_widths;
 	 test_value__test_utf8_str => slab_kernel::test_value::test_utf8_str;
 	 test_value__test_tuple_dyn_members_track_params => slab_kernel::test_value::test_tuple_dyn_members_track_params;
 	 test_value__test_value_decode => slab_kernel::test_value::test_value_decode;

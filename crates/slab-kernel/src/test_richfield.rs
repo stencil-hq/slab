@@ -185,7 +185,7 @@ pub fn test_layout_emits_styled_segments_with_total_advance() {
 	let spans = instance.ds.ed[0].spans.clone();
 	let size = text_ops[0].size;
 	let tracking = text_ops[0].tracking;
-	let mut wrapped = textm::measure_text(
+	let wrapped = textm::measure_rich_text(
 		instance.doc(),
 		regular,
 		size,
@@ -196,31 +196,202 @@ pub fn test_layout_emits_styled_segments_with_total_advance() {
 		true,
 		false,
 		-1,
-	);
-	let mut shape_cache = textm::ShapeCache::default();
-	textm::rewrap_rich_layout(
-		instance.doc(),
-		regular,
-		size,
-		tracking,
-		"abcd",
-		20.0,
-		-1,
 		&spans,
-		&mut wrapped,
-		&mut shape_cache,
-	);
-	textm::shape_rich_layout(
-		instance.doc(),
-		regular,
-		size,
-		tracking,
-		&spans,
-		&mut wrapped,
-		&mut shape_cache,
 	);
 	assert_eq!(wrapped.src_le, [2, 4], "rich advances drive wrapping");
 	assert!(wrapped.line_w.iter().all(|width| *width <= 20.0));
+}
+
+/// Rich ellipsis truncates with span-charged widths via the public API.
+///
+/// The cut lands where bold advances (not plain advances) fit, the output
+/// ends in `…`, and the final line never exceeds the budget — including at
+/// span boundaries, across combining marks, and for `max_lines` truncation.
+pub fn test_rich_ellipsis_cuts_with_span_widths() {
+	let mut instance = field();
+	let regular = register_metric_font(&mut instance, "Test Sans", 400, 500);
+	let bold = register_metric_font(&mut instance, "Test Sans", 700, 1000);
+	assert_eq!((regular, bold), (0, 1));
+	let spans = {
+		let mut spans = edit::InlineSpans::empty();
+		spans
+			.get_mut(edit::STYLE_BOLD)
+			.expect("bold style exists")
+			.toggle(2, 8);
+		spans
+	};
+	let size = 10.0;
+	// Plain advances: 5.0/cp; bold advances: 10.0/cp. Budget fits "ab" (10)
+	// plus two bold cps (20) plus a bold ellipsis (10) = 40. A plain-font cut
+	// would wrongly retain six codepoints.
+	let layout = textm::measure_rich_text(
+		instance.doc(),
+		regular,
+		size,
+		1.2,
+		0.0,
+		"abcdefgh",
+		40.0,
+		false,
+		true,
+		-1,
+		&spans,
+	);
+	assert!(layout.truncated, "over-budget rich line is truncated");
+	let line: String = layout.chars[usize::try_from(layout.ls[0]).expect("line start")
+		..usize::try_from(layout.le[0]).expect("line end")]
+		.iter()
+		.map(|&cp| char::from_u32(cp).expect("valid codepoint"))
+		.collect();
+	assert_eq!(line, "abcd…", "span-charged advances pick the cut boundary");
+	assert_eq!(layout.src_le[0], 4, "source range reflects the retained prefix");
+	assert!(
+		layout.line_w[0] <= 40.0 + 1e-6,
+		"span-charged cut keeps the line inside the budget: {}",
+		layout.line_w[0]
+	);
+	let cache = std::cell::RefCell::new(textm::ShapeCache::default());
+	let shaper = textm::Shaper { d: instance.doc(), cache: &cache };
+	let shaped = shaper.line(&layout, 0).expect("line 0 shapes");
+	assert_eq!(layout.line_w[0], shaped.width, "painted rich width equals the measured cut width");
+
+	// max_lines truncation alone still appends the terminal ellipsis to a
+	// fitting last line, in bold-charged width.
+	let clipped = textm::measure_rich_text(
+		instance.doc(),
+		regular,
+		size,
+		1.2,
+		0.0,
+		"ab\ncd",
+		200.0,
+		true,
+		true,
+		1,
+		&spans,
+	);
+	assert!(clipped.truncated, "line budget truncates the layout");
+	assert_eq!(clipped.ls.len(), 1, "only the first line is retained");
+	let first: String = clipped.chars[usize::try_from(clipped.ls[0]).expect("line start")
+		..usize::try_from(clipped.le[0]).expect("line end")]
+		.iter()
+		.map(|&cp| char::from_u32(cp).expect("valid codepoint"))
+		.collect();
+	assert_eq!(first, "ab…", "the fitting last line still gains the terminal ellipsis");
+
+	// Cut exactly at a span START: the ellipsis paints with the LAST
+	// retained (plain) mask, so a budget that fits plain-charged "abcd…"
+	// must keep all four plain codepoints even though the next span is bold.
+	let boundary_spans = {
+		let mut spans = edit::InlineSpans::empty();
+		spans
+			.get_mut(edit::STYLE_BOLD)
+			.expect("bold style exists")
+			.toggle(4, 8);
+		spans
+	};
+	let at_boundary = textm::measure_rich_text(
+		instance.doc(),
+		regular,
+		size,
+		1.2,
+		0.0,
+		"abcdefgh",
+		27.0,
+		false,
+		true,
+		-1,
+		&boundary_spans,
+	);
+	let cut: String = at_boundary.chars[usize::try_from(at_boundary.ls[0]).expect("line start")
+		..usize::try_from(at_boundary.le[0]).expect("line end")]
+		.iter()
+		.map(|&cp| char::from_u32(cp).expect("valid codepoint"))
+		.collect();
+	assert_eq!(cut, "abcd…", "ellipsis charged to the retained plain span at a span start");
+	assert!(
+		(at_boundary.line_w[0] - 25.0).abs() < 1e-9,
+		"stored width matches the painted plain-charged ellipsis: {}",
+		at_boundary.line_w[0]
+	);
+
+	// A combining mark straddling the budget: the post-strip retry must
+	// retreat a whole grapheme, never splitting the base from its mark.
+	let mark_spans = {
+		let mut spans = edit::InlineSpans::empty();
+		spans
+			.get_mut(edit::STYLE_BOLD)
+			.expect("bold style exists")
+			.toggle(1, 3);
+		spans
+	};
+	// "a" plain (5) + "e\u{301}" bold (10 + 0) + "b" bold(10)...; budget 20
+	// fits "a" + bold ellipsis? candidates: after grapheme "ae\u{301}" the
+	// bold ellipsis (10) overflows 5+10+10=25>20; retreat lands before the
+	// full grapheme, keeping "a…" (5 + plain 5 = 10).
+	let marked = textm::measure_rich_text(
+		instance.doc(),
+		regular,
+		size,
+		1.2,
+		0.0,
+		"ae\u{301}bcd",
+		20.0,
+		false,
+		true,
+		-1,
+		&mark_spans,
+	);
+	let kept: String = marked.chars[usize::try_from(marked.ls[0]).expect("line start")
+		..usize::try_from(marked.le[0]).expect("line end")]
+		.iter()
+		.map(|&cp| char::from_u32(cp).expect("valid codepoint"))
+		.collect();
+	assert!(
+		!kept.contains('\u{301}') || kept.contains("e\u{301}"),
+		"a combining mark never survives without its base: {kept:?}"
+	);
+	assert!(
+		marked.line_w[0] <= 20.0 + 1e-9,
+		"grapheme-aligned retreat still lands inside the budget: {}",
+		marked.line_w[0]
+	);
+
+	// Cut exactly at a span END: the ellipsis is charged to the retained
+	// BOLD span. A budget of 49 rejects "abcd…" (40 + bold 10) even though
+	// a wrong next-codepoint (plain) charge would accept it and paint 50.
+	let end_spans = {
+		let mut spans = edit::InlineSpans::empty();
+		spans
+			.get_mut(edit::STYLE_BOLD)
+			.expect("bold style exists")
+			.toggle(0, 4);
+		spans
+	};
+	let at_end = textm::measure_rich_text(
+		instance.doc(),
+		regular,
+		size,
+		1.2,
+		0.0,
+		"abcdefgh",
+		49.0,
+		false,
+		true,
+		-1,
+		&end_spans,
+	);
+	let end_cut: String = at_end.chars[usize::try_from(at_end.ls[0]).expect("line start")
+		..usize::try_from(at_end.le[0]).expect("line end")]
+		.iter()
+		.map(|&cp| char::from_u32(cp).expect("valid codepoint"))
+		.collect();
+	assert_eq!(end_cut, "abc…", "ellipsis charged to the retained bold span at a span end");
+	assert!(
+		at_end.line_w[0] <= 49.0 + 1e-9,
+		"span-end cut never paints past the budget: {}",
+		at_end.line_w[0]
+	);
 }
 
 fn code_paint_field(code_color: u32, code_bg: u32) -> frame::Instance {
@@ -378,8 +549,34 @@ pub fn test_composition_clauses_paint_distinct_underlines() {
 	assert_eq!(underlines.len(), 2, "one underline rectangle per adjacent clause");
 	let layout = &instance.lay.tls[0];
 	let expected = [
-		(textm::caret_x(layout, 0, 0), textm::caret_x(layout, 0, 2)),
-		(textm::caret_x(layout, 0, 2), textm::caret_x(layout, 0, 4)),
+		(
+			textm::caret_x(
+				textm::Shaper { d: instance.doc(), cache: &instance.lay.shape_cache },
+				layout,
+				0,
+				0,
+			),
+			textm::caret_x(
+				textm::Shaper { d: instance.doc(), cache: &instance.lay.shape_cache },
+				layout,
+				0,
+				2,
+			),
+		),
+		(
+			textm::caret_x(
+				textm::Shaper { d: instance.doc(), cache: &instance.lay.shape_cache },
+				layout,
+				0,
+				2,
+			),
+			textm::caret_x(
+				textm::Shaper { d: instance.doc(), cache: &instance.lay.shape_cache },
+				layout,
+				0,
+				4,
+			),
+		),
 	];
 	for (underline, (start, end)) in underlines.iter().zip(expected) {
 		assert!((underline.x - (text.x + start.min(end))).abs() < 0.001);
@@ -414,7 +611,9 @@ pub fn test_composition_clause_fallback_underlines_whole_preedit() {
 			.collect();
 		assert_eq!(underlines.len(), 1, "fallback has one underline");
 		let layout = &instance.lay.tls[0];
-		let width = (textm::caret_x(layout, 0, 4) - textm::caret_x(layout, 0, 0)).abs();
+		let shaper = textm::Shaper { d: instance.doc(), cache: &instance.lay.shape_cache };
+		let width =
+			(textm::caret_x(shaper, layout, 0, 4) - textm::caret_x(shaper, layout, 0, 0)).abs();
 		assert!((underlines[0].w - width).abs() < 0.001, "fallback covers full preedit");
 	}
 }

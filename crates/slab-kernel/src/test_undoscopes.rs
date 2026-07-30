@@ -142,8 +142,8 @@ pub fn test_enter_split_restore_is_exact_and_resets_local_history() {
 	assert_eq!((caret.caret, caret.anchor, caret.goal_x), (3, 1, 37.5));
 	let state = &instance.ds.ed[edit_index(&instance, A)];
 	assert_eq!(state.revision, captured.runs.revision, "restore adopts captured revision");
-	assert!(state.u_text.is_empty(), "restored state is the new undo baseline");
-	assert!(state.r_text.is_empty(), "restore discards redo history");
+	assert!(state.undo.is_empty(), "restored state is the new undo baseline");
+	assert!(state.redo.is_empty(), "restore discards redo history");
 
 	let mut undo = crate::test_edit::host_field_event(dispatch::E_KEY_DOWN, "z", "");
 	undo.mods = dispatch::M_CTRL;
@@ -189,8 +189,8 @@ pub fn test_backspace_merge_restore_restores_both_fields() {
 	}
 	for node in [A, B] {
 		let state = &instance.ds.ed[edit_index(&instance, node)];
-		assert!(state.u_text.is_empty(), "restored field has no local undo");
-		assert!(state.r_text.is_empty(), "restored field has no local redo");
+		assert!(state.undo.is_empty(), "restored field has no local undo");
+		assert!(state.redo.is_empty(), "restored field has no local redo");
 	}
 	let mut undo = crate::test_edit::host_field_event(dispatch::E_KEY_DOWN, "z", "");
 	undo.mods = dispatch::M_CTRL;
@@ -208,10 +208,10 @@ pub fn test_snapshot_and_restore_reject_unresolvable_locator_atomically() {
 	let a = edit_index(&instance, A);
 	assert!(edit::insert(&mut instance.ds.ed[a], "!"));
 	let before_text = instance.ds.ed[a].text.clone();
-	let before_undo = instance.ds.ed[a].u_text.clone();
+	let before_undo = instance.ds.ed[a].undo.clone();
 	assert!(frame::inst_snapshot_fields(&instance, &[KEY_A, "#root/#missing"]).is_none());
 	assert_eq!(instance.ds.ed[a].text, before_text);
-	assert_eq!(instance.ds.ed[a].u_text, before_undo, "failed capture writes no barrier");
+	assert_eq!(instance.ds.ed[a].undo, before_undo, "failed capture writes no barrier");
 
 	let mut snapshot =
 		frame::inst_snapshot_fields(&instance, &[KEY_A, KEY_B]).expect("valid capture");
@@ -230,13 +230,13 @@ pub fn test_snapshot_abort_preserves_local_history() {
 	assert!(frame::inst_set_field_text(&mut instance, KEY_A, "alpha"));
 	let a = edit_index(&instance, A);
 	assert!(edit::insert(&mut instance.ds.ed[a], "!"));
-	let before_undo = instance.ds.ed[a].u_text.clone();
-	let before_redo = instance.ds.ed[a].r_text.clone();
+	let before_undo = instance.ds.ed[a].undo.clone();
+	let before_redo = instance.ds.ed[a].redo.clone();
 
 	let snapshot = frame::inst_snapshot_fields(&instance, &[KEY_A]).expect("bound field");
 	assert_eq!(snapshot.fields[0].text, "alpha!");
-	assert_eq!(instance.ds.ed[a].u_text, before_undo);
-	assert_eq!(instance.ds.ed[a].r_text, before_redo);
+	assert_eq!(instance.ds.ed[a].undo, before_undo);
+	assert_eq!(instance.ds.ed[a].redo, before_redo);
 	assert!(edit::undo(&mut instance.ds.ed[a]), "pre-snapshot edit remains undoable");
 	assert_eq!(instance.ds.ed[a].text, "alpha");
 }
@@ -248,12 +248,12 @@ pub fn test_commit_without_structural_change_barriers_history() {
 	assert!(frame::inst_set_caret(&mut instance, KEY_A, 5, 5));
 	let text = crate::test_edit::host_field_event(dispatch::E_TEXT, "", "!");
 	frame::inst_dispatch(&mut instance, &text);
-	assert!(!instance.ds.ed[edit_index(&instance, A)].u_text.is_empty());
+	assert!(!instance.ds.ed[edit_index(&instance, A)].undo.is_empty());
 
 	assert!(frame::inst_commit_fields(&mut instance, &[KEY_A]));
 	let state = &instance.ds.ed[edit_index(&instance, A)];
-	assert!(state.u_text.is_empty());
-	assert!(state.r_text.is_empty());
+	assert!(state.undo.is_empty());
+	assert!(state.redo.is_empty());
 	let mut undo = crate::test_edit::host_field_event(dispatch::E_KEY_DOWN, "z", "");
 	undo.mods = dispatch::M_CTRL;
 	let effects = frame::inst_dispatch(&mut instance, &undo);

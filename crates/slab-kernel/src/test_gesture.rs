@@ -2,7 +2,7 @@
 
 use crate::{
 	dispatch::{self, Effects, Event, SigMeta},
-	layout, list,
+	flatten, layout, list, motion,
 	scene::{self, Scene},
 	slir::{self, Doc},
 	style::{self, St},
@@ -670,4 +670,305 @@ pub fn test_host_param_write_resets_idle_edit_buffer() {
 	));
 	assert_eq!(fixture.dispatch.ed[edit_index].text, "server");
 	assert!(fixture.dispatch.ed[edit_index].composing);
+}
+
+fn static_text_doc(
+	root_kind: u32,
+	select: bool,
+	inert_first: bool,
+	first: &str,
+	second: &str,
+	paint: u32,
+) -> Doc {
+	let mut doc = slir::doc_new();
+	doc.ok = true;
+	doc.strs.extend([
+		String::new(),
+		"root".into(),
+		"root/first".into(),
+		"root/second".into(),
+		first.into(),
+		second.into(),
+	]);
+	doc.node_kind
+		.extend([root_kind, slir::K_TEXT, slir::K_TEXT]);
+	doc.node_flags.extend([
+		if select { slir::F_SELECT } else { 0 },
+		if inert_first { slir::F_INERT } else { 0 },
+		0,
+	]);
+	doc.node_parent.extend([slir::NONE, 0, 0]);
+	doc.node_first.extend([1, slir::NONE, slir::NONE]);
+	doc.node_next.extend([slir::NONE, 2, slir::NONE]);
+	doc.node_key.extend([1, 2, 3]);
+	doc.node_id.extend([0, 0, 0]);
+	doc.node_line.extend([1, 2, 3]);
+
+	doc.aval_tag
+		.extend([slir::T_COLOR, slir::T_STR, slir::T_STR]);
+	doc.aval_lo.extend([paint, 4, 5]);
+	doc.aval_hi.extend([0, 0, 0]);
+	doc.aval_num.extend([0.0, 0.0, 0.0]);
+	doc.attr_id
+		.extend([slir::A_SELECT_BG, slir::A_CONTENT, slir::A_CONTENT]);
+	doc.attr_val.extend([0, 1, 2]);
+	doc.attr_index.extend([0, 1, 2, 3]);
+	doc
+}
+
+fn static_fixture_kind(
+	root_kind: u32,
+	select: bool,
+	inert_first: bool,
+	first: &str,
+	second: &str,
+) -> (Fixture, flatten::Frame) {
+	let doc = static_text_doc(root_kind, select, inert_first, first, second, 0x1122_3344);
+	fixture_from_doc(doc)
+}
+
+fn fixture_from_doc(doc: Doc) -> (Fixture, flatten::Frame) {
+	let mut state = style::st_new();
+	list::init(&doc, &mut state.lists);
+	style::begin_solve(&doc, &mut state);
+	let mut layout = layout::lay_new();
+	let root = layout::solve(&doc, &mut state, &mut layout, 240.0, 160.0, true);
+	let dispatch = dispatch::dstate_new();
+	let frame = flatten::flatten(&doc, &state, &layout, &dispatch, &motion::mst_new(), root);
+	let mut scene = scene::scene_new();
+	scene::load(&mut scene, &frame);
+	(Fixture { doc, state, layout, scene, dispatch }, frame)
+}
+
+fn static_para_doc() -> Doc {
+	let mut doc = slir::doc_new();
+	doc.ok = true;
+	doc.strs.extend([
+		String::new(),
+		"root".into(),
+		"root/para".into(),
+		"root/para/include".into(),
+		"root/para/space".into(),
+		"root/para/quoted".into(),
+		"  #include ".into(),
+		" ".into(),
+		" \"x\"  ".into(),
+	]);
+	doc.node_kind
+		.extend([slir::K_COL, slir::K_PARA, slir::K_SPAN, slir::K_SPAN, slir::K_SPAN]);
+	doc.node_flags.extend([slir::F_SELECT, 0, 0, 0, 0]);
+	doc.node_parent.extend([slir::NONE, 0, 1, 1, 1]);
+	doc.node_first
+		.extend([1, 2, slir::NONE, slir::NONE, slir::NONE]);
+	doc.node_next
+		.extend([slir::NONE, slir::NONE, 3, 4, slir::NONE]);
+	doc.node_key.extend([1, 2, 3, 4, 5]);
+	doc.node_id.resize(5, 0);
+	doc.node_line.extend([1, 2, 2, 2, 2]);
+	doc.aval_tag
+		.extend([slir::T_COLOR, slir::T_STR, slir::T_STR, slir::T_STR]);
+	doc.aval_lo.extend([0x1122_3344, 6, 7, 8]);
+	doc.aval_hi.resize(4, 0);
+	doc.aval_num.resize(4, 0.0);
+	doc.attr_id
+		.extend([slir::A_SELECT_BG, slir::A_CONTENT, slir::A_CONTENT, slir::A_CONTENT]);
+	doc.attr_val.extend([0, 1, 2, 3]);
+	doc.attr_index.extend([0, 1, 1, 2, 3, 4]);
+	doc
+}
+
+fn static_fixture(
+	select: bool,
+	inert_first: bool,
+	first: &str,
+	second: &str,
+) -> (Fixture, flatten::Frame) {
+	static_fixture_kind(slir::K_COL, select, inert_first, first, second)
+}
+fn text_hit(frame: &flatten::Frame, scene: &Scene, node: u32, end: bool) -> (f64, f64) {
+	let text = frame
+		.ops
+		.iter()
+		.find_map(|op| match op {
+			flatten::FrameOp::Text(text) if text.node == node => Some(text),
+
+			_ => None,
+		})
+		.expect("text op exists");
+	let entry =
+		&scene.entries[usize::try_from(scene::index_of(scene, node)).expect("text is in scene")];
+	let x = if end {
+		text.x + text.measured_w - 0.01
+	} else {
+		text.x + 0.01
+	};
+	(x, entry.y + entry.h / 2.0)
+}
+
+fn drag_static_range(fixture: &mut Fixture, frame: &flatten::Frame) {
+	let (x0, y0) = text_hit(frame, &fixture.scene, 1, false);
+	let (x1, y1) = text_hit(frame, &fixture.scene, 2, true);
+	let down = send(fixture, &pointer(dispatch::E_POINTER_DOWN, x0, y0, 0, 1, 0));
+	assert!(!down.has_static_selection, "collapsed anchor is not yet a retained range");
+	let armed = fixture
+		.dispatch
+		.static_selection
+		.as_ref()
+		.expect("select root arms");
+	assert_eq!(armed.anchor, armed.focus);
+	let moved = send(fixture, &pointer(dispatch::E_POINTER_MOVE, x1, y1, 0, 0, 0));
+	assert!(moved.repaint, "extending the endpoint repaints");
+	let up = send(fixture, &pointer(dispatch::E_POINTER_UP, x1, y1, 0, 0, 0));
+	assert!(up.has_static_selection, "pointer-up retains the dragged range");
+}
+
+/// Static selection anchors, extends across scene-ordered text nodes, copies
+/// through Effects, clears on Escape, and treats a sub-threshold gesture as a
+/// plain click.
+pub fn test_static_selection_lifecycle_cross_node_copy_and_clear() {
+	let (mut fixture, frame) = static_fixture(true, false, "ab", "cd");
+	drag_static_range(&mut fixture, &frame);
+	let copied = send(&mut fixture, &pointer(dispatch::E_COPY, 0.0, 0.0, 0, 0, 0));
+	assert_eq!(copied.copy_text.as_deref(), Some("ab\ncd"));
+
+	let (mut row, row_frame) = static_fixture_kind(slir::K_ROW, true, false, "ab", "cd");
+	drag_static_range(&mut row, &row_frame);
+	let row_copy = send(&mut row, &pointer(dispatch::E_COPY, 0.0, 0.0, 0, 0, 0));
+	assert_eq!(row_copy.copy_text.as_deref(), Some("abcd"), "same-line runs concatenate");
+
+	let escaped = send(&mut fixture, &key_event("Escape"));
+	assert!(escaped.repaint);
+	assert!(fixture.dispatch.static_selection.is_none());
+
+	let (x, y) = text_hit(&frame, &fixture.scene, 1, false);
+	send(&mut fixture, &pointer(dispatch::E_POINTER_DOWN, x, y, 0, 1, 0));
+	let click = send(&mut fixture, &pointer(dispatch::E_POINTER_UP, x, y, 0, 0, 0));
+	assert!(!click.has_static_selection);
+	assert!(fixture.dispatch.static_selection.is_none());
+	let (mut vanished, vanished_frame) = static_fixture(true, false, "ab", "cd");
+	drag_static_range(&mut vanished, &vanished_frame);
+	vanished.scene = scene::scene_new();
+	assert!(dispatch::validate_static_selection(
+		&vanished.doc,
+		&vanished.state,
+		&vanished.scene,
+		&mut vanished.dispatch,
+	));
+	assert!(vanished.dispatch.static_selection.is_none(), "vanished root clears selection");
+}
+
+/// Paragraph copy slices its layout source range, preserving whitespace-only
+/// spans that do not produce their own painted Text operation.
+pub fn test_static_selection_paragraph_copy_preserves_unpainted_space() {
+	let (mut fixture, frame) = fixture_from_doc(static_para_doc());
+	let entry_index =
+		usize::try_from(scene::index_of(&fixture.scene, 1)).expect("paragraph scene entry");
+	let (entry_x, y) = {
+		let entry = &fixture.scene.entries[entry_index];
+		(entry.x, entry.y + entry.h / 2.0)
+	};
+	let mut x1 = f64::NEG_INFINITY;
+	for op in &frame.ops {
+		if let flatten::FrameOp::Text(text) = op {
+			// Painted runs omit boundary whitespace; only their right edge is useful.
+			x1 = x1.max(text.x + text.measured_w);
+		}
+	}
+	send(&mut fixture, &pointer(dispatch::E_POINTER_DOWN, entry_x + 0.01, y, 0, 1, 0));
+	send(&mut fixture, &pointer(dispatch::E_POINTER_MOVE, x1 + 1.0, y, 0, 0, 0));
+	send(&mut fixture, &pointer(dispatch::E_POINTER_UP, x1 + 1.0, y, 0, 0, 0));
+	let copied = send(&mut fixture, &pointer(dispatch::E_COPY, 0.0, 0.0, 0, 0, 0));
+	assert_eq!(copied.copy_text.as_deref(), Some("  #include   \"x\"  "));
+}
+
+/// Pointer hit carets never split a grapheme cluster.
+pub fn test_static_selection_grapheme_clamping() {
+	let (mut fixture, frame) = static_fixture(true, false, "ae\u{301}b", "z");
+
+	let text = frame
+		.ops
+		.iter()
+		.find_map(|op| match op {
+			flatten::FrameOp::Text(text) if text.node == 1 => Some(text),
+			_ => None,
+		})
+		.expect("first text op");
+	let text_y = {
+		let entry = &fixture.scene.entries
+			[usize::try_from(scene::index_of(&fixture.scene, 1)).expect("first text scene entry")];
+		entry.y + entry.h / 2.0
+	};
+	send(
+		&mut fixture,
+		&pointer(dispatch::E_POINTER_DOWN, text.x + text.measured_w / 2.0, text_y, 0, 1, 0),
+	);
+	let offset = fixture
+		.dispatch
+		.static_selection
+		.as_ref()
+		.expect("selection arms")
+		.anchor
+		.offset;
+	assert_ne!(offset, 2, "caret cannot land inside e + combining-mark cluster");
+	assert!([0, 1, 3, 4].contains(&offset), "caret is a grapheme boundary: {offset}");
+}
+
+/// `select` is opt-in and effective inert text is excluded from selection.
+pub fn test_static_selection_requires_flag_and_excludes_inert() {
+	let (mut plain, plain_frame) = static_fixture(false, false, "ab", "cd");
+	let (x, y) = text_hit(&plain_frame, &plain.scene, 1, false);
+	send(&mut plain, &pointer(dispatch::E_POINTER_DOWN, x, y, 0, 1, 0));
+	assert!(plain.dispatch.static_selection.is_none());
+
+	let (mut inert, inert_frame) = static_fixture(true, true, "ab", "cd");
+	let (x, y) = text_hit(&inert_frame, &inert.scene, 1, false);
+	send(&mut inert, &pointer(dispatch::E_POINTER_DOWN, x, y, 0, 1, 0));
+
+	let (mut focused, focused_frame) = static_fixture(true, false, "ab", "cd");
+	let focused_index =
+		usize::try_from(scene::index_of(&focused.scene, 1)).expect("focusable text scene entry");
+	focused.scene.entries[focused_index].flags |= slir::F_FOCUSABLE;
+	let (x, y) = text_hit(&focused_frame, &focused.scene, 1, false);
+	send(&mut focused, &pointer(dispatch::E_POINTER_DOWN, x, y, 0, 1, 0));
+	assert!(focused.dispatch.static_selection.is_none(), "focusable hit path has precedence");
+	assert!(inert.dispatch.static_selection.is_none());
+}
+
+/// Selection rectangles use `select-bg` and are emitted immediately before
+/// every covered text op without otherwise changing paint order.
+pub fn test_static_selection_rects_precede_covered_text_ops() {
+	let (mut fixture, initial) = static_fixture(true, false, "ab", "cd");
+	drag_static_range(&mut fixture, &initial);
+	let root = fixture
+		.layout
+		.p_node
+		.iter()
+		.rposition(|&node| node == 0)
+		.expect("root placement");
+	let frame = flatten::flatten(
+		&fixture.doc,
+		&fixture.state,
+		&fixture.layout,
+		&fixture.dispatch,
+		&motion::mst_new(),
+		i32::try_from(root).expect("root placement fits i32"),
+	);
+	let selected: Vec<_> = frame
+		.ops
+		.windows(2)
+		.filter_map(|pair| match (&pair[0], &pair[1]) {
+			(flatten::FrameOp::Rect(rect), flatten::FrameOp::Text(text))
+				if rect.bg == 0x1122_3344 && rect.node == text.node =>
+			{
+				Some((rect.w, text.measured_w))
+			},
+			_ => None,
+		})
+		.collect();
+	assert_eq!(selected.len(), 2, "one selection rect immediately precedes each text run");
+	assert!(
+		selected
+			.iter()
+			.all(|(width, measured)| width > &0.0 && width <= measured)
+	);
 }

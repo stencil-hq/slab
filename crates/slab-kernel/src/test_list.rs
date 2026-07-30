@@ -833,6 +833,54 @@ pub fn test_virtual_list_frame_settle_reveal_and_op_bound() {
 	assert!(revealed.ops.len() < 200);
 }
 
+/// Verifies mixed retained extents, prefix placement, anchor preservation,
+/// keyed reorder retention, bounded windows, and far-item reveal.
+pub fn test_variable_virtual_extents_anchor_reorder_and_reveal() {
+	let mut inst = frame::inst_shell();
+	inst.doc = virtual_list_with_origin_doc();
+	frame::inst_init(&mut inst);
+	frame::inst_set_env(&mut inst, 120.0, 100.0, 0, false, false);
+	assert!(frame::inst_set_list_len(&mut inst, 0, "", 100));
+	assert!(frame::inst_set_list_key(&mut inst, 0, "", 0, "a"));
+	assert!(frame::inst_set_list_key(&mut inst, 0, "", 1, "b"));
+	frame::inst_frame(&mut inst, 0.0);
+	frame::inst_frame(&mut inst, 1.0);
+
+	assert!(frame::inst_set_item_extent(&mut inst, "virtual", 0, 40.0));
+	assert!(frame::inst_set_item_extent(&mut inst, "virtual", 1, 10.0));
+	assert_eq!(list::virtual_item_offset(&inst.doc, &inst.st.lists, 1, 2), Some(50.0));
+	assert_eq!(list::virtual_total_extent(&inst.doc, &inst.st.lists, 1), Some(2_010.0));
+
+	assert!(frame::inst_set_scroll(&mut inst, "scroll", 0, 1_000.0));
+	frame::inst_frame(&mut inst, 2.0);
+	let before = frame::inst_get_scroll(&inst, "scroll", 0);
+	assert!(frame::inst_set_item_extent(&mut inst, "virtual", 0, 60.0));
+	assert_eq!(
+		frame::inst_get_scroll(&inst, "scroll", 0),
+		before + 20.0,
+		"an edit above the viewport preserves the visible anchor"
+	);
+
+	assert!(frame::inst_set_list_key(&mut inst, 0, "", 0, "__swap"));
+	assert!(frame::inst_set_list_key(&mut inst, 0, "", 1, "a"));
+	assert!(frame::inst_set_list_key(&mut inst, 0, "", 0, "b"));
+	frame::inst_frame(&mut inst, 3.0);
+	assert_eq!(
+		list::virtual_item_offset(&inst.doc, &inst.st.lists, 1, 1),
+		Some(10.0),
+		"keyed extents follow identities through reorder"
+	);
+	assert_eq!(list::virtual_item_offset(&inst.doc, &inst.st.lists, 1, 2), Some(70.0));
+
+	assert!(frame::inst_reveal_item(&mut inst, "virtual", 99, 2));
+	let revealed = frame::inst_frame(&mut inst, 4.0);
+	let (start, end) = frame::inst_each_window(&inst, "virtual");
+	assert!(start > 90);
+	assert_eq!(end, 100);
+	assert!(end - start < 32);
+	assert!(revealed.scene.len() < 200);
+}
+
 /// Verifies retained frame updates skip clean instances without clearing or
 /// reallocating the caller-owned frame.
 pub fn test_retained_frame_update_reuses_output_and_reports_clean_frames() {

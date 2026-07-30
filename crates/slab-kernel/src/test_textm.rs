@@ -379,16 +379,7 @@ pub fn test_fallback_advance_eaw() {
 pub fn test_bidi_visual_order() {
 	let doc = font_doc();
 	let chars: Vec<u32> = "abc אבג".chars().map(u32::from).collect();
-	let shaped = textm::shape_line(
-		&doc,
-		0,
-		10.0,
-		0.0,
-		&chars,
-		0,
-		0,
-		i32::try_from(chars.len()).expect("text fits i32"),
-	);
+	let shaped = textm::shape_line(&doc, 0, 10.0, 0.0, &chars);
 	let starts: Vec<i32> = shaped
 		.clusters
 		.iter()
@@ -397,23 +388,34 @@ pub fn test_bidi_visual_order() {
 	assert_eq!(starts, [0, 1, 2, 3, 6, 5, 4], "RTL clusters paint in visual order");
 	assert!(shaped.runs.iter().any(|run| run.rtl), "frame splits an RTL shaped run");
 	let layout = measure(&doc, "abc אבג", 200.0, false, false, -1);
+	let cache = std::cell::RefCell::new(textm::ShapeCache::default());
+	let shaper = textm::Shaper { d: &doc, cache: &cache };
 	let mut editor = crate::edit::es_new(0, "abc אבג");
+	// Arrow stops are logical grapheme boundaries: monotone even across the
+	// bidi run seam, so no stop can be visited twice or skipped.
+	editor.caret = 4;
+	editor.anchor = 4;
+	crate::edit::visual_step(shaper, &mut editor, &layout, 1, false);
+	assert_eq!(editor.caret, 5, "ArrowRight advances one logical grapheme in RTL text");
+	crate::edit::visual_step(shaper, &mut editor, &layout, -1, false);
+	assert_eq!(editor.caret, 4, "ArrowLeft reverses the same logical step");
 	editor.caret = 7;
 	editor.anchor = 7;
-	crate::edit::visual_step(&mut editor, &layout, 1, false);
-	assert_eq!(editor.caret, 6, "ArrowRight follows the RTL visual run");
-	crate::edit::visual_step(&mut editor, &layout, -1, false);
-	assert_eq!(editor.caret, 7, "ArrowLeft reverses the same visual step");
+	crate::edit::visual_step(shaper, &mut editor, &layout, 1, false);
+	assert_eq!(editor.caret, 7, "ArrowRight at the logical end stays put");
 }
 
 /// Verifies grapheme clusters are indivisible for wrapping and caret geometry.
 pub fn test_cluster_aware_wrap_and_caret() {
 	let doc = font_doc();
 	let layout = measure(&doc, "a\u{301}b", 6.0, true, false, -1);
+	let cache = std::cell::RefCell::new(textm::ShapeCache::default());
+	let shaper = textm::Shaper { d: &doc, cache: &cache };
 	assert_eq!(layout.ls.len(), 2, "oversized grapheme stays intact");
 	assert_eq!(line_str(&layout, 0), "a\u{301}", "hard wrap does not split combining marks");
+	let first = shaper.line(&layout, 0).expect("line 0 shapes");
 	assert_eq!(
-		layout.shaped[0]
+		first
 			.clusters
 			.iter()
 			.map(|cluster| (cluster.start, cluster.end))
@@ -422,13 +424,13 @@ pub fn test_cluster_aware_wrap_and_caret() {
 		"base and combining mark expose one caret cluster"
 	);
 	assert_eq!(
-		textm::caret_x(&layout, 0, 1),
-		layout.shaped[0].width,
+		textm::caret_x(shaper, &layout, 0, 1),
+		first.width,
 		"an interior source offset snaps past the cluster"
 	);
 	assert_eq!(
-		textm::selection_bands(&layout, 0, 1, 2),
-		[(0.0, layout.shaped[0].width)],
+		textm::selection_bands(shaper, &layout, 0, 1, 2),
+		[(0.0, first.width)],
 		"partial logical selection paints the whole cluster"
 	);
 }
@@ -452,7 +454,7 @@ pub fn test_font_fallback_splits_shaped_runs() {
 	doc.font_adv.push(500);
 
 	let chars: Vec<u32> = "a✕b".chars().map(u32::from).collect();
-	let shaped = textm::shape_line(&doc, 0, 10.0, 0.0, &chars, 0, 0, 3);
+	let shaped = textm::shape_line(&doc, 0, 10.0, 0.0, &chars);
 	assert_eq!(
 		shaped.runs.iter().map(|run| run.font).collect::<Vec<_>>(),
 		[0, 1, 0],
@@ -531,4 +533,221 @@ pub fn test_cumulative_diagnostics_survive_resolves() {
 		frame::inst_diags(&inst).is_empty(),
 		"new document assignment resets the cumulative set"
 	);
+}
+
+fn assert_splice_layout_eq(actual: &TextLayout, expected: &TextLayout, context: &str) {
+	assert_eq!(actual.chars, expected.chars, "{context}: chars");
+	assert_eq!(actual.ls, expected.ls, "{context}: line starts");
+	assert_eq!(actual.le, expected.le, "{context}: line ends");
+	assert_eq!(actual.src_ls, expected.src_ls, "{context}: source line starts");
+	assert_eq!(actual.src_le, expected.src_le, "{context}: source line ends");
+	assert_eq!(
+		actual
+			.line_w
+			.iter()
+			.map(|width| width.to_bits())
+			.collect::<Vec<_>>(),
+		expected
+			.line_w
+			.iter()
+			.map(|width| width.to_bits())
+			.collect::<Vec<_>>(),
+		"{context}: line widths"
+	);
+	assert_eq!(actual.hard_lines, expected.hard_lines, "{context}: hard lines");
+	assert_eq!(actual.hard_src, expected.hard_src, "{context}: hard source offsets");
+	assert_eq!(actual.w.to_bits(), expected.w.to_bits(), "{context}: width");
+	assert_eq!(actual.h.to_bits(), expected.h.to_bits(), "{context}: height");
+	assert_eq!(actual.truncated, expected.truncated, "{context}: truncation");
+}
+
+fn splice_differential(wrap: bool) {
+	const EDITS: usize = 256;
+	let doc = font_doc();
+	let mut cache = textm::ShapeCache::default();
+	let mut text = (0..200)
+		.map(|line| format!("abc x line{line:03} cab xxx"))
+		.collect::<Vec<_>>()
+		.join("\n");
+	let mut state = 0x4d59_5df4_d0f3_3173_u64;
+	let mut random = || {
+		state = state
+			.wrapping_mul(6_364_136_223_846_793_005)
+			.wrapping_add(1);
+		state
+	};
+	let max_w = if wrap { 31.0 } else { 10_000.0 };
+
+	for edit in 0..EDITS {
+		let old_chars: Vec<char> = text.chars().collect();
+		let old_len = old_chars.len();
+		let newline_positions: Vec<usize> = old_chars
+			.iter()
+			.enumerate()
+			.filter_map(|(index, &ch)| (ch == '\n').then_some(index))
+			.collect();
+		let (at, removed, inserted) = match edit % 8 {
+			0 => (0, 0, vec![if edit % 16 == 0 { '\n' } else { 'a' }]),
+			1 => (old_len, 0, vec![' ', 'f', 'f', 'i']),
+			2 => {
+				let boundary = newline_positions
+					.get((random() as usize) % newline_positions.len())
+					.map_or(old_len, |position| position + 1);
+				(boundary, 0, vec!['b', 'c'])
+			},
+			3 => {
+				let newline = newline_positions[(random() as usize) % newline_positions.len()];
+				let start = newline.saturating_sub(2);
+				let count = (old_len - start).min(5);
+				(start, count, Vec::new())
+			},
+			4 => {
+				let at = (random() as usize) % (old_len + 1);
+				let choices = ['x', '\n', ' ', 'c', '\u{301}'];
+				(at, 0, vec![choices[(random() as usize) % choices.len()]])
+			},
+			5 => {
+				let at = (random() as usize) % (old_len + 1);
+				let choices =
+					[vec!['a', 'b', 'c'], vec!['x', '\n', 'x'], vec![' ', 'f', 'i', ' '], vec![
+						'c', 'a',
+					]];
+				(at, 0, choices[(random() as usize) % choices.len()].clone())
+			},
+			6 => {
+				let at = (random() as usize) % old_len;
+				let count = ((random() as usize) % 9 + 1).min(old_len - at);
+				(at, count, Vec::new())
+			},
+			_ => {
+				let at = (random() as usize) % old_len;
+				let count = ((random() as usize) % 6 + 1).min(old_len - at);
+				(at, count, vec!['c', '\n', 'a'])
+			},
+		};
+		let full_prev = textm::measure_text_cached(
+			&doc,
+			0,
+			10.0,
+			1.4,
+			0.0,
+			&text,
+			max_w,
+			wrap,
+			false,
+			-1,
+			&crate::edit::InlineSpans::empty(),
+			&mut cache,
+		);
+		let mut new_chars = old_chars;
+		new_chars.splice(at..at + removed, inserted.iter().copied());
+		let new_text: String = new_chars.iter().collect();
+		let delta = textm::TextDelta {
+			at:       i32::try_from(at).expect("test text fits i32"),
+			removed:  i32::try_from(removed).expect("test edit fits i32"),
+			inserted: i32::try_from(inserted.len()).expect("test edit fits i32"),
+		};
+		let spliced = textm::measure_text_spliced(
+			&doc, 0, 10.0, 1.4, 0.0, &full_prev, &new_text, delta, max_w, wrap, &mut cache,
+		)
+		.unwrap_or_else(|| panic!("splice rejected valid edit {edit}, wrap={wrap}"));
+		let full_new = textm::measure_text_cached(
+			&doc,
+			0,
+			10.0,
+			1.4,
+			0.0,
+			&new_text,
+			max_w,
+			wrap,
+			false,
+			-1,
+			&crate::edit::InlineSpans::empty(),
+			&mut cache,
+		);
+		assert_splice_layout_eq(&spliced, &full_new, &format!("edit {edit}, wrap={wrap}"));
+		text = new_text;
+	}
+}
+
+/// Differentially checks delta-spliced measurement against a full measure.
+pub fn test_splice_differential_wrapped() {
+	splice_differential(true);
+}
+
+/// Differentially checks delta-spliced measurement without soft wrapping.
+pub fn test_splice_differential_nowrap() {
+	splice_differential(false);
+}
+
+/// Checks composition of contiguous edit deltas and rejection of disjoint
+/// edits.
+pub fn test_text_delta_merge() {
+	let mut cancelled = textm::TextDelta { at: 4, removed: 0, inserted: 1 };
+	assert!(cancelled.merge(textm::TextDelta { at: 4, removed: 1, inserted: 0 }));
+	assert_eq!(cancelled, textm::TextDelta { at: 4, removed: 0, inserted: 0 });
+
+	let mut overlap = textm::TextDelta { at: 3, removed: 3, inserted: 2 };
+	assert!(overlap.merge(textm::TextDelta { at: 4, removed: 1, inserted: 3 }));
+	assert_eq!(overlap, textm::TextDelta { at: 3, removed: 3, inserted: 4 });
+	assert!(overlap.merge(textm::TextDelta { at: 2, removed: 2, inserted: 1 }));
+	assert_eq!(overlap, textm::TextDelta { at: 2, removed: 4, inserted: 4 });
+
+	let before = overlap;
+	assert!(!overlap.merge(textm::TextDelta { at: 20, removed: 1, inserted: 0 }));
+	assert_eq!(overlap, before, "a rejected merge leaves the accumulated delta intact");
+}
+
+/// Checks that shaped multi-font runs remain in normative FONT-advance space.
+pub fn test_multifont_shaped_advance_contract() {
+	let mut doc = font_doc();
+	doc.font_family.push(0);
+	doc.font_class.push(0);
+	doc.font_weight.push(700);
+	doc.font_upem.push(1000);
+	doc.font_ascent.push(800);
+	doc.font_descent.push(-200);
+	doc.font_line_gap.push(0);
+	doc.font_default_adv.push(600);
+	doc.font_cmap_off
+		.push(i32::try_from(doc.font_cmap_cp.len()).expect("cmap fits i32"));
+	doc.font_cmap_len.push(1);
+	doc.font_cmap_cp.push(0x2715);
+	doc.font_cmap_gid.push(99);
+	doc.font_adv.push(700);
+
+	let mut cache = textm::ShapeCache::default();
+	let layout = textm::measure_text_cached(
+		&doc,
+		0,
+		10.0,
+		1.4,
+		0.0,
+		"a✕b\n✕ ab✕",
+		200.0,
+		false,
+		false,
+		-1,
+		&crate::edit::InlineSpans::empty(),
+		&mut cache,
+	);
+	let cache = std::cell::RefCell::new(cache);
+	for line in 0..layout.line_w.len() {
+		let shaped = textm::line_shaped(&doc, &cache, &layout, line).expect("line shapes");
+		let run_width = shaped.runs.iter().fold(0.0, |sum, run| sum + run.width);
+		assert_eq!(
+			run_width.to_bits(),
+			layout.line_w[line].to_bits(),
+			"line {line}: shaped run widths stay in measured advance space"
+		);
+		let mut visual_end = f64::NEG_INFINITY;
+		for cluster in &shaped.clusters {
+			assert!(cluster.x0 <= cluster.x1, "line {line}: cluster extent is ordered");
+			assert!(
+				cluster.x0 >= visual_end,
+				"line {line}: visual clusters are monotone and non-overlapping"
+			);
+			visual_end = cluster.x1;
+		}
+	}
 }
