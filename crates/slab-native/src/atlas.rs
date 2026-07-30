@@ -301,9 +301,9 @@ impl Atlas {
 	pub(crate) fn new(max_texture_dimension: u32) -> Self {
 		let max_size = max_texture_dimension.clamp(COLOR_INITIAL_SIZE, ATLAS_LIMIT);
 		Self {
-			context: ScaleContext::new(),
-			mask:    AtlasLayer::new(AtlasKind::Mask, MASK_INITIAL_SIZE, max_size),
-			color:   AtlasLayer::new(AtlasKind::Color, COLOR_INITIAL_SIZE, max_size),
+			context:  ScaleContext::new(),
+			mask:     AtlasLayer::new(AtlasKind::Mask, MASK_INITIAL_SIZE, max_size),
+			color:    AtlasLayer::new(AtlasKind::Color, COLOR_INITIAL_SIZE, max_size),
 			counters: AtlasCounters::default(),
 		}
 	}
@@ -399,7 +399,7 @@ impl Atlas {
 		self.layer_mut(kind).take_dirty()
 	}
 
-	pub(crate) fn record_upload(&mut self, bytes: u64) {
+	pub(crate) const fn record_upload(&mut self, bytes: u64) {
 		self.counters.upload_bytes += bytes;
 	}
 

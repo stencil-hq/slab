@@ -15,7 +15,11 @@
 //! (toggle), and `act=window-drag` (starts an OS window move on press —
 //! bind it on the titlebar container; nested controls still win).
 
-use std::{path::{Path, PathBuf}, sync::Arc, time::Instant};
+use std::{
+	path::{Path, PathBuf},
+	sync::Arc,
+	time::Instant,
+};
 
 use slab_kernel::{
 	dispatch as kdispatch,
@@ -361,8 +365,8 @@ where
 		a11y_proxy: EventLoopProxy<ShellEvent<U>>,
 		host: H,
 	) -> Self {
-		let stats = (opts.stats || opts.stats_csv.is_some())
-			.then(|| FrameStats::new(opts.stats_csv.clone()));
+		let stats =
+			(opts.stats || opts.stats_csv.is_some()).then(|| FrameStats::new(opts.stats_csv.clone()));
 		Self {
 			exit_deadline: opts
 				.exit_after_ms

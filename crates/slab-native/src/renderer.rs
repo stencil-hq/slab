@@ -2317,7 +2317,9 @@ impl Renderer {
 				AtlasKind::Mask => &self.atlas_mask_tex,
 				AtlasKind::Color => &self.atlas_color_tex,
 			};
-			self.atlas.record_upload(u64::from(stride) * u64::from(rows));
+			self
+				.atlas
+				.record_upload(u64::from(stride) * u64::from(rows));
 			self.queue.write_texture(
 				wgpu::TexelCopyTextureInfo {
 					texture,

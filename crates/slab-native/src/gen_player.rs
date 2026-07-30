@@ -325,6 +325,11 @@ impl Doc {
 		kframe::inst_each_window(&self.inst, each_key)
 	}
 
+	/// Enable retained per-item extents and update one virtual-list item.
+	pub fn set_item_extent(&mut self, each_key: &str, index: i32, extent: f64) -> bool {
+		kframe::inst_set_item_extent(&mut self.inst, each_key, index, extent)
+	}
+
 	/// Set the extent overlay controlled by a keyed divider.
 	pub fn set_divider(&mut self, key: &str, extent: f64) -> bool {
 		kframe::inst_set_divider(&mut self.inst, key, extent)
@@ -333,6 +338,16 @@ impl Doc {
 	/// Read a keyed divider's extent overlay, or `-1.0` when unknown or unset.
 	pub fn get_divider(&self, key: &str) -> f64 {
 		kframe::inst_get_divider(&self.inst, key)
+	}
+
+	/// Set one retained split-pane size.
+	pub fn set_split(&mut self, pane_key: &str, size: f64) -> bool {
+		kframe::inst_set_split(&mut self.inst, pane_key, size)
+	}
+
+	/// Read one retained split-pane size, or `-1.0` when unknown.
+	pub fn get_split(&self, pane_key: &str) -> f64 {
+		kframe::inst_get_split(&self.inst, pane_key)
 	}
 
 	/// Dispatch an input event and return its raw and typed effects.

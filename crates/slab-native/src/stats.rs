@@ -11,51 +11,51 @@ use std::{
 use crate::atlas::AtlasCounters;
 
 #[derive(Clone, Copy, Debug)]
-pub(crate) enum InputKind {
+pub enum InputKind {
 	Key,
 	Wheel,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
 struct FrameRecord {
-	t_ms:             f64,
-	kernel_ns:        u64,
-	build_ns:         u64,
-	render_ns:        u64,
-	present_ns:       u64,
-	total_ns:         u64,
-	rasterized:       u32,
-	upload_bytes:     u64,
-	input_key_ns:     Option<u64>,
-	input_wheel_ns:   Option<u64>,
+	t_ms:           f64,
+	kernel_ns:      u64,
+	build_ns:       u64,
+	render_ns:      u64,
+	present_ns:     u64,
+	total_ns:       u64,
+	rasterized:     u32,
+	upload_bytes:   u64,
+	input_key_ns:   Option<u64>,
+	input_wheel_ns: Option<u64>,
 }
 
 /// Timing state for one successfully presented frame.
-pub(crate) struct FrameMeasurement {
-	t_ms:          f64,
-	total_start:   Instant,
-	stage_start:   Instant,
-	kernel:        Duration,
-	build:         Duration,
-	render:        Duration,
-	present:       Duration,
+pub struct FrameMeasurement {
+	t_ms:        f64,
+	total_start: Instant,
+	stage_start: Instant,
+	kernel:      Duration,
+	build:       Duration,
+	render:      Duration,
+	present:     Duration,
 }
 
 impl FrameMeasurement {
 	pub(crate) fn start() -> Self {
 		let now = Instant::now();
 		Self {
-			t_ms: 0.0,
+			t_ms:        0.0,
 			total_start: now,
 			stage_start: now,
-			kernel: Duration::ZERO,
-			build: Duration::ZERO,
-			render: Duration::ZERO,
-			present: Duration::ZERO,
+			kernel:      Duration::ZERO,
+			build:       Duration::ZERO,
+			render:      Duration::ZERO,
+			present:     Duration::ZERO,
 		}
 	}
 
-	pub(crate) fn set_t_ms(&mut self, t_ms: f64) {
+	pub(crate) const fn set_t_ms(&mut self, t_ms: f64) {
 		self.t_ms = t_ms;
 	}
 
@@ -91,15 +91,18 @@ impl FrameMeasurement {
 		let presented = Instant::now();
 		self.present = presented.duration_since(self.stage_start);
 		stats.frames.push(FrameRecord {
-			t_ms: self.t_ms,
-			kernel_ns: nanos(self.kernel),
-			build_ns: nanos(self.build),
-			render_ns: nanos(self.render),
-			present_ns: nanos(self.present),
-			total_ns: nanos(presented.duration_since(self.total_start)),
-			rasterized: counters.rasterized_glyphs,
-			upload_bytes: counters.upload_bytes,
-			input_key_ns: stats.pending_key.take().map(|stamp| nanos(presented.duration_since(stamp))),
+			t_ms:           self.t_ms,
+			kernel_ns:      nanos(self.kernel),
+			build_ns:       nanos(self.build),
+			render_ns:      nanos(self.render),
+			present_ns:     nanos(self.present),
+			total_ns:       nanos(presented.duration_since(self.total_start)),
+			rasterized:     counters.rasterized_glyphs,
+			upload_bytes:   counters.upload_bytes,
+			input_key_ns:   stats
+				.pending_key
+				.take()
+				.map(|stamp| nanos(presented.duration_since(stamp))),
 			input_wheel_ns: stats
 				.pending_wheel
 				.take()
@@ -109,7 +112,7 @@ impl FrameMeasurement {
 }
 
 /// Session-bounded collector for frame timings and input-to-present latency.
-pub(crate) struct FrameStats {
+pub struct FrameStats {
 	frames:        Vec<FrameRecord>,
 	pending_key:   Option<Instant>,
 	pending_wheel: Option<Instant>,
@@ -150,7 +153,14 @@ impl FrameStats {
 			("present", self.frames.iter().map(|f| f.present_ns).collect()),
 			("total", self.frames.iter().map(|f| f.total_ns).collect()),
 			("input key", self.frames.iter().filter_map(|f| f.input_key_ns).collect()),
-			("input wheel", self.frames.iter().filter_map(|f| f.input_wheel_ns).collect()),
+			(
+				"input wheel",
+				self
+					.frames
+					.iter()
+					.filter_map(|f| f.input_wheel_ns)
+					.collect(),
+			),
 		] {
 			write_summary_row(&mut out, name, values);
 		}
@@ -167,7 +177,8 @@ impl FrameStats {
 		let mut out = BufWriter::new(file);
 		writeln!(
 			out,
-			"t_ms,kernel_us,build_us,render_us,present_us,total_us,rasterized_glyphs,atlas_upload_bytes,input_key_us,input_wheel_us"
+			"t_ms,kernel_us,build_us,render_us,present_us,total_us,rasterized_glyphs,\
+			 atlas_upload_bytes,input_key_us,input_wheel_us"
 		)
 		.map_err(|e| format!("cannot write stats CSV {}: {e}", path.display()))?;
 		for frame in &self.frames {
@@ -187,7 +198,8 @@ impl FrameStats {
 			)
 			.map_err(|e| format!("cannot write stats CSV {}: {e}", path.display()))?;
 		}
-		out.flush().map_err(|e| format!("cannot write stats CSV {}: {e}", path.display()))
+		out.flush()
+			.map_err(|e| format!("cannot write stats CSV {}: {e}", path.display()))
 	}
 }
 
@@ -200,7 +212,8 @@ fn micros(ns: u64) -> f64 {
 }
 
 fn optional_micros(ns: Option<u64>) -> String {
-	ns.map(|value| format!("{:.3}", micros(value))).unwrap_or_default()
+	ns.map(|value| format!("{:.3}", micros(value)))
+		.unwrap_or_default()
 }
 
 fn write_summary_row(out: &mut String, name: &str, mut values: Vec<u64>) {
@@ -221,7 +234,7 @@ fn write_summary_row(out: &mut String, name: &str, mut values: Vec<u64>) {
 	);
 }
 
-fn percentile(sorted: &[u64], percent: usize) -> u64 {
+const fn percentile(sorted: &[u64], percent: usize) -> u64 {
 	let rank = (percent * sorted.len()).div_ceil(100);
 	sorted[rank.saturating_sub(1)]
 }
@@ -241,13 +254,13 @@ mod tests {
 	#[test]
 	fn summary_aggregates_frames_and_counters() {
 		let stats = FrameStats {
-			frames: vec![
+			frames:        vec![
 				FrameRecord { kernel_ns: 1_000, rasterized: 2, upload_bytes: 10, ..Default::default() },
 				FrameRecord { kernel_ns: 3_000, rasterized: 3, upload_bytes: 20, ..Default::default() },
 			],
-			pending_key: None,
+			pending_key:   None,
 			pending_wheel: None,
-			csv_path: None,
+			csv_path:      None,
 		};
 		let summary = stats.summary();
 		assert!(summary.contains("frame stats (2 frames)"));

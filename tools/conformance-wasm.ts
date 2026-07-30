@@ -114,6 +114,12 @@ interface TraceDivider {
    extent: number;
 }
 
+interface TraceItemExtent {
+   each: string;
+   index: number;
+   extent: number;
+}
+
 interface TraceReveal {
    key: string;
    margin: number;
@@ -152,6 +158,7 @@ interface TraceStep {
    img?: TraceImage;
    list?: TraceList;
    divider?: TraceDivider;
+   itemExtent?: TraceItemExtent;
    reveal?: TraceReveal;
    revealItem?: TraceRevealItem;
    window?: TraceWindow;
@@ -523,6 +530,18 @@ function parseTraceStep(value: unknown, index: number): TraceStep {
             typeof rawExtent === 'number' && Number.isFinite(rawExtent) ? rawExtent : Number.NaN,
       };
    }
+   const itemExtentValue = field(step, 'item_extent');
+   let itemExtent: TraceItemExtent | undefined;
+   if (itemExtentValue !== undefined) {
+      const itemExtentObject = objectValue(itemExtentValue, `${context}.item_extent`);
+      const rawExtent = field(itemExtentObject, 'extent');
+      itemExtent = {
+         each: stringOr(field(itemExtentObject, 'each'), ''),
+         index: i32Or(field(itemExtentObject, 'index'), -0x8000_0000),
+         extent:
+            typeof rawExtent === 'number' && Number.isFinite(rawExtent) ? rawExtent : Number.NaN,
+      };
+   }
    const revealValue = field(step, 'reveal');
    let reveal: TraceReveal | undefined;
    if (revealValue !== undefined) {
@@ -575,6 +594,7 @@ function parseTraceStep(value: unknown, index: number): TraceStep {
       img,
       list,
       divider,
+      itemExtent,
       reveal,
       revealItem,
       window,
@@ -1382,6 +1402,13 @@ function runTrace(
             const changed = inst.set_divider(step.divider.key, step.divider.extent);
             const read = inst.get_divider(step.divider.key) === step.divider.extent;
             lines.push(`{"set":"divider","changed":${changed},"read":${read}}`);
+         } else if (step.itemExtent) {
+            const ok = inst.set_item_extent(
+               step.itemExtent.each,
+               step.itemExtent.index,
+               step.itemExtent.extent,
+            );
+            lines.push(`{"set":"item_extent","ok":${ok}}`);
          } else if (step.reveal) {
             const ok = inst.reveal(step.reveal.key, step.reveal.margin);
             lines.push(`{"set":"reveal","ok":${ok}}`);

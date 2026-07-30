@@ -489,6 +489,13 @@ fn run_trace(bytes: &[u8], case: &serde_json::Value) -> TraceResult {
 			let margin = reveal["margin"].as_f64().unwrap_or(0.0);
 			let ok = slab_kernel::frame::inst_reveal(&mut inst, key, margin);
 			lines.push(format!("{{\"set\":\"reveal\",\"ok\":{ok}}}"));
+		} else if step["item_extent"].is_object() {
+			let item = &step["item_extent"];
+			let each = item["each"].as_str().unwrap_or("");
+			let index = json_i32(&item["index"]).unwrap_or(i32::MIN);
+			let extent = item["extent"].as_f64().unwrap_or(f64::NAN);
+			let ok = slab_kernel::frame::inst_set_item_extent(&mut inst, each, index, extent);
+			lines.push(format!("{{\"set\":\"item_extent\",\"ok\":{ok}}}"));
 		} else if step["reveal_item"].is_object() {
 			let reveal = &step["reveal_item"];
 			let each = reveal["each"].as_str().unwrap_or("");
