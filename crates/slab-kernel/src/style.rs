@@ -55,6 +55,9 @@ pub struct St {
 	/// Whether a retained divider footprint changed enough to require a settle
 	/// solve.
 	pub divider_footprint_changed: bool,
+	/// Retained split-pane sizes keyed by canonical full scene key.
+	pub split_key: Vec<String>,
+	pub split_extent: Vec<f64>,
 	/// Current numeric values for numeric, percentage, and boolean parameters.
 	pub pv_num: Vec<f64>,
 	/// Current text parameter values.
@@ -127,6 +130,8 @@ pub struct St {
 	/// Previous text-cache generation, probed on miss and dropped at the next
 	/// swap.
 	pub text_layout_cache_cold: FxHashMap<u32, crate::textm::TextCacheEntry>,
+	/// Measured-content lineage per editable field node.
+	pub text_rev: FxHashMap<u32, FieldTextRev>,
 	pub rs: Vec<crate::style::RStyle>,
 	/// Grid track kinds: fixed, hug, fill, or percentage.
 	pub track_kind: Vec<u32>,
@@ -160,6 +165,8 @@ pub fn st_new() -> crate::style::St {
 		divider_footprint_node: vec![],
 		divider_footprint: vec![],
 		divider_footprint_changed: false,
+		split_key: vec![],
+		split_extent: vec![],
 		pv_num: vec![],
 		pv_str: vec![],
 		pv_h: vec![],
@@ -200,6 +207,7 @@ pub fn st_new() -> crate::style::St {
 		aval_active: vec![],
 		text_layout_cache: FxHashMap::default(),
 		text_layout_cache_cold: FxHashMap::default(),
+		text_rev: FxHashMap::default(),
 		rs: vec![],
 		track_kind: vec![],
 		track_v: vec![],
@@ -258,9 +266,11 @@ pub fn init_params(d: &crate::slir::Doc, st: &mut crate::style::St) {
 	st.base_attr_values.clear();
 	st.font_selection.clear();
 	st.family_index.clear();
-	// Node ids and font indices alias across a doc swap; drop stale text.
+	// Node ids and font indices alias across a doc swap; drop stale text
+	// and its measured-content lineage together.
 	st.text_layout_cache.clear();
 	st.text_layout_cache_cold.clear();
+	st.text_rev.clear();
 	st.base_attr_values
 		.extend((0..d.node_kind.len()).map(|node| authored_attr_values(d, node)));
 	st.kw_codes.clear();
@@ -296,6 +306,7 @@ pub fn init_params(d: &crate::slir::Doc, st: &mut crate::style::St) {
 /// Returns whether a synthetic node no longer belongs to an active list item.
 pub fn stale_synthetic(d: &crate::slir::Doc, st: &crate::style::St, node: u32) -> bool {
 	usize::try_from(node).expect("node index exceeds usize") >= d.node_kind.len()
+		&& !crate::list::is_split_sash(&st.lists, node)
 		&& crate::list::base(&st.lists, d, node) == crate::slir::NONE
 }
 
@@ -335,8 +346,10 @@ pub fn prune_node_state(d: &crate::slir::Doc, st: &mut crate::style::St) {
 	while index > 0 {
 		index -= 1;
 		if crate::style::stale_synthetic(d, st, st.field_node[index]) {
+			let node = st.field_node[index];
 			st.field_node.swap_remove(index);
 			st.field_text.swap_remove(index);
+			st.text_rev.remove(&node);
 		}
 	}
 
@@ -753,8 +766,47 @@ pub const fn divider_clamp(requested: f64, min: f64, max: f64, budget_max: f64) 
 	min.max(requested.min(max).min(budget_max.max(min)))
 }
 
+/// Per-field measured-content lineage: a monotonic revision plus the splice
+/// that produced the latest content, when one exists.
+#[derive(Clone, Copy, Debug)]
+pub struct FieldTextRev {
+	/// Monotonic revision; the layout cache stores the revision it measured.
+	pub rev:   u64,
+	/// Forward splice from revision `rev - 1`, or `None` for a full change.
+	pub delta: Option<crate::textm::TextDelta>,
+}
+
 /// Replaces the content override for an editable field node.
+///
+/// The change is recorded as a full (non-spliceable) transition; edit-driven
+/// keystrokes go through [`field_set_spliced`] instead.
 pub fn field_set(st: &mut crate::style::St, node: u32, text: &str) {
+	field_set_with(st, node, text, None);
+}
+
+/// Replaces the content override with a contiguous-splice lineage, letting
+/// layout re-measure only the hard lines the edit touched.
+pub fn field_set_spliced(
+	st: &mut crate::style::St,
+	node: u32,
+	text: &str,
+	delta: crate::textm::TextDelta,
+) {
+	field_set_with(st, node, text, Some(delta));
+}
+
+fn field_set_with(
+	st: &mut crate::style::St,
+	node: u32,
+	text: &str,
+	delta: Option<crate::textm::TextDelta>,
+) {
+	let lineage = st
+		.text_rev
+		.entry(node)
+		.or_insert(FieldTextRev { rev: 0, delta: None });
+	lineage.rev = lineage.rev.wrapping_add(1);
+	lineage.delta = delta;
 	if let Some(index) = st
 		.field_node
 		.iter()
@@ -1161,6 +1213,42 @@ pub fn attr_val(
 		resolve_attr_ref(d, st, node, value)
 	} else {
 		value
+	}
+}
+
+/// Returns a retained split-pane extent by canonical key.
+pub fn split_get(st: &crate::style::St, key: &str) -> Option<f64> {
+	st.split_key
+		.iter()
+		.position(|candidate| candidate == key)
+		.map(|index| st.split_extent[index])
+}
+
+/// Writes a retained split-pane extent, reporting whether it changed.
+pub fn split_set(st: &mut crate::style::St, key: &str, extent: f64) -> bool {
+	if let Some(index) = st.split_key.iter().position(|candidate| candidate == key) {
+		if (st.split_extent[index] - extent).abs() <= crate::layout::EPS {
+			return false;
+		}
+		st.split_extent[index] = extent;
+		return true;
+	}
+	st.split_key.push(key.to_owned());
+	st.split_extent.push(extent);
+	true
+}
+
+/// Resolves the current selection highlight paint for a `select` root.
+///
+/// The default is `#3B82F640`. An explicit `none` remains a transparent solid
+/// so authoring it suppresses the default rather than falling back to it.
+pub fn select_paint(d: &crate::slir::Doc, st: &crate::style::St, node: u32) -> (u32, u32) {
+	let value = attr_val(d, st, node, crate::slir::A_SELECT_BG);
+	match value.tag {
+		crate::slir::T_COLOR | crate::slir::T_PAINT_SOLID => (1, value.h),
+		crate::slir::T_PAINT_GRADIENT => (2, value.h),
+		crate::slir::T_PAINT_NONE => (1, 0),
+		_ => (1, 0x40f6_823b),
 	}
 }
 /// Returns a frame-runtime normalized verb stream for a negative path
@@ -2105,6 +2193,10 @@ pub struct RStyle {
 	pub scrollbar_w:     f64,
 	pub scrollbar_fg:    u32,
 	pub scrollbar_bg:    u32,
+	pub split_w:         f64,
+	/// Active sash paint: 0 none, 1 solid, 2 gradient.
+	pub split_fg_kind:   u32,
+	pub split_fg:        u32,
 	pub fam:             u32,
 	pub font:            i32,
 	pub size:            f64,
@@ -2504,6 +2596,20 @@ pub fn build_rstyle(
 	if scrollbar_bg.tag == crate::slir::T_COLOR {
 		st.rs[ri].scrollbar_bg = scrollbar_bg.h;
 	}
+	st.rs[ri].split_w =
+		(0.0f64).max(crate::style::attr_num(d, st, node, crate::slir::A_SPLIT_W, 4.0f64));
+	let split_fg = crate::style::attr_val(d, st, node, crate::slir::A_SPLIT_FG);
+	match split_fg.tag {
+		crate::slir::T_COLOR | crate::slir::T_PAINT_SOLID => {
+			st.rs[ri].split_fg_kind = 1;
+			st.rs[ri].split_fg = split_fg.h;
+		},
+		crate::slir::T_PAINT_GRADIENT => {
+			st.rs[ri].split_fg_kind = 2;
+			st.rs[ri].split_fg = split_fg.h;
+		},
+		_ => {},
+	}
 	// Only the text-style whitelist inherits from the parent.
 	let family = crate::style::attr_val(d, st, node, crate::slir::A_FAMILY);
 	let mut fam = inh_fam;
@@ -2788,6 +2894,9 @@ pub fn rstyle_default(node: u32, kind: u32, line: u32) -> crate::style::RStyle {
 		scrollbar_w: 4.0f64,
 		scrollbar_fg: 0x80808080u32,
 		scrollbar_bg: 0x33808080u32,
+		split_w: 4.0f64,
+		split_fg_kind: 0u32,
+		split_fg: 0u32,
 		fam: 0u32,
 		font: (-1i32),
 		size: 14.0f64,
@@ -2936,11 +3045,11 @@ mod attribute_cache_tests {
 			slab_slir::attrs::ATTR_COUNT,
 			"kernel ATTR_COUNT must match normative slab-slir table size"
 		);
-		let highest_id = crate::slir::A_PAD_L;
+		let highest_id = crate::slir::A_SPLIT_FG;
 		assert_eq!(
 			(highest_id as usize) + 1,
 			crate::slir::ATTR_COUNT,
-			"A_PAD_L must be the highest attribute ID"
+			"A_SPLIT_FG must be the highest attribute ID"
 		);
 		for &(id, name) in slab_slir::attrs::ATTRS {
 			assert!(

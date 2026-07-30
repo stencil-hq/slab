@@ -255,7 +255,7 @@ pub fn inst_init(i: &mut Instance) {
 	i.focus_note.clear();
 	i.solved = false;
 	i.dirty = true;
-	i.lay.shape_cache.clear();
+	i.lay.shape_cache.get_mut().clear();
 	if i.ok {
 		style::init_params(&i.doc, &mut i.st);
 	}
@@ -1068,6 +1068,8 @@ pub fn inst_restore_fields(i: &mut Instance, snapshot: &FieldSnapshot) -> bool {
 		if display_changed {
 			style::field_set(&mut i.st, node, &field.text);
 		}
+		// The full content is now published; drop any pending splice lineage.
+		i.ds.ed[edit_index].reset_measure_delta();
 		let param_changed = dispatch::sync_bound_text_param(&i.doc, &mut i.st, node, &field.text);
 		if text_changed || spans_changed || param_changed {
 			dispatch::queue_field_change(&i.doc, &i.st, &mut i.ds, node, &field.text);
@@ -1251,7 +1253,12 @@ fn inst_set_caret_inner(
 		let collapsed = caret == anchor;
 		let text_layout = &i.lay.tls[text_layout_index];
 		let line = edit::visual_line(text_layout, caret);
-		caret = edit::caret_for_x(&i.doc, &i.ds.ed[index], text_layout, line, 0, 0.0, 0.0, goal_x);
+		caret = edit::caret_for_x(
+			crate::textm::Shaper { d: &i.doc, cache: &i.lay.shape_cache },
+			text_layout,
+			line,
+			goal_x,
+		);
 		if collapsed {
 			anchor = caret;
 		}
@@ -1261,6 +1268,8 @@ fn inst_set_caret_inner(
 		edit::composition_end(&mut i.ds.ed[index], "");
 		style::set_node_state(&i.doc, &mut i.st, node, "composing", false);
 		style::field_set(&mut i.st, node, &i.ds.ed[index].text);
+		// The committed text is now published; re-baseline the lineage.
+		i.ds.ed[index].reset_measure_delta();
 	}
 	edit::set_selection(&mut i.ds.ed[index], caret, anchor);
 	i.ds.ed[index].goal_x = goal_x.unwrap_or(-1.0);
@@ -1318,6 +1327,8 @@ fn inst_set_caret_inner(
 	if !range_set {
 		dispatch::clear_range(&mut i.ds);
 	}
+	// A host-placed caret reveals itself on the next solve, like an edit.
+	i.ds.follow_caret_pending = true;
 	i.dirty = true;
 	true
 }
@@ -1651,7 +1662,7 @@ pub fn inst_reveal_item(i: &mut Instance, each_key: &str, item_index: i32, align
 		return false;
 	}
 	let each = scene::node_by_key(&i.doc, &i.st.lists, each_key);
-	let Some((extent, _, parent)) = list::virtual_config(&i.doc, &i.st.lists, each) else {
+	let Some((estimate, _, parent)) = list::virtual_config(&i.doc, &i.st.lists, each) else {
 		return false;
 	};
 	let list_id = list::each_list(&i.doc, &i.st.lists, each);
@@ -1670,13 +1681,17 @@ pub fn inst_reveal_item(i: &mut Instance, each_key: &str, item_index: i32, align
 	// Sticky siblings pinned at the viewport start (e.g. a list header) cover
 	// the first `cover` units, so start-side alignments land below them and
 	// centering happens within the uncovered region.
-	let cover = cover.min((viewport - extent).max(0.0));
+	let item_extent = list::virtual_item_offset(&i.doc, &i.st.lists, each, item_index + 1)
+		.zip(list::virtual_item_offset(&i.doc, &i.st.lists, each, item_index))
+		.map_or(estimate, |(end, start)| end - start);
+	let cover = cover.min((viewport - item_extent).max(0.0));
 	let old = style::scroll_get(&i.st, parent);
-	let start = f64::from(item_index).mul_add(extent, origin);
-	let end = start + extent;
+	let start =
+		list::virtual_item_offset(&i.doc, &i.st.lists, each, item_index).unwrap_or(0.0) + origin;
+	let end = start + item_extent;
 	let target = match align {
 		0 => start - cover,
-		1 => start - cover - (viewport - cover - extent) / 2.0,
+		1 => start - cover - (viewport - cover - item_extent) / 2.0,
 		2 => end - viewport,
 		3 if start - cover < old => start - cover,
 		3 if end > old + viewport => end - viewport,
@@ -1761,6 +1776,27 @@ pub fn inst_each_window(i: &Instance, each_key: &str) -> (i32, i32) {
 	} else {
 		list::current_window(&i.st.lists, each)
 	}
+}
+/// Enables per-item extents for a virtual `each` and sets one retained extent.
+///
+/// Extents must be finite and positive. A change above the first visible item
+/// shifts the owning scroll offset by the same delta to preserve its anchor.
+pub fn inst_set_item_extent(i: &mut Instance, each_key: &str, index: i32, extent: f64) -> bool {
+	let each = scene::node_by_key(&i.doc, &i.st.lists, each_key);
+	let Some((_, _, parent)) = list::virtual_config(&i.doc, &i.st.lists, each) else {
+		return false;
+	};
+	let old_scroll = style::scroll_get(&i.st, parent);
+	let Some(anchor) =
+		list::set_item_extent(&i.doc, &mut i.st.lists, each, index, extent, old_scroll)
+	else {
+		return false;
+	};
+	if anchor != 0.0 {
+		style::scroll_set(&mut i.st, parent, old_scroll + anchor);
+	}
+	i.dirty = true;
+	true
 }
 
 /// Sets a parameter's current value.
@@ -1989,6 +2025,84 @@ pub fn inst_get_divider(i: &Instance, key: &str) -> f64 {
 		return -1.0;
 	};
 	style::divider_get(&i.st, node).unwrap_or(-1.0)
+}
+
+fn split_pane(i: &Instance, key: &str) -> Option<(u32, String, bool)> {
+	let node = scene::node_by_key(&i.doc, &i.st.lists, key);
+	if node == slir::NONE || list::is_split_sash(&i.st.lists, node) {
+		return None;
+	}
+	let node_base = list::base(&i.st.lists, &i.doc, node);
+	if usize::try_from(node_base)
+		.ok()
+		.and_then(|index| i.doc.node_kind.get(index))
+		== Some(&slir::K_EACH)
+	{
+		return None;
+	}
+	let canonical = scene::key_of(&i.doc, &i.st.lists, node);
+	let scene_index = scene::index_of(&i.sc, node);
+	if scene_index >= 0 {
+		let entry = &i.sc.entries[usize::try_from(scene_index).expect("negative scene index")];
+		if let Ok(parent_index) = usize::try_from(entry.parent_ix)
+			&& let Some(parent) = i.sc.entries.get(parent_index)
+			&& parent.flags & slir::F_SPLITS != 0
+		{
+			return Some((node, canonical, parent.is_row));
+		}
+	}
+	let mut parent = list::parent(&i.st.lists, &i.doc, node);
+	let parent_base = list::base(&i.st.lists, &i.doc, parent);
+	if usize::try_from(parent_base)
+		.ok()
+		.and_then(|index| i.doc.node_kind.get(index))
+		== Some(&slir::K_EACH)
+	{
+		parent = list::parent(&i.st.lists, &i.doc, parent);
+	}
+	let parent_base = list::base(&i.st.lists, &i.doc, parent);
+	let parent_index = usize::try_from(parent_base).ok()?;
+	let row = match i.doc.node_kind.get(parent_index) {
+		Some(&slir::K_ROW) => true,
+		Some(&slir::K_COL) => false,
+		_ => return None,
+	};
+	if style::eff_flags(&i.doc, &i.st, parent) & slir::F_SPLITS == 0 {
+		return None;
+	}
+	Some((node, canonical, row))
+}
+
+/// Sets one retained split-pane size by its canonical scene key.
+pub fn inst_set_split(i: &mut Instance, pane_key: &str, size: f64) -> bool {
+	if !i.solved && scene::node_by_key(&i.doc, &i.st.lists, pane_key) == slir::NONE {
+		list::sync(&i.doc, &mut i.st.lists);
+	}
+	let Some((node, key, row)) = split_pane(i, pane_key) else {
+		return false;
+	};
+	if !size.is_finite() {
+		return false;
+	}
+	let min =
+		style::attr_num(&i.doc, &i.st, node, if row { slir::A_MIN_W } else { slir::A_MIN_H }, 0.0);
+	let max = style::attr_num(
+		&i.doc,
+		&i.st,
+		node,
+		if row { slir::A_MAX_W } else { slir::A_MAX_H },
+		style::INF,
+	);
+	i.dirty |= style::split_set(&mut i.st, &key, size.clamp(min, max));
+	true
+}
+
+/// Returns one retained split-pane size, or `-1` when unknown.
+pub fn inst_get_split(i: &Instance, pane_key: &str) -> f64 {
+	let Some((_, key, _)) = split_pane(i, pane_key) else {
+		return -1.0;
+	};
+	style::split_get(&i.st, &key).unwrap_or(-1.0)
 }
 
 /// Records hole content size.
@@ -2248,6 +2362,9 @@ fn write_frame(i: &mut Instance, t_ms: f64, frame: &mut Frame, retain_clean: boo
 	i.solved = true;
 	i.last_t = t_ms;
 	scene::load(&mut i.sc, frame);
+	if dispatch::validate_static_selection(&i.doc, &i.st, &i.sc, &mut i.ds) {
+		i.dirty = true;
+	}
 	if dispatch::cancel_invalid_drag(&i.doc, &mut i.st, &i.sc, &mut i.ds) {
 		i.dirty |= solve_frame_settled(i, t_ms, true, frame);
 		scene::load(&mut i.sc, frame);
@@ -2273,6 +2390,7 @@ fn write_frame(i: &mut Instance, t_ms: f64, frame: &mut Frame, retain_clean: boo
 			i.dirty = true;
 		}
 	}
+	i.ds.follow_caret_pending = false;
 
 	// Restore focus when its node vanished or is no longer visibly focusable.
 	if i.ds.fs.focus != slir::NONE

@@ -64,6 +64,10 @@ pub const F_STICKY: u32 = 2048u32;
 pub const F_DRAG_GHOST: u32 = 4096u32;
 /// Escape clears focus on an editable node instead of bubbling.
 pub const F_ESCAPE_BLUR: u32 = 8192u32;
+/// Enables kernel-owned pointer selection for static descendant text.
+pub const F_SELECT: u32 = 16384u32;
+/// Enables kernel-owned proportional split-pane layout and synthetic sashes.
+pub const F_SPLITS: u32 = 32768u32;
 
 /// Attribute-value tags stored in [`Doc::aval_tag`].
 pub const T_NUM: u32 = 0u32;
@@ -326,11 +330,18 @@ pub const A_PAD_B: u32 = 98u32;
 /// Left padding override (applied after `pad`).
 pub const A_PAD_L: u32 = 99u32;
 
+/// Selection highlight paint for a `select` root.
+pub const A_SELECT_BG: u32 = 100u32;
+/// Split sash pointer hit and active-paint thickness.
+pub const A_SPLIT_W: u32 = 101u32;
+/// Split sash paint while hovered or pressed.
+pub const A_SPLIT_FG: u32 = 102u32;
+
 /// Field cancel binder channel fired on escape-blur.
 pub const A_CANCEL: u32 = 91u32;
 
 /// Total number of normative SLIR attributes (highest attribute ID + 1).
-pub const ATTR_COUNT: usize = (A_PAD_L as usize) + 1;
+pub const ATTR_COUNT: usize = (A_SPLIT_FG as usize) + 1;
 
 /// Parameter types stored in [`Doc::parm_type`] and host parameter values.
 pub const PARAM_TEXT: u32 = 0u32;
@@ -567,6 +578,12 @@ pub fn base_attr(d: &Doc, node: u32, attr: u32) -> i32 {
 ///
 /// Returns the index in the shared cmap arrays, or `-1` when missing.
 pub fn font_cmap_ix(d: &Doc, font: i32, codepoint: u32) -> i32 {
+	// Fontless documents (host-measured shells, tests) degrade to the
+	// deterministic fallback advance instead of panicking — same contract
+	// as `textm::char_w`'s upem guard.
+	if font < 0 || usize::try_from(font).is_ok_and(|f| f >= d.font_cmap_off.len()) {
+		return -1;
+	}
 	let font = i32_index(font);
 	let offset = d.font_cmap_off[font];
 	if codepoint <= 0x7f && d.font_cmap_len[font] > 0 {

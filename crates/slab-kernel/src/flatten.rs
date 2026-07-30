@@ -545,6 +545,25 @@ pub fn push_solid_rect(fr: &mut Frame, node: u32, x: f64, y: f64, w: f64, h: f64
 	fr.ops.push(FrameOp::Rect(rect));
 }
 
+fn push_paint_rect(
+	fr: &mut Frame,
+	node: u32,
+	x: f64,
+	y: f64,
+	w: f64,
+	h: f64,
+	paint_kind: u32,
+	paint: u32,
+) {
+	if w <= 0.0 || h <= 0.0 || paint_kind == 0 {
+		return;
+	}
+	let mut rect = unstyled_rect(node, x, y, w, h, 0.0);
+	rect.bg_kind = paint_kind;
+	rect.bg = paint;
+	fr.ops.push(FrameOp::Rect(rect));
+}
+
 fn frame_path_ref(d: &slir::Doc, st: &St, fr: &mut Frame, path: i32) -> Option<i32> {
 	if path == style::PATH_NONE {
 		return None;
@@ -805,11 +824,191 @@ struct RangeOrders {
 }
 
 #[derive(Clone, Copy)]
+struct StaticOrders {
+	anchor_node:  u32,
+	focus_node:   u32,
+	anchor_order: u32,
+	focus_order:  u32,
+	paint_kind:   u32,
+	paint:        u32,
+}
+
+#[derive(Clone, Copy)]
 struct WalkContext {
 	parent_ix:    i32,
 	parent_inert: bool,
 	rotation:     Option<RotationFrame>,
 	range:        Option<RangeOrders>,
+	static_range: Option<StaticOrders>,
+	/// Vertical band still visible under every ancestor clip, in the current
+	/// paint coordinate space; `None` paints (and culls) nothing away. Reset
+	/// across rotation boundaries, where an axis-aligned band is meaningless.
+	clip_y:       Option<(f64, f64)>,
+}
+
+fn static_selection(
+	ds: &DState,
+	orders: Option<StaticOrders>,
+	node: u32,
+	order: u32,
+	text_end: i32,
+) -> Option<(i32, i32)> {
+	let selection = ds.static_selection.as_ref()?;
+	let orders = orders?;
+	if orders.anchor_node == orders.focus_node {
+		return (node == orders.anchor_node).then(|| {
+			(
+				selection
+					.anchor
+					.offset
+					.min(selection.focus.offset)
+					.clamp(0, text_end),
+				selection
+					.anchor
+					.offset
+					.max(selection.focus.offset)
+					.clamp(0, text_end),
+			)
+		});
+	}
+	let anchor_before = orders.anchor_order < orders.focus_order;
+	let (first_node, first_offset, first_order, last_node, last_offset, last_order) =
+		if anchor_before {
+			(
+				orders.anchor_node,
+				selection.anchor.offset,
+				orders.anchor_order,
+				orders.focus_node,
+				selection.focus.offset,
+				orders.focus_order,
+			)
+		} else {
+			(
+				orders.focus_node,
+				selection.focus.offset,
+				orders.focus_order,
+				orders.anchor_node,
+				selection.anchor.offset,
+				orders.anchor_order,
+			)
+		};
+	if node == first_node {
+		Some((first_offset.clamp(0, text_end), text_end))
+	} else if node == last_node {
+		Some((0, last_offset.clamp(0, text_end)))
+	} else if order > first_order && order < last_order {
+		Some((0, text_end))
+	} else {
+		None
+	}
+}
+
+#[allow(clippy::too_many_arguments, reason = "static band paint keeps geometry inputs explicit")]
+fn push_static_bands(
+	fr: &mut Frame,
+	node: u32,
+	shaped: &textm::ShapedLine,
+	base: i32,
+	end: i32,
+	sel_lo: i32,
+	sel_hi: i32,
+	run_x0: f64,
+	run_x1: f64,
+	origin: f64,
+	y: f64,
+	h: f64,
+	paint_kind: u32,
+	paint: u32,
+) {
+	let mut band: Option<(f64, f64)> = None;
+	let flush = |fr: &mut Frame, band: Option<(f64, f64)>| {
+		if let Some((x0, x1)) = band {
+			push_paint_rect(fr, node, origin + x0, y, x1 - x0, h, paint_kind, paint);
+		}
+	};
+	for cluster in &shaped.clusters {
+		let start = cluster.start.wrapping_add(base).min(end);
+		let finish = cluster.end.wrapping_add(base).min(end);
+		if finish <= sel_lo || start >= sel_hi {
+			continue;
+		}
+		let x0 = cluster.x0.max(run_x0);
+		let x1 = cluster.x1.min(run_x1);
+		if x1 <= x0 {
+			continue;
+		}
+		if let Some(current) = band.as_mut()
+			&& x0 <= current.1 + 0.001
+		{
+			current.1 = current.1.max(x1);
+		} else {
+			flush(fr, band.take());
+			band = Some((x0, x1));
+		}
+	}
+	flush(fr, band);
+}
+
+fn paragraph_source_bounds(l: &Lay, paragraph: usize) -> Option<(i32, i32)> {
+	let lo = *l.para_src_off.get(paragraph)?;
+	let len = *l.para_src_len.get(paragraph)?;
+	Some((lo, lo.wrapping_add(len)))
+}
+
+/// Returns the `[first, end)` range of uniform-height lines intersecting the
+/// vertical band, or the full range when unclipped.
+///
+/// The visibility predicate is exact line geometry; the float division only
+/// seeds the search, so a boundary line is never misclassified.
+fn visible_lines(
+	count: usize,
+	line_top_base: f64,
+	line_h: f64,
+	band: Option<(f64, f64)>,
+) -> (usize, usize) {
+	let Some((top, bottom)) = band else {
+		return (0, count);
+	};
+	if count == 0 || !line_h.is_finite() || line_h <= 0.0 {
+		return (0, count);
+	}
+	// A degenerate or non-finite band never culls: painting extra is safe,
+	// silently dropping visible lines is not.
+	if !top.is_finite() || !bottom.is_finite() {
+		return (0, count);
+	}
+	// Whole-range rejection keeps fully offscreen text O(1).
+	let total_h = f64::from(u32::try_from(count).expect("line count exceeds u32")) * line_h;
+	if bottom <= top || line_top_base >= bottom || line_top_base + total_h <= top {
+		return (0, 0);
+	}
+	let visible = |line: usize| {
+		let line_top = f64::from(u32::try_from(line).expect("line count exceeds u32"))
+			.mul_add(line_h, line_top_base);
+		line_top + line_h > top && line_top < bottom
+	};
+	let clamp = |seed: f64| -> usize {
+		if seed.is_finite() && seed > 0.0 {
+			(seed as usize).min(count)
+		} else {
+			0
+		}
+	};
+	let mut first = clamp(((top - line_top_base) / line_h).floor() - 2.0);
+	while first > 0 && visible(first - 1) {
+		first -= 1;
+	}
+	while first < count && !visible(first) {
+		first += 1;
+	}
+	let mut end = clamp(((bottom - line_top_base) / line_h).ceil() + 2.0).max(first);
+	while end < count && visible(end) {
+		end += 1;
+	}
+	while end > first && !visible(end - 1) {
+		end -= 1;
+	}
+	(first, end)
 }
 
 fn mark_authored_order(l: &Lay, pi: i32, next: &mut u32, order: &mut [u32]) {
@@ -932,11 +1131,29 @@ pub fn walk(
 		};
 		Some(RangeOrders { anchor_node, head_node, ordering })
 	});
+	let static_range = ds.static_selection.as_ref().and_then(|selection| {
+		let root = scene::node_by_key(d, &st.lists, &selection.root_key);
+		let anchor_node = scene::node_by_key(d, &st.lists, &selection.anchor.key);
+		let focus_node = scene::node_by_key(d, &st.lists, &selection.focus.key);
+		if root == slir::NONE
+			|| anchor_node == slir::NONE
+			|| focus_node == slir::NONE
+			|| style::eff_flags(d, st, root) & slir::F_SELECT == 0
+		{
+			return None;
+		}
+		let anchor_order = node_authored_order(l, &authored_order, anchor_node)?;
+		let focus_order = node_authored_order(l, &authored_order, focus_node)?;
+		let (paint_kind, paint) = style::select_paint(d, st, root);
+		Some(StaticOrders { anchor_node, focus_node, anchor_order, focus_order, paint_kind, paint })
+	});
 	walk_node(d, st, l, ds, ms, fr, pi, ox, oy, &authored_order, WalkContext {
 		parent_ix,
 		parent_inert,
 		rotation,
 		range,
+		static_range,
+		clip_y: None,
 	});
 	fr.order_scratch = authored_order;
 }
@@ -996,7 +1213,7 @@ fn walk_node(
 			x + (w - l.p_w[inner]) / 2.0,
 			y + (h - l.p_h[inner]) / 2.0,
 			authored_order,
-			WalkContext { rotation: Some(rotation), ..context },
+			WalkContext { rotation: Some(rotation), clip_y: None, ..context },
 		);
 		fr.ops.push(FrameOp::RotatePop);
 		return;
@@ -1196,15 +1413,37 @@ fn walk_node(
 		let text_layout = &l.tls[index(l.p_tl[pi])];
 		let content_width = w - padding_left - padding_right;
 		let alignment = text_alignment_factor(rule.talign);
+		// Lines outside every ancestor clip (and the field's own clip) paint
+		// nothing; all four line passes share one visible range. Any active
+		// ink transform (rotation, scale, tilt) moves node coordinates out of
+		// the inherited clip space, so transformed text never culls.
+		let cull_band = if rotation.is_some() || scaled || tilted {
+			None
+		} else if field_clip {
+			let band = (y, y + h);
+			Some(
+				context
+					.clip_y
+					.map_or(band, |(top, bottom)| (top.max(band.0), bottom.min(band.1))),
+			)
+		} else {
+			context.clip_y
+		};
+		let (vis_first, vis_end) =
+			visible_lines(text_layout.ls.len(), y + padding_top, text_layout.line_h, cull_band);
+		let shaper = textm::Shaper { d, cache: &l.shape_cache };
 
 		if rule.code_bg_kind != 0 {
-			for line in 0..count(text_layout.ls.len()) {
-				let line_index = index(line);
+			for line_index in vis_first..vis_end {
+				let line = i32::try_from(line_index).expect("line count exceeds i32");
 				let line_origin = (content_width - text_layout.line_w[line_index])
 					.mul_add(alignment, x + padding_left)
 					- field_scroll_x;
 				let line_y = f64::from(line).mul_add(text_layout.line_h, y + padding_top);
-				for run in &text_layout.shaped[line_index].runs {
+				let Some(shaped_line) = shaper.line(text_layout, line_index) else {
+					continue;
+				};
+				for run in &shaped_line.runs {
 					if run.end <= run.start || run.style & (1 << edit::STYLE_CODE) == 0 {
 						continue;
 					}
@@ -1226,6 +1465,12 @@ fn walk_node(
 		// Cross-field and focused local selections share the same shaped visual
 		// band primitive and paint before glyphs inside each field clip.
 		let text_end = count(text_layout.chars.len());
+		let static_selection = (!field_clip)
+			.then(|| {
+				let source_end = text_layout.src_le.iter().copied().max().unwrap_or(text_end);
+				static_selection(ds, context.static_range, node, authored_order[pi], source_end)
+			})
+			.flatten();
 		let selection = field_clip
 			.then(|| {
 				cross_field_selection(d, st, ds, context.range, node, authored_order[pi], text_end)
@@ -1248,7 +1493,7 @@ fn walk_node(
 			// RGBA words are little-endian [r, g, b, a]: keep the text rgb,
 			// set alpha to exactly half (0x80).
 			let band = (solid_text_rgba(d, rule) & 0x00ff_ffff) | 0x8000_0000;
-			for line in 0..text_layout.src_ls.len() {
+			for line in vis_first..vis_end {
 				let overlap_lo = sel_lo.max(text_layout.src_ls[line]);
 				let overlap_hi = sel_hi.min(text_layout.src_le[line]);
 				if overlap_hi <= overlap_lo {
@@ -1257,7 +1502,9 @@ fn walk_node(
 				let origin = (content_width - text_layout.line_w[line])
 					.mul_add(alignment, x + padding_left)
 					- field_scroll_x;
-				for (x0, x1) in textm::selection_bands(text_layout, line, overlap_lo, overlap_hi) {
+				for (x0, x1) in
+					textm::selection_bands(shaper, text_layout, line, overlap_lo, overlap_hi)
+				{
 					push_solid_rect(
 						fr,
 						node,
@@ -1271,21 +1518,35 @@ fn walk_node(
 			}
 		}
 
-		for line in 0..count(text_layout.ls.len()) {
-			let line_index = index(line);
+		for line_index in vis_first..vis_end {
+			let line = i32::try_from(line_index).expect("line count exceeds i32");
 			let line_origin = (content_width - text_layout.line_w[line_index])
 				.mul_add(alignment, x + padding_left)
 				- field_scroll_x;
 			let baseline =
 				f64::from(line).mul_add(text_layout.line_h, y + padding_top + text_layout.ascent);
-			for run in &text_layout.shaped[line_index].runs {
+			let Some(shaped_line) = shaper.line(text_layout, line_index) else {
+				continue;
+			};
+			for run in &shaped_line.runs {
 				if run.end <= run.start {
 					continue;
 				}
-				let string_ref = push_str_slice(fr, &text_layout.chars, run.start, run.end);
+				let string_ref = push_str_slice(
+					fr,
+					&text_layout.chars,
+					text_layout.ls[line_index].wrapping_add(run.start),
+					text_layout.ls[line_index].wrapping_add(run.end),
+				);
 				let (uncov_off, uncov_len) = push_uncovered_runs(d, fr, run.font, string_ref);
-				let (glyph_off, glyph_len) =
-					push_shaped_glyphs(fr, run, line_origin, baseline, rule.size, 0);
+				let (glyph_off, glyph_len) = push_shaped_glyphs(
+					fr,
+					run,
+					line_origin,
+					baseline,
+					rule.size,
+					text_layout.src_ls[line_index],
+				);
 				let (underline_offset, underline_thickness) =
 					textm::underline_geometry(d, run.font, rule.size);
 				let bold = run.style & (1 << edit::STYLE_BOLD) != 0;
@@ -1341,6 +1602,27 @@ fn walk_node(
 					text_op.gw = content_width;
 					text_op.gh = h - padding_top - padding_bottom;
 				}
+				if let Some((sel_lo, sel_hi)) = static_selection
+					&& sel_hi > sel_lo
+					&& let Some(orders) = context.static_range
+				{
+					push_static_bands(
+						fr,
+						node,
+						&shaped_line,
+						text_layout.src_ls[line_index],
+						text_layout.src_le[line_index],
+						sel_lo,
+						sel_hi,
+						run.x,
+						run.x + run.width,
+						line_origin,
+						f64::from(line).mul_add(text_layout.line_h, y + padding_top),
+						text_layout.line_h,
+						orders.paint_kind,
+						orders.paint,
+					);
+				}
 				fr.ops.push(FrameOp::Text(text_op));
 			}
 		}
@@ -1356,7 +1638,7 @@ fn walk_node(
 					for &(clause_start, clause_end) in &es.compose_clauses {
 						let clause_start = es.caret.wrapping_add(clause_start);
 						let clause_end = es.caret.wrapping_add(clause_end);
-						for line in 0..text_layout.src_ls.len() {
+						for line in vis_first..vis_end {
 							let overlap_start = clause_start.max(text_layout.src_ls[line]);
 							let overlap_end = clause_end.min(text_layout.src_le[line]);
 							if overlap_start >= overlap_end {
@@ -1367,14 +1649,18 @@ fn walk_node(
 								- field_scroll_x;
 							let baseline = f64::from(count(line))
 								.mul_add(text_layout.line_h, y + padding_top + text_layout.ascent);
-							let font = text_layout.shaped[line]
-								.runs
-								.first()
-								.map_or(rule.font, |run| run.font);
+							let font = shaper
+								.line(text_layout, line)
+								.and_then(|shaped| shaped.runs.first().map(|run| run.font))
+								.unwrap_or(rule.font);
 							let (offset, thickness) = textm::underline_geometry(d, font, rule.size);
-							for (band_x, band_end) in
-								textm::selection_bands(text_layout, line, overlap_start, overlap_end)
-							{
+							for (band_x, band_end) in textm::selection_bands(
+								shaper,
+								text_layout,
+								line,
+								overlap_start,
+								overlap_end,
+							) {
 								push_solid_rect(
 									fr,
 									node,
@@ -1403,6 +1689,17 @@ fn walk_node(
 		let mut baseline_y = y + padding_top;
 		let first_line = l.para_line_off[paragraph];
 		let line_end = first_line.wrapping_add(l.para_line_len[paragraph]);
+		let paragraph_bounds = paragraph_source_bounds(l, paragraph);
+		let paragraph_selection = paragraph_bounds.and_then(|(source_start, source_end)| {
+			static_selection(
+				ds,
+				context.static_range,
+				node,
+				authored_order[pi],
+				source_end.wrapping_sub(source_start),
+			)
+			.map(|(lo, hi)| (source_start.wrapping_add(lo), source_start.wrapping_add(hi)))
+		});
 
 		for line in first_line..line_end {
 			let line_index = index(line);
@@ -1486,6 +1783,35 @@ fn walk_node(
 						text_op.gw = content_width;
 						text_op.gh = h - padding_top - padding_bottom;
 					}
+					if let Some((sel_lo, sel_hi)) = paragraph_selection
+						&& sel_hi > sel_lo
+						&& let Some(orders) = context.static_range
+					{
+						let source_lo = l.seg_src_a[segment_index];
+						let source_hi = l.seg_src_b[segment_index];
+						let overlap_lo = sel_lo.max(source_lo);
+						let overlap_hi = sel_hi.min(source_hi);
+						if overlap_hi > overlap_lo {
+							let painted_lo = segment_start.wrapping_add(overlap_lo - source_lo);
+							let painted_hi = segment_start.wrapping_add(overlap_hi - source_lo);
+							push_static_bands(
+								fr,
+								node,
+								&l.seg_shaped[segment_index],
+								segment_start,
+								l.seg_b[segment_index],
+								painted_lo,
+								painted_hi,
+								run.x,
+								run.x + run.width,
+								segment_origin,
+								baseline_y,
+								l.pl_h[line_index],
+								orders.paint_kind,
+								orders.paint,
+							);
+						}
+					}
 					fr.ops.push(FrameOp::Text(text_op));
 				}
 			}
@@ -1525,8 +1851,8 @@ fn walk_node(
 				padding_right
 			};
 	}
-	if let Some((extent, len, ..)) = list::virtual_metrics(d, &st.lists, node) {
-		fr.scene[scene_index].content_main = f64::from(len) * extent;
+	if let Some(extent) = list::virtual_total_extent(d, &st.lists, node) {
+		fr.scene[scene_index].content_main = extent;
 	}
 
 	if child_clip {
@@ -1554,6 +1880,21 @@ fn walk_node(
 	let first_child = l.p_child_off[pi];
 	let child_end = first_child.wrapping_add(child_count);
 	// Normal children paint first. Sticky children are promoted above siblings.
+	// Children inherit the tightest vertical band; a clipping container
+	// narrows it to its own box. Rotated, scaled, or tilted subtrees paint in
+	// a different coordinate space and rebuild bands from scratch.
+	let child_clip_y = if rotation.is_some() || scaled || tilted {
+		None
+	} else if child_clip {
+		let band = (y, y + h);
+		Some(
+			context
+				.clip_y
+				.map_or(band, |(top, bottom)| (top.max(band.0), bottom.min(band.1))),
+		)
+	} else {
+		context.clip_y
+	};
 	for child_pool_index in first_child..child_end {
 		if crate::layout::sticky_main_position(
 			st,
@@ -1581,6 +1922,8 @@ fn walk_node(
 				parent_inert: inert,
 				rotation:     None,
 				range:        context.range,
+				static_range: context.static_range,
+				clip_y:       child_clip_y,
 			},
 		);
 	}
@@ -1611,7 +1954,69 @@ fn walk_node(
 			parent_inert: inert,
 			rotation:     None,
 			range:        context.range,
+			static_range: context.static_range,
+			clip_y:       child_clip_y,
 		});
+	}
+
+	if rule.flags & slir::F_SPLITS != 0 && child_count > 1 {
+		let split_w = rule.split_w;
+		for child_pool_index in first_child..child_end - 1 {
+			let left = index(l.child_pool[index(child_pool_index)]);
+			let left_key = scene::key_of(d, &st.lists, l.p_node[left]);
+			let Some(sash_node) = list::split_sash_for_left(&st.lists, &left_key) else {
+				continue;
+			};
+			let (sash_x, sash_y, sash_w, sash_h) = if rule.is_row {
+				(
+					children_x + l.p_x[left] + l.p_w[left] - split_w / 2.0,
+					y + padding_top,
+					split_w,
+					(h - padding_top - padding_bottom).max(0.0),
+				)
+			} else {
+				(
+					x + padding_left,
+					children_y + l.p_y[left] + l.p_h[left] - split_w / 2.0,
+					(w - padding_left - padding_right).max(0.0),
+					split_w,
+				)
+			};
+			fr.scene.push(SceneNode {
+				node: sash_node,
+				parent_ix: scene_index_i32,
+				kind: slir::K_DIVIDER,
+				x: sash_x,
+				y: sash_y,
+				w: sash_w,
+				h: sash_h,
+				radius: 0.0,
+				rot_deg,
+				rot_cx,
+				rot_cy,
+				flags: slir::F_FOCUSABLE | if inert { slir::F_INERT } else { 0 },
+				content_main: 0.0,
+				scroll_off: 0.0,
+				scroll_cross: 0.0,
+				content_cross: 0.0,
+				is_row: rule.is_row,
+				src_line: rule.line,
+				authored_order: u32::try_from(fr.scene.len()).expect("scene exceeds u32"),
+				sem: style::Semantics::default(),
+				disabled: false,
+				focused: ds.fs.focus == sash_node,
+				editable: false,
+			});
+			if split_w > 0.0
+				&& rule.split_fg_kind != 0
+				&& (ds.hover.contains(&sash_node) || ds.pressed == sash_node)
+			{
+				let mut sash = unstyled_rect(sash_node, sash_x, sash_y, sash_w, sash_h, 0.0);
+				sash.bg_kind = rule.split_fg_kind;
+				sash.bg = rule.split_fg;
+				fr.ops.push(FrameOp::Rect(sash));
+			}
+		}
 	}
 
 	let content_main = fr.scene[scene_index].content_main;
@@ -1728,4 +2133,40 @@ pub fn flatten(d: &slir::Doc, st: &St, l: &Lay, ds: &DState, ms: &MSt, root_pi: 
 	let mut frame = frame_new();
 	flatten_into(d, st, l, ds, ms, root_pi, &mut frame);
 	frame
+}
+
+#[cfg(test)]
+mod tests {
+	use super::visible_lines;
+
+	const LINE_H: f64 = 20.0;
+
+	#[test]
+	fn unclipped_and_degenerate_bands_keep_every_line() {
+		assert_eq!(visible_lines(5, 0.0, LINE_H, None), (0, 5));
+		assert_eq!(visible_lines(5, 0.0, 0.0, Some((0.0, 100.0))), (0, 5));
+		assert_eq!(visible_lines(0, 0.0, LINE_H, Some((0.0, 100.0))), (0, 0));
+		assert_eq!(visible_lines(5, 0.0, LINE_H, Some((f64::NEG_INFINITY, f64::INFINITY))), (0, 5));
+	}
+
+	#[test]
+	fn fully_offscreen_text_rejects_in_constant_time() {
+		// Text entirely below the band.
+		assert_eq!(visible_lines(100_000, 500.0, LINE_H, Some((0.0, 400.0))), (0, 0));
+		// Text entirely above the band.
+		assert_eq!(visible_lines(100_000, -3_000_000.0, LINE_H, Some((0.0, 400.0))), (0, 0));
+		// Empty band.
+		assert_eq!(visible_lines(100_000, 0.0, LINE_H, Some((100.0, 100.0))), (0, 0));
+	}
+
+	#[test]
+	fn boundary_lines_cull_exactly() {
+		// Band [40, 100): line 1 ends exactly at 40 (invisible), line 2 starts
+		// at 40 (visible); line 4 starts exactly at 100 (invisible).
+		assert_eq!(visible_lines(10, 0.0, LINE_H, Some((40.0, 100.0))), (2, 5));
+		// One-pixel overlap on each side keeps the boundary lines.
+		assert_eq!(visible_lines(10, 0.0, LINE_H, Some((39.0, 101.0))), (1, 6));
+		// Band wider than the text clamps to the full range.
+		assert_eq!(visible_lines(3, 0.0, LINE_H, Some((-500.0, 500.0))), (0, 3));
+	}
 }

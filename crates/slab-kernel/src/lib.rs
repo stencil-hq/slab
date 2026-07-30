@@ -51,6 +51,7 @@ pub mod test_motion;
 pub mod test_multiline;
 pub mod test_rangesel;
 pub mod test_richfield;
+pub mod test_split;
 pub mod test_textm;
 pub mod test_undoscopes;
 pub mod test_value;

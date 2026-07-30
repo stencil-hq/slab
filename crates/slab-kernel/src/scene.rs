@@ -254,6 +254,7 @@ fn candidate_nodes(d: &Doc, lists: &State) -> Vec<u32> {
 			.copied()
 			.filter(|&node| list::item_ix(lists, d, node) >= 0),
 	);
+	nodes.extend(lists.split_sash_id.iter().copied());
 	nodes
 }
 
@@ -314,6 +315,9 @@ fn key_distance(candidate: &str, query: &str) -> (usize, usize) {
 pub fn resolve_key(d: &Doc, lists: &State, key: &str) -> KeyResolution {
 	if key.is_empty() {
 		return KeyResolution::Missing { candidates: Vec::new() };
+	}
+	if let Some(node) = list::split_sash_by_key(lists, key) {
+		return KeyResolution::Found(node);
 	}
 	if list::key_index_ready(lists) {
 		if let Some(node) = list::key_index_get(lists, key)
@@ -434,6 +438,9 @@ pub fn escape_segment(segment: &str) -> String {
 pub fn key_of(d: &Doc, lists: &State, node: u32) -> String {
 	if node == NONE {
 		return String::new();
+	}
+	if let Some(key) = list::split_sash_key(lists, node) {
+		return key;
 	}
 
 	let each = list::each_of(lists, d, node);

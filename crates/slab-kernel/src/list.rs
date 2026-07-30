@@ -82,6 +82,72 @@ impl IdentityNodes {
 	}
 }
 
+#[derive(Clone, Debug)]
+struct VariableExtents {
+	list:     u32,
+	estimate: f64,
+	keys:     Vec<String>,
+	extents:  Vec<f64>,
+	revision: u64,
+	fenwick:  Vec<f64>,
+	retained: HashMap<String, f64>,
+}
+
+impl VariableExtents {
+	fn rebuild_fenwick(&mut self) {
+		self.fenwick.clear();
+		self.fenwick.resize(self.extents.len() + 1, 0.0);
+		for (index, &extent) in self.extents.iter().enumerate() {
+			let mut slot = index + 1;
+			while slot < self.fenwick.len() {
+				self.fenwick[slot] += extent;
+				slot += slot.isolate_lowest_one();
+			}
+		}
+	}
+
+	fn prefix(&self, end: usize) -> f64 {
+		let mut slot = end.min(self.extents.len());
+		let mut sum = 0.0;
+		while slot != 0 {
+			sum += self.fenwick[slot];
+			slot &= slot - 1;
+		}
+		sum
+	}
+
+	fn set(&mut self, item: usize, extent: f64) -> f64 {
+		let delta = extent - self.extents[item];
+		if delta == 0.0 {
+			return 0.0;
+		}
+		self.extents[item] = extent;
+		let mut slot = item + 1;
+		while slot < self.fenwick.len() {
+			self.fenwick[slot] += delta;
+			slot += slot.isolate_lowest_one();
+		}
+		delta
+	}
+
+	/// Number of complete items whose prefix extent is at most `offset`.
+	fn lower_bound(&self, offset: f64) -> usize {
+		let target = offset.max(0.0);
+		let mut index = 0usize;
+		let mut sum = 0.0;
+		let mut bit = self.fenwick.len().next_power_of_two() >> 1;
+		while bit != 0 {
+			let next = index + bit;
+			if next < self.fenwick.len() && sum + self.fenwick[next] <= target {
+				index = next;
+				sum += self.fenwick[next];
+			}
+			bit >>= 1;
+		}
+		index.min(self.extents.len())
+	}
+}
+
 /// Runtime storage for root and nested lists, keys, field values, windows, and
 /// synthetic nodes.
 #[derive(Clone, Debug)]
@@ -94,6 +160,7 @@ pub struct State {
 	pub li_owner_field:         Vec<u32>,
 	pub li_len:                 Vec<i32>,
 	pub li_next:                u32,
+	pub li_revision:            Vec<u64>,
 	li_slot:                    HashMap<u32, usize>,
 	li_child:                   HashMap<(u32, i32, u32), u32>,
 	pub lk_param:               Vec<u32>,
@@ -126,6 +193,9 @@ pub struct State {
 	sy_materialized_mark:       Vec<u64>,
 	materialized_generation:    u64,
 	sy_deleted:                 Vec<u32>,
+	/// Stable synthetic split-sash ids, keyed by the full left-pane scene key.
+	pub(crate) split_sash_id:   Vec<u32>,
+	split_sash_key:             Vec<String>,
 	prune_pending:              bool,
 	pub(crate) patches_by_node: Vec<Vec<usize>>,
 	/// Static authored keys mapped to their node; populated by [`init`].
@@ -141,6 +211,7 @@ pub struct State {
 	pub win_end:                Vec<i32>,
 	pub win_viewport:           Vec<f64>,
 	pub win_origin:             Vec<f64>,
+	win_variable:               Vec<Option<VariableExtents>>,
 }
 
 /// A normalized value stored in a typed scalar list field.
@@ -236,6 +307,7 @@ pub fn state_new() -> State {
 		li_schema:               Vec::new(),
 		li_owner:                Vec::new(),
 		li_owner_index:          Vec::new(),
+		li_revision:             Vec::new(),
 		li_owner_field:          Vec::new(),
 		li_len:                  Vec::new(),
 		li_next:                 0,
@@ -271,6 +343,8 @@ pub fn state_new() -> State {
 		sy_materialized_mark:    Vec::new(),
 		materialized_generation: 1,
 		sy_deleted:              Vec::new(),
+		split_sash_id:           Vec::new(),
+		split_sash_key:          Vec::new(),
 		prune_pending:           false,
 		patches_by_node:         Vec::new(),
 		key_index:               HashMap::default(),
@@ -282,6 +356,7 @@ pub fn state_new() -> State {
 		win_end:                 Vec::new(),
 		win_viewport:            Vec::new(),
 		win_origin:              Vec::new(),
+		win_variable:            Vec::new(),
 	}
 }
 
@@ -416,6 +491,7 @@ fn push_list(
 	s.li_owner_index.push(owner_index);
 	s.li_owner_field.push(owner_field);
 	s.li_len.push(0);
+	s.li_revision.push(0);
 }
 
 fn ensure_child(s: &mut State, owner: u32, item: i32, field: u32, schema: u32) -> u32 {
@@ -769,6 +845,7 @@ fn remove_list(s: &mut State, list: u32) {
 		s.li_owner_index.swap_remove(slot);
 		s.li_owner_field.swap_remove(slot);
 		s.li_len.swap_remove(slot);
+		s.li_revision.swap_remove(slot);
 		if slot < s.li_id.len() {
 			s.li_slot.insert(s.li_id[slot], slot);
 		}
@@ -964,6 +1041,7 @@ fn set_len_id(d: &slir::Doc, s: &mut State, list: u32, n: i32) -> i32 {
 	if old == n {
 		return 0;
 	}
+	s.li_revision[index(slot)] = s.li_revision[index(slot)].wrapping_add(1);
 	invalidate_locations(s);
 	if n > old {
 		s.li_len[index(slot)] = n;
@@ -1106,6 +1184,8 @@ fn set_key_id(d: &slir::Doc, s: &mut State, list: u32, item_index: i32, key: &st
 	if key_at(d, s, list, item_index) == key {
 		return 0;
 	}
+	let list_slot = index(slot_by_id(s, list));
+	s.li_revision[list_slot] = s.li_revision[list_slot].wrapping_add(1);
 	invalidate_locations(s);
 	s.prune_pending = true;
 	note_lookup();
@@ -1239,6 +1319,63 @@ pub fn init(d: &slir::Doc, s: &mut State) {
 		}
 	}
 	sync(d, s);
+}
+
+/// Returns or creates the synthetic sash id following `left_key`.
+pub fn split_sash(s: &mut State, left_key: &str) -> u32 {
+	if let Some(index) = s.split_sash_key.iter().position(|key| key == left_key) {
+		return s.split_sash_id[index];
+	}
+	let id = s.sy_next;
+	s.sy_next = s.sy_next.wrapping_add(1);
+	s.split_sash_id.push(id);
+	s.split_sash_key.push(left_key.to_owned());
+	id
+}
+
+/// Returns the canonical sash key for a synthetic sash node.
+pub fn split_sash_key(s: &State, node: u32) -> Option<String> {
+	let index = s
+		.split_sash_id
+		.iter()
+		.position(|candidate| *candidate == node)?;
+	let left = &s.split_sash_key[index];
+	let mut key = String::with_capacity(left.len() + 5);
+	key.push_str(left);
+	key.push_str("~sash");
+	Some(key)
+}
+/// Returns the left-pane key for a synthetic sash node.
+pub fn split_sash_left(s: &State, node: u32) -> Option<&str> {
+	let index = s
+		.split_sash_id
+		.iter()
+		.position(|candidate| *candidate == node)?;
+	Some(&s.split_sash_key[index])
+}
+
+/// Reports whether `node` is a synthetic split sash.
+pub fn is_split_sash(s: &State, node: u32) -> bool {
+	s.split_sash_id.contains(&node)
+}
+
+/// Resolves the synthetic sash id following `left_key`.
+pub fn split_sash_for_left(s: &State, left_key: &str) -> Option<u32> {
+	let index = s
+		.split_sash_key
+		.iter()
+		.position(|candidate| candidate == left_key)?;
+	Some(s.split_sash_id[index])
+}
+
+/// Resolves a canonical sash key to its synthetic node id.
+pub fn split_sash_by_key(s: &State, key: &str) -> Option<u32> {
+	let left = key.strip_suffix("~sash")?;
+	let index = s
+		.split_sash_key
+		.iter()
+		.position(|candidate| candidate == left)?;
+	Some(s.split_sash_id[index])
 }
 
 #[inline]
@@ -1545,6 +1682,10 @@ fn sync_each(d: &slir::Doc, s: &mut State, each: u32) {
 /// Materializes recursive identities needed before motion sampling without
 /// pruning de-windowed items.
 pub fn sync(d: &slir::Doc, s: &mut State) {
+	let variable_each = s.win_each.clone();
+	for each in variable_each {
+		reconcile_variable(d, s, each, true);
+	}
 	let next_generation = s.materialized_generation.wrapping_add(1);
 	if next_generation == 0 {
 		s.sy_materialized_mark.fill(0);
@@ -1608,6 +1749,177 @@ fn window_slot(s: &State, each: u32) -> i32 {
 		.position(|candidate| *candidate == each)
 		.map_or(-1, |slot| i32::try_from(slot).expect("window slot exceeds i32"))
 }
+fn ensure_window_slot(s: &mut State, each: u32) -> usize {
+	let slot = window_slot(s, each);
+	if slot >= 0 {
+		return index(slot);
+	}
+	let slot = s.win_each.len();
+	s.win_each.push(each);
+	s.win_start.push(0);
+	s.win_end.push(0);
+	s.win_viewport.push(0.0);
+	s.win_origin.push(0.0);
+	s.win_variable.push(None);
+	slot
+}
+
+fn reconcile_variable(d: &slir::Doc, s: &mut State, each: u32, drop_removed: bool) {
+	let slot = window_slot(s, each);
+	if slot < 0 || s.win_variable[index(slot)].is_none() {
+		return;
+	}
+	let Some((estimate, ..)) = virtual_config(d, s, each) else {
+		return;
+	};
+	let list = each_list(d, s, each);
+	if list < 0 {
+		return;
+	}
+	let list = unsigned(list);
+	let revision = s.li_revision[index(slot_by_id(s, list))];
+	let variable = s.win_variable[index(slot)]
+		.as_ref()
+		.expect("checked variable extents");
+	if variable.list == list && variable.estimate == estimate && variable.revision == revision {
+		return;
+	}
+	let len = length(d, s, list).max(0);
+	let mut keys = Vec::with_capacity(index(len));
+	for item in 0..len {
+		keys.push(key_at(d, s, list, item));
+	}
+	let variable = s.win_variable[index(slot)]
+		.as_mut()
+		.expect("checked variable extents");
+	variable.list = list;
+	variable.estimate = estimate;
+	variable.revision = revision;
+	variable.keys = keys;
+	if drop_removed {
+		let live: std::collections::HashSet<&str> =
+			variable.keys.iter().map(String::as_str).collect();
+		variable
+			.retained
+			.retain(|key, _| live.contains(key.as_str()));
+	}
+	variable.extents.clear();
+	variable.extents.extend(
+		variable
+			.keys
+			.iter()
+			.map(|key| variable.retained.get(key).copied().unwrap_or(estimate)),
+	);
+	variable.rebuild_fenwick();
+}
+
+fn activate_variable(d: &slir::Doc, s: &mut State, each: u32) -> bool {
+	let Some((estimate, ..)) = virtual_config(d, s, each) else {
+		return false;
+	};
+	let list = each_list(d, s, each);
+	if list < 0 {
+		return false;
+	}
+	let slot = ensure_window_slot(s, each);
+	if s.win_variable[slot].is_none() {
+		s.win_variable[slot] = Some(VariableExtents {
+			list: unsigned(list),
+			estimate,
+			keys: Vec::new(),
+			extents: Vec::new(),
+			revision: u64::MAX,
+			fenwick: vec![0.0],
+			retained: HashMap::default(),
+		});
+	}
+	reconcile_variable(d, s, each, false);
+	true
+}
+
+/// Whether per-item extents have been enabled for a virtual list.
+pub fn variable_extents_enabled(s: &State, each: u32) -> bool {
+	let slot = window_slot(s, each);
+	slot >= 0 && s.win_variable[index(slot)].is_some()
+}
+
+/// Updates one retained item extent and returns the scroll-anchor adjustment.
+///
+/// The first call enables variable extents for this `each`. Items before the
+/// first visible item contribute their delta to the returned adjustment.
+pub fn set_item_extent(
+	d: &slir::Doc,
+	s: &mut State,
+	each: u32,
+	item: i32,
+	extent: f64,
+	scroll_offset: f64,
+) -> Option<f64> {
+	if item < 0 || !extent.is_finite() || extent <= 0.0 || !activate_variable(d, s, each) {
+		return None;
+	}
+	let slot = window_slot(s, each);
+	let local_offset = scroll_offset - s.win_origin[index(slot)];
+	let variable = s.win_variable[index(slot)]
+		.as_mut()
+		.expect("activated variable extents");
+	let item = usize::try_from(item).ok()?;
+	if item >= variable.extents.len() {
+		return None;
+	}
+	let first_visible = variable.lower_bound(local_offset);
+	let key = variable.keys[item].clone();
+	variable.retained.insert(key, extent);
+	let delta = variable.set(item, extent);
+	Some(if item < first_visible { delta } else { 0.0 })
+}
+
+/// Records a laid-out item's measured extent when variable extents are active.
+pub fn measure_item_extent(
+	d: &slir::Doc,
+	s: &mut State,
+	each: u32,
+	item: i32,
+	extent: f64,
+	scroll_offset: f64,
+) -> Option<f64> {
+	if !variable_extents_enabled(s, each) {
+		return None;
+	}
+	set_item_extent(d, s, each, item, extent, scroll_offset)
+}
+
+/// Exact retained logical extent for a virtual list.
+pub fn virtual_total_extent(d: &slir::Doc, s: &State, each: u32) -> Option<f64> {
+	let (estimate, ..) = virtual_config(d, s, each)?;
+	let list = each_list(d, s, each);
+	if list < 0 {
+		return None;
+	}
+	let slot = window_slot(s, each);
+	if slot >= 0
+		&& let Some(variable) = &s.win_variable[index(slot)]
+	{
+		return Some(variable.prefix(variable.extents.len()));
+	}
+	Some(f64::from(length(d, s, unsigned(list))) * estimate)
+}
+
+/// Exact retained main-axis offset of one virtual item.
+pub fn virtual_item_offset(d: &slir::Doc, s: &State, each: u32, item: i32) -> Option<f64> {
+	let (estimate, ..) = virtual_config(d, s, each)?;
+	let list = each_list(d, s, each);
+	if item < 0 || list < 0 || item > length(d, s, unsigned(list)) {
+		return None;
+	}
+	let slot = window_slot(s, each);
+	if slot >= 0
+		&& let Some(variable) = &s.win_variable[index(slot)]
+	{
+		return Some(variable.prefix(index(item)));
+	}
+	Some(f64::from(item) * estimate)
+}
 
 /// Returns the last materialized half-open range for a virtual each.
 pub fn current_window(s: &State, each: u32) -> (i32, i32) {
@@ -1662,6 +1974,39 @@ fn compute_window(len: i32, extent: f64, overscan: i32, off: f64, viewport: f64)
 	(first.saturating_sub(overscan).clamp(0, len), last.saturating_add(overscan).clamp(0, len))
 }
 
+fn compute_retained_window(
+	s: &State,
+	each: u32,
+	len: i32,
+	extent: f64,
+	overscan: i32,
+	off: f64,
+	viewport: f64,
+) -> (i32, i32) {
+	let slot = window_slot(s, each);
+	if slot < 0 || s.win_variable[index(slot)].is_none() {
+		return compute_window(len, extent, overscan, off, viewport);
+	}
+	if len <= 0 {
+		return (0, 0);
+	}
+	if viewport <= 0.0 {
+		return (0, len.min(overscan.saturating_mul(2)));
+	}
+	let variable = s.win_variable[index(slot)]
+		.as_ref()
+		.expect("checked variable extents");
+	let visible_start = off.max(0.0);
+	let visible_end = (off + viewport).max(0.0);
+	let first = i32::try_from(variable.lower_bound(visible_start)).unwrap_or(i32::MAX);
+	let mut last = variable.lower_bound(visible_end);
+	if last < variable.extents.len() && variable.prefix(last) < visible_end {
+		last += 1;
+	}
+	let last = i32::try_from(last).unwrap_or(i32::MAX);
+	(first.saturating_sub(overscan).clamp(0, len), last.saturating_add(overscan).clamp(0, len))
+}
+
 /// Computes and records the current range from retained viewport and scroll
 /// offset.
 pub fn materialized_window(
@@ -1675,7 +2020,11 @@ pub fn materialized_window(
 	if list < 0 {
 		return None;
 	}
-	let range = compute_window(
+	ensure_window_slot(s, each);
+	reconcile_variable(d, s, each, false);
+	let range = compute_retained_window(
+		s,
+		each,
 		length(d, s, unsigned(list)),
 		extent,
 		overscan,
@@ -1683,16 +2032,8 @@ pub fn materialized_window(
 		viewport_for(s, each),
 	);
 	let slot = window_slot(s, each);
-	if slot < 0 {
-		s.win_each.push(each);
-		s.win_start.push(range.0);
-		s.win_end.push(range.1);
-		s.win_viewport.push(0.0);
-		s.win_origin.push(0.0);
-	} else {
-		s.win_start[index(slot)] = range.0;
-		s.win_end[index(slot)] = range.1;
-	}
+	s.win_start[index(slot)] = range.0;
+	s.win_end[index(slot)] = range.1;
 	Some(range)
 }
 
@@ -1712,23 +2053,25 @@ pub fn set_virtual_viewport(
 	if list < 0 {
 		return false;
 	}
+	ensure_window_slot(s, each);
+	reconcile_variable(d, s, each, false);
 	let viewport = viewport.max(0.0);
 	let origin = if origin.is_finite() { origin } else { 0.0 };
 	let old = current_window(s, each);
-	let new = compute_window(length(d, s, unsigned(list)), extent, overscan, off - origin, viewport);
+	let new = compute_retained_window(
+		s,
+		each,
+		length(d, s, unsigned(list)),
+		extent,
+		overscan,
+		off - origin,
+		viewport,
+	);
 	let slot = window_slot(s, each);
-	if slot < 0 {
-		s.win_each.push(each);
-		s.win_start.push(new.0);
-		s.win_end.push(new.1);
-		s.win_viewport.push(viewport);
-		s.win_origin.push(origin);
-	} else {
-		s.win_start[index(slot)] = new.0;
-		s.win_end[index(slot)] = new.1;
-		s.win_viewport[index(slot)] = viewport;
-		s.win_origin[index(slot)] = origin;
-	}
+	s.win_start[index(slot)] = new.0;
+	s.win_end[index(slot)] = new.1;
+	s.win_viewport[index(slot)] = viewport;
+	s.win_origin[index(slot)] = origin;
 	old != new
 }
 

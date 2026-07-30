@@ -826,6 +826,13 @@ pub fn dump_effects(d: &slir::Doc, st: &style::St, effects: &dispatch::Effects) 
 		emit_jstr(&mut out, &range_edit.text);
 		out.push(OBJECT_CLOSE);
 	}
+	if let Some(copy_text) = &effects.copy_text {
+		emit(&mut out, ",\"copy_text\":");
+		emit_jstr(&mut out, copy_text);
+	}
+	if effects.has_static_selection {
+		emit(&mut out, ",\"has_static_selection\":true");
+	}
 	out.push(OBJECT_CLOSE);
 	crate::rt::str_from_chars(&out)
 }

@@ -40,6 +40,7 @@ lto = "thin"
 codegen-units = 16
 incremental = true
 strip = false
+debug = "line-tables-only"
 
 [profile.ci]
 inherits = "release"

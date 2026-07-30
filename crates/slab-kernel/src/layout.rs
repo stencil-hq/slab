@@ -106,15 +106,24 @@ pub struct Lay {
 	/// range.
 	pub para_line_off:        Vec<i32>,
 	pub para_line_len:        Vec<i32>,
+	/// Raw source codepoint range in [`Self::para_chars`] for each paragraph.
+	pub para_src_off:         Vec<i32>,
+	pub para_src_len:         Vec<i32>,
 	pub pl_h:                 Vec<f64>,
 	pub pl_asc:               Vec<f64>,
 	pub pl_w:                 Vec<f64>,
 	pub pl_seg_off:           Vec<i32>,
 	pub pl_seg_len:           Vec<i32>,
+	/// Raw source codepoint range represented by each visual paragraph line.
+	pub pl_src_a:             Vec<i32>,
+	pub pl_src_b:             Vec<i32>,
 	pub seg_x:                Vec<f64>,
 	/// Start of the segment's codepoint slice in [`Lay::para_chars`].
 	pub seg_a:                Vec<i32>,
 	pub seg_b:                Vec<i32>,
+	/// Raw source codepoint range represented by each painted segment.
+	pub seg_src_a:            Vec<i32>,
+	pub seg_src_b:            Vec<i32>,
 	pub seg_w:                Vec<f64>,
 	pub seg_font:             Vec<i32>,
 	pub seg_size:             Vec<f64>,
@@ -136,8 +145,9 @@ pub struct Lay {
 	scratch_u32:              Vec<Vec<u32>>,
 	scratch_i32:              Vec<Vec<i32>>,
 	scratch_f64:              Vec<Vec<f64>>,
-	/// Reusable OpenType plans, retained across solves for this document.
-	pub(crate) shape_cache:   crate::textm::ShapeCache,
+	/// Reusable OpenType plans and shaped-line cache, retained across solves
+	/// and shared with lazy paint shaping during flatten.
+	pub(crate) shape_cache:   std::cell::RefCell<crate::textm::ShapeCache>,
 	/// Retained [`place_attached`] scratch, cleared and refilled per call.
 	attach:                   AttachScratch,
 }
@@ -168,14 +178,20 @@ pub fn lay_reset(l: &mut Lay) {
 	l.tls.clear();
 	l.para_line_off.clear();
 	l.para_line_len.clear();
+	l.para_src_off.clear();
+	l.para_src_len.clear();
 	l.pl_h.clear();
 	l.pl_asc.clear();
 	l.pl_w.clear();
 	l.pl_seg_off.clear();
 	l.pl_seg_len.clear();
+	l.pl_src_a.clear();
+	l.pl_src_b.clear();
 	l.seg_x.clear();
 	l.seg_a.clear();
 	l.seg_b.clear();
+	l.seg_src_a.clear();
+	l.seg_src_b.clear();
 	l.seg_w.clear();
 	l.seg_font.clear();
 	l.seg_size.clear();
@@ -756,11 +772,133 @@ fn divider_extent_for_child(
 	Some(extent)
 }
 
+fn split_materialized_children(d: &Doc, st: &mut St, node: u32, out: &mut Vec<u32>) {
+	crate::style::children(d, st, node, out);
+	let direct = std::mem::take(out);
+	for child in direct {
+		let base = crate::list::base(&st.lists, d, child);
+		if base != crate::slir::NONE && d.node_kind[idx(base)] == crate::slir::K_EACH {
+			let mut items = Vec::new();
+			crate::style::children(d, st, child, &mut items);
+			out.extend(items);
+		} else {
+			out.push(child);
+		}
+	}
+}
+
+fn split_seed(d: &Doc, st: &St, node: u32, row: bool, parent_kind: u32) -> f64 {
+	let size = crate::style::peek_size(d, st, node, row, parent_kind, row);
+	match size.kind {
+		crate::style::S_FIXED | crate::style::S_FILL => size.v.max(EPS),
+		crate::style::S_PCT => size.v.max(EPS),
+		_ => 1.0,
+	}
+}
+
+fn normalize_split_sizes(
+	d: &Doc,
+	st: &St,
+	kids: &[u32],
+	row: bool,
+	parent_kind: u32,
+	target: f64,
+) -> Vec<f64> {
+	let count = kids.len();
+	let keys: Vec<String> = kids
+		.iter()
+		.map(|node| crate::scene::key_of(d, &st.lists, *node))
+		.collect();
+	let retained: Vec<Option<f64>> = keys
+		.iter()
+		.map(|key| {
+			crate::style::split_get(st, key).filter(|extent| extent.is_finite() && *extent >= 0.0)
+		})
+		.collect();
+	let unset_count = retained.iter().filter(|extent| extent.is_none()).count();
+	let retained_total: f64 = retained.iter().flatten().sum();
+	let weights: Vec<f64> = if unset_count > 0 && unset_count < count {
+		let equal = target.max(0.0) / count as f64;
+		let retained_budget = equal * (count - unset_count) as f64;
+		retained
+			.iter()
+			.map(|extent| match extent {
+				Some(extent) if retained_total > EPS => retained_budget * extent / retained_total,
+				Some(_) | None => equal,
+			})
+			.collect()
+	} else {
+		kids
+			.iter()
+			.zip(&retained)
+			.map(|(&node, extent)| extent.unwrap_or_else(|| split_seed(d, st, node, row, parent_kind)))
+			.collect()
+	};
+	let mins: Vec<f64> = kids
+		.iter()
+		.map(|&node| effective_min(d, st, node, row))
+		.collect();
+	let maxs: Vec<f64> = kids
+		.iter()
+		.map(|&node| effective_max(d, st, node, row))
+		.collect();
+	let mut sizes = vec![0.0; count];
+	let mut active = vec![true; count];
+	let mut remaining = target.max(0.0);
+	for _ in 0..count {
+		let total_weight: f64 = weights
+			.iter()
+			.enumerate()
+			.filter_map(|(index, weight)| active[index].then_some(*weight))
+			.sum();
+		let active_count = active.iter().filter(|value| **value).count();
+		if active_count == 0 {
+			break;
+		}
+		let mut clamped = false;
+		for index in 0..count {
+			if !active[index] {
+				continue;
+			}
+			let candidate = if total_weight <= EPS {
+				remaining / active_count as f64
+			} else {
+				remaining * weights[index] / total_weight
+			};
+			if candidate < mins[index] {
+				sizes[index] = mins[index];
+				remaining = (remaining - sizes[index]).max(0.0);
+				active[index] = false;
+				clamped = true;
+			} else if candidate > maxs[index] {
+				sizes[index] = maxs[index];
+				remaining = (remaining - sizes[index]).max(0.0);
+				active[index] = false;
+				clamped = true;
+			}
+		}
+		if !clamped {
+			for index in 0..count {
+				if active[index] {
+					sizes[index] = if total_weight <= EPS {
+						remaining / active_count as f64
+					} else {
+						remaining * weights[index] / total_weight
+					};
+				}
+			}
+			break;
+		}
+	}
+	sizes
+}
+
 /// Measures a row or column container and places its children in document
 /// order.
 pub fn box_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &Cons) -> i32 {
 	let row = st.rs[idx(ri)].is_row;
 	let kind = st.rs[idx(ri)].kind;
+	let splits = st.rs[idx(ri)].flags & crate::slir::F_SPLITS != 0;
 	let pt = st.rs[idx(ri)].pad_t;
 	let pr = st.rs[idx(ri)].pad_r;
 	let pb = st.rs[idx(ri)].pad_b;
@@ -875,15 +1013,27 @@ pub fn box_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &C
 		content_cross = INF;
 	}
 	let mut kids: Vec<u32> = take_u32(l);
-	crate::style::children(d, st, node, &mut kids);
+	if splits {
+		split_materialized_children(d, st, node, &mut kids);
+	} else {
+		crate::style::children(d, st, node, &mut kids);
+	}
 	let nk = len_i32(&kids);
 	let virtual_metrics = crate::list::virtual_metrics(d, &st.lists, node);
-	let gap = st.rs[idx(ri)].gap;
+	let gap = if splits { 0.0 } else { st.rs[idx(ri)].gap };
 	let gaps = gap * (0.0f64).max(f64::from(nk.wrapping_sub(1i32)));
 	let mut remaining = if content_main == INF {
 		INF
 	} else {
 		content_main - gaps
+	};
+	let split_sizes = if splits && content_main != INF {
+		for &kid in &kids {
+			crate::style::reset_wh_patches(d, st, kid);
+		}
+		Some(normalize_split_sizes(d, st, &kids, row, kind, content_main))
+	} else {
+		None
 	};
 	let mut kp: Vec<i32> = take_i32(l);
 	let mut fills: Vec<i32> = take_i32(l);
@@ -922,7 +1072,11 @@ pub fn box_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &C
 	let inh = inh_of(st, ri);
 	for i in 0i32..(nk) {
 		crate::style::reset_wh_patches(d, st, kids[idx(i)]);
-		let forced = divider_extent_for_child(d, st, &kids, i, row, kind, (0.0f64).max(remaining));
+		let forced = if let Some(sizes) = &split_sizes {
+			Some(sizes[idx(i)])
+		} else {
+			divider_extent_for_child(d, st, &kids, i, row, kind, (0.0f64).max(remaining))
+		};
 		let sm = forced.as_ref().map_or_else(
 			|| crate::style::peek_size(d, st, kids[idx(i)], row, kind, row),
 			|extent| crate::style::Size { kind: crate::style::S_FIXED, v: *extent },
@@ -1061,11 +1215,69 @@ pub fn box_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &C
 		if base != crate::slir::NONE && d.node_kind[idx(base)] == crate::slir::K_DIVIDER {
 			crate::style::divider_footprint_set(st, child, child_extent);
 		}
+		if splits {
+			let key = crate::scene::key_of(d, &st.lists, child);
+			crate::style::split_set(st, &key, child_extent);
+			if i + 1 < nk {
+				crate::list::split_sash(&mut st.lists, &key);
+			}
+		}
 	}
-	if let Some((extent, len, ..)) = virtual_metrics {
+	if virtual_metrics.is_some() && crate::list::variable_extents_enabled(&st.lists, node) {
+		let parent = crate::list::virtual_config(d, &st.lists, node)
+			.map_or(crate::slir::NONE, |(_, _, parent)| parent);
+		let mut measured_item = -1;
+		let mut measured_extent = 0.0;
+		for i in 0i32..nk {
+			if kp[idx(i)] < 0 {
+				continue;
+			}
+			let item = crate::list::item_ix(&st.lists, d, kids[idx(i)]);
+			if measured_item >= 0 && item != measured_item {
+				let scroll = crate::style::scroll_get(st, parent);
+				if let Some(anchor) = crate::list::measure_item_extent(
+					d,
+					&mut st.lists,
+					node,
+					measured_item,
+					measured_extent,
+					scroll,
+				) && anchor != 0.0
+				{
+					crate::style::scroll_set(st, parent, scroll + anchor);
+				}
+				measured_extent = 0.0;
+			}
+			if measured_extent != 0.0 {
+				measured_extent += gap;
+			}
+			measured_item = item;
+			measured_extent += if row {
+				l.p_w[idx(kp[idx(i)])]
+			} else {
+				l.p_h[idx(kp[idx(i)])]
+			};
+		}
+		if measured_item >= 0 {
+			let scroll = crate::style::scroll_get(st, parent);
+			if let Some(anchor) = crate::list::measure_item_extent(
+				d,
+				&mut st.lists,
+				node,
+				measured_item,
+				measured_extent,
+				scroll,
+			) && anchor != 0.0
+			{
+				crate::style::scroll_set(st, parent, scroll + anchor);
+			}
+		}
+	}
+
+	if virtual_metrics.is_some() {
 		// A virtual EACH represents its entire logical list. Only the retained
 		// window has child placements, but its main extent remains exact.
-		own_main = f64::from(len) * extent;
+		own_main = crate::list::virtual_total_extent(d, &st.lists, node).unwrap_or(0.0);
 		has_main = true;
 	}
 	if !has_main {
@@ -1184,13 +1396,15 @@ pub fn box_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &C
 		} else {
 			(final_content_cross - child_cross) * crate::style::cross_f(a)
 		};
-		if let Some((extent, ..)) = virtual_metrics {
+		if virtual_metrics.is_some() {
 			let item = crate::list::item_ix(&st.lists, d, kids[idx(i)]);
 			if item != virtual_item {
 				virtual_item = item;
 				virtual_within = 0.0;
 			}
-			cur = f64::from(item).mul_add(extent, if row { pl } else { pt }) + virtual_within;
+			cur = crate::list::virtual_item_offset(d, &st.lists, node, item).unwrap_or(0.0)
+				+ if row { pl } else { pt }
+				+ virtual_within;
 		}
 		if row {
 			l.p_x[idx(ci)] = cur;
@@ -2262,7 +2476,9 @@ pub fn text_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &
 		.iter()
 		.position(|candidate| *candidate == node)
 		.map_or(&empty_spans, |index| &l.rich_spans[index]);
-	let entry_matches = |entry: &crate::textm::TextCacheEntry, content: &str| {
+	let tracked_rev = st.text_rev.get(&node).map_or(0, |lineage| lineage.rev);
+	let tracked_delta = st.text_rev.get(&node).and_then(|lineage| lineage.delta);
+	let params_match = |entry: &crate::textm::TextCacheEntry| {
 		entry.font == font
 			&& entry.size == size.to_bits()
 			&& entry.leading == leading.to_bits()
@@ -2272,7 +2488,12 @@ pub fn text_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &
 			&& entry.ellipsis == ellipsis
 			&& entry.max_lines == max_lines
 			&& entry.spans == *rich_spans
-			&& entry.content == content
+	};
+	// Revision equality proves content equality for tracked fields, skipping
+	// a full-content compare on every solve; untracked nodes still compare.
+	let entry_matches = |entry: &crate::textm::TextCacheEntry, content: &str| {
+		params_match(entry)
+			&& ((tracked_rev != 0 && entry.content_rev == tracked_rev) || entry.content == content)
 	};
 	let cached = match st.text_layout_cache.get(&node) {
 		Some(entry) if entry_matches(entry, &st.rs[idx(ri)].content) => Some(entry.layout.clone()),
@@ -2289,42 +2510,49 @@ pub fn text_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &
 	if let Some(layout) = cached {
 		l.tls.push(layout);
 	} else {
-		let mut layout = crate::textm::measure_text_cached(
-			d,
-			font,
-			size,
-			leading,
-			tracking,
-			&st.rs[idx(ri)].content,
-			avail_w,
-			wrap,
-			ellipsis,
-			max_lines,
-			&mut l.shape_cache,
-		);
-		if wrap && !ellipsis {
-			crate::textm::rewrap_rich_layout(
+		// One contiguous edit against the previously measured revision can
+		// splice the prior layout instead of re-measuring the whole field.
+		let spliced = if tracked_rev != 0 && rich_spans.is_empty() && !ellipsis && max_lines < 0 {
+			tracked_delta.and_then(|delta| {
+				let entry = st.text_layout_cache.get(&node)?;
+				if !params_match(entry) || entry.content_rev.wrapping_add(1) != tracked_rev {
+					return None;
+				}
+				crate::textm::measure_text_spliced(
+					d,
+					font,
+					size,
+					leading,
+					tracking,
+					&entry.layout,
+					&st.rs[idx(ri)].content,
+					delta,
+					avail_w,
+					wrap,
+					l.shape_cache.get_mut(),
+				)
+			})
+		} else {
+			None
+		};
+		let layout = if let Some(layout) = spliced {
+			layout
+		} else {
+			crate::textm::measure_text_cached(
 				d,
 				font,
 				size,
+				leading,
 				tracking,
 				&st.rs[idx(ri)].content,
 				avail_w,
+				wrap,
+				ellipsis,
 				max_lines,
 				rich_spans,
-				&mut layout,
-				&mut l.shape_cache,
-			);
-		}
-		crate::textm::shape_rich_layout(
-			d,
-			font,
-			size,
-			tracking,
-			rich_spans,
-			&mut layout,
-			&mut l.shape_cache,
-		);
+				l.shape_cache.get_mut(),
+			)
+		};
 		let layout = std::rc::Rc::new(layout);
 		// Bound the hot generation; the demoted generation still serves probes
 		// until the next swap, so eviction never re-measures a whole frame.
@@ -2344,6 +2572,7 @@ pub fn text_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &
 				max_lines,
 				spans: rich_spans.clone(),
 				content: st.rs[idx(ri)].content.clone(),
+				content_rev: tracked_rev,
 				layout: layout.clone(),
 			});
 		l.tls.push(layout);
@@ -2511,7 +2740,7 @@ fn ellipsize_para_line(d: &Doc, l: &mut Lay, segment_start: i32, max_width: f64)
 			l.seg_size[segment],
 			l.seg_tracking[segment],
 			&l.para_chars[idx(output_start)..idx(output_end)],
-			&mut l.shape_cache,
+			l.shape_cache.get_mut(),
 		);
 		l.seg_w[segment] = shaped.width;
 		l.seg_shaped[segment] = shaped;
@@ -2572,6 +2801,7 @@ pub fn para_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &
 	let mut w_gap: Vec<i32> = take_i32(l);
 	let mut pending_gap = 0i32;
 	let mut cs: Vec<u32> = take_u32(l);
+	let para_source_start = len_i32(&l.para_chars);
 	for i in 0i32..(len_i32(&kids)) {
 		crate::style::set_patch_flags(d, st, kids[idx(i)], avail, INF);
 		let sri = crate::style::build_rstyle(
@@ -2623,7 +2853,7 @@ pub fn para_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &
 				}
 
 				for (range_a, range_b, mandatory) in ranges {
-					let width = crate::textm::slice_w_cached(
+					let width = crate::textm::slice_w(
 						d,
 						st.rs[idx(sri)].font,
 						st.rs[idx(sri)].size,
@@ -2631,7 +2861,6 @@ pub fn para_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &
 						&cs,
 						range_a,
 						range_b,
-						&mut l.shape_cache,
 					);
 					let mut parts = Vec::new();
 					if !nowrap && avail != INF && width > avail + EPS {
@@ -2670,6 +2899,7 @@ pub fn para_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &
 			a = b.wrapping_add(1i32);
 		}
 	}
+	let para_source_end = len_i32(&l.para_chars);
 	// Greedily wrap words with the same EPS tolerance used by the solver.
 	// Each word advances by its source gap; a gap is dropped when the word
 	// opens a wrapped line, and `w_eff` records the gap actually applied.
@@ -2686,7 +2916,7 @@ pub fn para_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &
 			line_len = 0;
 		}
 		let sri = w_ri[idx(i)];
-		let ww = crate::textm::slice_w_cached(
+		let ww = crate::textm::slice_w(
 			d,
 			st.rs[idx(sri)].font,
 			st.rs[idx(sri)].size,
@@ -2694,7 +2924,6 @@ pub fn para_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &
 			&l.para_chars,
 			w_a[idx(i)],
 			w_b[idx(i)],
-			&mut l.shape_cache,
 		);
 		let sp = crate::textm::char_w(
 			d,
@@ -2720,6 +2949,9 @@ pub fn para_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &
 	}
 	let pi = p_new(l, node, ri);
 	l.para_line_off.push(len_i32(&l.pl_h));
+	l.para_src_off.push(para_source_start);
+	l.para_src_len
+		.push(para_source_end.wrapping_sub(para_source_start));
 	let nlines = cur_line.wrapping_add(1i32);
 	let mut max_w = 0.0f64;
 	let mut total_h = 0.0f64;
@@ -2728,9 +2960,13 @@ pub fn para_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &
 		let mut lh = 0.0f64;
 		let mut asc = 0.0f64;
 		let mut has_any = false;
+		let mut line_source_start = i32::MAX;
+		let mut line_source_end = i32::MIN;
 		for i in 0i32..(len_i32(&w_a)) {
 			if wline[idx(i)] == ln {
 				has_any = true;
+				line_source_start = line_source_start.min(w_a[idx(i)].wrapping_sub(w_eff[idx(i)]));
+				line_source_end = line_source_end.max(w_b[idx(i)]);
 				let sri = w_ri[idx(i)];
 				lh = lh.max(crate::textm::line_h(st.rs[idx(sri)].size, st.rs[idx(sri)].leading));
 				asc = asc.max(crate::textm::ascent(
@@ -2745,14 +2981,21 @@ pub fn para_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &
 			continue;
 		}
 		nl_used = nl_used.wrapping_add(1i32);
+		if ln + 1 == nlines {
+			line_source_end = para_source_end;
+		}
 		l.pl_h.push(lh);
 		l.pl_asc.push(asc);
+		l.pl_src_a.push(line_source_start);
+		l.pl_src_b.push(line_source_end);
 		// Merge adjacent words only when every shaped and painted run input matches.
 		l.pl_seg_off.push(len_i32(&l.seg_x));
 		let mut x = 0.0f64;
 		let mut seg_open = false;
 		let mut seg_start = 0i32;
 		let mut seg_sri = 0i32;
+		let mut seg_source_start = 0i32;
+		let mut seg_source_end = 0i32;
 		for i in 0i32..(len_i32(&w_a)) {
 			if wline[idx(i)] != ln {
 				continue;
@@ -2793,7 +3036,7 @@ pub fn para_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &
 						32u32,
 					);
 				if seg_open {
-					close_seg(d, st, l, seg_start, seg_sri, x);
+					close_seg(d, st, l, seg_start, seg_source_start, seg_source_end, seg_sri, x);
 					let last = len_i32(&l.seg_x).wrapping_sub(1i32);
 					x = (l.seg_x[idx(last)] + l.seg_w[idx(last)]) + gw;
 				} else {
@@ -2802,13 +3045,15 @@ pub fn para_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &
 				seg_open = true;
 				seg_sri = sri;
 				seg_start = len_i32(&l.para_chars);
+				seg_source_start = w_a[idx(i)];
 			}
 			for k in (w_a[idx(i)])..(w_b[idx(i)]) {
 				l.para_chars.push(l.para_chars[idx(k)]);
 			}
+			seg_source_end = w_b[idx(i)];
 		}
 		if seg_open {
-			close_seg(d, st, l, seg_start, seg_sri, x);
+			close_seg(d, st, l, seg_start, seg_source_start, seg_source_end, seg_sri, x);
 		}
 		let segment_off = l.pl_seg_off[idx(len_i32(&l.pl_seg_off).wrapping_sub(1i32))];
 		if nowrap && ellipsis && avail != INF {
@@ -2869,7 +3114,16 @@ pub fn para_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &
 }
 
 /// Closes a paragraph segment and records its measured glyph slice.
-pub fn close_seg(d: &Doc, st: &St, l: &mut Lay, seg_start: i32, sri: i32, x: f64) {
+pub fn close_seg(
+	d: &Doc,
+	st: &St,
+	l: &mut Lay,
+	seg_start: i32,
+	seg_source_start: i32,
+	seg_source_end: i32,
+	sri: i32,
+	x: f64,
+) {
 	let seg_end = len_i32(&l.para_chars);
 	let shaped = crate::textm::shape_line_shared_cached(
 		d,
@@ -2877,12 +3131,14 @@ pub fn close_seg(d: &Doc, st: &St, l: &mut Lay, seg_start: i32, sri: i32, x: f64
 		st.rs[idx(sri)].size,
 		st.rs[idx(sri)].tracking,
 		&l.para_chars[idx(seg_start)..idx(seg_end)],
-		&mut l.shape_cache,
+		l.shape_cache.get_mut(),
 	);
 	let wseg = shaped.width;
 	l.seg_x.push(x);
 	l.seg_a.push(seg_start);
 	l.seg_b.push(seg_end);
+	l.seg_src_a.push(seg_source_start);
+	l.seg_src_b.push(seg_source_end);
 	l.seg_w.push(wseg);
 	l.seg_font.push(st.rs[idx(sri)].font);
 	l.seg_size.push(st.rs[idx(sri)].size);

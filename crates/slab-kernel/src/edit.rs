@@ -3,7 +3,8 @@
 //! All string indices are codepoint offsets into [`EditState::text`] and land
 //! on grapheme-cluster boundaries maintained by [`crate::graphemes`]. Mutation
 //! operations report committed text-or-span changes. Undo and redo history use
-//! capped parallel stacks to preserve the kernel's stable data layout.
+//! capped reverse-delta stacks, with full text only as a non-contiguous
+//! fallback.
 
 use std::fmt::Write as _;
 
@@ -11,11 +12,10 @@ use unicode_segmentation::UnicodeSegmentation as _;
 
 use crate::{
 	graphemes,
-	slir::Doc,
 	textm::{self, TextLayout},
 };
 
-/// Maximum number of snapshots retained in each history direction.
+/// Maximum number of records retained in each history direction.
 pub const HIST_CAP: i32 = 100;
 
 /// Mutation marker used when the next edit must begin a new undo group.
@@ -111,11 +111,12 @@ impl Ranges {
 	}
 
 	/// Reports whether `point` is inside a range.
+	///
+	/// Ranges are normalized (sorted, disjoint), so one lower-bound probe
+	/// suffices; rich measurement calls this per codepoint.
 	pub fn contains(&self, point: i32) -> bool {
-		self
-			.0
-			.iter()
-			.any(|&(start, end)| start <= point && point < end)
+		let index = self.0.partition_point(|&(_, end)| end <= point);
+		self.0.get(index).is_some_and(|&(start, _)| start <= point)
 	}
 
 	/// Removes `[a, b)` when fully covered, otherwise adds it.
@@ -184,6 +185,18 @@ pub struct InlineSpans {
 	pub code:      Ranges,
 }
 
+impl InlineSpans {
+	/// Creates an empty span set; usable in `const` contexts.
+	pub const fn empty() -> Self {
+		Self {
+			bold:      Ranges(Vec::new()),
+			italic:    Ranges(Vec::new()),
+			underline: Ranges(Vec::new()),
+			strike:    Ranges(Vec::new()),
+			code:      Ranges(Vec::new()),
+		}
+	}
+}
 impl InlineSpans {
 	/// Returns one style's ranges, or `None` for an unknown style identifier.
 	pub const fn get(&self, style: u32) -> Option<&Ranges> {
@@ -276,6 +289,47 @@ pub struct CrossFieldRange {
 	pub head_offset:   i32,
 }
 
+/// Text transformation that restores one side of a history transition.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum UndoRecord {
+	/// Replaces `inserted_len` codepoints at `at` with `removed`.
+	Splice { at: i32, removed: String, inserted_len: i32 },
+	/// Complete target text for a mutation group that cannot be one splice.
+	Full(String),
+}
+
+/// One undo or redo transition, including the target selection and spans.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UndoStep {
+	pub record:    UndoRecord,
+	pub spans:     InlineSpans,
+	pub caret:     i32,
+	pub anchor:    i32,
+	text_recorded: bool,
+}
+
+impl UndoStep {
+	/// Reports whether this step retains a full text snapshot.
+	pub const fn is_full_text(&self) -> bool {
+		matches!(self.record, UndoRecord::Full(_))
+	}
+}
+
+/// Accumulated display-content transition since the last field sync.
+///
+/// `Splice` composes contiguous edits into one forward delta the measure
+/// splice can replay. Anything that breaks splice lineage — non-contiguous
+/// edit groups or any input-method display transition — degrades to `Full`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MeasureDelta {
+	/// Published content is unchanged.
+	Unchanged,
+	/// Content changed by exactly this contiguous splice.
+	Splice(crate::textm::TextDelta),
+	/// Content changed in a way no single splice represents.
+	Full,
+}
+
 /// Mutable state for one editable text node.
 #[derive(Clone, Debug)]
 pub struct EditState {
@@ -303,24 +357,56 @@ pub struct EditState {
 	pub spans:           InlineSpans,
 	/// Monotonic committed text-or-span change counter.
 	pub revision:        u64,
-	/// Committed text snapshots in the undo stack.
-	pub u_text:          Vec<String>,
-	/// Inline spans parallel to [`Self::u_text`].
-	pub u_spans:         Vec<InlineSpans>,
-	/// Caret positions parallel to [`Self::u_text`].
-	pub u_caret:         Vec<i32>,
-	/// Selection anchors parallel to [`Self::u_text`].
-	pub u_anchor:        Vec<i32>,
-	/// Committed text snapshots in the redo stack.
-	pub r_text:          Vec<String>,
-	/// Inline spans parallel to [`Self::r_text`].
-	pub r_spans:         Vec<InlineSpans>,
-	/// Caret positions parallel to [`Self::r_text`].
-	pub r_caret:         Vec<i32>,
-	/// Selection anchors parallel to [`Self::r_text`].
-	pub r_anchor:        Vec<i32>,
+	/// Reverse deltas in the undo stack.
+	pub undo:            Vec<UndoStep>,
+	/// Reverse deltas in the redo stack.
+	pub redo:            Vec<UndoStep>,
 	/// Kind of the current coalesced undo group.
 	pub last_kind:       u32,
+	/// Whether the next splice belongs to the mutation just begun.
+	pending_splice:      bool,
+	/// Display transition since the last field sync (see [`MeasureDelta`]).
+	measure_delta:       MeasureDelta,
+	/// Whether the published display text diverged from committed-splice
+	/// lineage (any composition activity); forces full re-measure on sync.
+	display_dirty:       bool,
+}
+
+impl EditState {
+	/// Accumulates one committed forward splice into the pending transition.
+	fn accumulate_delta(&mut self, next: crate::textm::TextDelta) {
+		self.measure_delta = match self.measure_delta {
+			MeasureDelta::Unchanged => MeasureDelta::Splice(next),
+			MeasureDelta::Splice(mut delta) => {
+				if delta.merge(next) {
+					MeasureDelta::Splice(delta)
+				} else {
+					MeasureDelta::Full
+				}
+			},
+			MeasureDelta::Full => MeasureDelta::Full,
+		};
+	}
+
+	/// Consumes the pending transition for one field sync.
+	///
+	/// Composition activity poisons the lineage: every sync during a
+	/// composition, and the first one after it ends, re-measures fully and
+	/// re-baselines.
+	pub const fn take_measure_delta(&mut self) -> MeasureDelta {
+		if self.composing || self.display_dirty {
+			self.display_dirty = self.composing;
+			self.measure_delta = MeasureDelta::Unchanged;
+			return MeasureDelta::Full;
+		}
+		std::mem::replace(&mut self.measure_delta, MeasureDelta::Unchanged)
+	}
+
+	/// Discards the pending transition after a host publishes full content.
+	pub const fn reset_measure_delta(&mut self) {
+		self.measure_delta = MeasureDelta::Unchanged;
+		self.display_dirty = self.composing;
+	}
 }
 
 /// Creates editing state with the caret collapsed at the end of `text`.
@@ -338,15 +424,12 @@ pub fn es_new(node: u32, text: &str) -> EditState {
 		goal_x: NO_GOAL_X,
 		spans: InlineSpans::default(),
 		revision: 0,
-		u_text: Vec::new(),
-		u_spans: Vec::new(),
-		u_caret: Vec::new(),
-		u_anchor: Vec::new(),
-		r_text: Vec::new(),
-		r_spans: Vec::new(),
-		r_caret: Vec::new(),
-		r_anchor: Vec::new(),
+		undo: Vec::new(),
+		redo: Vec::new(),
 		last_kind: MUT_NONE,
+		pending_splice: false,
+		measure_delta: MeasureDelta::Unchanged,
+		display_dirty: false,
 	}
 }
 
@@ -365,6 +448,11 @@ pub fn display_spans(es: &EditState) -> InlineSpans {
 
 /// Returns the text as displayed, with composition text inserted at the caret.
 pub fn display_str(es: &EditState) -> String {
+	if !es.composing && es.compose.is_empty() {
+		// Hot path: committed text displays verbatim; one memcpy, no
+		// per-codepoint scan.
+		return es.text.clone();
+	}
 	let mut display = crate::rt::str_slice(&es.text, 0, es.caret);
 	display.push_str(&es.compose);
 	display.push_str(&crate::rt::str_slice(&es.text, es.caret, crate::rt::str_len(&es.text)));
@@ -398,44 +486,46 @@ pub fn set_selection(es: &mut EditState, caret: i32, anchor: i32) -> bool {
 	changed
 }
 
-/// Removes the oldest undo snapshot when the history cap is reached.
+/// Removes the oldest undo record when the history cap is reached.
 pub fn trim_undo(es: &mut EditState) {
-	if es.u_text.len() < usize::try_from(HIST_CAP).expect("negative history cap") {
+	if es.undo.len() < usize::try_from(HIST_CAP).expect("negative history cap") {
 		return;
 	}
-	es.u_text.remove(0);
-	es.u_spans.remove(0);
-	es.u_caret.remove(0);
-	es.u_anchor.remove(0);
+	es.undo.remove(0);
 }
 
-/// Removes the oldest redo snapshot when the history cap is reached.
+/// Removes the oldest redo record when the history cap is reached.
 pub fn trim_redo(es: &mut EditState) {
-	if es.r_text.len() < usize::try_from(HIST_CAP).expect("negative history cap") {
+	if es.redo.len() < usize::try_from(HIST_CAP).expect("negative history cap") {
 		return;
 	}
-	es.r_text.remove(0);
-	es.r_spans.remove(0);
-	es.r_caret.remove(0);
-	es.r_anchor.remove(0);
+	es.redo.remove(0);
 }
 
-/// Saves the current committed text and selection to the undo stack.
+fn current_step(es: &EditState) -> UndoStep {
+	UndoStep {
+		record:        UndoRecord::Splice {
+			at:           0,
+			removed:      String::new(),
+			inserted_len: 0,
+		},
+		spans:         es.spans.clone(),
+		caret:         es.caret,
+		anchor:        es.anchor,
+		text_recorded: false,
+	}
+}
+
+/// Starts an undo record at the current spans and selection.
 pub fn push_undo(es: &mut EditState) {
 	trim_undo(es);
-	es.u_text.push(es.text.clone());
-	es.u_spans.push(es.spans.clone());
-	es.u_caret.push(es.caret);
-	es.u_anchor.push(es.anchor);
+	es.undo.push(current_step(es));
 }
 
-/// Saves the current committed text and selection to the redo stack.
+/// Starts a redo record at the current spans and selection.
 pub fn push_redo(es: &mut EditState) {
 	trim_redo(es);
-	es.r_text.push(es.text.clone());
-	es.r_spans.push(es.spans.clone());
-	es.r_caret.push(es.caret);
-	es.r_anchor.push(es.anchor);
+	es.redo.push(current_step(es));
 }
 
 /// Starts or continues a coalesced mutation group and clears redo history.
@@ -447,11 +537,9 @@ pub fn begin_mutation(es: &mut EditState, kind: u32) {
 	if starts_group {
 		push_undo(es);
 	}
-	es.r_text.clear();
-	es.r_spans.clear();
-	es.r_caret.clear();
-	es.r_anchor.clear();
+	es.redo.clear();
 	es.last_kind = kind;
+	es.pending_splice = true;
 	es.goal_x = NO_GOAL_X;
 }
 
@@ -462,20 +550,15 @@ pub fn begin_mutation(es: &mut EditState, kind: u32) {
 /// snapshot rather than adding a duplicate history entry.
 pub const fn history_barrier(es: &mut EditState) {
 	es.last_kind = MUT_NONE;
+	es.pending_splice = false;
 }
 /// Discards both history directions and starts a hard host-transaction barrier.
 ///
 /// Unlike [`history_barrier`], which only ends mutation coalescing, this makes
 /// every earlier local edit unreachable by field-local undo.
 pub fn reset_history(es: &mut EditState) {
-	es.u_text.clear();
-	es.u_spans.clear();
-	es.u_caret.clear();
-	es.u_anchor.clear();
-	es.r_text.clear();
-	es.r_spans.clear();
-	es.r_caret.clear();
-	es.r_anchor.clear();
+	es.undo.clear();
+	es.redo.clear();
 	history_barrier(es);
 }
 
@@ -534,15 +617,83 @@ pub fn replace_spans(es: &mut EditState, spans: InlineSpans) -> bool {
 	true
 }
 
+fn append_codepoints(out: &mut String, text: &str, start: i32, end: i32) {
+	out.push_str(&text[byte_offset(text, start)..byte_offset(text, end)]);
+}
+
+fn text_with_reverse_splice(text: &str, at: i32, removed: &str, inserted_len: i32) -> String {
+	let mut restored = String::with_capacity(
+		text
+			.len()
+			.saturating_add(removed.len())
+			.saturating_sub(byte_offset(text, at.wrapping_add(inserted_len)) - byte_offset(text, at)),
+	);
+	append_codepoints(&mut restored, text, 0, at);
+	restored.push_str(removed);
+	append_codepoints(&mut restored, text, at.wrapping_add(inserted_len), crate::rt::str_len(text));
+	restored
+}
+
+fn record_splice(es: &mut EditState, lo: i32, hi: i32, insert_len: i32) {
+	if !es.pending_splice {
+		return;
+	}
+	es.pending_splice = false;
+	let step = es
+		.undo
+		.last_mut()
+		.expect("mutation group has an undo record");
+	if !step.text_recorded {
+		step.record = UndoRecord::Splice {
+			at:           lo,
+			removed:      crate::rt::str_slice(&es.text, lo, hi),
+			inserted_len: insert_len,
+		};
+		step.text_recorded = true;
+		return;
+	}
+
+	let UndoRecord::Splice { at, removed, inserted_len } = &step.record else {
+		return;
+	};
+	let old_end = at.wrapping_add(*inserted_len);
+	if hi < *at || lo > old_end {
+		step.record =
+			UndoRecord::Full(text_with_reverse_splice(&es.text, *at, removed, *inserted_len));
+		return;
+	}
+
+	let start = (*at).min(lo);
+	let end = old_end.max(hi);
+	let mut baseline = String::new();
+	append_codepoints(&mut baseline, &es.text, start, *at);
+	baseline.push_str(removed);
+	append_codepoints(&mut baseline, &es.text, old_end, end);
+	step.record = UndoRecord::Splice {
+		at:           start,
+		removed:      baseline,
+		inserted_len: lo
+			.wrapping_sub(start)
+			.wrapping_add(insert_len)
+			.wrapping_add(end.wrapping_sub(hi)),
+	};
+}
+
 /// Replaces committed `[lo, hi)` with `insert`, keeping every span consistent.
 pub fn splice(es: &mut EditState, lo: i32, hi: i32, insert: &str) -> bool {
 	if lo == hi && insert.is_empty() {
 		return false;
 	}
+	let added = crate::rt::str_len(insert);
+	record_splice(es, lo, hi, added);
+	es.accumulate_delta(crate::textm::TextDelta {
+		at:       lo,
+		removed:  hi.wrapping_sub(lo),
+		inserted: added,
+	});
 	if hi > lo {
 		es.spans.delete(lo, hi);
 	}
-	let added = crate::rt::str_len(insert);
 	if added > 0 {
 		es.spans.insert(lo, added);
 	}
@@ -855,67 +1006,116 @@ pub fn visual_line(tl: &TextLayout, caret: i32) -> i32 {
 }
 
 /// Finds the nearest shaped-cluster caret on `line` for horizontal `goal`.
-// The legacy metric arguments remain explicit for callers that already own
-// them; shaped layout is the sole geometry authority.
-pub fn caret_for_x(
-	_d: &Doc,
-	_es: &EditState,
-	tl: &TextLayout,
-	line: i32,
-	_font: i32,
-	_size: f64,
-	_tracking: f64,
-	goal: f64,
-) -> i32 {
-	textm::caret_for_visual_x(tl, usize::try_from(line).expect("negative visual line"), goal)
+pub(crate) fn caret_for_x(shaper: textm::Shaper<'_>, tl: &TextLayout, line: i32, goal: f64) -> i32 {
+	textm::caret_for_visual_x(shaper, tl, usize::try_from(line).expect("negative visual line"), goal)
 }
 
-/// Moves one caret stop in visual order across shaped lines.
-pub fn visual_step(es: &mut EditState, tl: &TextLayout, delta: i32, select: bool) {
+/// Returns the final caret stop of the whole layout: the trailing edge of
+/// the last line's last cluster, or the line's source start when empty.
+fn doc_tail_boundary(shaper: textm::Shaper<'_>, tl: &TextLayout) -> Option<i32> {
+	let line = tl.src_ls.len().checked_sub(1)?;
+	let shaped = shaper.line(tl, line)?;
+	if shaped.clusters.is_empty() {
+		return Some(tl.src_ls[line]);
+	}
+	let base = tl.src_ls[line];
+	let clamp = tl.src_le[line];
+	Some(
+		shaped
+			.clusters
+			.iter()
+			.map(|cluster| cluster.end.wrapping_add(base).min(clamp))
+			.max()
+			.unwrap_or(tl.src_ls[line]),
+	)
+}
+
+/// Moves one caret stop across shaped lines.
+///
+/// Stops are grapheme boundaries in LOGICAL order: on mixed-direction lines
+/// a logical value can appear at two visual positions (run seams), and a
+/// visual walk would match the wrong occurrence and orbit. Pure-LTR lines
+/// produce the identical stream either way. Cluster edges only exist on
+/// lines whose source range contains the caret, so scanning one line of
+/// context on each side reproduces the full stream without shaping the
+/// whole field.
+pub(crate) fn visual_step(
+	shaper: textm::Shaper<'_>,
+	es: &mut EditState,
+	tl: &TextLayout,
+	delta: i32,
+	select: bool,
+) {
 	history_barrier(es);
 	es.goal_x = NO_GOAL_X;
-	let mut previous = None;
-	let mut last = None;
-	let mut found = false;
-	let mut target = es.caret;
-	let mut done = false;
-	let mut visit = |boundary: i32| {
-		if done || last == Some(boundary) {
-			return;
+	struct Step {
+		previous: Option<i32>,
+		last:     Option<i32>,
+		found:    bool,
+		target:   i32,
+		done:     bool,
+	}
+	impl Step {
+		fn visit(&mut self, boundary: i32, caret: i32, delta: i32) {
+			if self.done || self.last == Some(boundary) {
+				return;
+			}
+			if delta < 0 && boundary == caret {
+				self.target = self.previous.unwrap_or(boundary);
+				self.done = true;
+			} else if delta >= 0 && self.found {
+				self.target = boundary;
+				self.done = true;
+			} else if boundary == caret {
+				self.found = true;
+			}
+			self.previous = Some(boundary);
+			self.last = Some(boundary);
 		}
-		if delta < 0 && boundary == es.caret {
-			target = previous.unwrap_or(boundary);
-			done = true;
-		} else if delta >= 0 && found {
-			target = boundary;
-			done = true;
-		} else if boundary == es.caret {
-			found = true;
-		}
-		previous = Some(boundary);
-		last = Some(boundary);
-	};
-	for (line, shaped) in tl.shaped.iter().enumerate() {
+	}
+	let mut step =
+		Step { previous: None, last: None, found: false, target: es.caret, done: false };
+	let lines = tl.src_ls.len();
+	let mut first = 0usize;
+	while first + 1 < lines && tl.src_le[first] < es.caret {
+		first += 1;
+	}
+	let scan_end = (first + 2).min(lines);
+	for line in first.saturating_sub(1)..scan_end {
+		let Some(shaped) = shaper.line(tl, line) else {
+			continue;
+		};
 		if shaped.clusters.is_empty() {
-			visit(tl.src_ls[line]);
+			step.visit(tl.src_ls[line], es.caret, delta);
 			continue;
 		}
-		for cluster in &shaped.clusters {
-			visit(if cluster.rtl {
-				cluster.end
-			} else {
-				cluster.start
-			});
-			visit(if cluster.rtl {
-				cluster.start
-			} else {
-				cluster.end
-			});
+		let base = tl.src_ls[line];
+		let clamp = tl.src_le[line];
+		let mut edges: Vec<i32> = shaped
+			.clusters
+			.iter()
+			.flat_map(|cluster| {
+				[cluster.start.wrapping_add(base).min(clamp), cluster.end.wrapping_add(base).min(clamp)]
+			})
+			.collect();
+		edges.sort_unstable();
+		edges.dedup();
+		for edge in edges {
+			step.visit(edge, es.caret, delta);
+		}
+		if step.done {
+			break;
 		}
 	}
-	if !done && delta >= 0 {
-		target = previous.unwrap_or(es.caret);
-	}
+	let target = if step.done || delta < 0 {
+		step.target
+	} else if step.found {
+		step.previous.unwrap_or(es.caret)
+	} else {
+		// A caret inside a cluster never matches an edge; the full stream
+		// would land on the layout's final boundary.
+		doc_tail_boundary(shaper, tl).unwrap_or(es.caret)
+	};
 	es.caret = target;
 	if !select {
 		es.anchor = es.caret;
@@ -923,15 +1123,10 @@ pub fn visual_step(es: &mut EditState, tl: &TextLayout, delta: i32, select: bool
 }
 
 /// Moves vertically by visual lines while preserving the desired x position.
-// Keeping the text-metric inputs explicit makes this state transition
-// auditable.
-pub fn visual_move(
-	d: &Doc,
+pub(crate) fn visual_move(
+	shaper: textm::Shaper<'_>,
 	es: &mut EditState,
 	tl: &TextLayout,
-	font: i32,
-	size: f64,
-	tracking: f64,
 	delta: i32,
 	select: bool,
 ) {
@@ -939,7 +1134,7 @@ pub fn visual_move(
 	let line = visual_line(tl, es.caret);
 	if es.goal_x < 0.0 {
 		let line_index = usize::try_from(line).expect("negative visual line");
-		es.goal_x = textm::caret_x(tl, line_index, es.caret);
+		es.goal_x = textm::caret_x(shaper, tl, line_index, es.caret);
 	}
 
 	let target = line.wrapping_add(delta);
@@ -950,17 +1145,22 @@ pub fn visual_move(
 	if target < 0 || target >= line_count {
 		return;
 	}
-	es.caret = caret_for_x(d, es, tl, target, font, size, tracking, es.goal_x);
+	es.caret = caret_for_x(shaper, tl, target, es.goal_x);
 	if !select {
 		es.anchor = es.caret;
 	}
 }
 
 /// Moves the caret to the start of its visual line.
-pub fn visual_home(es: &mut EditState, tl: &TextLayout, select: bool) {
+pub(crate) fn visual_home(
+	shaper: textm::Shaper<'_>,
+	es: &mut EditState,
+	tl: &TextLayout,
+	select: bool,
+) {
 	history_barrier(es);
 	let line = usize::try_from(visual_line(tl, es.caret)).expect("negative visual line");
-	es.caret = textm::caret_for_visual_x(tl, line, f64::NEG_INFINITY);
+	es.caret = textm::caret_for_visual_x(shaper, tl, line, f64::NEG_INFINITY);
 	es.goal_x = NO_GOAL_X;
 	if !select {
 		es.anchor = es.caret;
@@ -968,10 +1168,15 @@ pub fn visual_home(es: &mut EditState, tl: &TextLayout, select: bool) {
 }
 
 /// Moves the caret to the end of its visual line.
-pub fn visual_end(es: &mut EditState, tl: &TextLayout, select: bool) {
+pub(crate) fn visual_end(
+	shaper: textm::Shaper<'_>,
+	es: &mut EditState,
+	tl: &TextLayout,
+	select: bool,
+) {
 	history_barrier(es);
 	let line = usize::try_from(visual_line(tl, es.caret)).expect("negative visual line");
-	es.caret = textm::caret_for_visual_x(tl, line, f64::INFINITY);
+	es.caret = textm::caret_for_visual_x(shaper, tl, line, f64::INFINITY);
 	es.goal_x = NO_GOAL_X;
 	if !select {
 		es.anchor = es.caret;
@@ -1023,48 +1228,73 @@ fn finish_history_transition(es: &mut EditState) {
 	es.compose.clear();
 	es.compose_clauses.clear();
 	es.composing = false;
-	es.last_kind = MUT_NONE;
+	history_barrier(es);
 	es.goal_x = NO_GOAL_X;
 }
 
-/// Restores the most recent undo snapshot.
-pub fn undo(es: &mut EditState) -> bool {
-	if es.u_text.is_empty() {
-		return false;
-	}
-
-	let spans_changed = es.u_spans.last().expect("undo span history out of sync") != &es.spans;
-	let text_changed = es.u_text.last().expect("checked non-empty undo history") != &es.text;
-	push_redo(es);
-	es.text = es.u_text.pop().expect("checked non-empty undo history");
-	es.spans = es.u_spans.pop().expect("undo span history out of sync");
-	es.caret = es.u_caret.pop().expect("undo caret history out of sync");
-	es.anchor = es.u_anchor.pop().expect("undo anchor history out of sync");
-	if text_changed || spans_changed {
-		es.revision = es.revision.wrapping_add(1);
-	}
-	finish_history_transition(es);
-	text_changed || spans_changed
+fn apply_history_step(es: &mut EditState, step: UndoStep) -> (UndoStep, bool) {
+	let spans_changed = es.spans != step.spans;
+	let (inverse_record, text_changed) = match step.record {
+		UndoRecord::Splice { at, removed, inserted_len } => {
+			let end = at.wrapping_add(inserted_len);
+			let inverse_removed = crate::rt::str_slice(&es.text, at, end);
+			let changed = inverse_removed != removed;
+			let inverse_inserted_len = crate::rt::str_len(&removed);
+			es.accumulate_delta(crate::textm::TextDelta {
+				at,
+				removed: inserted_len,
+				inserted: inverse_inserted_len,
+			});
+			es.text = text_with_reverse_splice(&es.text, at, &removed, inserted_len);
+			(
+				UndoRecord::Splice { at, removed: inverse_removed, inserted_len: inverse_inserted_len },
+				changed,
+			)
+		},
+		UndoRecord::Full(target) => {
+			let changed = es.text != target;
+			es.measure_delta = MeasureDelta::Full;
+			(UndoRecord::Full(std::mem::replace(&mut es.text, target)), changed)
+		},
+	};
+	let inverse_step = UndoStep {
+		record:        inverse_record,
+		spans:         std::mem::replace(&mut es.spans, step.spans),
+		caret:         std::mem::replace(&mut es.caret, step.caret),
+		anchor:        std::mem::replace(&mut es.anchor, step.anchor),
+		text_recorded: step.text_recorded,
+	};
+	(inverse_step, text_changed || spans_changed)
 }
 
-/// Reapplies the most recent redo snapshot.
-pub fn redo(es: &mut EditState) -> bool {
-	if es.r_text.is_empty() {
+/// Restores the most recent undo record.
+pub fn undo(es: &mut EditState) -> bool {
+	let Some(step) = es.undo.pop() else {
 		return false;
-	}
-
-	let spans_changed = es.r_spans.last().expect("redo span history out of sync") != &es.spans;
-	let text_changed = es.r_text.last().expect("checked non-empty redo history") != &es.text;
-	push_undo(es);
-	es.text = es.r_text.pop().expect("checked non-empty redo history");
-	es.spans = es.r_spans.pop().expect("redo span history out of sync");
-	es.caret = es.r_caret.pop().expect("redo caret history out of sync");
-	es.anchor = es.r_anchor.pop().expect("redo anchor history out of sync");
-	if text_changed || spans_changed {
+	};
+	let (inverse, changed) = apply_history_step(es, step);
+	trim_redo(es);
+	es.redo.push(inverse);
+	if changed {
 		es.revision = es.revision.wrapping_add(1);
 	}
 	finish_history_transition(es);
-	text_changed || spans_changed
+	changed
+}
+
+/// Reapplies the most recent redo record.
+pub fn redo(es: &mut EditState) -> bool {
+	let Some(step) = es.redo.pop() else {
+		return false;
+	};
+	let (inverse, changed) = apply_history_step(es, step);
+	trim_undo(es);
+	es.undo.push(inverse);
+	if changed {
+		es.revision = es.revision.wrapping_add(1);
+	}
+	finish_history_transition(es);
+	changed
 }
 
 /// Updates uncommitted composition text, first replacing any selection.
@@ -1094,6 +1324,9 @@ pub fn composition_update_clauses(es: &mut EditState, text: &str, clauses: &[(i3
 		}
 	}
 	es.composing = true;
+	// The synced display now carries the preedit; splice lineage is broken
+	// until a non-composing sync re-baselines.
+	es.display_dirty = true;
 	committed_changed
 }
 
@@ -1102,6 +1335,9 @@ pub fn composition_end(es: &mut EditState, text: &str) -> bool {
 	es.compose.clear();
 	es.compose_clauses.clear();
 	es.composing = false;
+	// The previously synced display carried the preedit; committed-splice
+	// lineage is broken until the next sync re-baselines.
+	es.display_dirty = true;
 	if text.is_empty() {
 		return false;
 	}

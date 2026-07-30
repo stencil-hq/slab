@@ -72,8 +72,8 @@ pub const TR_DBLCLICK: u32 = 5;
 pub const TR_DRAG_START: u32 = 6;
 /// Drop signal trigger.
 pub const TR_DROP: u32 = 7;
-/// Divider resize signal trigger, delivered live while a divider drags (and
-/// per keyboard step), then once more with the final clamped extent on release.
+/// Resize signal trigger. Dividers deliver live plus gesture-end; split
+/// containers deliver at gesture-end and per keyboard adjustment.
 pub const TR_RESIZE: u32 = 8;
 /// Continuous pointer-move signal trigger.
 pub const TR_POINTER_MOVE: u32 = 9;
@@ -226,76 +226,93 @@ pub struct RangeEdit {
 	pub text:   String,
 }
 
+#[allow(
+	clippy::trivially_copy_pass_by_ref,
+	reason = "serde skip_serializing_if requires a reference predicate"
+)]
+const fn is_false(value: &bool) -> bool {
+	!*value
+}
+
 /// Host-visible consequences of dispatching an [`Event`].
 #[derive(Clone, Debug, Serialize)]
 pub struct Effects {
 	/// Whether the next frame must re-solve.
-	pub repaint:    bool,
+	pub repaint:              bool,
 	/// Document string references, parallel to every `sig_*` payload vector.
-	pub sig_name:   Vec<u32>,
+	pub sig_name:             Vec<u32>,
 	/// Committed text for Change/Submit, final extent for Resize, or empty.
-	pub sig_text:   Vec<String>,
+	pub sig_text:             Vec<String>,
 	/// Rich-field payload JSON parallel to `sig_name`; empty for non-field
 	/// signals.
-	pub sig_runs:   Vec<String>,
+	pub sig_runs:             Vec<String>,
 	/// Innermost list item key, or empty for a real document node.
-	pub sig_item:   Vec<String>,
+	pub sig_item:             Vec<String>,
 	/// Signal metadata parallel to [`Self::sig_name`].
-	pub sig_meta:   Vec<SigMeta>,
+	pub sig_meta:             Vec<SigMeta>,
 	/// Scroll offsets changed by this dispatch.
-	pub scrolls:    Vec<ScrollChange>,
+	pub scrolls:              Vec<ScrollChange>,
 	/// Host-owned structural edit requested for an active cross-field range.
 	#[serde(skip_serializing_if = "Option::is_none")]
-	pub range_edit: Option<RangeEdit>,
+	pub range_edit:           Option<RangeEdit>,
 	/// Whether the caret rectangle is available.
-	pub has_caret:  bool,
+	pub has_caret:            bool,
 	/// Caret rectangle x-coordinate.
-	pub caret_x:    f64,
+	pub caret_x:              f64,
 	/// Caret rectangle y-coordinate.
-	pub caret_y:    f64,
+	pub caret_y:              f64,
 	/// Caret rectangle width.
-	pub caret_w:    f64,
+	pub caret_w:              f64,
 	/// Caret rectangle height.
-	pub caret_h:    f64,
+	pub caret_h:              f64,
 	/// Whether the IME rectangle is available.
-	pub has_ime:    bool,
+	pub has_ime:              bool,
 	/// IME rectangle x-coordinate.
-	pub ime_x:      f64,
+	pub ime_x:                f64,
 	/// IME rectangle y-coordinate.
-	pub ime_y:      f64,
+	pub ime_y:                f64,
 	/// IME rectangle width.
-	pub ime_w:      f64,
+	pub ime_w:                f64,
 	/// IME rectangle height.
-	pub ime_h:      f64,
+	pub ime_h:                f64,
+	/// Selected text requested by `E_COPY`, or `None` when the kernel does not
+	/// own the current clipboard selection.
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub copy_text:            Option<String>,
+	/// Whether a retained kernel-owned static-text selection is active.
+	#[serde(skip_serializing_if = "is_false")]
+	pub has_static_selection: bool,
 	/// One of the `CUR_*` cursor codes.
-	pub cursor:     u32,
+	pub cursor:               u32,
 	/// Focused node id, or [`slir::NONE`].
-	pub focus:      u32,
+	pub focus:                u32,
 }
 
 /// Creates an empty effect collection.
 pub const fn effects_new() -> Effects {
 	Effects {
-		repaint:    false,
-		sig_name:   Vec::new(),
-		sig_text:   Vec::new(),
-		sig_runs:   Vec::new(),
-		sig_item:   Vec::new(),
-		sig_meta:   Vec::new(),
-		scrolls:    Vec::new(),
-		range_edit: None,
-		has_caret:  false,
-		caret_x:    0.0,
-		caret_y:    0.0,
-		caret_w:    0.0,
-		caret_h:    0.0,
-		has_ime:    false,
-		ime_x:      0.0,
-		ime_y:      0.0,
-		ime_w:      0.0,
-		ime_h:      0.0,
-		cursor:     CUR_DEFAULT,
-		focus:      slir::NONE,
+		repaint:              false,
+		sig_name:             Vec::new(),
+		sig_text:             Vec::new(),
+		sig_runs:             Vec::new(),
+		sig_item:             Vec::new(),
+		sig_meta:             Vec::new(),
+		scrolls:              Vec::new(),
+		range_edit:           None,
+		has_caret:            false,
+		caret_x:              0.0,
+		caret_y:              0.0,
+		caret_w:              0.0,
+		caret_h:              0.0,
+		has_ime:              false,
+		ime_x:                0.0,
+		ime_y:                0.0,
+		ime_w:                0.0,
+		ime_h:                0.0,
+		copy_text:            None,
+		has_static_selection: false,
+		cursor:               CUR_DEFAULT,
+		focus:                slir::NONE,
 	}
 }
 
@@ -310,6 +327,20 @@ struct DividerDrag {
 	max_extent:     f64,
 	moved:          bool,
 }
+#[derive(Clone, Debug)]
+struct SplitDrag {
+	sash:      u32,
+	container: u32,
+	row:       bool,
+	start_pos: f64,
+	left:      usize,
+	keys:      Vec<String>,
+	start:     Vec<f64>,
+	current:   Vec<f64>,
+	min:       Vec<f64>,
+	max:       Vec<f64>,
+	moved:     bool,
+}
 
 #[derive(Clone, Debug)]
 struct PendingSignal {
@@ -320,86 +351,126 @@ struct PendingSignal {
 	meta: SigMeta,
 }
 
+/// One stable endpoint in a kernel-owned static-text selection.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StaticEndpoint {
+	/// Escaped canonical full key of the text-bearing scene node.
+	pub key:    String,
+	/// Grapheme-boundary codepoint offset in that node's painted text.
+	pub offset: i32,
+}
+
+/// Active pointer selection rooted at one authored `select` box.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StaticSelection {
+	/// Stable key of the `select` root.
+	pub root_key: String,
+	/// Fixed endpoint.
+	pub anchor:   StaticEndpoint,
+	/// Active endpoint.
+	pub focus:    StaticEndpoint,
+}
+
 /// Dispatch-owned interaction state, keyed by node id.
 #[derive(Clone, Debug)]
 pub struct DState {
 	/// Keyboard focus state.
-	pub fs:                 FSt,
+	pub fs:                   FSt,
 	/// Node ids currently under the pointer, comprising the whole hit path.
-	pub hover:              Vec<u32>,
+	pub hover:                Vec<u32>,
 	/// Pointer-captured node, or [`slir::NONE`].
-	pub pressed:            u32,
+	pub pressed:              u32,
 	/// Armed or active drag-source node, or [`slir::NONE`].
-	pub drag_source:        u32,
+	pub drag_source:          u32,
 	/// Current eligible drop-target node, or [`slir::NONE`].
-	pub drop_target:        u32,
+	pub drop_target:          u32,
 	/// Pointer x-coordinate at drag arm time.
-	pub drag_x:             f64,
+	pub drag_x:               f64,
 	/// Pointer y-coordinate at drag arm time.
-	pub drag_y:             f64,
+	pub drag_y:               f64,
 	/// Whether the armed drag crossed the four-unit threshold.
-	pub drag_active:        bool,
+	pub drag_active:          bool,
 	/// Whether this primary gesture must suppress Activate.
-	pub suppress_activate:  bool,
-	pub(crate) drag_last_x: f64,
-	pub(crate) drag_last_y: f64,
-	drag_last_dx:           f64,
-	drag_last_dy:           f64,
-	drag_last_mods:         u32,
-	drag_last_button:       u32,
-	drag_last_clicks:       u32,
-	pub(crate) drag_grab_x: f64,
-	pub(crate) drag_grab_y: f64,
-	drag_source_key:        String,
-	drag_source_item:       String,
-	drag_update_name:       Option<u32>,
-	drag_end_name:          Option<u32>,
-	pending_signals:        Vec<PendingSignal>,
-	divider:                Option<DividerDrag>,
+	pub suppress_activate:    bool,
+	pub(crate) drag_last_x:   f64,
+	pub(crate) drag_last_y:   f64,
+	drag_last_dx:             f64,
+	drag_last_dy:             f64,
+	drag_last_mods:           u32,
+	drag_last_button:         u32,
+	drag_last_clicks:         u32,
+	pub(crate) drag_grab_x:   f64,
+	pub(crate) drag_grab_y:   f64,
+	drag_source_key:          String,
+	drag_source_item:         String,
+	drag_update_name:         Option<u32>,
+	drag_end_name:            Option<u32>,
+	pending_signals:          Vec<PendingSignal>,
+	divider:                  Option<DividerDrag>,
+	split:                    Option<SplitDrag>,
 	/// Current `CUR_*` cursor code.
-	pub cursor:             u32,
+	pub cursor:               u32,
 	/// Whether the host requested closure.
-	pub closed:             bool,
+	pub closed:               bool,
 	/// Active selection spanning two editable fields, if any.
-	pub range:              Option<edit::CrossFieldRange>,
+	pub range:                Option<edit::CrossFieldRange>,
+	/// Active kernel-owned selection over non-field text.
+	pub static_selection:     Option<StaticSelection>,
+	/// Whether primary-pointer capture currently extends `static_selection`.
+	static_select_capture:    bool,
+	static_select_x:          f64,
+	static_select_y:          f64,
+	static_select_moved:      bool,
 	/// Field node ids, parallel to `ed`.
-	pub ed_node:            Vec<u32>,
+	pub ed_node:              Vec<u32>,
 	/// Editing states parallel to `ed_node`.
-	pub ed:                 Vec<EditState>,
+	pub ed:                   Vec<EditState>,
+	/// Whether an edit or caret move requested a reveal on the next solve.
+	///
+	/// Wheel scrolling never sets it, so users can scroll away from the
+	/// caret; the next keystroke or caret move pulls the view back.
+	pub follow_caret_pending: bool,
 }
 
 /// Creates empty dispatch state.
 pub const fn dstate_new() -> DState {
 	DState {
-		fs:                focus::fst_new(),
-		hover:             Vec::new(),
-		pressed:           slir::NONE,
-		drag_source:       slir::NONE,
-		drop_target:       slir::NONE,
-		drag_x:            0.0,
-		drag_y:            0.0,
-		drag_active:       false,
-		suppress_activate: false,
-		drag_last_x:       0.0,
-		drag_last_y:       0.0,
-		drag_last_dx:      0.0,
-		drag_last_dy:      0.0,
-		drag_last_mods:    0,
-		drag_last_button:  0,
-		drag_last_clicks:  0,
-		drag_grab_x:       0.0,
-		drag_grab_y:       0.0,
-		drag_source_key:   String::new(),
-		drag_source_item:  String::new(),
-		drag_update_name:  None,
-		drag_end_name:     None,
-		pending_signals:   Vec::new(),
-		divider:           None,
-		cursor:            CUR_DEFAULT,
-		closed:            false,
-		range:             None,
-		ed_node:           Vec::new(),
-		ed:                Vec::new(),
+		fs:                    focus::fst_new(),
+		hover:                 Vec::new(),
+		pressed:               slir::NONE,
+		drag_source:           slir::NONE,
+		drop_target:           slir::NONE,
+		drag_x:                0.0,
+		drag_y:                0.0,
+		drag_active:           false,
+		suppress_activate:     false,
+		drag_last_x:           0.0,
+		drag_last_y:           0.0,
+		drag_last_dx:          0.0,
+		drag_last_dy:          0.0,
+		drag_last_mods:        0,
+		drag_last_button:      0,
+		drag_last_clicks:      0,
+		drag_grab_x:           0.0,
+		drag_grab_y:           0.0,
+		drag_source_key:       String::new(),
+		drag_source_item:      String::new(),
+		drag_update_name:      None,
+		drag_end_name:         None,
+		pending_signals:       Vec::new(),
+		divider:               None,
+		split:                 None,
+		cursor:                CUR_DEFAULT,
+		closed:                false,
+		range:                 None,
+		static_selection:      None,
+		static_select_capture: false,
+		static_select_x:       0.0,
+		static_select_y:       0.0,
+		static_select_moved:   false,
+		ed_node:               Vec::new(),
+		ed:                    Vec::new(),
+		follow_caret_pending:  false,
 	}
 }
 
@@ -408,6 +479,7 @@ pub fn vanished(d: &Doc, st: &St, node: u32) -> bool {
 	node != slir::NONE
 		&& i32::from_ne_bytes(node.to_ne_bytes())
 			>= i32::try_from(d.node_kind.len()).expect("too many document nodes")
+		&& !list::is_split_sash(&st.lists, node)
 		&& list::base(&st.lists, d, node) == slir::NONE
 }
 
@@ -848,6 +920,42 @@ pub fn validate_range(d: &Doc, st: &St, ds: &mut DState) -> bool {
 	}
 	invalid
 }
+
+/// Clears the active static-text selection and its pointer capture.
+pub fn clear_static_selection(ds: &mut DState) -> bool {
+	ds.static_select_capture = false;
+	ds.static_select_moved = false;
+	ds.static_selection.take().is_some()
+}
+
+/// Drops static selection state when its root or either endpoint is no longer
+/// present in the active scene.
+pub fn validate_static_selection(d: &Doc, st: &St, sc: &Scene, ds: &mut DState) -> bool {
+	let invalid = ds.static_selection.as_ref().is_some_and(|selection| {
+		let root = scene::node_by_key(d, &st.lists, &selection.root_key);
+		let anchor = scene::node_by_key(d, &st.lists, &selection.anchor.key);
+		let focus = scene::node_by_key(d, &st.lists, &selection.focus.key);
+		let root_index = scene::index_of(sc, root);
+		let anchor_index = scene::index_of(sc, anchor);
+		let focus_index = scene::index_of(sc, focus);
+		if root_index < 0 || anchor_index < 0 || focus_index < 0 {
+			return true;
+		}
+		let root_index = usize::try_from(root_index).expect("negative root scene index");
+		let anchor_index = usize::try_from(anchor_index).expect("negative anchor scene index");
+		let focus_index = usize::try_from(focus_index).expect("negative focus scene index");
+		(sc.entries[root_index].flags
+			| sc.entries[anchor_index].flags
+			| sc.entries[focus_index].flags)
+			& slir::F_INERT
+			!= 0 || sc.entries[root_index].flags & slir::F_SELECT == 0
+			|| !static_text_entry(&sc.entries[anchor_index])
+			|| !static_text_entry(&sc.entries[focus_index])
+			|| !scene_descends_from(sc, anchor_index, root_index)
+			|| !scene_descends_from(sc, focus_index, root_index)
+	});
+	invalid && clear_static_selection(ds)
+}
 fn request_range_edit(ds: &DState, effects: &mut Effects, kind: u32, text: &str) -> bool {
 	let Some(range) = ds.range.as_ref() else {
 		return false;
@@ -1027,6 +1135,9 @@ pub(crate) fn reset_synced_edits(
 		ds.ed[index].anchor = end;
 		edit::history_barrier(&mut ds.ed[index]);
 		style::field_set(st, node, text);
+		// The full content is now published; drop the whole-text splice so
+		// the next local edit cannot merge against a stale lineage.
+		ds.ed[index].reset_measure_delta();
 		endpoint_changed |= range_nodes.is_some_and(|(anchor, head)| node == anchor || node == head);
 		changed = true;
 	}
@@ -1066,17 +1177,32 @@ pub(crate) fn queue_field_change(d: &Doc, st: &St, ds: &mut DState, node: u32, t
 }
 
 /// Writes an edit's display text back into style and emits a change signal.
+///
+/// The pending measure transition travels with the content: contiguous
+/// keystrokes publish a splice lineage so layout re-measures only the hard
+/// lines they touched; composition activity and non-contiguous groups
+/// publish a full transition.
 pub fn sync_field(
 	d: &Doc,
 	st: &mut St,
-	ds: &DState,
+	ds: &mut DState,
 	eff: &mut Effects,
 	ei: i32,
 	text_changed: bool,
 ) {
 	let index = usize::try_from(ei).expect("negative edit index");
 	let node = ds.ed_node[index];
-	style::field_set(st, node, &edit::display_str(&ds.ed[index]));
+	let display = edit::display_str(&ds.ed[index]);
+	// Every synced edit or caret transition reveals the caret next solve.
+	ds.follow_caret_pending = true;
+	match ds.ed[index].take_measure_delta() {
+		// Pure caret motion: published content is already current, so the
+		// lineage must not advance — a following keystroke splices against
+		// the same measured revision.
+		edit::MeasureDelta::Unchanged => {},
+		edit::MeasureDelta::Splice(delta) => style::field_set_spliced(st, node, &display, delta),
+		edit::MeasureDelta::Full => style::field_set(st, node, &display),
+	}
 	eff.repaint = true;
 	if !text_changed {
 		return;
@@ -1144,24 +1270,35 @@ pub fn caret_effects(d: &Doc, st: &St, lay: &Lay, sc: &Scene, ds: &DState, eff: 
 			(-1, 14.0, 0.0, 0.0, 0.0, 0.0, 0.0)
 		};
 
-	let text = edit::display_str(&ds.ed[edit_index]);
 	let caret = edit::display_caret(&ds.ed[edit_index]);
 	let text_layout_index = crate::layout::text_layout_ix(lay, node);
-	let (line, line_start, line_height, line_width) = if text_layout_index >= 0 {
+	let (line, line_height, line_width, advance) = if text_layout_index >= 0 {
 		let text_layout =
 			&lay.tls[usize::try_from(text_layout_index).expect("negative text layout index")];
 		if text_layout.src_ls.is_empty() {
-			(0, 0, sc.entries[scene_index].h, 0.0)
+			(0, sc.entries[scene_index].h, 0.0, 0.0)
 		} else {
+			// Caret geometry comes from the retained layout: line-local work
+			// instead of re-measuring the whole display string.
 			let line = line_of(text_layout, caret);
 			let index = usize::try_from(line).expect("negative line index");
-			(line, text_layout.src_ls[index], text_layout.line_h, text_layout.line_w[index])
+			let shaper = crate::textm::Shaper { d, cache: &lay.shape_cache };
+			(
+				line,
+				text_layout.line_h,
+				text_layout.line_w[index],
+				crate::textm::caret_x(shaper, text_layout, index, caret),
+			)
 		}
 	} else {
-		(0, 0, sc.entries[scene_index].h, 0.0)
+		let text = edit::display_str(&ds.ed[edit_index]);
+		(
+			0,
+			sc.entries[scene_index].h,
+			0.0,
+			crate::textm::str_slice_w(d, font, size, tracking, &text, 0, caret),
+		)
 	};
-
-	let advance = crate::textm::str_slice_w(d, font, size, tracking, &text, line_start, caret);
 	let entry = &sc.entries[scene_index];
 	let content_width = entry.w - pad_left - pad_right;
 	let origin = (content_width - line_width).mul_add(align, entry.x + pad_left);
@@ -1194,6 +1331,201 @@ pub fn deliver_trigger(
 	let signal_index = usize::try_from(signal_index).expect("negative signal index");
 	emit_signal(d, st, eff, signal_index, node, text);
 	eff.repaint = true;
+	true
+}
+fn split_snapshot(d: &Doc, st: &St, sc: &Scene, sash: u32) -> Option<SplitDrag> {
+	let sash_index = usize::try_from(scene::index_of(sc, sash)).ok()?;
+	let sash_entry = sc.entries.get(sash_index)?;
+	let parent_index = usize::try_from(sash_entry.parent_ix).ok()?;
+	let parent = sc.entries.get(parent_index)?;
+	if parent.flags & slir::F_SPLITS == 0 {
+		return None;
+	}
+	let left_key = list::split_sash_left(&st.lists, sash)?;
+	let mut panes: Vec<&crate::flatten::SceneNode> = sc
+		.entries
+		.iter()
+		.filter(|entry| {
+			entry.parent_ix == sash_entry.parent_ix && !list::is_split_sash(&st.lists, entry.node)
+		})
+		.collect();
+	panes.sort_by(|left, right| {
+		let left_pos = if parent.is_row { left.x } else { left.y };
+		let right_pos = if parent.is_row { right.x } else { right.y };
+		left_pos.total_cmp(&right_pos)
+	});
+	let keys: Vec<String> = panes
+		.iter()
+		.map(|entry| scene::key_of(d, &st.lists, entry.node))
+		.collect();
+	let left = keys.iter().position(|key| key == left_key)?;
+	if left + 1 >= panes.len() {
+		return None;
+	}
+	let current: Vec<f64> = panes
+		.iter()
+		.zip(&keys)
+		.map(|(entry, key)| {
+			style::split_get(st, key).unwrap_or(if parent.is_row { entry.w } else { entry.h })
+		})
+		.collect();
+	let mut min = Vec::with_capacity(panes.len());
+	let mut max = Vec::with_capacity(panes.len());
+	for entry in &panes {
+		let (pane_min, pane_max) = resolved_axis_bounds(st, entry.node, parent.is_row);
+		min.push(pane_min);
+		max.push(pane_max);
+	}
+	Some(SplitDrag {
+		sash,
+		container: parent.node,
+		row: parent.is_row,
+		start_pos: 0.0,
+		left,
+		keys,
+		start: current.clone(),
+		current,
+		min,
+		max,
+		moved: false,
+	})
+}
+
+fn split_apply_delta(split: &mut SplitDrag, delta: f64) {
+	split.current.clone_from(&split.start);
+	if !delta.is_finite() || delta == 0.0 {
+		split.moved = false;
+		return;
+	}
+	let left = split.left;
+	let count = split.current.len();
+	let (grow_left, requested) = (delta > 0.0, delta.abs());
+	let capacity_left: f64 = if grow_left {
+		(0..=left)
+			.map(|index| (split.max[index] - split.current[index]).max(0.0))
+			.sum()
+	} else {
+		(0..=left)
+			.map(|index| (split.current[index] - split.min[index]).max(0.0))
+			.sum()
+	};
+	let capacity_right: f64 = if grow_left {
+		(left + 1..count)
+			.map(|index| (split.current[index] - split.min[index]).max(0.0))
+			.sum()
+	} else {
+		(left + 1..count)
+			.map(|index| (split.max[index] - split.current[index]).max(0.0))
+			.sum()
+	};
+	let amount = requested.min(capacity_left).min(capacity_right);
+	let mut remaining = amount;
+	for index in (0..=left).rev() {
+		let capacity = if grow_left {
+			split.max[index] - split.current[index]
+		} else {
+			split.current[index] - split.min[index]
+		}
+		.max(0.0);
+		let applied = remaining.min(capacity);
+		split.current[index] += if grow_left { applied } else { -applied };
+		remaining -= applied;
+	}
+	remaining = amount;
+	for index in left + 1..count {
+		let capacity = if grow_left {
+			split.current[index] - split.min[index]
+		} else {
+			split.max[index] - split.current[index]
+		}
+		.max(0.0);
+		let applied = remaining.min(capacity);
+		split.current[index] += if grow_left { -applied } else { applied };
+		remaining -= applied;
+	}
+	split.moved = amount > 0.0;
+}
+
+fn split_store(st: &mut St, split: &SplitDrag) -> bool {
+	let mut changed = false;
+	for (key, extent) in split.keys.iter().zip(&split.current) {
+		changed |= style::split_set(st, key, *extent);
+	}
+	changed
+}
+
+fn arm_split(d: &Doc, st: &St, sc: &Scene, sash: u32, x: f64, y: f64) -> Option<SplitDrag> {
+	let mut split = split_snapshot(d, st, sc, sash)?;
+	split.start_pos = if split.row { x } else { y };
+	Some(split)
+}
+
+fn move_split(st: &mut St, split: &mut SplitDrag, x: f64, y: f64) -> bool {
+	let position = if split.row { x } else { y };
+	split_apply_delta(split, position - split.start_pos);
+	split_store(st, split)
+}
+
+fn split_signal(d: &Doc, st: &St, eff: &mut Effects, split: &SplitDrag) {
+	if deliver_trigger(
+		d,
+		st,
+		eff,
+		split.container,
+		TR_RESIZE,
+		&crate::value::fmt3(split.current[split.left]),
+	) && let Some(meta) = eff.sig_meta.last_mut()
+	{
+		meta.key = scene::key_of(d, &st.lists, split.sash);
+	}
+}
+
+fn path_split_sash(st: &St, sc: &Scene, path: &[i32]) -> u32 {
+	path
+		.iter()
+		.rev()
+		.find_map(|&scene_index| {
+			let node = sc.entries[usize::try_from(scene_index).expect("negative scene index")].node;
+			list::is_split_sash(&st.lists, node).then_some(node)
+		})
+		.unwrap_or(slir::NONE)
+}
+
+fn split_even(d: &Doc, st: &mut St, sc: &Scene, sash: u32) -> Option<SplitDrag> {
+	let mut split = split_snapshot(d, st, sc, sash)?;
+	let left = split.left;
+	let total = split.current[left] + split.current[left + 1];
+	let lower = split.min[left].max(total - split.max[left + 1]);
+	let upper = split.max[left].min(total - split.min[left + 1]);
+	let next = (total / 2.0).clamp(lower, upper);
+	split.current[left] = next;
+	split.current[left + 1] = total - next;
+	split.start.clone_from(&split.current);
+	split.moved = split_store(st, &split);
+	Some(split)
+}
+
+fn split_key(
+	d: &Doc,
+	st: &mut St,
+	sc: &Scene,
+	sash: u32,
+	key: &str,
+	mods: u32,
+	eff: &mut Effects,
+) -> bool {
+	let Some(mut split) = split_snapshot(d, st, sc, sash) else {
+		return false;
+	};
+	let direction = match (split.row, key) {
+		(true, "ArrowLeft") | (false, "ArrowUp") => -1.0,
+		(true, "ArrowRight") | (false, "ArrowDown") => 1.0,
+		_ => return false,
+	};
+	let step = if mods & M_SHIFT != 0 { 1.0 } else { 8.0 };
+	split_apply_delta(&mut split, direction * step);
+	eff.repaint |= split_store(st, &split);
+	split_signal(d, st, eff, &split);
 	true
 }
 
@@ -1321,7 +1653,10 @@ fn path_divider_node(d: &Doc, st: &St, sc: &Scene, path: &[i32]) -> u32 {
 			let index = usize::try_from(scene_index).expect("negative scene index");
 			let entry = &sc.entries[index];
 			let node = entry.node;
-			(entry.kind == slir::K_DIVIDER && !disabled(d, st, node)).then_some(node)
+			(entry.kind == slir::K_DIVIDER
+				&& !list::is_split_sash(&st.lists, node)
+				&& !disabled(d, st, node))
+			.then_some(node)
 		})
 		.unwrap_or(slir::NONE)
 }
@@ -1494,6 +1829,7 @@ fn clear_drag(d: &Doc, st: &mut St, ds: &mut DState, eff: &mut Effects) {
 
 fn clear_pressed(d: &Doc, st: &mut St, ds: &mut DState, eff: &mut Effects) {
 	if ds.pressed != slir::NONE {
+		eff.repaint |= list::is_split_sash(&st.lists, ds.pressed);
 		eff.repaint |= style::set_node_state(d, st, ds.pressed, "pressed", false);
 		ds.pressed = slir::NONE;
 	}
@@ -1503,6 +1839,7 @@ fn cancel_pointer(d: &Doc, st: &mut St, ds: &mut DState, eff: &mut Effects) {
 	clear_pressed(d, st, ds, eff);
 	clear_drag(d, st, ds, eff);
 	ds.divider = None;
+	ds.split = None;
 }
 
 /// Cancels a pointer gesture whose armed drag source is absent or disabled.
@@ -1510,12 +1847,18 @@ fn cancel_pointer(d: &Doc, st: &mut St, ds: &mut DState, eff: &mut Effects) {
 /// Called after loading a freshly solved scene so dynamic visibility changes
 /// cannot leave capture or Drop styling alive until another host event.
 pub(crate) fn cancel_invalid_drag(d: &Doc, st: &mut St, sc: &Scene, ds: &mut DState) -> bool {
-	if ds.drag_source == slir::NONE
-		|| scene::index_of(sc, ds.drag_source) >= 0 && !disabled(d, st, ds.drag_source)
-	{
+	let invalid_drag = ds.drag_source != slir::NONE
+		&& (scene::index_of(sc, ds.drag_source) < 0 || disabled(d, st, ds.drag_source));
+	let invalid_split = ds
+		.split
+		.as_ref()
+		.is_some_and(|split| scene::index_of(sc, split.sash) < 0);
+	if !invalid_drag && !invalid_split {
 		return false;
 	}
-	queue_drag_end(ds);
+	if invalid_drag {
+		queue_drag_end(ds);
+	}
 	let mut effects = effects_new();
 	cancel_pointer(d, st, ds, &mut effects);
 	true
@@ -1646,6 +1989,7 @@ pub fn line_of(tl: &TextLayout, at: i32) -> i32 {
 
 /// Geometry needed to map a document-space hit into one editable field.
 pub(crate) struct FieldHit<'a> {
+	pub(crate) d:    &'a Doc,
 	pub(crate) st:   &'a St,
 	pub(crate) lay:  &'a Lay,
 	pub(crate) sc:   &'a Scene,
@@ -1687,7 +2031,12 @@ fn field_caret_at(hit: &FieldHit<'_>, scroll_x: f64, x: f64, y: f64) -> i32 {
 	let origin = (content_width - text_layout.line_w[line_index])
 		.mul_add(align, sc.entries[scene_index].x + pad_left)
 		- scroll_x;
-	textm::caret_for_visual_x(text_layout, line_index, x - origin)
+	textm::caret_for_visual_x(
+		textm::Shaper { d: hit.d, cache: &hit.lay.shape_cache },
+		text_layout,
+		line_index,
+		x - origin,
+	)
 }
 
 /// Applies secondary-click selection semantics to one editable field.
@@ -1706,6 +2055,436 @@ pub(crate) fn place_context_caret(
 	edit_state.anchor = hit;
 	edit_state.goal_x = -1.0;
 	true
+}
+fn scene_descends_from(sc: &Scene, mut index: usize, root: usize) -> bool {
+	loop {
+		if index == root {
+			return true;
+		}
+		let parent = sc.entries[index].parent_ix;
+		if parent < 0 {
+			return false;
+		}
+		index = usize::try_from(parent).expect("negative scene parent");
+	}
+}
+
+const fn static_text_entry(entry: &crate::flatten::SceneNode) -> bool {
+	matches!(entry.kind, slir::K_TEXT | slir::K_SPAN | slir::K_PARA) && !entry.editable
+}
+
+fn paragraph_placement(lay: &Lay, node: u32) -> Option<(usize, usize)> {
+	lay.p_node
+		.iter()
+		.zip(&lay.p_para)
+		.enumerate()
+		.rev()
+		.find_map(|(placement, (&candidate, &paragraph))| {
+			(candidate == node && paragraph >= 0)
+				.then(|| (placement, usize::try_from(paragraph).expect("negative paragraph index")))
+		})
+}
+
+fn paragraph_source_bounds(lay: &Lay, paragraph: usize) -> Option<(i32, i32)> {
+	let lo = *lay.para_src_off.get(paragraph)?;
+	let len = *lay.para_src_len.get(paragraph)?;
+	Some((lo, lo.wrapping_add(len)))
+}
+
+fn shaped_caret_at(shaped: &textm::ShapedLine, base: i32, end: i32, goal: f64) -> i32 {
+	for cluster in &shaped.clusters {
+		let midpoint = f64::midpoint(cluster.x0, cluster.x1);
+		if goal < midpoint {
+			return base
+				.wrapping_add(if cluster.rtl {
+					cluster.end
+				} else {
+					cluster.start
+				})
+				.min(end);
+		}
+		if goal <= cluster.x1 {
+			return base
+				.wrapping_add(if cluster.rtl {
+					cluster.start
+				} else {
+					cluster.end
+				})
+				.min(end);
+		}
+	}
+	shaped.clusters.last().map_or(base, |cluster| {
+		base
+			.wrapping_add(if cluster.rtl {
+				cluster.start
+			} else {
+				cluster.end
+			})
+			.min(end)
+	})
+}
+
+fn paragraph_caret_at(st: &St, lay: &Lay, sc: &Scene, node: u32, x: f64, y: f64) -> i32 {
+	let scene_index = scene::index_of(sc, node);
+	let Some((_, paragraph)) = paragraph_placement(lay, node) else {
+		return 0;
+	};
+	if scene_index < 0 {
+		return 0;
+	}
+	let scene_index = usize::try_from(scene_index).expect("negative scene index");
+	let entry = &sc.entries[scene_index];
+	let Some((source_base, _)) = paragraph_source_bounds(lay, paragraph) else {
+		return 0;
+	};
+	let (pad_top, pad_left, pad_right, align) =
+		if let Some(resolved) = st.rs.iter().rev().find(|resolved| resolved.node == node) {
+			let align = match resolved.talign {
+				1 => 0.5,
+				2 => 1.0,
+				_ => 0.0,
+			};
+			(resolved.pad_t, resolved.pad_l, resolved.pad_r, align)
+		} else {
+			(0.0, 0.0, 0.0, 0.0)
+		};
+	let first_line = lay.para_line_off[paragraph];
+	let line_end = first_line.wrapping_add(lay.para_line_len[paragraph]);
+	let mut line_top = entry.y + pad_top;
+	let mut chosen_line = first_line;
+	for line in first_line..line_end {
+		chosen_line = line;
+		let line_index = usize::try_from(line).expect("negative paragraph line");
+		if y < line_top + lay.pl_h[line_index] || line + 1 == line_end {
+			break;
+		}
+		line_top += lay.pl_h[line_index];
+	}
+	let line_index = usize::try_from(chosen_line).expect("negative paragraph line");
+	let content_width = entry.w - pad_left - pad_right;
+	let line_origin = (content_width - lay.pl_w[line_index]).mul_add(align, entry.x + pad_left);
+	let first_segment = lay.pl_seg_off[line_index];
+	let segment_end = first_segment.wrapping_add(lay.pl_seg_len[line_index]);
+	let line_source_start = lay.pl_src_a[line_index];
+	let mut chosen = None;
+	let mut best = f64::INFINITY;
+	for segment in first_segment..segment_end {
+		let segment_index = usize::try_from(segment).expect("negative paragraph segment");
+		let left = line_origin + lay.seg_x[segment_index];
+		let right = left + lay.seg_w[segment_index];
+		let distance = if x < left {
+			left - x
+		} else if x > right {
+			x - right
+		} else {
+			0.0
+		};
+		if distance < best {
+			best = distance;
+			chosen = Some((segment_index, left));
+		}
+	}
+	let Some((segment, left)) = chosen else {
+		return 0;
+	};
+	if segment == usize::try_from(first_segment).expect("negative paragraph segment") && x <= left {
+		return line_source_start.wrapping_sub(source_base);
+	}
+	if segment == usize::try_from(segment_end.wrapping_sub(1)).expect("negative paragraph segment")
+		&& x >= left + lay.seg_w[segment]
+	{
+		return lay.pl_src_b[line_index].wrapping_sub(source_base);
+	}
+	let caret =
+		shaped_caret_at(&lay.seg_shaped[segment], lay.seg_a[segment], lay.seg_b[segment], x - left);
+	lay.seg_src_a[segment]
+		.wrapping_add(caret.wrapping_sub(lay.seg_a[segment]))
+		.min(lay.seg_src_b[segment])
+		.wrapping_sub(source_base)
+}
+
+fn static_caret_at(d: &Doc, st: &St, lay: &Lay, sc: &Scene, node: u32, x: f64, y: f64) -> i32 {
+	let scene_index = scene::index_of(sc, node);
+	if scene_index < 0 {
+		return 0;
+	}
+	let entry = &sc.entries[usize::try_from(scene_index).expect("negative scene index")];
+	if entry.kind == slir::K_PARA {
+		paragraph_caret_at(st, lay, sc, node, x, y)
+	} else {
+		field_caret_at(&FieldHit { d, st, lay, sc, node }, 0.0, x, y)
+	}
+}
+
+fn static_position_nearest(
+	d: &Doc,
+	st: &St,
+	lay: &Lay,
+	sc: &Scene,
+	root: u32,
+	x: f64,
+	y: f64,
+) -> Option<(u32, i32)> {
+	let root_index = usize::try_from(scene::index_of(sc, root)).ok()?;
+	let mut chosen = None;
+	let mut best = f64::INFINITY;
+	for (index, entry) in sc.entries.iter().enumerate() {
+		if !static_text_entry(entry)
+			|| entry.flags & slir::F_INERT != 0
+			|| !scene_descends_from(sc, index, root_index)
+		{
+			continue;
+		}
+		let dx = if x < entry.x {
+			entry.x - x
+		} else if x > entry.x + entry.w {
+			x - entry.x - entry.w
+		} else {
+			0.0
+		};
+		let dy = if y < entry.y {
+			entry.y - y
+		} else if y > entry.y + entry.h {
+			y - entry.y - entry.h
+		} else {
+			0.0
+		};
+		let distance = dy.mul_add(dy, dx * dx);
+		if distance < best {
+			best = distance;
+			chosen = Some(entry.node);
+		}
+	}
+	let node = chosen?;
+	let offset = static_caret_at(d, st, lay, sc, node, x, y);
+	Some((node, offset))
+}
+
+fn static_position_on_path(
+	d: &Doc,
+	st: &St,
+	lay: &Lay,
+	sc: &Scene,
+	path: &[i32],
+	x: f64,
+	y: f64,
+) -> Option<(u32, u32, i32)> {
+	let root_path = path.iter().rposition(|&scene_index| {
+		sc.entries[usize::try_from(scene_index).expect("negative scene index")].flags & slir::F_SELECT
+			!= 0
+	})?;
+	if path[root_path..].iter().any(|&scene_index| {
+		let entry = &sc.entries[usize::try_from(scene_index).expect("negative scene index")];
+		entry.flags & slir::F_FOCUSABLE != 0
+			|| entry.editable
+			|| sig_of(d, st, entry.node, TR_DRAG_START) >= 0
+	}) {
+		return None;
+	}
+	let text = path[root_path..].iter().rev().find_map(|&scene_index| {
+		let entry = &sc.entries[usize::try_from(scene_index).expect("negative scene index")];
+		(static_text_entry(entry) && entry.flags & slir::F_INERT == 0).then_some(entry.node)
+	})?;
+	let root = sc.entries[usize::try_from(path[root_path]).expect("negative scene index")].node;
+	Some((root, text, static_caret_at(d, st, lay, sc, text, x, y)))
+}
+fn update_static_focus(d: &Doc, st: &St, ds: &mut DState, node: u32, offset: i32) -> bool {
+	let Some(selection) = ds.static_selection.as_mut() else {
+		return false;
+	};
+	if scene::node_by_key(d, &st.lists, &selection.focus.key) == node {
+		if selection.focus.offset == offset {
+			return false;
+		}
+		selection.focus.offset = offset;
+	} else {
+		selection.focus = StaticEndpoint { key: scene::key_of(d, &st.lists, node), offset };
+	}
+	true
+}
+
+fn static_selection_limits(
+	d: &Doc,
+	st: &St,
+	sc: &Scene,
+	selection: &StaticSelection,
+	node: u32,
+	text_end: i32,
+) -> Option<(i32, i32)> {
+	let anchor_node = scene::node_by_key(d, &st.lists, &selection.anchor.key);
+	let focus_node = scene::node_by_key(d, &st.lists, &selection.focus.key);
+	let anchor_index = usize::try_from(scene::index_of(sc, anchor_node)).ok()?;
+	let focus_index = usize::try_from(scene::index_of(sc, focus_node)).ok()?;
+	let node_index = usize::try_from(scene::index_of(sc, node)).ok()?;
+	let anchor_order = sc.entries[anchor_index].authored_order;
+	let focus_order = sc.entries[focus_index].authored_order;
+	let node_order = sc.entries[node_index].authored_order;
+	if anchor_node == focus_node {
+		return (node == anchor_node).then(|| {
+			(
+				selection
+					.anchor
+					.offset
+					.min(selection.focus.offset)
+					.clamp(0, text_end),
+				selection
+					.anchor
+					.offset
+					.max(selection.focus.offset)
+					.clamp(0, text_end),
+			)
+		});
+	}
+	let anchor_before = anchor_order < focus_order;
+	let (first_node, first_offset, first_order, last_node, last_offset, last_order) =
+		if anchor_before {
+			(
+				anchor_node,
+				selection.anchor.offset,
+				anchor_order,
+				focus_node,
+				selection.focus.offset,
+				focus_order,
+			)
+		} else {
+			(
+				focus_node,
+				selection.focus.offset,
+				focus_order,
+				anchor_node,
+				selection.anchor.offset,
+				anchor_order,
+			)
+		};
+	if node == first_node {
+		Some((first_offset.clamp(0, text_end), text_end))
+	} else if node == last_node {
+		Some((0, last_offset.clamp(0, text_end)))
+	} else if node_order > first_order && node_order < last_order {
+		Some((0, text_end))
+	} else {
+		None
+	}
+}
+
+fn append_visual_piece(
+	out: &mut String,
+	last_baseline: &mut Option<f64>,
+	baseline: f64,
+	text: &str,
+) {
+	if text.is_empty() {
+		return;
+	}
+	if last_baseline.is_some_and(|previous| (previous - baseline).abs() > 0.5) && !out.is_empty() {
+		out.push('\n');
+	}
+	out.push_str(text);
+	*last_baseline = Some(baseline);
+}
+
+fn codepoint_slice(text: &str, start: i32, end: i32) -> String {
+	let start = usize::try_from(start.max(0)).expect("nonnegative codepoint offset");
+	let len = usize::try_from(end.max(0))
+		.expect("nonnegative codepoint offset")
+		.saturating_sub(start);
+	text.chars().skip(start).take(len).collect()
+}
+
+fn static_selection_text(
+	d: &Doc,
+	st: &St,
+	lay: &Lay,
+	sc: &Scene,
+	selection: &StaticSelection,
+) -> String {
+	let root = scene::node_by_key(d, &st.lists, &selection.root_key);
+	let Ok(root_index) = usize::try_from(scene::index_of(sc, root)) else {
+		return String::new();
+	};
+	let mut out = String::new();
+	let mut last_baseline = None;
+	for &scene_index in &sc.authored_order {
+		let entry = &sc.entries[scene_index];
+		if !static_text_entry(entry)
+			|| entry.flags & slir::F_INERT != 0
+			|| !scene_descends_from(sc, scene_index, root_index)
+		{
+			continue;
+		}
+		if entry.kind == slir::K_PARA {
+			let Some((_, paragraph)) = paragraph_placement(lay, entry.node) else {
+				continue;
+			};
+			let Some((source_base, source_end)) = paragraph_source_bounds(lay, paragraph) else {
+				continue;
+			};
+			let Some((lo, hi)) = static_selection_limits(
+				d,
+				st,
+				sc,
+				selection,
+				entry.node,
+				source_end.wrapping_sub(source_base),
+			) else {
+				continue;
+			};
+			let lo = source_base.wrapping_add(lo);
+			let hi = source_base.wrapping_add(hi);
+			let first_line = lay.para_line_off[paragraph];
+			let line_end = first_line.wrapping_add(lay.para_line_len[paragraph]);
+			let mut line_top = entry.y;
+			for line in first_line..line_end {
+				let line_index = usize::try_from(line).expect("negative paragraph line");
+				let baseline = line_top + lay.pl_asc[line_index];
+				let start = lo.max(lay.pl_src_a[line_index]);
+				let end = hi.min(lay.pl_src_b[line_index]);
+				if end > start {
+					let piece = crate::rt::str_from_chars(
+						&lay.para_chars[usize::try_from(start).expect("negative paragraph offset")
+							..usize::try_from(end).expect("negative paragraph offset")],
+					);
+					append_visual_piece(&mut out, &mut last_baseline, baseline, &piece);
+				}
+				line_top += lay.pl_h[line_index];
+			}
+			continue;
+		}
+		let text_layout_index = crate::layout::text_layout_ix(lay, entry.node);
+		if text_layout_index < 0 {
+			continue;
+		}
+		let text_layout =
+			&lay.tls[usize::try_from(text_layout_index).expect("negative text layout index")];
+		let text_end = text_layout.src_le.iter().copied().max().unwrap_or(0);
+		let Some((lo, hi)) = static_selection_limits(d, st, sc, selection, entry.node, text_end)
+		else {
+			continue;
+		};
+		let content = style::content_str(d, st, entry.node);
+		let (pad_top, ascent, line_h) = if let Some(resolved) = st
+			.rs
+			.iter()
+			.rev()
+			.find(|resolved| resolved.node == entry.node)
+		{
+			(resolved.pad_t, text_layout.ascent, text_layout.line_h)
+		} else {
+			(0.0, text_layout.ascent, text_layout.line_h)
+		};
+		for line in 0..text_layout.src_ls.len() {
+			let start = lo.max(text_layout.src_ls[line]);
+			let end = hi.min(text_layout.src_le[line]);
+			if end <= start {
+				continue;
+			}
+			let piece = codepoint_slice(&content, start, end);
+			let baseline = f64::from(i32::try_from(line).expect("too many text lines"))
+				.mul_add(line_h, entry.y + pad_top + ascent);
+			append_visual_piece(&mut out, &mut last_baseline, baseline, &piece);
+		}
+	}
+	out
 }
 
 /// Emits a submit signal containing the field's committed text.
@@ -1773,28 +2552,33 @@ pub fn follow_caret(
 
 	let text_layout_index = crate::layout::text_layout_ix(lay, node);
 	let caret = edit::display_caret(&ds.ed[edit_index]);
-	let (line, line_start, line_height, line_width) = if text_layout_index >= 0 {
+	let (line, line_height, line_width, advance) = if text_layout_index >= 0 {
 		let text_layout =
 			&lay.tls[usize::try_from(text_layout_index).expect("negative text layout index")];
 		if text_layout.src_ls.is_empty() {
-			(0, 0, sc.entries[scene_index].h, 0.0)
+			(0, sc.entries[scene_index].h, 0.0, 0.0)
 		} else {
+			// Line-local caret geometry from the retained layout; never
+			// re-measures the whole display string.
 			let line = line_of(text_layout, caret);
 			let line_index = usize::try_from(line).expect("negative line index");
-			(line, text_layout.src_ls[line_index], text_layout.line_h, text_layout.line_w[line_index])
+			let shaper = crate::textm::Shaper { d, cache: &lay.shape_cache };
+			(
+				line,
+				text_layout.line_h,
+				text_layout.line_w[line_index],
+				crate::textm::caret_x(shaper, text_layout, line_index, caret),
+			)
 		}
 	} else {
-		(0, 0, sc.entries[scene_index].h, 0.0)
+		let text = edit::display_str(&ds.ed[edit_index]);
+		(
+			0,
+			sc.entries[scene_index].h,
+			0.0,
+			crate::textm::str_slice_w(d, font, size, tracking, &text, 0, caret),
+		)
 	};
-	let advance = crate::textm::str_slice_w(
-		d,
-		font,
-		size,
-		tracking,
-		&edit::display_str(&ds.ed[edit_index]),
-		line_start,
-		caret,
-	);
 
 	if !multiline(d, st, node) {
 		let old_scroll = ds.ed[edit_index].scroll_x;
@@ -1836,9 +2620,11 @@ pub fn follow_caret(
 
 /// Re-runs caret following against a freshly solved text layout and scene.
 ///
+/// Only acts while an edit or caret move is pending: wheel scrolling never
+/// requests a follow, so users can scroll away from the caret.
 /// Returns `true` when one more settle solve is required.
 pub fn follow_caret_fresh(d: &Doc, st: &mut St, lay: &Lay, sc: &Scene, ds: &mut DState) -> bool {
-	if ds.fs.focus == slir::NONE {
+	if !ds.follow_caret_pending || ds.fs.focus == slir::NONE {
 		return false;
 	}
 	let edit_index = ed_ix(ds, ds.fs.focus);
@@ -1939,7 +2725,13 @@ pub fn route_edit_key(
 			} else if alt {
 				edit::move_caret(&mut ds.ed[index], -1, selecting, true);
 			} else if let Some(text_layout) = text_layout {
-				edit::visual_step(&mut ds.ed[index], text_layout, -1, selecting);
+				edit::visual_step(
+					textm::Shaper { d, cache: &lay.shape_cache },
+					&mut ds.ed[index],
+					text_layout,
+					-1,
+					selecting,
+				);
 			} else {
 				edit::move_caret(&mut ds.ed[index], -1, selecting, false);
 			}
@@ -1950,29 +2742,24 @@ pub fn route_edit_key(
 			} else if alt {
 				edit::move_caret(&mut ds.ed[index], 1, selecting, true);
 			} else if let Some(text_layout) = text_layout {
-				edit::visual_step(&mut ds.ed[index], text_layout, 1, selecting);
+				edit::visual_step(
+					textm::Shaper { d, cache: &lay.shape_cache },
+					&mut ds.ed[index],
+					text_layout,
+					1,
+					selecting,
+				);
 			} else {
 				edit::move_caret(&mut ds.ed[index], 1, selecting, false);
 			}
 		},
 		"ArrowUp" | "ArrowDown" if is_multiline => {
 			if let Some(text_layout) = text_layout {
-				let (font, size, tracking) = st
-					.rs
-					.iter()
-					.rev()
-					.find(|resolved| resolved.node == node)
-					.map_or((-1, 14.0, 0.0), |resolved| {
-						(resolved.font, resolved.size, resolved.tracking)
-					});
 				let delta = if key == "ArrowUp" { -1 } else { 1 };
 				edit::visual_move(
-					d,
+					textm::Shaper { d, cache: &lay.shape_cache },
 					&mut ds.ed[index],
 					text_layout,
-					font,
-					size,
-					tracking,
 					delta,
 					selecting,
 				);
@@ -1981,7 +2768,12 @@ pub fn route_edit_key(
 		"Home" => {
 			if is_multiline && !command {
 				if let Some(text_layout) = text_layout {
-					edit::visual_home(&mut ds.ed[index], text_layout, selecting);
+					edit::visual_home(
+						textm::Shaper { d, cache: &lay.shape_cache },
+						&mut ds.ed[index],
+						text_layout,
+						selecting,
+					);
 				}
 			} else {
 				edit::home(&mut ds.ed[index], selecting);
@@ -1990,7 +2782,12 @@ pub fn route_edit_key(
 		"End" => {
 			if is_multiline && !command {
 				if let Some(text_layout) = text_layout {
-					edit::visual_end(&mut ds.ed[index], text_layout, selecting);
+					edit::visual_end(
+						textm::Shaper { d, cache: &lay.shape_cache },
+						&mut ds.ed[index],
+						text_layout,
+						selecting,
+					);
 				}
 			} else {
 				edit::end(&mut ds.ed[index], selecting);
@@ -2042,6 +2839,9 @@ pub fn dispatch(
 	if validate_range(d, st, ds) {
 		effects.repaint = true;
 	}
+	if validate_static_selection(d, st, sc, ds) {
+		effects.repaint = true;
+	}
 	let (pointer_dx, pointer_dy) = if ev.etype == E_POINTER_MOVE
 		&& ds.drag_source != slir::NONE
 		&& ev.dx == 0.0
@@ -2068,6 +2868,25 @@ pub fn dispatch(
 		E_POINTER_MOVE => {
 			if ds.drag_source != slir::NONE {
 				remember_drag_event(ds, ev, pointer_dx, pointer_dy);
+			}
+			if ds.static_select_capture {
+				let dx = ev.x - ds.static_select_x;
+				let dy = ev.y - ds.static_select_y;
+				ds.static_select_moved |= dy.mul_add(dy, dx * dx) > 16.0;
+				let root = ds
+					.static_selection
+					.as_ref()
+					.map_or(slir::NONE, |selection| {
+						scene::node_by_key(d, &st.lists, &selection.root_key)
+					});
+				if root == slir::NONE {
+					effects.repaint |= clear_static_selection(ds);
+				} else if let Some((node, offset)) =
+					static_position_nearest(d, st, lay, sc, root, ev.x, ev.y)
+					&& update_static_focus(d, st, ds, node, offset)
+				{
+					effects.repaint = true;
+				}
 			}
 			let mut signal_path = Vec::new();
 			routed_pointer_path(sc, ds, &path, &mut signal_path);
@@ -2101,8 +2920,29 @@ pub fn dispatch(
 				}
 				next_hover.push(node);
 			}
+			if ds.hover != next_hover
+				&& ds
+					.hover
+					.iter()
+					.chain(&next_hover)
+					.any(|node| list::is_split_sash(&st.lists, *node))
+			{
+				changed = true;
+			}
 			ds.hover = next_hover;
 			effects.repaint |= changed;
+
+			let cancel_split = ds
+				.split
+				.as_ref()
+				.is_some_and(|split| ds.pressed != split.sash || scene::index_of(sc, split.sash) < 0);
+			if cancel_split {
+				ds.split = None;
+			} else if let Some(split) = ds.split.as_mut()
+				&& move_split(st, split, ev.x, ev.y)
+			{
+				effects.repaint = true;
+			}
 
 			let cancel_divider = ds.divider.as_ref().is_some_and(|divider| {
 				ds.pressed != divider.node
@@ -2161,11 +3001,23 @@ pub fn dispatch(
 			for &scene_index in path.iter().rev() {
 				let index = usize::try_from(scene_index).expect("negative scene index");
 				let node = sc.entries[index].node;
+				if list::is_split_sash(&st.lists, node) {
+					ds.cursor = if sc.entries[index].is_row {
+						CUR_COL_RESIZE
+					} else {
+						CUR_ROW_RESIZE
+					};
+					break;
+				}
 				if sc.entries[index].kind == slir::K_DIVIDER
 					&& !disabled(d, st, node)
 					&& let Some((_, _, row)) = divider_scene_siblings(d, st, sc, node)
 				{
 					ds.cursor = if row { CUR_COL_RESIZE } else { CUR_ROW_RESIZE };
+					break;
+				}
+				if static_position_on_path(d, st, lay, sc, &path, ev.x, ev.y).is_some() {
+					ds.cursor = CUR_TEXT;
 					break;
 				}
 				if sig_of(d, st, node, TR_CHANGE) >= 0 && !disabled(d, st, node) {
@@ -2183,6 +3035,9 @@ pub fn dispatch(
 			if ev.mods & M_SHIFT == 0 && clear_range(ds) {
 				effects.repaint = true;
 			}
+			if clear_static_selection(ds) {
+				effects.repaint = true;
+			}
 			// A fresh down cancels stale capture without disturbing keyboard
 			// focus, except that a secondary field hit applies pointer focus.
 			if ds.drag_active {
@@ -2192,6 +3047,11 @@ pub fn dispatch(
 			cancel_pointer(d, st, ds, &mut effects);
 			let divider_target = if ev.button == 0 {
 				path_divider_node(d, st, sc, &path)
+			} else {
+				slir::NONE
+			};
+			let split_target = if ev.button == 0 {
+				path_split_sash(st, sc, &path)
 			} else {
 				slir::NONE
 			};
@@ -2209,7 +3069,7 @@ pub fn dispatch(
 					let edit_index =
 						usize::try_from(ed_ix(ds, field)).expect("field edit state is missing");
 					effects.repaint |= place_context_caret(
-						&FieldHit { st, lay, sc, node: field },
+						&FieldHit { d, st, lay, sc, node: field },
 						&mut ds.ed[edit_index],
 						ev.x,
 						ev.y,
@@ -2230,6 +3090,13 @@ pub fn dispatch(
 					deliver_trigger(d, st, &mut effects, press_target, TR_PRESS, "");
 				}
 				if ev.clicks >= 2 {
+					if split_target != slir::NONE
+						&& let Some(split) = split_even(d, st, sc, split_target)
+					{
+						ds.suppress_activate = true;
+						effects.repaint = true;
+						split_signal(d, st, &mut effects, &split);
+					}
 					if divider_target != slir::NONE {
 						ds.suppress_activate = true;
 						effects.repaint |= style::divider_clear(st, divider_target);
@@ -2241,7 +3108,7 @@ pub fn dispatch(
 						deliver_trigger(d, st, &mut effects, target, TR_DBLCLICK, "");
 					}
 				}
-				ds.drag_source = if divider_target == slir::NONE {
+				ds.drag_source = if divider_target == slir::NONE && split_target == slir::NONE {
 					path_trigger_node(d, st, sc, &path, TR_DRAG_START)
 				} else {
 					slir::NONE
@@ -2260,6 +3127,20 @@ pub fn dispatch(
 						ds.drag_grab_x = ev.x - sc.entries[source_index].x;
 						ds.drag_grab_y = ev.y - sc.entries[source_index].y;
 					}
+				}
+				if let Some((root, text, offset)) =
+					static_position_on_path(d, st, lay, sc, &path, ev.x, ev.y)
+				{
+					let endpoint = StaticEndpoint { key: scene::key_of(d, &st.lists, text), offset };
+					ds.static_selection = Some(StaticSelection {
+						root_key: scene::key_of(d, &st.lists, root),
+						anchor:   endpoint.clone(),
+						focus:    endpoint,
+					});
+					ds.static_select_capture = true;
+					ds.static_select_x = ev.x;
+					ds.static_select_y = ev.y;
+					ds.static_select_moved = false;
 				}
 
 				// Capture the nearest focusable node, or the raw target. Pointer
@@ -2286,13 +3167,14 @@ pub fn dispatch(
 				if pressed != slir::NONE {
 					ds.pressed = pressed;
 					effects.repaint |= style::set_node_state(d, st, pressed, "pressed", true);
+					effects.repaint |= list::is_split_sash(&st.lists, pressed);
 				}
 				if focus_target != slir::NONE && sig_of(d, st, focus_target, TR_CHANGE) >= 0 {
 					ensure_edit(d, st, ds, focus_target);
 					let edit_index =
 						usize::try_from(ed_ix(ds, focus_target)).expect("field edit state is missing");
 					let hit = field_caret_at(
-						&FieldHit { st, lay, sc, node: focus_target },
+						&FieldHit { d, st, lay, sc, node: focus_target },
 						ds.ed[edit_index].scroll_x,
 						ev.x,
 						ev.y,
@@ -2345,6 +3227,13 @@ pub fn dispatch(
 					effects.repaint = true;
 				}
 				effects.repaint |= focus::set_focus(d, st, &mut ds.fs, focus_target, false);
+				if split_target != slir::NONE
+					&& ev.clicks < 2
+					&& let Some(split) = arm_split(d, st, sc, split_target, ev.x, ev.y)
+				{
+					ds.split = Some(split);
+					ds.suppress_activate = true;
+				}
 				if divider_target != slir::NONE
 					&& ev.clicks < 2
 					&& let Some(divider) = arm_divider(d, st, sc, divider_target, ev.x, ev.y)
@@ -2370,7 +3259,35 @@ pub fn dispatch(
 					apply_drag_meta(meta, ds, false, false);
 				}
 			}
+			if ev.button == 0 && ds.static_select_capture {
+				let dx = ev.x - ds.static_select_x;
+				let dy = ev.y - ds.static_select_y;
+				ds.static_select_moved |= dy.mul_add(dy, dx * dx) > 16.0;
+				if ds.static_select_moved {
+					let root = ds
+						.static_selection
+						.as_ref()
+						.map_or(slir::NONE, |selection| {
+							scene::node_by_key(d, &st.lists, &selection.root_key)
+						});
+					if let Some((node, offset)) =
+						static_position_nearest(d, st, lay, sc, root, ev.x, ev.y)
+					{
+						effects.repaint |= update_static_focus(d, st, ds, node, offset);
+					}
+					ds.static_select_capture = false;
+				} else {
+					effects.repaint |= clear_static_selection(ds);
+				}
+			}
 			if ev.button == 0 {
+				if let Some(mut split) = ds.split.take()
+					&& scene::index_of(sc, split.sash) >= 0
+				{
+					effects.repaint |= move_split(st, &mut split, ev.x, ev.y);
+					split_signal(d, st, &mut effects, &split);
+					ds.suppress_activate = true;
+				}
 				if let Some(mut divider) = ds.divider.take()
 					&& !disabled(d, st, divider.node)
 					&& scene::index_of(sc, divider.node) >= 0
@@ -2465,6 +3382,10 @@ pub fn dispatch(
 				} else {
 					false
 				};
+			if !handled && ev.key == "Escape" && ds.static_selection.is_some() {
+				handled = true;
+				effects.repaint |= clear_static_selection(ds);
+			}
 			if !handled
 				&& ev.key == "Escape"
 				&& focused != slir::NONE
@@ -2495,6 +3416,9 @@ pub fn dispatch(
 			}
 			if !handled && focused != slir::NONE {
 				handled = route_edit_key(d, st, lay, sc, ds, focused, &ev.key, ev.mods, &mut effects);
+			}
+			if !handled && focused != slir::NONE && list::is_split_sash(&st.lists, focused) {
+				handled = split_key(d, st, sc, focused, &ev.key, ev.mods, &mut effects);
 			}
 			if !handled && focused != slir::NONE && ed_ix(ds, focused) < 0 {
 				handled = divider_key(d, st, sc, focused, &ev.key, ev.mods, &mut effects);
@@ -2596,7 +3520,16 @@ pub fn dispatch(
 			}
 		},
 		E_COPY => {
-			request_range_edit(ds, &mut effects, RANGE_EDIT_COPY, "");
+			if !request_range_edit(ds, &mut effects, RANGE_EDIT_COPY, "") {
+				let edit_index = ed_ix(ds, ds.fs.focus);
+				if ds.fs.focus != slir::NONE && edit_index >= 0 {
+					let state = &ds.ed[usize::try_from(edit_index).expect("negative edit state index")];
+					effects.copy_text =
+						Some(codepoint_slice(&state.text, edit::sel_lo(state), edit::sel_hi(state)));
+				} else if let Some(selection) = ds.static_selection.as_ref() {
+					effects.copy_text = Some(static_selection_text(d, st, lay, sc, selection));
+				}
+			}
 		},
 		E_CUT => {
 			if !request_range_edit(ds, &mut effects, RANGE_EDIT_CUT, "") {
@@ -2701,6 +3634,10 @@ pub fn dispatch(
 		}
 	}
 
+	effects.has_static_selection = ds
+		.static_selection
+		.as_ref()
+		.is_some_and(|selection| selection.anchor != selection.focus);
 	effects.cursor = ds.cursor;
 	effects.focus = ds.fs.focus;
 	caret_effects(d, st, lay, sc, ds, &mut effects);
