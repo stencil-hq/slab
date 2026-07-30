@@ -86,3 +86,15 @@ fn rust_generator_keeps_source_name_in_header() {
 		module.lines().next().unwrap_or_default()
 	);
 }
+
+#[test]
+fn pad_side_attrs_infer_numeric_item_props() {
+	let source = r#"
+def Cell(mt=0, mb=0) export {
+  row pad-t=mt pad-b=mb { text "x" }
+}
+"#;
+	let (_slir, props) = compile_export_ok(source, "Cell");
+	assert_eq!(prop_type(&props, "mt"), &ParamType::Num, "pad-t votes Num");
+	assert_eq!(prop_type(&props, "mb"), &ParamType::Num, "pad-b votes Num");
+}

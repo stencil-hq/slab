@@ -72,7 +72,7 @@ const TEXT_ATTRS: [&str; 12] = [
 const TEXT_OR_BOOL_ATTRS: [&str; 1] = ["checked"];
 const BOOL_ATTRS: [&str; 7] =
 	["expanded", "selected", "modal", "live-atomic", "strike", "italic", "underline"];
-const NUM_ATTRS: [&str; 25] = [
+const NUM_ATTRS: [&str; 29] = [
 	"w",
 	"h",
 	"min-w",
@@ -98,6 +98,10 @@ const NUM_ATTRS: [&str; 25] = [
 	"level",
 	"pos-in-set",
 	"set-size",
+	"pad-t",
+	"pad-r",
+	"pad-b",
+	"pad-l",
 ];
 const NUM_TUPLE_ATTRS: [&str; 8] =
 	["pad", "offset", "at", "cols", "stroke-dash", "scale", "grain", "tilt"];

@@ -129,4 +129,8 @@ attr_table! {
 	 UNDERLINE = 93, "underline";
 	 CODE_COLOR = 94, "code-color";
 	 CODE_BG = 95, "code-bg";
+	 PAD_T = 96, "pad-t";
+	 PAD_R = 97, "pad-r";
+	 PAD_B = 98, "pad-b";
+	 PAD_L = 99, "pad-l";
 }

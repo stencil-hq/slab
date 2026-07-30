@@ -1425,6 +1425,25 @@ fn apply_attr_concrete(ctx: &mut Ctx, sink: &mut Sink, key: &str, rv: &RVal, lin
 				sink.set(id, TVal::Num(v));
 			}
 		},
+		"pad-t" | "pad-r" | "pad-b" | "pad-l" => {
+			let id = match key {
+				"pad-t" => at::PAD_T,
+				"pad-r" => at::PAD_R,
+				"pad-b" => at::PAD_B,
+				_ => at::PAD_L,
+			};
+			if let RVal::Param(ix) = rv {
+				if let Some(tv) = expect_param_ty(ctx, *ix, &[ParamType::Num], line, key) {
+					sink.set(id, tv);
+				}
+			} else if let RVal::Prop(field) = rv {
+				if let Some(tv) = expect_prop_ty(ctx, *field, &[ParamType::Num], line, key) {
+					sink.set(id, tv);
+				}
+			} else if let Some(v) = num_val(ctx, rv, line, key) {
+				sink.set(id, TVal::Num(v));
+			}
+		},
 		"pad" => match rv {
 			RVal::Num(v) => sink.set(at::PAD, TVal::Tuple(vec![*v, *v, *v, *v])),
 			RVal::Tup(items) if items.len() == 2 => {
