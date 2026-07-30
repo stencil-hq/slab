@@ -325,6 +325,11 @@ impl KInst {
 		kframe::inst_reveal_item(&mut self.inner, each, index, align)
 	}
 
+	/// Enables per-item extents and updates one virtual-list item.
+	pub fn set_item_extent(&mut self, each: &str, index: i32, extent: f64) -> bool {
+		kframe::inst_set_item_extent(&mut self.inner, each, index, extent)
+	}
+
 	/// Returns a virtual list's materialized window as JSON.
 	pub fn each_window_json(&self, each: &str) -> String {
 		serde_json::to_string(&kframe::inst_each_window(&self.inner, each))
@@ -339,6 +344,16 @@ impl KInst {
 	/// Returns one keyed divider extent overlay.
 	pub fn get_divider(&self, key: &str) -> f64 {
 		kframe::inst_get_divider(&self.inner, key)
+	}
+
+	/// Sets one retained split-pane size.
+	pub fn set_split(&mut self, pane_key: &str, size: f64) -> bool {
+		kframe::inst_set_split(&mut self.inner, pane_key, size)
+	}
+
+	/// Returns one retained split-pane size, or `-1` when unknown.
+	pub fn get_split(&self, pane_key: &str) -> f64 {
+		kframe::inst_get_split(&self.inner, pane_key)
 	}
 
 	/// Updates measured slot content for one hole.

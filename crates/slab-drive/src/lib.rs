@@ -98,6 +98,8 @@
 //! | `list.window` | `{"each":str}` | materialized `{"start":i32,"end":i32}` |
 //! | `divider.get` | `{"key":str}` | `{"extent":f64}` |
 //! | `divider.set` | `{"key":str,"extent":f64}` | sets a divider overlay |
+//! | `split.get` | `{"key":str}` | `{"size":f64}` |
+//! | `split.set` | `{"key":str,"size":f64}` | sets a retained split-pane size |
 //! | `hole.list` | none | visible `{"holes":[{"hole","name","x","y","w","h","clip"}]}` |
 //! | `hole.size` | `{"name":str,"w":f64,"h":f64}` or numeric `hole` | records host content size |
 //! | `scene.tree` | none | flat pre-order entries with stable keys, hierarchy, geometry, flags, scroll data, and resolved accessibility semantics |
@@ -218,6 +220,8 @@ const METHODS: &[&str] = &[
 	"list.window",
 	"divider.get",
 	"divider.set",
+	"split.get",
+	"split.set",
 	"hole.list",
 	"hole.size",
 	"scene.tree",
@@ -1171,6 +1175,8 @@ fn handle(
 		"list.window" => list_window(session, params(value)),
 		"divider.get" => divider_get(session, params(value)),
 		"divider.set" => divider_set(session, params(value)),
+		"split.get" => split_get(session, params(value)),
+		"split.set" => split_set(session, params(value)),
 		"hole.list" => hole_list(session),
 		"hole.size" => hole_size(session, params(value)),
 		"scene.tree" => scene_tree(session),
@@ -1902,6 +1908,35 @@ fn divider_set(session: &mut Session, object: &Map<String, Value>) -> ProtocolRe
 	Ok(json!({"ok": true}))
 }
 
+fn split_get(session: &mut Session, object: &Map<String, Value>) -> ProtocolResult {
+	let query = required_str(object, "key")?.to_string();
+	let doc = ensure_frame(session)?;
+	let (node, key) = resolve_node_key(doc, &query)?;
+	let scene_index = scene::index_of(&doc.inst.sc, node);
+	let pane = usize::try_from(scene_index)
+		.ok()
+		.and_then(|index| doc.inst.sc.entries.get(index))
+		.and_then(|entry| usize::try_from(entry.parent_ix).ok())
+		.and_then(|parent| doc.inst.sc.entries.get(parent))
+		.is_some_and(|parent| parent.flags & slir::F_SPLITS != 0)
+		&& !slab_kernel::list::is_split_sash(&doc.inst.st.lists, node);
+	if !pane {
+		return Err(domain(format!("key '{key}' is not a split pane")));
+	}
+	Ok(json!({"size": frame::inst_get_split(&doc.inst, &key)}))
+}
+
+fn split_set(session: &mut Session, object: &Map<String, Value>) -> ProtocolResult {
+	let query = required_str(object, "key")?.to_string();
+	let size = required_f64(object, "size")?;
+	let doc = ensure_frame(session)?;
+	let (_, key) = resolve_node_key(doc, &query)?;
+	if !frame::inst_set_split(&mut doc.inst, &key, size) {
+		return Err(domain(format!("key '{key}' is not a split pane")));
+	}
+	Ok(json!({"ok": true}))
+}
+
 fn hole_list(session: &mut Session) -> ProtocolResult {
 	let doc = ensure_frame(session)?;
 	let holes = frame::inst_holes(&mut doc.inst)
@@ -2334,7 +2369,8 @@ fn input_event(
 	host_input: Option<&mut HostInputHook<'_>>,
 ) -> ProtocolResult {
 	validate_event(params(value))?;
-	let event = wire::build_event(&value["params"]).map_err(invalid)?;
+	// `value` is already the request's params object (see the route table).
+	let event = wire::build_event(value).map_err(invalid)?;
 	dispatch_input(session, &event, host_input)
 }
 
@@ -2545,6 +2581,10 @@ fn merge_effects(combined: &mut Effects, next: Effects) {
 	if next.range_edit.is_some() {
 		combined.range_edit = next.range_edit;
 	}
+	if next.copy_text.is_some() {
+		combined.copy_text = next.copy_text;
+	}
+	combined.has_static_selection = next.has_static_selection;
 	combined.has_caret = next.has_caret;
 	combined.caret_x = next.caret_x;
 	combined.caret_y = next.caret_y;
@@ -3481,5 +3521,43 @@ col {
 		let mut pump = RequestPump::new("test.slab", slir, images);
 		let clean = pump.request(&mut instance, r#"{"method":"doc.diags","params":{}}"#);
 		assert_eq!(result(&clean), &json!({"diags": []}));
+	}
+	#[test]
+	fn sdp_copy_preserves_paragraph_boundary_whitespace() {
+		let source = r#"
+col select w=240 h=40 {
+  para#code w=240 { span "  #include "; span " "; span " \"x\"  " }
+}
+"#;
+		let (slir, mut instance, images) = compile_live(source);
+		let painted = frame::inst_frame(&mut instance, 0.0);
+		let paragraph_index = instance
+			.sc
+			.entries
+			.iter()
+			.position(|entry| entry.kind == slab_kernel::slir::K_PARA)
+			.expect("paragraph scene entry");
+		let paragraph = &instance.sc.entries[paragraph_index];
+		let down_x = paragraph.x + 0.01;
+		let y = paragraph.y + paragraph.h / 2.0;
+		let up_x = painted
+			.ops
+			.iter()
+			.filter_map(|op| match op {
+				slab_kernel::flatten::FrameOp::Text(text) => Some(text.x + text.measured_w),
+				_ => None,
+			})
+			.fold(f64::NEG_INFINITY, f64::max)
+			+ 1.0;
+		let mut pump = RequestPump::new("test.slab", slir, images);
+		for (kind, x) in [("down", down_x), ("move", up_x), ("up", up_x)] {
+			let request =
+				format!(r#"{{"method":"input.pointer","params":{{"type":"{kind}","x":{x},"y":{y}}}}}"#);
+			let response = pump.request(&mut instance, &request);
+			assert!(response.response.get("error").is_none(), "{:?}", response.response);
+		}
+		let copied =
+			pump.request(&mut instance, r#"{"method":"input.event","params":{"type":"copy"}}"#);
+		assert_eq!(result(&copied)["effects"]["copy_text"], json!("  #include   \"x\"  "),);
 	}
 }

@@ -148,29 +148,41 @@ struct ScrollChangeSnapshot<'a> {
 	off:  f64,
 }
 
+#[allow(
+	clippy::trivially_copy_pass_by_ref,
+	reason = "serde skip_serializing_if requires a reference predicate"
+)]
+const fn is_false(value: &bool) -> bool {
+	!*value
+}
+
 #[derive(Serialize)]
 struct EffectSnapshot<'a> {
-	repaint:    bool,
-	sig_name:   &'a [u32],
-	sig_text:   &'a [String],
-	sig_item:   &'a [String],
-	sig_runs:   &'a [String],
+	repaint:              bool,
+	sig_name:             &'a [u32],
+	sig_text:             &'a [String],
+	sig_item:             &'a [String],
+	sig_runs:             &'a [String],
 	#[serde(skip_serializing_if = "Option::is_none")]
-	range_edit: Option<&'a slab_kernel::dispatch::RangeEdit>,
-	has_caret:  bool,
-	caret_x:    f64,
-	caret_y:    f64,
-	caret_w:    f64,
-	caret_h:    f64,
-	has_ime:    bool,
-	ime_x:      f64,
-	ime_y:      f64,
-	ime_w:      f64,
-	ime_h:      f64,
-	cursor:     u32,
-	focus:      u32,
-	sig_meta:   Vec<SigMetaSnapshot<'a>>,
-	scrolls:    Vec<ScrollChangeSnapshot<'a>>,
+	range_edit:           Option<&'a slab_kernel::dispatch::RangeEdit>,
+	#[serde(skip_serializing_if = "Option::is_none")]
+	copy_text:            Option<&'a str>,
+	#[serde(skip_serializing_if = "is_false")]
+	has_static_selection: bool,
+	has_caret:            bool,
+	caret_x:              f64,
+	caret_y:              f64,
+	caret_w:              f64,
+	caret_h:              f64,
+	has_ime:              bool,
+	ime_x:                f64,
+	ime_y:                f64,
+	ime_w:                f64,
+	ime_h:                f64,
+	cursor:               u32,
+	focus:                u32,
+	sig_meta:             Vec<SigMetaSnapshot<'a>>,
+	scrolls:              Vec<ScrollChangeSnapshot<'a>>,
 }
 
 #[derive(Serialize)]
@@ -386,6 +398,8 @@ pub fn effects_json(effects: &Effects) -> String {
 		sig_item: &effects.sig_item,
 		sig_runs: &effects.sig_runs,
 		range_edit: effects.range_edit.as_ref(),
+		copy_text: effects.copy_text.as_deref(),
+		has_static_selection: effects.has_static_selection,
 		has_caret: effects.has_caret,
 		caret_x: effects.caret_x,
 		caret_y: effects.caret_y,
