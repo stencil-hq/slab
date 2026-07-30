@@ -153,7 +153,7 @@ Node kinds are `Row=0`, `Col=1`, `Wrap=2`, `Grid=3`, `Stack=4`, `Canvas=5`,
 `Spacer=13`, `Hole=14`, `Each=15`, `Divider=16`, and `Icon=17`. Node flags
 retain the kernel bit assignments: `clip`, `bleed`, `scroll`, `nowrap`,
 `ellipsis`, `inert`, `focusable`, `detached`, `multiline`, `scroll-cross`,
-`virtual`, `sticky`, `drag-ghost`, and `escape-blur`.
+`virtual`, `sticky`, `drag-ghost`, `escape-blur`, `select`, and `splits`.
 
 Base attribute runs are sorted by attribute id and contain authored values
 only. Layout defaults and inherited text style remain the kernel's job.
@@ -268,6 +268,7 @@ The attribute id mapping is shared by `crates/slab-slir/src/attrs.rs` and
 88 set-size      89 animate       90 strike        91 cancel        92 italic
 93 underline     94 code-color    95 code-bg
 96 pad-t         97 pad-r        98 pad-b         99 pad-l
+100 select-bg   101 split-w      102 split-fg
 ```
 
 `style=`, `key=`, and `transition=` do not appear in attribute runs: styles
@@ -279,6 +280,9 @@ internal animation-binding channel. Attributes 90, 92, and 93 are authorable
 inherited boolean text styles (`strike`, `italic`, and `underline`);
 attributes 94 and 95 are the non-inherited rich-field code-run paints
 (`code-color` and `code-bg`). `each` is `Num(parameter index)` on an `Each` node.
+Attribute 100 is the optional non-inherited static-selection tint paint
+(`select-bg`).
+Attributes 101 and 102 are the split-container sash thickness and active paint.
 `sign_trigger=13` is an internal discriminator for typed
 `keys=Key:signal` entries. It has the same host-facing Activate payload as
 trigger 0, but keeps default Enter/Space activation from selecting an arbitrary

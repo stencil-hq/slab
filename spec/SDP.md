@@ -226,6 +226,8 @@ Both methods return the same result shape as `doc.load` and appear in
 | `list.window` | `{each}` | Returns materialized half-open `{start,end}`. |
 | `divider.get` | `{key}` | `{extent}`; `-1` is the unset sentinel: the divider still sits at its authored position and no overlay extent has been recorded. |
 | `divider.set` | `{key,extent}` | Sets the divider overlay. |
+| `split.get` | `{key}` | `{size}`; `-1` is the unset sentinel for a valid materialized split pane. |
+| `split.set` | `{key,size}` | Sets the retained size of a materialized split pane. |
 | `hole.list` | none | Visible hole geometry and clipping. |
 | `hole.size` | `{name,w,h}` or `{hole,w,h}` | Records host-content size. |
 
@@ -275,8 +277,13 @@ Change signal additionally contains `runs` in the exact `{rev,runs}` schema
 defined above. A deferred cross-field edit additionally contains
 `range_edit:{kind,anchor,head,text}` with the canonical endpoint objects
 defined above; kind values are `0 text | 1 paste | 2 cut | 3 Backspace |
-4 Delete | 5 composition | 6 copy`. Signal metadata
-`key` is always the emitter node path; pointer-derived signals additionally
+4 Delete | 5 composition | 6 copy`.
+
+For `input.event {type:"copy"}`, an active static-text selection additionally
+returns `copy_text` and `has_static_selection:true`; both keys are omitted when
+absent/false, preserving the effect shape for documents that do not opt in.
+
+Signal metadata `key` is always the emitter node path; pointer-derived signals additionally
 carry `hit_key` (the deepest hit-target canonical key) and keyboard-driven
 activations carry `pressed_key` (the key name). Both fields are omitted when
 absent; `spec/FRAME.md` is normative for their composition. A host-consumed

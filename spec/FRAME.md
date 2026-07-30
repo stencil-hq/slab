@@ -186,6 +186,10 @@ fn inst_focus_item(i: &mut Instance, each_key: &str, index: i32) -> bool
     // explained by inst_focus_note.
 fn inst_each_window(i: &Instance, each_key: &str) -> (i32, i32)
     // Half-open materialized virtual range; (-1, -1) for unknown/non-virtual.
+fn inst_set_item_extent(i: &mut Instance, each_key: &str, index: i32,
+                        extent: f64) -> bool
+    // Enable retained per-item extents and set one finite positive main extent.
+    // Changes above the viewport preserve the first visible item's anchor.
 fn inst_set_param(i: &mut Instance, param: u32, v: &ParamValue) -> bool
     // false = unknown param, type mismatch, or unknown enum member.
 fn inst_list_len(i: &Instance, param: u32, path: &str) -> i32
@@ -623,6 +627,8 @@ struct Effects {
   sig_meta: Vec<SigMeta>,
   scrolls: Vec<ScrollChange>,
   range_edit: Option<RangeEdit>,
+  copy_text: Option<String>, // selected static text requested by E_COPY
+  has_static_selection: bool,
   has_caret: bool, caret_x: f64, caret_y: f64, caret_w: f64, caret_h: f64,
   has_ime: bool, ime_x: f64, ime_y: f64, ime_w: f64, ime_h: f64,
   cursor: u32,           // 0 default | 1 pointer | 2 text |
@@ -638,6 +644,12 @@ the same stable locators as `inst_get_range`; replacement text is empty for
 deletion/cut/copy. All field bytes and range state remain unchanged until the
 host atomically applies the structural edit and pushes its list/field updates
 back to the instance.
+
+`copy_text` is the clipboard payload for an active kernel-owned static-text
+selection when `E_COPY` is dispatched without a focused edit field.
+`has_static_selection` tells hosts whether such a non-collapsed selection is
+retained; JSON snapshots omit both fields when absent/false so opt-in selection
+does not change Effects produced by existing documents.
 Structural undo is a **host transaction** because the kernel never owns the
 host's block list or list parameters. Before Enter-split, Backspace-merge, or
 another structural edit, the host purely calls `inst_snapshot_fields` for every
@@ -876,6 +888,30 @@ Runtime text emits the one-shot `glyph-missing` frame diagnostic defined above,
 and the cumulative instance set retains it. Compiler-known literal,
 parameter-default, and list item-property-default text is checked against the
 same cmap at compile time; host-supplied content remains runtime-checked.
+
+### One coordinate space (as built in `textm`)
+
+Every geometric consumer — wrapping, alignment origins, scroll extents,
+caret and selection x, pointer hit mapping, and the paint ops' run
+extents — lives in the normative advance space above. OpenType shaping
+(rustybuzz) selects glyphs and places them *within* their cluster (marks,
+ligature glyph position), but cluster and run x-extents are rebased onto
+the advance folds after shaping: inter-cluster pair positioning never moves
+geometry, RTL runs mirror their logical folds inside the run box, and a
+ligature that merges several graphemes into one shaped cluster is split
+back to grapheme grain so every caret stop stays addressable. A field's
+measured line width therefore always equals the sum of its painted runs'
+`measured_w`, and End/pointer round-trips can never leave the measured box.
+
+Shaping is lazy and bounded: measurement never shapes, paint geometry fills
+per line on first access (visible, focused, or caret-adjacent lines), plain
+lines are retained weakly by the bounded two-generation shape cache, rich
+lines by a bounded per-layout FIFO. Editor-shaped fields (no ellipsis,
+unbounded lines) memoize wrap results per hard line — keyed by content and
+the rebased inline-span signature, validated exactly — and a contiguous
+edit re-measures only the hard lines it touched, splicing the untouched
+prefix and suffix of the previous layout. All of this is a pure evaluation
+strategy: the resulting frames are byte-identical to a cold full measure.
 
 ## Motion (as built in `motion`)
 

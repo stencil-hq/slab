@@ -136,9 +136,9 @@ cond       := IDENT | REF | "!" (IDENT | REF)
   `drag=`, `drop=`, `resize=`, `pointer-move=`, `pointer-up=`, `drag-update=`,
   and `drag-end=` are **reserved attributes** binding signals (§13.3). `act=`,
   `field=`, `press=`, and `drag=` imply `focusable`; `submit=` and `cancel=`
-  are legal only on a `field=` text node, `resize=` is emitted by a divider
-  (§6.11), and the two drag companion bindings require `drag=` on the same
-  node.
+  are legal only on a `field=` text node; `resize=` is emitted by a divider
+  (§6.11) or split container (§6.12); and the two drag companion bindings
+  require `drag=` on the same node.
 - `field-sync=host` is a compiler-only reserved attribute on a field whose
   Change signal is intentionally reconciled by its host. It suppresses the
   otherwise actionable `warn[field-sync]`; `field-sync=implicit` restores the
@@ -544,6 +544,46 @@ the divider's optional `dblclick=` signal. Slab deliberately has no collapse
 threshold or content-aware initial-allocation policy: hosts express collapse
 with params/`when` and provide initial extents through the keyed API.
 
+### 6.12 Split containers
+
+`splits` is a closed-vocabulary flag legal only on `row` and `col`; every
+other use is `error[splits-ctx]`. It turns every materialized direct child
+into a pane. A direct `each` is transparent for this purpose: each
+materialized item root is a pane, and its full scene key (including the item
+key) is the pane identity.
+
+The container owns one retained main-axis size per pane key. Authored
+main-axis sizes are initial ratio seeds only: fixed sizes contribute their
+numeric extents, fill sizes contribute their weights, and otherwise panes
+seed equally. On every solve the kernel normalizes retained sizes to the
+container's full content extent, proportionally rescales them when that
+extent changes, and enforces each pane's main-axis `min-*` and `max-*`.
+Removing a pane therefore redistributes its extent proportionally among the
+survivors; reordering keyed panes does not move their retained sizes.
+`inst_set_split(i, pane_key, size)` restores a retained pane size and
+`inst_get_split(i, pane_key)` reads it (`-1` for unknown or unset).
+
+Between every consecutive pair the kernel emits a synthetic, focusable sash
+whose key is `<left-pane-key>~sash`. Panes remain flush: the sash has zero
+layout footprint and is an absolute hit overlay centered on the seam.
+`split-w` sets its hit and active-paint thickness (default 4u).
+`split-fg` is optional (default none) and paints that overlay only while it
+is hovered or pressed. Row splits use `col-resize`; column splits use
+`row-resize`.
+
+Primary pointer-down captures a sash and snapshots every pane's solved size
+and min/max bounds. Moving transfers extent across the seam. When either
+adjacent pane clamps, the remaining delta cascades outward through further
+siblings on that side, matching VS Code SplitView resize mechanics while
+preserving the total extent. Pointer-up emits the container's optional
+`resize=` with `sig_text=fmt3(final left-pane size)` and
+`meta.key=<left-pane-key>~sash`. A double-click evens the two adjacent panes
+subject to their clamps and emits the same resize result.
+
+When focused, Left/Right on row sashes or Up/Down on column sashes apply the
+same cascading transfer by 8u (1u with Shift) and emit `resize=` for every
+keypress.
+
 ## 7. Styling
 
 Small closed set; everything else is composition.
@@ -581,9 +621,13 @@ Small closed set; everything else is composition.
 | `tilt` | any node | `rx[,ry[,depth]]` — ink-only 3D perspective about the node's center: CSS `perspective(depth)·rotateX(rx)·rotateY(ry)` (degrees; `depth` in u, default 800; single number = rx). The subtree flattens into one plane; hit-testing keeps the layout rect. SVG degrades to an affine three-corner fit; TUI skips (`cap-transform`) |
 | `fit` | img | `cover\|contain\|stretch` |
 | `scroll` | box | bare flag = main axis; `scroll=cross` = cross axis; `scroll=both` = both (§6.9, §15.5) |
-| `item-extent`, `overscan` | `each virtual` | required positive uniform main extent; optional nonnegative retained-item margin (default 4), §13.6 |
-| `virtual` flag | root-param `each` in a main-scroll row/col | materialize a bounded uniform window (§13.6) |
-| flags | box | `clip`, `bleed`, `sticky` (direct main-scroll child only), `nowrap`, `ellipsis`, `inert` (subtree ignored by hit testing and focus, §15.2), `focusable` (participates in tab order, §15.3) |
+| `item-extent`, `overscan` | `each virtual` | required positive main-axis estimate; optional nonnegative retained-item margin (default 4), §13.6 |
+| `virtual` flag | root-param `each` in a main-scroll row/col | materialize a bounded fixed- or variable-extent window (§13.6) |
+| flags | box | `clip`, `bleed`, `sticky` (direct main-scroll child only), `nowrap`, `ellipsis`, `inert` (subtree ignored by hit testing and focus, §15.2), `focusable` (participates in tab order, §15.3), `select` (kernel-owned static-text selection, §15.7) |
+| `select-bg` | box with `select` | selection tint paint (default `#3B82F640`), painted by the kernel (§15.7) |
+| `splits` flag | `row`, `col` | n-ary proportional panes with synthetic keyed sashes (§6.12) |
+| `split-w` | `row splits`, `col splits` | zero-footprint sash hit/active-paint thickness (default 4u) |
+| `split-fg` | `row splits`, `col splits` | sash paint while hovered or pressed (default none) |
 | `pad` | any box | `pad=16` (all) · `pad=v,h` (vertical, horizontal) · `pad=t,r,b,l` |
 | `pad-t` `pad-r` `pad-b` `pad-l` | any box | per-side padding overrides applied after `pad`; single numbers (param/prop-drivable, unlike the tuple members) |
 | `gap` | containers | `gap=8` or `gap=main,cross`: second value = grid row gap / wrap line gap (`gap=16,0` gives table gutters with tight rows) |
@@ -862,6 +906,7 @@ inst_set_list_key(i, param, path, index, key) -> bool // innermost stable identi
 inst_reveal_item(i, each_key, index, align) -> bool // virtual: start|center|end|nearest (0..3)
 inst_focus_item(i, each_key, index) -> bool     // virtual nearest-reveal + first focusable
 inst_each_window(i, each_key) -> (i32, i32)     // virtual materialized half-open range
+inst_set_item_extent(i, each_key, index, extent) -> bool // enable/set variable extent
 inst_set_hole_size(i, hole, w, h)              // persistent natural size; dirties only on change
 inst_set_divider(i, key, extent) -> bool        // persistent split extent; clamps to adjacent panes
 inst_get_divider(i, key) -> float               // -1 for unknown or authored fallback
@@ -982,6 +1027,7 @@ Compile time (`slab-syntax` + `slab-compile`):
 | `dup-id` | warning | one `#id` resolves more than once (second site reported) |
 | `dup-key` | warning | sibling key collision; both nodes kept (§15.1) |
 | `attach-ctx` | error | `attach`, `gravity`, or `collide` used outside a direct child of `stack`/`canvas` (§6.10) |
+| `splits-ctx` | error | `splits` is used on a node other than `row` or `col` (§6.12) |
 | `icon-body` | error | an icon has no paths, a non-path child, a dynamic value, or a nonpositive viewbox (§4.3) |
 | `icon-dup` | error | a top-level icon name is declared more than once |
 | `fill-unbounded` | warning | explicit fill on a leaf `each` item root resolves as hug; use a fill-sized container root |
@@ -1139,7 +1185,7 @@ hit behavior, pointer cursor, edit behavior, or tab stop.
 - `drag=NAME` — DragStart (6), once an armed pointer moves beyond the drag
   threshold.
 - `drop=NAME` — Drop (7), on the deepest eligible target at drag release.
-- `resize=NAME` — Resize (8), with the divider's final extent as text (§6.11).
+- `resize=NAME` — Resize (8), with a divider's final extent (§6.11) or a split sash's final left-pane size (§6.12) as text.
 - `pointer-move=NAME` — PointerMove (9), on every pointer move routed to the
   deepest enabled binding in the captured path, or current hit path without capture.
 - `pointer-up=NAME` — PointerUp (10), on every pointer-button release routed
@@ -1194,9 +1240,8 @@ cycles are represented by row references rather than by expanding a type
 forever.
 
 Host-owned exported-def instances remain appropriate for arbitrary host
-content and variable-height virtualization. Runtime `each` also has a
-kernel-owned uniform-extent virtual mode (§13.6); neither mechanism is a
-compatibility shim for the other.
+content. Runtime `each` has kernel-owned fixed- and retained variable-extent
+virtual modes (§13.6); neither mechanism is a compatibility shim for the other.
 
 ### 13.5 % needs a determinate axis
 
@@ -1279,28 +1324,40 @@ for example `"3.segments"` or `"3.segments.0.points"`:
 Every valid equal write is a successful no-op and does not dirty. Invalid
 requests return `false` without mutation.
 
-**Uniform virtualization.** `virtual` is valid only on a non-nested root-param
-`each` directly inside a row/col whose main axis scrolls; otherwise
-`err[virtual-ctx]`. It requires a positive constant
-`item-extent=N` (`err[virtual-extent]`) and accepts `overscan=N` (default 4).
-Variable-height items deliberately stay unvirtualized in v1.
+**Virtualization.** `virtual` is valid only on a non-nested root-param `each`
+directly inside a row/col whose main axis scrolls; otherwise
+`err[virtual-ctx]`. It requires a positive constant `item-extent=N`
+(`err[virtual-extent]`) and accepts `overscan=N` (default 4). The authored
+extent is the default and estimate for every item.
 
-For list length `len`, retained main-axis offset `off`, viewport `vp`, extent
-`e`, and overscan `o`, the materialized half-open window is
-`[floor(off/e)-o, ceil((off+vp)/e)+o]`, clamped to `[0,len)`. Before viewport
-geometry exists, the conservative first window is `[0,min(len,2o))`; the fresh
-scene geometry dirties one settling frame. Layout places retained items in
-their logical slots and accounts for omitted leading/trailing slots directly,
-so scroll content extent is exactly `len*e` and frame/scene size is
-`O(window)`, not `O(len)`. De-windowed synthetic ids and keyed state remain
-registered; only truncation prunes them. Focus and tab traversal see only
-materialized scene nodes.
+Until a host calls `inst_set_item_extent`, the list uses its fixed-extent fast
+path. For list length `len`, retained main-axis offset `off`, viewport `vp`,
+extent `e`, and overscan `o`, its materialized half-open window is
+`[floor(off/e)-o, ceil((off+vp)/e)+o]`, clamped to `[0,len)`.
+
+`inst_set_item_extent(i, each_key, index, extent)` enables retained per-item
+extents and sets one finite positive extent. The kernel subsequently replaces
+an enabled materialized item's extent with its laid-out main-axis size whenever
+they differ. Keyed items carry their measured extent through reorder; removed
+keys are discarded at the next solve. Unmeasured items retain the authored
+estimate. A Fenwick prefix index defines total content extent, item placement,
+offset-to-window lookup, and reveal offsets in `O(log len)` time. When an
+extent changes for an item strictly before the first visible item, the owning
+scroll offset changes by the same delta, preserving the top visible item's
+painted position.
+
+Before viewport geometry exists, the conservative first window is
+`[0,min(len,2o))`; fresh scene geometry dirties one settling frame. Layout
+places retained items at their prefix-sum logical offsets and accounts for
+omitted slots directly, so frame/scene size is `O(window)`, not `O(len)`.
+De-windowed synthetic ids and keyed state remain registered; only truncation
+prunes them. Focus and tab traversal see only materialized scene nodes.
 
 `inst_each_window(i, each_key)` returns the last materialized half-open range,
 or `(-1,-1)` for an unknown/non-virtual each. `inst_reveal_item` accepts
-alignment `0 start | 1 center | 2 end | 3 nearest`, clamps against
-`len*extent-vp`, updates the owning scroll offset, and materializes the target
-on the next solve.
+alignment `0 start | 1 center | 2 end | 3 nearest`, clamps against total
+retained extent minus the viewport, updates the owning scroll offset, and
+materializes the target on the next solve.
 
 Bulk public inputs prevalidate the complete recursive replacement, including
 final nonempty key uniqueness, before mutating it. Web components accept
@@ -1637,9 +1694,9 @@ is skipped so an enabled ancestor may handle it. With **empty focus**, key
 dispatch starts directly at the document root's `keys=` map; when a focused
 walk leaves the key unhandled, it likewise falls back to the root map, so
 global shortcuts work before anything is focused. Routing precedence is
-drag cancellation by Escape, editable `escape-blur` (which also fires a
-`cancel=` binder with the retained buffer, §13.3), the focused field's own
-`keys=` map for a plain (unmodified), non-printable key — a field-local
+drag cancellation by Escape, static-selection cancellation, editable
+`escape-blur` (which also fires a `cancel=` binder with the retained buffer,
+§13.3), the focused field's own
 binding preempts kernel editing for that key, so plain Enter can split a
 block rather than insert a newline while Shift+Enter still reaches the
 editor — field-edit commands,
@@ -1724,7 +1781,8 @@ Authored `Space` is canonicalized to the event key `" "`. Unknown names produce
   drag displacement, and termination outcome.
 - Printable input reaches edit fields as `text` events; `key-down` carries
   named keys. `wheel` routes through scroll containers (§15.5). `resize`
-  (`dx/dy > 0`) updates env. `copy` and `inspect` carry no kernel semantics.
+  (`dx/dy > 0`) updates env. `copy` exposes kernel-owned selected text through
+  `Effects.copy_text` (§15.6, §15.7); `inspect` carries no kernel semantics.
 - Activate, Press, Context, Dblclick, DragStart, DragUpdate, DragEnd,
   PointerMove, PointerUp, and Drop use empty text; Change, Submit, and Resize
   carry text. A real (non-list) node uses an empty item key (§13.3).
@@ -2051,7 +2109,44 @@ own echoed write without discarding a later kernel edit.
   charted. Shaping stays
   per-codepoint advances; complex scripts (Arabic, RTL) are out of scope.
 
-### 15.7 Driver duties
+### 15.7 Static text selection
+
+`select` is an opt-in flag legal on boxes. It makes the painted, non-field text
+runs in that box's subtree pointer-selectable; an effectively `inert` subtree
+never participates. `select-bg` supplies the resolved selection tint and
+defaults to `#3B82F640`.
+
+A primary pointer-down whose hit path is inside the nearest `select` root arms
+selection only when the path at or below that root contains no focusable node,
+active edit field, or `drag=` source. The fixed endpoint is the nearest
+grapheme boundary of the hit text run, using the same FONT advances and shaped
+caret geometry as field pointer placement. The kernel captures subsequent
+primary moves and extends the active endpoint to the nearest painted text
+position in that root. The half-open range covers every text run between the
+two endpoints in authored scene order.
+
+Pointer-up retains a range after movement strictly greater than 4u from the
+down point. A primary gesture that never crosses that threshold is a plain
+click and clears the selection. Escape, any new pointer-down, or disappearance
+of the selected root also clears it. Escape precedence is deliberate: drag
+cancellation runs first, static-selection cancellation second, and editable
+`escape-blur` third. Selection endpoints use stable node keys and codepoint
+offsets on grapheme boundaries, so the state survives ordinary solves and list
+rematerialization for the same `select` root.
+
+Flatten intersects the range with each painted visual line and emits one
+selection `Rect` for each covered text segment, using the same measured
+advances carried by its `Text` op. Each selection rect is immediately before
+the covered `Text` op; all unrelated paint and z-order remain unchanged.
+
+On `copy`, a focused edit field retains precedence. Otherwise an active static
+selection is assembled in scene order: runs on one visual line concatenate,
+and different visual lines are separated by `\n`. The result is returned as
+`Effects.copy_text`, the same kernel copy channel used for a field-local
+selection. Hosts write that value to their system clipboard; the kernel never
+accesses a platform clipboard directly.
+
+### 15.8 Driver duties
 
 The surface lifecycle is owned by each driver, documented rather than
 abstracted: the browser element (ResizeObserver + matchMedia for
@@ -2068,7 +2163,6 @@ demand-driven: schedule a frame only when the instance is dirty or the
 kernel reports live motion. Hot reload and inspectors are host features
 outside this contract — kernel state is keyed (§15.1) and survives
 instance rebuilds by construction.
-
 ## 16. Kernel implementation and adding a platform
 
 ### 16.1 One Rust kernel and deterministic execution
