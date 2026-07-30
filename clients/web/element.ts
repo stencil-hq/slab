@@ -386,6 +386,7 @@ function emptyEffects(): Effects {
       sig_runs: [],
       sig_meta: [],
       scrolls: [],
+      has_static_selection: false,
       has_caret: false,
       caret_x: 0,
       caret_y: 0,
@@ -468,6 +469,8 @@ export class SlabElement extends HTMLElement {
    #scrolls = new Map<string, Map<number, number>>();
    #runtimeImages = new Map<string, RuntimeImageRegistration>();
    #dividers = new Map<string, number>();
+   #splits = new Map<string, number>();
+   #nodeStates = new Map<string, Map<string, boolean>>();
    #pendingFocus: [string, boolean] | null = null;
    #settledWaiters: Array<() => void> = [];
    #diagnosticsSignature = '';
@@ -591,7 +594,7 @@ export class SlabElement extends HTMLElement {
 
    /** Mount or hot-swap SLIR bytes on a live element (live-preview hosts
     * compile-on-edit and swap in place). Params, lists, scroll/divider offsets,
-    * runtime images, and env survive; focus and edit state reset.
+    * split-pane sizes, runtime images, and env survive; focus and edit state reset.
     * Returns false when the bytes fail to decode (previous content is
     * already torn down). Fires `slab-frame` after every subsequent paint. */
    loadSlir(bytes: Uint8Array): boolean {
@@ -639,7 +642,7 @@ export class SlabElement extends HTMLElement {
    }
 
    /** Decode SLIR and build painter + holes; re-applies buffered attrs, props,
-    * lists, scroll/divider offsets, and runtime images. `cached` uses the
+    * lists, scroll/divider offsets, split-pane sizes, and runtime images. `cached` uses the
     * per-class font/image caches; live swaps derive per-mount and revoke
     * their object URLs on the next swap. */
    #mount(bytes: Uint8Array, cached: boolean): boolean {
@@ -705,6 +708,11 @@ export class SlabElement extends HTMLElement {
          );
       }
       for (const [key, extent] of this.#dividers) this.setDivider(key, extent);
+      for (const [key, size] of this.#splits) this.setSplit(key, size);
+      for (const [key, states] of this.#nodeStates) {
+         for (const [name, on] of states) inst.set_node_state(key, name, on);
+      }
+      this.#nodeStates.clear();
       // Focus needs a solved scene; #tick replays any pending request.
       return true;
    }
@@ -1123,7 +1131,7 @@ export class SlabElement extends HTMLElement {
       });
       const pointerUp = (event: PointerEvent) => {
          const { x, y } = this.#xy(event);
-         this.#dispatch(
+         const effects = this.#dispatch(
             kernelEvent(E_POINTER_UP, {
                x,
                y,
@@ -1136,6 +1144,12 @@ export class SlabElement extends HTMLElement {
                modifiers: modsOf(event),
             }),
          );
+         if (effects.has_static_selection) {
+            // Static selection is not kernel focus. Keep the component itself
+            // as the browser copy-command target without adding a tab stop.
+            if (!this.hasAttribute('tabindex')) this.tabIndex = -1;
+            this.focus({ preventScroll: true });
+         }
          if (event.button === 2 && this.#contextEdit) this.#restoreContextEdit();
       };
       this.addEventListener('pointerup', pointerUp);
@@ -1250,13 +1264,18 @@ export class SlabElement extends HTMLElement {
          this.#dispatch(kernelEvent(E_CUT));
       });
       this.addEventListener('copy', (event) => {
-         if (!this.#editingEvent(event)) return;
-         const text = this.#ime.value.slice(this.#ime.selectionStart, this.#ime.selectionEnd);
+         const editing = this.#editingEvent(event);
+         const effects = this.#dispatch(kernelEvent(E_COPY));
+         const text =
+            effects.copy_text ??
+            (editing
+               ? this.#ime.value.slice(this.#ime.selectionStart, this.#ime.selectionEnd)
+               : null);
+         if (text === null) return;
          if (event.clipboardData) {
             event.clipboardData.setData('text/plain', text);
             event.preventDefault();
          }
-         this.#dispatch(kernelEvent(E_COPY));
       });
       this.addEventListener('focusout', (event) => {
          const related = event.relatedTarget;
@@ -1935,10 +1954,47 @@ export class SlabElement extends HTMLElement {
       return true;
    }
 
+   /** Set one retained split-pane size. */
+   setSplit(paneKey: string, size: number): boolean {
+      const inst = this.#inst;
+      if (!inst) {
+         this.#splits.set(paneKey, size);
+         return true;
+      }
+      if (!inst.set_split(paneKey, size)) return false;
+      this.#splits.set(paneKey, size);
+      this.#schedule();
+      return true;
+   }
+
+   /** Set one host app state (`selected`, `disabled`, custom idents…) on a
+    * keyed node, driving that node's `when` patches. Before the document
+    * mounts the write is buffered and replayed once. */
+   setNodeState(key: string, name: string, on: boolean): boolean {
+      const inst = this.#inst;
+      if (!inst) {
+         let states = this.#nodeStates.get(key);
+         if (!states) {
+            states = new Map();
+            this.#nodeStates.set(key, states);
+         }
+         states.set(name, on);
+         return true;
+      }
+      if (!inst.set_node_state(key, name, on)) return false;
+      this.#schedule();
+      return true;
+   }
+
    /** Read one keyed divider extent, or `-1` when it is unknown. */
    getDivider(key: string): number {
       const inst = this.#inst;
       return inst ? inst.get_divider(key) : (this.#dividers.get(key) ?? -1);
+   }
+   /** Read one retained split-pane size, or `-1` when it is unknown. */
+   getSplit(paneKey: string): number {
+      const inst = this.#inst;
+      return inst ? inst.get_split(paneKey) : (this.#splits.get(paneKey) ?? -1);
    }
 
    #syncSemantics(): void {

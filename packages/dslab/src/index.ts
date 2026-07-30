@@ -208,6 +208,8 @@ type InputEffect = DriveObject & {
    cursor: number;
    focus: string | null;
    scrolls: Array<DriveObject & { key: DriveSceneKey; axis: Axis; off: number }>;
+   copy_text?: string;
+   has_static_selection?: boolean;
 };
 type InputResult = DriveObject & { effects: InputEffect; t: number };
 type TraceEvent = {
@@ -344,6 +346,8 @@ interface DriveApi {
    'list.window': Endpoint<{ each: DriveEachKey }, DriveObject & { start: number; end: number }>;
    'divider.get': Endpoint<{ key: DriveSceneKey }, DriveObject & { extent: number }>;
    'divider.set': Endpoint<{ key: DriveSceneKey; extent: number }, Ok>;
+   'split.get': Endpoint<{ key: DriveSceneKey }, DriveObject & { size: number }>;
+   'split.set': Endpoint<{ key: DriveSceneKey; size: number }, Ok>;
    'hole.list': Endpoint<
       EmptyParams,
       DriveObject & {

@@ -178,6 +178,8 @@ export interface Effects {
    sig_item: string[];
    sig_meta: SigMeta[];
    range_edit?: RangeEdit;
+   copy_text?: string;
+   has_static_selection?: boolean;
    has_caret: boolean;
    caret_x: number;
    caret_y: number;
