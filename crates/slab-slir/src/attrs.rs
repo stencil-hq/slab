@@ -133,4 +133,7 @@ attr_table! {
 	 PAD_R = 97, "pad-r";
 	 PAD_B = 98, "pad-b";
 	 PAD_L = 99, "pad-l";
+	 SELECT_BG = 100, "select-bg";
+	 SPLIT_W = 101, "split-w";
+	 SPLIT_FG = 102, "split-fg";
 }

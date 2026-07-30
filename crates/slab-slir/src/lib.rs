@@ -62,8 +62,12 @@ pub mod flags {
 	pub const STICKY: u16 = 1 << 11;
 	pub const DRAG_GHOST: u16 = 1 << 12;
 	pub const ESCAPE_BLUR: u16 = 1 << 13;
+	/// Enables kernel-owned pointer selection for static descendant text.
+	pub const SELECT: u16 = 1 << 14;
+	/// Enables kernel-owned proportional split-pane layout and synthetic sashes.
+	pub const SPLITS: u16 = 1 << 15;
 
-	pub const NAMES: [(u16, &str); 14] = [
+	pub const NAMES: [(u16, &str); 16] = [
 		(CLIP, "clip"),
 		(BLEED, "bleed"),
 		(SCROLL, "scroll"),
@@ -78,6 +82,8 @@ pub mod flags {
 		(STICKY, "sticky"),
 		(DRAG_GHOST, "drag-ghost"),
 		(ESCAPE_BLUR, "escape-blur"),
+		(SELECT, "select"),
+		(SPLITS, "splits"),
 	];
 }
 

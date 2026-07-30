@@ -23,6 +23,8 @@ pub const FLAGS: &[&str] = &[
 	"virtual",
 	"drag-ghost",
 	"escape-blur",
+	"select",
+	"splits",
 	"strike",
 	"italic",
 	"underline",
