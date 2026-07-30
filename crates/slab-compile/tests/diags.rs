@@ -317,6 +317,52 @@ fn escape_blur_requires_an_editable_text_node() {
 }
 
 #[test]
+fn select_flag_and_tint_lower_to_slir() {
+	let (slir, diagnostics) =
+		compile("col select select-bg=#12345678 { para { span \"ab\"; span \"cd\" } }\n", &Options {
+			embed_assets: false,
+			..Default::default()
+		});
+	assert!(!diagnostics.has_errors(), "{:?}", diagnostics.0);
+	let slir = slir.expect("selection document compiles");
+	assert_ne!(slir.nodes.flags[0] & slab_slir::flags::SELECT, 0);
+	let start = slir.attr_index[0] as usize;
+	let end = slir.attr_index[1] as usize;
+	let (_, value) = slir.attrs[start..end]
+		.iter()
+		.find(|(attr, _)| *attr == slab_slir::attrs::SELECT_BG)
+		.expect("select-bg is lowered");
+	let paint = slir.avals[*value as usize];
+	assert_eq!(paint.tag, slab_slir::aval::PAINT_SOLID);
+	assert_eq!(paint.lo(), 0x7856_3412);
+}
+
+#[test]
+fn select_is_rejected_on_leaf_nodes() {
+	let (slir, diagnostics) = compile("text select select-bg=#12345678 \"ab\"\n", &Options {
+		embed_assets: false,
+		..Default::default()
+	});
+	let slir = slir.expect("misplaced selection attrs are warnings");
+	assert_eq!(slir.nodes.flags[0] & slab_slir::flags::SELECT, 0);
+	assert!(diagnostics.0.iter().any(|diagnostic| {
+		diagnostic.code == "attr" && diagnostic.msg.contains("`select` applies only to boxes")
+	}));
+	assert!(diagnostics.0.iter().any(|diagnostic| {
+		diagnostic.code == "attr"
+			&& diagnostic
+				.msg
+				.contains("`select-bg` requires `select` on the same box")
+	}));
+	assert!(
+		slir
+			.attrs
+			.iter()
+			.all(|(attr, _)| *attr != slab_slir::attrs::SELECT_BG)
+	);
+}
+
+#[test]
 fn explicit_key_segments_escape_structural_bytes() {
 	let (slir, diagnostics) =
 		compile("col key=\"a/b~%\" {}\n", &Options { embed_assets: false, ..Default::default() });
@@ -480,6 +526,17 @@ fn content_keyframes_warn_on_non_text_bind() {
 		Level::Warning,
 		5,
 	);
+}
+
+#[test]
+fn splits_requires_row_or_col_and_accepts_split_surface() {
+	assert_has("stack splits { rect; rect }\n", "splits-ctx", Level::Error, 1);
+	let (slir, diags) = compile(
+		"row splits split-w=4 split-fg=#f00 resize=resized { col min-w=40 {}; col {}; col {} }\n",
+		&Options::default(),
+	);
+	assert!(slir.is_some(), "{:#?}", diags.0);
+	assert!(diags.0.iter().all(|diag| diag.code != "splits-ctx"), "{:#?}", diags.0);
 }
 
 #[test]

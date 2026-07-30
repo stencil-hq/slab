@@ -189,6 +189,12 @@ export declare class {{ d.class }} extends HTMLElement {
    setDivider(key: string, extent: number): boolean;
    /** Read a keyed divider's extent overlay. */
    getDivider(key: string): number;
+   /** Set one retained split-pane size. */
+   setSplit(paneKey: string, size: number): boolean;
+   /** Read one retained split-pane size. */
+   getSplit(paneKey: string): number;
+   /** Set one host app state (selected, disabled, custom idents) on a keyed node. */
+   setNodeState(key: string, name: string, on: boolean): boolean;
    /** Return the current retained scene, stable until the next solve. */
    sceneSnapshot(): readonly SceneNode[];
 {%- for p in d.params %}

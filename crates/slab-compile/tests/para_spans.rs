@@ -483,8 +483,9 @@ fn kernel_shapes_kerning_and_emits_visual_bidi_runs() {
 		})
 		.sum();
 	assert!(
-		(latin.measured_w - nominal_width).abs() > 0.01,
-		"OpenType kerning must replace nominal codepoint advances"
+		(latin.measured_w - nominal_width).abs() <= 0.01,
+		"shaped runs rebase into FRAME.md-normative advance space (kerning deltas fold back to \
+		 per-codepoint advances so measurement, wrapping, and paint agree)"
 	);
 	let (rtl, _) = runs
 		.iter()

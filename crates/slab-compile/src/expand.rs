@@ -250,7 +250,7 @@ pub struct CNode {
 	pub drag:                   Option<String>,
 	/// Drop-target signal.
 	pub drop:                   Option<String>,
-	/// Divider resize signal.
+	/// Divider or split-container resize signal.
 	pub resize:                 Option<String>,
 	/// Continuous pointer-move signal.
 	pub pointer_move:           Option<String>,
@@ -1554,12 +1554,14 @@ fn apply_attr_concrete(ctx: &mut Ctx, sink: &mut Sink, key: &str, rv: &RVal, lin
 			},
 			_ => ctx.error("ref", "collide expects auto|none".into(), line),
 		},
-		"bg" | "stroke" | "code-color" | "code-bg" => {
+		"bg" | "stroke" | "code-color" | "code-bg" | "select-bg" | "split-fg" => {
 			let id = match key {
 				"bg" => at::BG,
 				"stroke" => at::STROKE,
 				"code-color" => at::CODE_COLOR,
-				_ => at::CODE_BG,
+				"code-bg" => at::CODE_BG,
+				"select-bg" => at::SELECT_BG,
+				_ => at::SPLIT_FG,
 			};
 			if matches!(rv, RVal::Kw(keyword) if keyword == "current") {
 				if ctx.icon_depth != 0 {
@@ -1586,7 +1588,7 @@ fn apply_attr_concrete(ctx: &mut Ctx, sink: &mut Sink, key: &str, rv: &RVal, lin
 				},
 				Ok(None) => {
 					if matches!(rv, RVal::Kw(_)) && key != "code-color" {
-						// Explicit none/transparent clears box and code backgrounds.
+						// Explicit none/transparent clears box, code, and selection backgrounds.
 						sink.set(id, TVal::Paint(Paint::None));
 					}
 				},
@@ -1613,6 +1615,15 @@ fn apply_attr_concrete(ctx: &mut Ctx, sink: &mut Sink, key: &str, rv: &RVal, lin
 				}
 			} else if let Some(v) = num_val(ctx, rv, line, key) {
 				sink.set(at::SCROLLBAR_W, TVal::Num(v.max(0.0)));
+			}
+		},
+		"split-w" => {
+			if let RVal::Param(ix) = rv {
+				if let Some(tv) = expect_param_ty(ctx, *ix, &[ParamType::Num], line, key) {
+					sink.set(at::SPLIT_W, tv);
+				}
+			} else if let Some(v) = num_val(ctx, rv, line, key) {
+				sink.set(at::SPLIT_W, TVal::Num(v.max(0.0)));
 			}
 		},
 		"scrollbar-fg" | "scrollbar-bg" => {
@@ -3507,8 +3518,12 @@ fn expand_builtin(
 							);
 							continue;
 						}
-						if trigger == 8 && kind != nk::DIVIDER {
-							ctx.warn("attr", "resize= applies only to divider nodes".into(), w.line);
+						if trigger == 8 && !matches!(kind, nk::DIVIDER | nk::ROW | nk::COL) {
+							ctx.warn(
+								"attr",
+								"resize= applies only to divider or splits nodes".into(),
+								w.line,
+							);
 							continue;
 						}
 						node.conditional_signals.push((name, trigger));
@@ -3581,6 +3596,24 @@ fn expand_builtin(
 			"scrollbar attributes apply only to nodes with an active scroll axis".into(),
 			a.line,
 		);
+	}
+	let select_box = matches!(
+		kind,
+		nk::ROW | nk::COL | nk::WRAP | nk::GRID | nk::STACK | nk::CANVAS | nk::PARA | nk::GROUP
+	);
+	if node.flags & fl::SELECT != 0 && !select_box {
+		ctx.warn("attr", "`select` applies only to boxes".into(), a.line);
+		node.flags &= !fl::SELECT;
+	}
+	for patch in &mut node.patches {
+		if patch.flag_mask & fl::SELECT != 0 && !select_box {
+			ctx.warn("attr", "`select` applies only to boxes".into(), patch.line);
+			patch.flag_mask &= !fl::SELECT;
+		}
+	}
+	if sink.get(at::SELECT_BG).is_some() && node.flags & fl::SELECT == 0 {
+		ctx.warn("attr", "`select-bg` requires `select` on the same box".into(), a.line);
+		sink.entries.retain(|entry| entry.id != at::SELECT_BG);
 	}
 	if kind != nk::TEXT
 		&& let Some(bind) = &sink.animate
@@ -3753,8 +3786,11 @@ fn expand_builtin(
 		ctx.warn("attr", "cancel= applies only to text nodes with field=".into(), a.line);
 		node.cancel = None;
 	}
-	if node.resize.is_some() && kind != nk::DIVIDER {
-		ctx.warn("attr", "resize= applies only to divider nodes".into(), a.line);
+	if node.resize.is_some()
+		&& kind != nk::DIVIDER
+		&& !(matches!(kind, nk::ROW | nk::COL) && node.flags & fl::SPLITS != 0)
+	{
+		ctx.warn("attr", "resize= applies only to divider or splits nodes".into(), a.line);
 		node.resize = None;
 	}
 	if node.flags & fl::DRAG_GHOST != 0 && node.drag.is_none() {
@@ -3841,6 +3877,8 @@ fn flag_bit(name: &str) -> u16 {
 		"virtual" => fl::VIRTUAL,
 		"drag-ghost" => fl::DRAG_GHOST,
 		"escape-blur" => fl::ESCAPE_BLUR,
+		"select" => fl::SELECT,
+		"splits" => fl::SPLITS,
 		_ => 0,
 	}
 }
@@ -4611,6 +4649,26 @@ fn validate_divider_context(ctx: &mut Ctx, node: &CNode, valid_position: bool) {
 	}
 }
 
+fn validate_splits_context(ctx: &mut Ctx, node: &CNode) {
+	let valid_kind = matches!(node.kind, nk::ROW | nk::COL);
+	if node.flags & fl::SPLITS != 0 && !valid_kind {
+		ctx.error("splits-ctx", "splits is valid only on row or col".into(), node.line);
+	}
+	for patch in &node.patches {
+		if patch.flag_mask & fl::SPLITS != 0 && !valid_kind {
+			ctx.error("splits-ctx", "splits is valid only on row or col".into(), patch.line);
+		}
+	}
+	for child in &node.children {
+		validate_splits_context(ctx, child);
+	}
+	for patch in &node.patches {
+		for child in &patch.children {
+			validate_splits_context(ctx, child);
+		}
+	}
+}
+
 fn stamp_diagnostic_file(diags: &mut Diagnostics, file: Option<&str>) {
 	if let Some(file) = file
 		&& let Some(diagnostic) = diags.0.last_mut()
@@ -4861,6 +4919,7 @@ pub fn expand(units: &[crate::import::Unit], diags: &mut Diagnostics) -> Expande
 	for root in &roots {
 		validate_attach_context(&mut ctx, root, None);
 		validate_divider_context(&mut ctx, root, false);
+		validate_splits_context(&mut ctx, root);
 		validate_sticky_context(&mut ctx, root, None);
 	}
 	let mut static_scene_keys = BTreeSet::new();

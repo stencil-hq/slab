@@ -505,3 +505,56 @@ para w=200 h=40 { each param.runs key=runs }
 	assert_eq!(two.font, custom_font);
 	assert!(runs.next().is_none());
 }
+
+#[test]
+fn bulk_nested_writes_replace_the_whole_subtree() {
+	let source = r#"
+def Tree(label="", children=list(Tree)) export {
+  col {
+    text label
+    each children
+  }
+}
+params { roots list(Tree) = [] }
+col { each param.roots }
+"#;
+	let slir = compile_ok(source);
+	let bytes = slab_slir::write(&slir);
+	let (mut instance, _) = slab_slir::instance(&bytes).expect("recursive list instance");
+	frame::inst_set_env(&mut instance, 200.0, 200.0, 0, false, false);
+
+	// Seed one keyed item with two nested children through the shared writer.
+	slab_compile::input::apply_sets(
+		&mut instance,
+		&[(
+			"roots".to_string(),
+			r#"[{"key":"a","label":"A","children":[{"key":"c1","label":"one"},{"key":"c2","label":"two"}]}]"#
+				.to_string(),
+		)],
+	)
+	.expect("nested bulk write");
+	assert_eq!(frame::inst_list_len(&instance, 0, ""), 1);
+	assert_eq!(frame::inst_list_len(&instance, 0, "0.children"), 2);
+
+	// Reapplying the same key WITHOUT `children` is whole-tree replacement:
+	// an omitted List field is empty (SPEC §13.6), never the stale subtree.
+	slab_compile::input::apply_sets(&mut instance, &[(
+		"roots".to_string(),
+		r#"[{"key":"a","label":"A2"}]"#.to_string(),
+	)])
+	.expect("reapply without children");
+	assert_eq!(frame::inst_list_len(&instance, 0, ""), 1);
+	assert_eq!(
+		frame::inst_list_len(&instance, 0, "0.children"),
+		0,
+		"omitted nested list must shed stale children"
+	);
+
+	// And a later write can regrow the subtree through the same path grammar.
+	slab_compile::input::apply_sets(&mut instance, &[(
+		"roots".to_string(),
+		r#"[{"key":"a","children":[{"key":"c3","label":"three"}]}]"#.to_string(),
+	)])
+	.expect("regrow nested children");
+	assert_eq!(frame::inst_list_len(&instance, 0, "0.children"), 1);
+}

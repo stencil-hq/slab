@@ -8,16 +8,20 @@ use slab_kernel::{
 
 const PARAM_LIST: u32 = 6;
 
+const FIELD_LIST: u32 = 6;
+
+/// One path-addressed kernel list write, emitted in application order.
 #[derive(Debug)]
-struct ListItem {
-	key:    String,
-	fields: Vec<(String, ParamValue)>,
+enum ListOp {
+	Len { path: String, n: i32 },
+	Key { path: String, index: i32, key: String },
+	Field { path: String, index: i32, field: String, value: ParamValue },
 }
 
 #[derive(Debug)]
 enum Prepared {
 	Scalar { param: u32, value: ParamValue },
-	List { param: u32, len: i32, items: Vec<ListItem> },
+	List { param: u32, ops: Vec<ListOp> },
 }
 
 const fn empty_value(kind: u32) -> ParamValue {
@@ -145,26 +149,37 @@ fn json_field_value(doc: &Doc, field: usize, value: &Value) -> Result<ParamValue
 			}
 			out.sym = member.to_string();
 		},
+		FIELD_LIST => return Err("list fields are prepared recursively".to_string()),
 		_ => return Err(format!("unsupported field type {kind}")),
 	}
 	Ok(out)
 }
 
-fn prepare_list(doc: &Doc, param: usize, raw: &str) -> Result<Prepared, String> {
-	let json: Value = serde_json::from_str(raw).map_err(|e| format!("invalid list JSON: {e}"))?;
-	let array = json
-		.as_array()
-		.ok_or_else(|| "list value must be a JSON array".to_string())?;
-	let list = doc
-		.list_param
-		.iter()
-		.position(|&candidate| candidate as usize == param)
-		.ok_or_else(|| "list schema is missing".to_string())?;
+/// Joins the kernel's `<index>.<field>` list-path grammar (`""` = root).
+fn child_path(path: &str, index: usize, field: &str) -> String {
+	if path.is_empty() {
+		format!("{index}.{field}")
+	} else {
+		format!("{path}.{index}.{field}")
+	}
+}
+
+/// Validates one list level and emits its writes, recursing into
+/// `list(Def)`-typed fields so nested JSON replaces the whole subtree
+/// (SPEC §13.6: every public surface accepts equivalent nested JSON).
+fn prepare_list_level(
+	doc: &Doc,
+	list: usize,
+	array: &[Value],
+	path: &str,
+	ops: &mut Vec<ListOp>,
+) -> Result<(), String> {
 	let field_off = doc.list_field_off[list] as usize;
 	let field_len = doc.list_field_len[list] as usize;
-	let mut items = Vec::with_capacity(array.len());
-	let mut keys = Vec::with_capacity(array.len());
+	let len = i32::try_from(array.len()).map_err(|_| "list has too many items".to_string())?;
+	ops.push(ListOp::Len { path: path.to_owned(), n: len });
 
+	let mut keys: Vec<String> = Vec::with_capacity(array.len());
 	for (index, item) in array.iter().enumerate() {
 		let object = item
 			.as_object()
@@ -204,22 +219,64 @@ fn prepare_list(doc: &Doc, param: usize, raw: &str) -> Result<Prepared, String> 
 			return Err(format!("item {index}: duplicate key '{key}'"));
 		}
 		keys.push(key.clone());
+		let item_index = i32::try_from(index).map_err(|_| "list has too many items".to_string())?;
+		ops.push(ListOp::Key { path: path.to_owned(), index: item_index, key });
 
-		let mut fields = Vec::with_capacity(field_len);
 		for field in field_off..field_off + field_len {
 			let name = kslir::str_at(doc, doc.list_field_name[field]);
+			if doc.list_field_type[field] == FIELD_LIST {
+				let Some(raw_value) = object.get(name) else {
+					// Whole-tree replacement: an omitted List field is empty
+					// (SPEC §13.6), so reapplied items shed stale children.
+					ops.push(ListOp::Len { path: child_path(path, index, name), n: 0 });
+					continue;
+				};
+				let nested = raw_value
+					.as_array()
+					.ok_or_else(|| format!("item {index} field '{name}': must be an array"))?;
+				let sub = doc.list_field_sub[field];
+				if sub == 0 {
+					return Err(format!("item {index} field '{name}': missing nested schema"));
+				}
+				prepare_list_level(
+					doc,
+					(sub - 1) as usize,
+					nested,
+					&child_path(path, index, name),
+					ops,
+				)
+				.map_err(|e| format!("item {index} field '{name}': {e}"))?;
+				continue;
+			}
 			let value = match object.get(name) {
 				Some(raw_value) => json_field_value(doc, field, raw_value)
 					.map_err(|e| format!("item {index} field '{name}': {e}"))?,
 				None => default_field_value(doc, field),
 			};
-			fields.push((name.to_owned(), value));
+			ops.push(ListOp::Field {
+				path: path.to_owned(),
+				index: item_index,
+				field: name.to_owned(),
+				value,
+			});
 		}
-		items.push(ListItem { key, fields });
 	}
+	Ok(())
+}
 
-	let len = i32::try_from(items.len()).map_err(|_| "list has too many items".to_string())?;
-	Ok(Prepared::List { param: param as u32, len, items })
+fn prepare_list(doc: &Doc, param: usize, raw: &str) -> Result<Prepared, String> {
+	let json: Value = serde_json::from_str(raw).map_err(|e| format!("invalid list JSON: {e}"))?;
+	let array = json
+		.as_array()
+		.ok_or_else(|| "list value must be a JSON array".to_string())?;
+	let list = doc
+		.list_param
+		.iter()
+		.position(|&candidate| candidate as usize == param)
+		.ok_or_else(|| "list schema is missing".to_string())?;
+	let mut ops = Vec::new();
+	prepare_list_level(doc, list, array, "", &mut ops)?;
+	Ok(Prepared::List { param: param as u32, ops })
 }
 
 fn prepare(doc: &Doc, name: &str, raw: &str) -> Result<Prepared, String> {
@@ -253,19 +310,19 @@ pub fn apply_sets(inst: &mut Instance, sets: &[(String, String)]) -> Result<(), 
 					return Err("validated scalar input was rejected by the kernel".to_string());
 				}
 			},
-			Prepared::List { param, len, items } => {
-				if !kframe::inst_set_list_len(inst, param, "", len) {
-					return Err("validated list length was rejected by the kernel".to_string());
-				}
-				for (index, item) in items.iter().enumerate() {
-					let index = index as i32;
-					if !kframe::inst_set_list_key(inst, param, "", index, &item.key) {
-						return Err("validated list key was rejected by the kernel".to_string());
-					}
-					for (field, field_value) in &item.fields {
-						if !kframe::inst_set_list_field(inst, param, "", index, field, field_value) {
-							return Err("validated list field was rejected by the kernel".to_string());
-						}
+			Prepared::List { param, ops } => {
+				for op in &ops {
+					let applied = match op {
+						ListOp::Len { path, n } => kframe::inst_set_list_len(inst, param, path, *n),
+						ListOp::Key { path, index, key } => {
+							kframe::inst_set_list_key(inst, param, path, *index, key)
+						},
+						ListOp::Field { path, index, field, value } => {
+							kframe::inst_set_list_field(inst, param, path, *index, field, value)
+						},
+					};
+					if !applied {
+						return Err("validated list input was rejected by the kernel".to_string());
 					}
 				}
 			},
