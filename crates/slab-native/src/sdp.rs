@@ -86,6 +86,7 @@ pub fn run_window(
 	let mut app = NativeShell::new(doc, options, event_loop.create_proxy(), SdpHost { pump });
 	event_loop.run_app(&mut app).map_err(|e| e.to_string())?;
 	eprintln!("slab-native: presented {} frames", app.frames);
+	app.finish_stats()?;
 	if app.frames == 0 {
 		return Err("no frames presented".into());
 	}

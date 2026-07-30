@@ -21,6 +21,7 @@ pub mod player;
 pub mod renderer;
 pub(crate) mod sdp;
 pub mod shell;
+pub(crate) mod stats;
 pub mod surface;
 pub mod tess;
 pub mod view;

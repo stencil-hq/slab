@@ -15,7 +15,7 @@
 //! (toggle), and `act=window-drag` (starts an OS window move on press —
 //! bind it on the titlebar container; nested controls still win).
 
-use std::{path::Path, sync::Arc, time::Instant};
+use std::{path::{Path, PathBuf}, sync::Arc, time::Instant};
 
 use slab_kernel::{
 	dispatch as kdispatch,
@@ -37,6 +37,7 @@ use crate::{
 	demo::{self, write_png},
 	input::{self, Clipboard, ImeState},
 	renderer::{LayerInput, Renderer},
+	stats::{FrameMeasurement, FrameStats, InputKind},
 };
 
 /// User-event envelope used by [`NativeShell`]. Hosts can send application
@@ -73,6 +74,10 @@ pub struct ShellOptions {
 	pub max_frames:    Option<u64>,
 	/// Optional wall-clock lifetime after which the shell exits.
 	pub exit_after_ms: Option<u64>,
+	/// Enables frame-time and input-latency collection.
+	pub stats:         bool,
+	/// Optional per-frame CSV output path; also enables statistics collection.
+	pub stats_csv:     Option<PathBuf>,
 }
 
 impl Default for ShellOptions {
@@ -85,6 +90,8 @@ impl Default for ShellOptions {
 			undecorated:   false,
 			max_frames:    None,
 			exit_after_ms: None,
+			stats:         false,
+			stats_csv:     None,
 		}
 	}
 }
@@ -234,6 +241,8 @@ pub fn run_source(
 		undecorated:   opts.undecorated,
 		max_frames:    opts.max_frames,
 		exit_after_ms: opts.exit_after_ms,
+		stats:         opts.stats,
+		stats_csv:     opts.stats_csv.clone(),
 	};
 	if let Some(port) = opts.port {
 		let doc_path = base_dir.join(format!("{name}.slab"));
@@ -247,6 +256,7 @@ pub fn run_source(
 	let mut app = NativeShell::new(doc, options, event_loop.create_proxy(), DefaultShellHost);
 	event_loop.run_app(&mut app).map_err(|e| e.to_string())?;
 	eprintln!("slab-native: presented {} frames", app.frames);
+	app.finish_stats()?;
 	if app.frames == 0 {
 		return Err("no frames presented".into());
 	}
@@ -315,6 +325,7 @@ pub struct NativeShell<U: 'static, H> {
 	surface:         Option<wgpu::Surface<'static>>,
 	surface_format:  wgpu::TextureFormat,
 	renderer:        Option<Renderer>,
+	stats:           Option<FrameStats>,
 	doc:             NativeDocument,
 	doc_id:          usize,
 	host:            H,
@@ -350,6 +361,8 @@ where
 		a11y_proxy: EventLoopProxy<ShellEvent<U>>,
 		host: H,
 	) -> Self {
+		let stats = (opts.stats || opts.stats_csv.is_some())
+			.then(|| FrameStats::new(opts.stats_csv.clone()));
 		Self {
 			exit_deadline: opts
 				.exit_after_ms
@@ -361,6 +374,7 @@ where
 			surface: None,
 			surface_format: wgpu::TextureFormat::Bgra8Unorm,
 			renderer: None,
+			stats,
 			doc,
 			doc_id: 0,
 			host,
@@ -375,6 +389,15 @@ where
 			start: Instant::now(),
 			frames: 0,
 		}
+	}
+
+	/// Prints the collected summary and writes the requested CSV, if enabled.
+	pub fn finish_stats(&mut self) -> Result<(), String> {
+		let Some(stats) = self.stats.take() else {
+			return Ok(());
+		};
+		eprintln!("{}", stats.finish()?);
+		Ok(())
 	}
 
 	/// Returns the mounted document and its live kernel instance.
@@ -452,10 +475,14 @@ where
 	}
 
 	fn draw(&mut self) {
+		let mut measurement = self.stats.as_ref().map(|_| FrameMeasurement::start());
 		if self.occluded {
 			return;
 		}
 		let t = self.t_ms();
+		if let Some(measurement) = &mut measurement {
+			measurement.set_t_ms(t);
+		}
 		let Some(window) = self.window.clone() else {
 			return;
 		};
@@ -463,7 +490,13 @@ where
 		if size.width == 0 || size.height == 0 {
 			return;
 		}
+		if let Some(measurement) = &mut measurement {
+			measurement.begin_kernel();
+		}
 		let fr = kframe::inst_frame(&mut self.doc.inst, t);
+		if let Some(measurement) = &mut measurement {
+			measurement.end_kernel();
+		}
 		let pending = kframe::inst_take_signals(&mut self.doc.inst);
 		self.host.effects(&mut self.doc, &pending);
 		self.refresh_accessibility(&fr, size);
@@ -473,6 +506,7 @@ where
 		let Some(surface) = self.surface.as_ref() else {
 			return;
 		};
+		let _ = renderer.take_atlas_counters();
 		let layers = [LayerInput {
 			doc_id: self.doc_id,
 			inst:   &self.doc.inst,
@@ -482,7 +516,13 @@ where
 			clip:   None,
 		}];
 		let scale = window.scale_factor();
+		if let Some(measurement) = &mut measurement {
+			measurement.begin_build();
+		}
 		let build = renderer.build(&layers, scale, size.width, size.height);
+		if let Some(measurement) = &mut measurement {
+			measurement.end_build();
+		}
 		let frame_tex = match surface.get_current_texture() {
 			wgpu::CurrentSurfaceTexture::Success(texture)
 			| wgpu::CurrentSurfaceTexture::Suboptimal(texture) => texture,
@@ -509,9 +549,22 @@ where
 		let view = frame_tex
 			.texture
 			.create_view(&wgpu::TextureViewDescriptor::default());
+		if let Some(measurement) = &mut measurement {
+			measurement.begin_render();
+		}
 		renderer.render(build, Some((&view, self.surface_format)), wgpu::Color::BLACK);
+		if let Some(measurement) = &mut measurement {
+			measurement.end_render();
+		}
+		let atlas_counters = renderer.take_atlas_counters();
 		window.pre_present_notify();
+		if let Some(measurement) = &mut measurement {
+			measurement.begin_present();
+		}
 		renderer.queue.present(frame_tex);
+		if let (Some(measurement), Some(stats)) = (measurement, &mut self.stats) {
+			measurement.finish(stats, atlas_counters);
+		}
 		self.frames += 1;
 
 		if self.doc.inst.dirty || self.doc.inst.ms.active || self.opts.max_frames.is_some() {
@@ -520,6 +573,13 @@ where
 	}
 
 	fn dispatch(&mut self, event_loop: &ActiveEventLoop, ev: Event) {
+		if let Some(stats) = &mut self.stats {
+			match ev.etype {
+				kdispatch::E_KEY_DOWN | kdispatch::E_TEXT => stats.input(InputKind::Key),
+				kdispatch::E_WHEEL => stats.input(InputKind::Wheel),
+				_ => {},
+			}
+		}
 		let eff = kframe::inst_dispatch(&mut self.doc.inst, &ev);
 		let mut cmd = None;
 		for k in 0..eff.sig_name.len() {

@@ -20,6 +20,8 @@ options:
   --theme NAME               select a compiler-declared theme
   --frames N                 windowed: exit after N presented frames
   --exit-after-ms MS         windowed: exit after MS milliseconds
+  --stats                    print frame-time and input-latency statistics
+  --stats-csv PATH           also write one statistics row per presented frame
   --port N                   serve the live window kernel as an SDP session
                              on 127.0.0.1:N (0 picks a free port)
   --version                  print the version and git commit hash
@@ -88,6 +90,11 @@ fn main() -> ExitCode {
 					Ok(v) => opts.exit_after_ms = Some(v),
 					Err(e) => return err(e),
 				}
+			},
+			"--stats" => opts.stats = true,
+			"--stats-csv" => match val("--stats-csv") {
+				Ok(v) => opts.stats_csv = Some(v.into()),
+				Err(e) => return err(e),
 			},
 			"--dark" => opts.dark = true,
 			"--undecorated" => opts.undecorated = true,

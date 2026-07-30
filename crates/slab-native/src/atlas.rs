@@ -283,11 +283,18 @@ impl AtlasLayer {
 	}
 }
 
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct AtlasCounters {
+	pub(crate) rasterized_glyphs: u32,
+	pub(crate) upload_bytes:      u64,
+}
+
 /// Shared Swash rasterizer and independent mask/color atlas caches.
 pub(crate) struct Atlas {
-	context: ScaleContext,
-	mask:    AtlasLayer,
-	color:   AtlasLayer,
+	context:  ScaleContext,
+	mask:     AtlasLayer,
+	color:    AtlasLayer,
+	counters: AtlasCounters,
 }
 
 impl Atlas {
@@ -297,6 +304,7 @@ impl Atlas {
 			context: ScaleContext::new(),
 			mask:    AtlasLayer::new(AtlasKind::Mask, MASK_INITIAL_SIZE, max_size),
 			color:   AtlasLayer::new(AtlasKind::Color, COLOR_INITIAL_SIZE, max_size),
+			counters: AtlasCounters::default(),
 		}
 	}
 
@@ -338,6 +346,7 @@ impl Atlas {
 		let mut scaler = self.context.builder(font_ref).size(size).hint(true).build();
 		let sources =
 			[Source::ColorOutline(0), Source::ColorBitmap(StrikeWith::BestFit), Source::Outline];
+		self.counters.rasterized_glyphs += 1;
 		let image = Render::new(&sources)
 			.format(Format::Alpha)
 			.offset(Vector::new(
@@ -388,6 +397,14 @@ impl Atlas {
 
 	pub(crate) fn take_dirty(&mut self, kind: AtlasKind) -> Option<(u32, u32)> {
 		self.layer_mut(kind).take_dirty()
+	}
+
+	pub(crate) fn record_upload(&mut self, bytes: u64) {
+		self.counters.upload_bytes += bytes;
+	}
+
+	pub(crate) fn take_counters(&mut self) -> AtlasCounters {
+		std::mem::take(&mut self.counters)
 	}
 
 	const fn layer(&self, kind: AtlasKind) -> &AtlasLayer {

@@ -31,7 +31,7 @@ use wgpu::util::DeviceExt;
 
 use crate::{
 	RegisteredFont,
-	atlas::{Atlas, AtlasKind, Face},
+	atlas::{Atlas, AtlasCounters, AtlasKind, Face},
 	tess::{
 		Mesh, fill_mesh, fill_mesh_data, rect_stroke_mesh, squircle_fill_mesh, stroke_mesh,
 		stroke_mesh_data,
@@ -2317,6 +2317,7 @@ impl Renderer {
 				AtlasKind::Mask => &self.atlas_mask_tex,
 				AtlasKind::Color => &self.atlas_color_tex,
 			};
+			self.atlas.record_upload(u64::from(stride) * u64::from(rows));
 			self.queue.write_texture(
 				wgpu::TexelCopyTextureInfo {
 					texture,
@@ -2337,6 +2338,12 @@ impl Renderer {
 				},
 			);
 		}
+	}
+
+	/// Takes glyph rasterization and atlas upload counters accumulated since
+	/// the previous call.
+	pub(crate) fn take_atlas_counters(&mut self) -> AtlasCounters {
+		self.atlas.take_counters()
 	}
 
 	// ----------------------------------------------------------- render ----
