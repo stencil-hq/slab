@@ -78,6 +78,12 @@ fn inst_set_field_text(i: &mut Instance, key: &str, text: &str) -> bool
 fn inst_field_text(i: &Instance, key: &str) -> Option<String>
     // Committed EditState text, or resolved content before first bind.
     // None = unknown key or a node without field=.
+struct FieldStyle { start: i32, end: i32, rgba: u32, flags: u32 }
+    // Paint-only codepoint range; flags bit 0 requests synthetic italic.
+fn inst_set_field_styles(i: &mut Instance, key: &str,
+                         styles: &[FieldStyle]) -> bool
+    // Atomically replace ascending, non-overlapping ranges after clamping to
+    // committed text bounds. false = invalid ranges or unknown/non-field key.
 struct FieldRun { style: u32, start: i32, end: i32 }
     // style: 0 bold | 1 italic | 2 underline | 3 strike | 4 code.
     // start/end are a non-empty half-open codepoint range on grapheme
@@ -248,9 +254,9 @@ fn text_glyphs(i: &Instance, fr: &Frame, op: i32) -> Vec<GlyphPos>
 ### Browser and Node WebAssembly surface
 
 Instance editing APIs are available at both public host boundaries. SDP exposes
-`field.caret.get/set`, `field.runs.get/set`, `field.style.toggle`, and
-`field.range.get/clear`; SDP.md defines their strict request schemas and
-protocol errors.
+`field.caret.get/set`, `field.runs.get/set`, `field.style.toggle`,
+`field.styles`, and `field.range.get/clear`; SDP.md defines their strict request
+schemas and protocol errors.
 
 `KInst` is the wasm-bindgen owner of a decoded and initialized Rust `Instance`.
 Its constructor accepts SLIR bytes and returns an error if Rust cannot decode
@@ -262,15 +268,24 @@ them. The field bridge exposes `set_caret` and `get_caret_json`,
 rejects `set_field_runs_json` without mutation. Range JSON is either null or
 `{"anchor":{"key","offset"},"head":{"key","offset"}}` with canonical
 `FieldLocator` keys.
+Paint-only styles cross WASM as
+`set_field_styles(key: string, flat: &[i32])`, where `flat` contains repeated
+`start,end,rgba,flags` quads.
 
 The bridge otherwise mirrors the native contract with JavaScript-safe
-arguments. List methods (`list_len`, `set_list_len`, `set_list_key`,
-`set_list_field`) include `path`; `set_scroll` and `get_scroll` include `axis`.
-It also exposes `reveal`, `reveal_item`, `focus_item`, `each_window_json`,
-`set_divider`, `get_divider`, `img_register`, `img_unregister`,
-`image_info_json`, and unified-index `image_data`, plus `clear_focus` and
-`focus_note` alongside the existing environment, parameter, state, focus,
-theme, font, and hole methods.
+arguments. Its generic `set_param` and `set_list_field` transports take
+`kind, num, value, rgba, boolean, symbol` payload arguments: kind 0 selects
+`value` (Text), 1 selects `num` (Num), 2 selects `num` (Pct), 3 selects `rgba`
+(Color), 4 selects the distinct `boolean` payload (Bool), and 5 selects
+`symbol` (Enum). Payloads not selected by `kind` are ignored. Rust callers
+instead pass the corresponding typed `ParamValue` variant, including
+`ParamValue::Bool(bool)`. List methods (`list_len`, `set_list_len`,
+`set_list_key`, `set_list_field`) include `path`; `set_scroll` and
+`get_scroll` include `axis`. It also exposes `reveal`, `reveal_item`,
+`focus_item`, `each_window_json`, `set_divider`, `get_divider`,
+`img_register`, `img_unregister`, `image_info_json`, and unified-index
+`image_data`, plus `clear_focus` and `focus_note` alongside the existing
+environment, parameter, state, focus, theme, font, and hole methods.
 
 Cold structured results cross the boundary as JSON: `holes_json`,
 `dispatch_json`, `caret_effects_json`, `statics_json`, `scene_json`,
@@ -318,12 +333,28 @@ Layout-time diagnostics accumulate per solve in `Instance.st.diag_code` /
 rendered with the canonical `fmt3` formatter.
 
 ```rust
-struct ParamValue { kind: u32, num: f64, s: String, rgba: u32, sym: String }
-    // kind mirrors the scalar PARM/List-field type it must match:
-    // 0 Text(s) | 1 Num(num) | 2 Pct(num) | 3 Color(rgba) |
-    // 4 Bool(num 0|1) | 5 Enum(sym — must name a declared member).
-    // PARM type 6 List is replaced only through the list API above.
-    // All setters are total, atomic, and dirty only on an actual value change.
+pub enum ParamValue {
+    Text(String),
+    Num(f64),
+    Pct(f64),
+    Color(u32),
+    Bool(bool),
+    Enum(String),
+}
+```
+
+`inst_set_param` accepts only the variant matching the declared scalar
+parameter type; a List parameter cannot be replaced through this setter.
+`inst_set_list_field` likewise requires the variant matching the selected
+scalar field and rejects a List-typed field. For either setter, an Enum symbol
+must be a member declared by that parameter or field. An unknown WASM `kind`
+and every resolution, type, or enum-validation failure return `false` without
+mutation or a dirty mark. A valid write returns `true`; if its value is equal
+to the retained value it is a no-op and does not dirty the instance, while an
+actual value change is applied atomically and marks the instance dirty for the
+next `inst_frame`.
+
+```rust
 struct HoleRect { hole: u32, x: f64, y: f64, w: f64, h: f64, clip: bool }
 struct GlyphPos { font: i32, gid: u32, x: f64, y: f64, size: f64 }
 ```
@@ -372,7 +403,9 @@ atomically (`-1` from `inst_list_len`, `false` from setters). The separate
 by `path`.
 
 List values, keys, and the synthetic-node registry are persistent Instance
-state. Synthetic ids are stable by `(Each node, template node, item key)`;
+state. Retained Bool parameter and list-field values are bit-packed; this
+runtime storage detail does not change their typed host payloads. Synthetic
+ids are stable by `(Each node, template node, item key)`;
 state maps retain that synthetic id while every SLIR/document read uses its
 template base node. The public descendant key is
 `<each-key>~<item-key>/<template-relative-key>`. Truncation prunes values,
@@ -544,8 +577,12 @@ itself never rolls back. A same-named Text-param reset is host synchronization,
 so it clears spans with the replacement text but neither emits Change nor
 increments revision. A host can remember the revision from its own last write
 and ignore a returned Change payload with that revision, while accepting later
-revisions. `inst_set_field_text` clears existing spans; rich hosts replace text
-and then call `inst_set_field_runs`.
+revisions. `inst_set_field_text` clears existing spans and host paint styles;
+rich hosts replace text and then call `inst_set_field_runs`. Paint-only styles
+do not participate in measurement, wrapping, revisions, Change payloads, caret,
+selection, or IME geometry. Text splices adjust their codepoint endpoints like
+inline spans; paint emission splits runs at their boundaries, overrides color,
+and ORs synthetic italic without selecting a different face.
 Backspace/Delete delete grapheme clusters; Ctrl/Meta/Alt word deletion and
 Ctrl-K/U kills use the visual line; Ctrl/Meta-Z and
 Ctrl/Meta-Shift-Z traverse bounded grouped

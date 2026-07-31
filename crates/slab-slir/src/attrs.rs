@@ -136,4 +136,5 @@ attr_table! {
 	 SELECT_BG = 100, "select-bg";
 	 SPLIT_W = 101, "split-w";
 	 SPLIT_FG = 102, "split-fg";
+	 TAB_SIZE = 103, "tab-size";
 }

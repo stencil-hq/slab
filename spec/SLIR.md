@@ -208,8 +208,19 @@ fallback metrics. Only fallback face selection chooses among the bundled
 400/500/600/700 faces, taking the nearest weight and rounding ties up; the
 table's `weight` remains the normalized authored value.
 
+The `font_data` pool (sliced by `font_data_off`/`font_data_len`) carries sfnt
+bytes only for host-supplied compile-time faces, which no runtime can resolve
+on its own. Tables backed by a bundled face are metrics-only: every kernel
+resolves such a compiled table to the identical vendored face for shaping and
+paint, so documents never ship the bundled Inter or JetBrains Mono binaries.
+Writers may share one payload or cmap/advance run between tables with
+identical content; readers must treat each table's ranges as independent
+slices, never as a contiguous partition.
+
 Runtimes may register a face by `(family name, weight, metrics, font bytes)`;
-the registered table preserves that supplied weight. The kernel appends its
+the registered table preserves that supplied weight. The font bytes are
+optional: a metrics-only registered table shapes from its cmap and advances
+while the host paints its own matching face. The kernel appends its
 metric table, matches family names ASCII-case-insensitively, and selects the
 nearest weight; later equal candidates win, so a registered face overrides an
 equal-weight compiled fallback. If no matching family exists, it falls back to
@@ -268,7 +279,7 @@ The attribute id mapping is shared by `crates/slab-slir/src/attrs.rs` and
 88 set-size      89 animate       90 strike        91 cancel        92 italic
 93 underline     94 code-color    95 code-bg
 96 pad-t         97 pad-r        98 pad-b         99 pad-l
-100 select-bg   101 split-w      102 split-fg
+100 select-bg   101 split-w      102 split-fg      103 tab-size
 ```
 
 `style=`, `key=`, and `transition=` do not appear in attribute runs: styles
@@ -283,6 +294,8 @@ attributes 94 and 95 are the non-inherited rich-field code-run paints
 Attribute 100 is the optional non-inherited static-selection tint paint
 (`select-bg`).
 Attributes 101 and 102 are the split-container sash thickness and active paint.
+Attribute 103 is the numeric opt-in plain-Tab insertion width for multiline
+editable text (`tab-size`).
 `sign_trigger=13` is an internal discriminator for typed
 `keys=Key:signal` entries. It has the same host-facing Activate payload as
 trigger 0, but keeps default Enter/Space activation from selecting an arbitrary

@@ -152,6 +152,7 @@ constants. Human-authored probes MAY use unique ids and id-rooted suffixes.
 | `field.caret.set` | `{key,caret,anchor,goal_x?}` | Sets a directed selection; null or omitted `goal_x` resets the goal. Returns `{ok:true,changed:true}`. |
 | `field.runs.get` | `{key}` | Returns canonical rich runs as `{rev,runs:[{style,start,end}]}`. |
 | `field.runs.set` | `{key,rev,runs:[{style,start,end}]}` | Atomically replaces rich runs and returns `{ok:true,changed}`. |
+| `field.styles` | `{key,ranges:[[start,end,"#rrggbb",italic?],...]}` | Atomically replaces ascending, non-overlapping paint-only codepoint ranges and returns `{ok:true}`. Colors may also use `#rrggbbaa`. |
 | `field.style.toggle` | `{key,style}` | Toggles style `0..4` over the current selection and returns `{ok:true,changed}`. |
 | `field.range.get` | none | Returns `{range:{anchor:{key,offset},head:{key,offset}}}` or `{range:null}`. |
 | `field.range.clear` | none | Clears cross-field metadata and returns `{ok:true,changed}`. |

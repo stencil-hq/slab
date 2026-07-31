@@ -12,6 +12,7 @@ use unicode_segmentation::UnicodeSegmentation as _;
 
 use crate::{
 	graphemes,
+	text::Text,
 	textm::{self, TextLayout},
 };
 
@@ -38,9 +39,51 @@ pub const STYLE_STRIKE: u32 = 3;
 /// Monospace-family inline-style identifier used by host rich-field APIs.
 pub const STYLE_CODE: u32 = 4;
 
+/// One host-supplied paint-only style over committed field text.
+///
+/// Offsets are codepoint positions. `flags & 1` requests synthetic italic
+/// paint; neither color nor flags participate in text measurement.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FieldStyle {
+	pub start: i32,
+	pub end:   i32,
+	pub rgba:  u32,
+	pub flags: u32,
+}
+
+impl FieldStyle {
+	/// Paint-only italic flag.
+	pub const ITALIC: u32 = 1;
+}
+
+const fn inserted_bounds(start: &mut i32, end: &mut i32, at: i32, len: i32) {
+	if at <= *start {
+		*start = start.wrapping_add(len);
+		*end = end.wrapping_add(len);
+	} else if at <= *end {
+		*end = end.wrapping_add(len);
+	}
+}
+
+const fn deleted_point(point: i32, start: i32, end: i32) -> i32 {
+	if point <= start {
+		point
+	} else if point >= end {
+		point - end.saturating_sub(start)
+	} else {
+		start
+	}
+}
+
 /// Sorted, disjoint, non-empty codepoint ranges.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Ranges(pub Vec<(i32, i32)>);
+
+impl Ranges {
+	fn retain_nonempty(&mut self) {
+		self.0.retain(|(start, end)| start < end);
+	}
+}
 
 impl Ranges {
 	/// Removes empty ranges, sorts them, and merges overlap or adjacency.
@@ -62,35 +105,20 @@ impl Ranges {
 	/// Adjusts ranges for `len` codepoints inserted at `at`.
 	pub fn insert(&mut self, at: i32, len: i32) {
 		for (start, end) in &mut self.0 {
-			if at <= *start {
-				*start = start.wrapping_add(len);
-				*end = end.wrapping_add(len);
-			} else if at <= *end {
-				*end = end.wrapping_add(len);
-			}
+			inserted_bounds(start, end, at, len);
 		}
 	}
 
 	/// Adjusts ranges for deletion of `[a, b)`.
 	pub fn delete(&mut self, a: i32, b: i32) {
-		let deleted = b.saturating_sub(a);
-		if deleted == 0 {
+		if a >= b {
 			return;
 		}
-		let map = |point: i32| {
-			if point <= a {
-				point
-			} else if point >= b {
-				point - deleted
-			} else {
-				a
-			}
-		};
 		for (start, end) in &mut self.0 {
-			*start = map(*start);
-			*end = map(*end);
+			*start = deleted_point(*start, a, b);
+			*end = deleted_point(*end, a, b);
 		}
-		self.normalize();
+		self.retain_nonempty();
 	}
 
 	/// Reports whether every codepoint of `[a, b)` is covered.
@@ -238,6 +266,20 @@ impl InlineSpans {
 		self.code.insert(at, len);
 	}
 
+	/// Reports whether `next` equals this span set transformed by one
+	/// contiguous text splice (`delta` in new-text coordinates).
+	///
+	/// True proves every boundary outside the edit window moved positionally,
+	/// the invariant [`crate::textm::measure_text_spliced_into`] needs to
+	/// retain prefix/suffix lines of a rich layout; style toggles or host
+	/// span replacement compare unequal and force a full re-measure.
+	pub fn follows_splice(&self, next: &Self, delta: crate::textm::TextDelta) -> bool {
+		let mut expected = self.clone();
+		expected.delete(delta.at, delta.at.wrapping_add(delta.removed));
+		expected.insert(delta.at, delta.inserted);
+		expected == *next
+	}
+
 	/// Reports whether all style sets are empty.
 	pub const fn is_empty(&self) -> bool {
 		self.bold.0.is_empty()
@@ -246,6 +288,23 @@ impl InlineSpans {
 			&& self.strike.0.is_empty()
 			&& self.code.0.is_empty()
 	}
+}
+
+fn field_styles_insert(styles: &mut [FieldStyle], at: i32, len: i32) {
+	for style in styles {
+		inserted_bounds(&mut style.start, &mut style.end, at, len);
+	}
+}
+
+fn field_styles_delete(styles: &mut Vec<FieldStyle>, start: i32, end: i32) {
+	if start >= end {
+		return;
+	}
+	for style in styles.iter_mut() {
+		style.start = deleted_point(style.start, start, end);
+		style.end = deleted_point(style.end, start, end);
+	}
+	styles.retain(|style| style.start < style.end);
 }
 
 /// Encodes one rich-field change payload as deterministic JSON.
@@ -293,19 +352,20 @@ pub struct CrossFieldRange {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum UndoRecord {
 	/// Replaces `inserted_len` codepoints at `at` with `removed`.
-	Splice { at: i32, removed: String, inserted_len: i32 },
+	Splice { at: i32, removed: Vec<u32>, inserted_len: i32 },
 	/// Complete target text for a mutation group that cannot be one splice.
-	Full(String),
+	Full(Text),
 }
 
 /// One undo or redo transition, including the target selection and spans.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UndoStep {
-	pub record:    UndoRecord,
-	pub spans:     InlineSpans,
-	pub caret:     i32,
-	pub anchor:    i32,
-	text_recorded: bool,
+	pub record:       UndoRecord,
+	pub spans:        InlineSpans,
+	pub field_styles: Vec<FieldStyle>,
+	pub caret:        i32,
+	pub anchor:       i32,
+	text_recorded:    bool,
 }
 
 impl UndoStep {
@@ -336,7 +396,7 @@ pub struct EditState {
 	/// Node that owns this editing state.
 	pub node:            u32,
 	/// Committed text.
-	pub text:            String,
+	pub text:            Text,
 	/// Active end of the selection, as a codepoint offset.
 	pub caret:           i32,
 	/// Fixed end of the selection, as a codepoint offset.
@@ -355,6 +415,8 @@ pub struct EditState {
 	pub goal_x:          f64,
 	/// Committed inline-style spans.
 	pub spans:           InlineSpans,
+	/// Host-supplied paint-only ranges over committed text.
+	pub field_styles:    Vec<FieldStyle>,
 	/// Monotonic committed text-or-span change counter.
 	pub revision:        u64,
 	/// Reverse deltas in the undo stack.
@@ -411,10 +473,11 @@ impl EditState {
 
 /// Creates editing state with the caret collapsed at the end of `text`.
 pub fn es_new(node: u32, text: &str) -> EditState {
-	let end = crate::rt::str_len(text);
+	let text = Text::from(text);
+	let end = text.len();
 	EditState {
 		node,
-		text: text.to_owned(),
+		text,
 		caret: end,
 		anchor: end,
 		composing: false,
@@ -423,6 +486,7 @@ pub fn es_new(node: u32, text: &str) -> EditState {
 		scroll_x: 0.0,
 		goal_x: NO_GOAL_X,
 		spans: InlineSpans::default(),
+		field_styles: Vec::new(),
 		revision: 0,
 		undo: Vec::new(),
 		redo: Vec::new(),
@@ -435,7 +499,7 @@ pub fn es_new(node: u32, text: &str) -> EditState {
 
 /// Returns the committed text, excluding any active composition.
 pub fn text_str(es: &EditState) -> String {
-	es.text.clone()
+	es.text.to_utf8()
 }
 /// Returns spans adjusted to the uncommitted composition display.
 pub fn display_spans(es: &EditState) -> InlineSpans {
@@ -446,20 +510,53 @@ pub fn display_spans(es: &EditState) -> InlineSpans {
 	spans
 }
 
-/// Returns the text as displayed, with composition text inserted at the caret.
-pub fn display_str(es: &EditState) -> String {
-	if !es.composing && es.compose.is_empty() {
-		// Hot path: committed text displays verbatim; one memcpy, no
-		// per-codepoint scan.
-		return es.text.clone();
+/// Returns paint-only styles projected around uncommitted composition text.
+///
+/// The preedit itself remains unstyled; a range crossing the caret is split so
+/// the committed text on both sides keeps its paint after the display shift.
+pub fn display_field_styles(es: &EditState) -> std::borrow::Cow<'_, [FieldStyle]> {
+	if !es.composing || es.compose.is_empty() || es.field_styles.is_empty() {
+		return std::borrow::Cow::Borrowed(&es.field_styles);
 	}
-	let mut display = crate::rt::str_slice(&es.text, 0, es.caret);
-	display.push_str(&es.compose);
-	display.push_str(&crate::rt::str_slice(&es.text, es.caret, crate::rt::str_len(&es.text)));
-	display
+	let inserted = crate::rt::str_len(&es.compose);
+	let mut display = Vec::with_capacity(es.field_styles.len().saturating_add(1));
+	for style in &es.field_styles {
+		if style.end <= es.caret {
+			display.push(*style);
+		} else if style.start >= es.caret {
+			display.push(FieldStyle {
+				start: style.start.wrapping_add(inserted),
+				end: style.end.wrapping_add(inserted),
+				..*style
+			});
+		} else {
+			display.push(FieldStyle { end: es.caret, ..*style });
+			display.push(FieldStyle {
+				start: es.caret.wrapping_add(inserted),
+				end: style.end.wrapping_add(inserted),
+				..*style
+			});
+		}
+	}
+	std::borrow::Cow::Owned(display)
 }
 
-/// Returns the caret offset in [`display_str`], after composition text.
+/// Returns the text as displayed, with composition text inserted at the caret.
+pub fn display_text(es: &EditState) -> Text {
+	if !es.composing && es.compose.is_empty() {
+		// Hot path: committed text displays verbatim; one reference clone.
+		return es.text.clone();
+	}
+	let cps = es.text.cps();
+	let caret = usize::try_from(es.caret).expect("negative caret");
+	let mut display = Vec::with_capacity(cps.len() + es.compose.len());
+	display.extend_from_slice(&cps[..caret]);
+	display.extend(es.compose.chars().map(u32::from));
+	display.extend_from_slice(&cps[caret..]);
+	Text::from_cps(display)
+}
+
+/// Returns the caret offset in [`display_text`], after composition text.
 pub fn display_caret(es: &EditState) -> i32 {
 	es.caret.wrapping_add(crate::rt::str_len(&es.compose))
 }
@@ -506,10 +603,11 @@ fn current_step(es: &EditState) -> UndoStep {
 	UndoStep {
 		record:        UndoRecord::Splice {
 			at:           0,
-			removed:      String::new(),
+			removed:      Vec::new(),
 			inserted_len: 0,
 		},
 		spans:         es.spans.clone(),
+		field_styles:  es.field_styles.clone(),
 		caret:         es.caret,
 		anchor:        es.anchor,
 		text_recorded: false,
@@ -566,7 +664,7 @@ pub fn reset_history(es: &mut EditState) {
 /// undo or redo entries.
 pub fn restore_baseline(
 	es: &mut EditState,
-	text: String,
+	text: &str,
 	spans: InlineSpans,
 	caret: i32,
 	anchor: i32,
@@ -574,7 +672,7 @@ pub fn restore_baseline(
 	revision: u64,
 ) {
 	reset_history(es);
-	es.text = text;
+	es.text = Text::from(text);
 	es.spans = spans;
 	es.caret = caret;
 	es.anchor = anchor;
@@ -617,21 +715,19 @@ pub fn replace_spans(es: &mut EditState, spans: InlineSpans) -> bool {
 	true
 }
 
-fn append_codepoints(out: &mut String, text: &str, start: i32, end: i32) {
-	out.push_str(&text[byte_offset(text, start)..byte_offset(text, end)]);
-}
-
-fn text_with_reverse_splice(text: &str, at: i32, removed: &str, inserted_len: i32) -> String {
-	let mut restored = String::with_capacity(
-		text
-			.len()
+fn text_with_reverse_splice(text: &Text, at: i32, removed: &[u32], inserted_len: i32) -> Text {
+	let cps = text.cps();
+	let at_index = usize::try_from(at).expect("negative splice offset");
+	let old_end = usize::try_from(at.wrapping_add(inserted_len)).expect("negative splice end");
+	let mut restored = Vec::with_capacity(
+		cps.len()
 			.saturating_add(removed.len())
-			.saturating_sub(byte_offset(text, at.wrapping_add(inserted_len)) - byte_offset(text, at)),
+			.saturating_sub(old_end - at_index),
 	);
-	append_codepoints(&mut restored, text, 0, at);
-	restored.push_str(removed);
-	append_codepoints(&mut restored, text, at.wrapping_add(inserted_len), crate::rt::str_len(text));
-	restored
+	restored.extend_from_slice(&cps[..at_index]);
+	restored.extend_from_slice(removed);
+	restored.extend_from_slice(&cps[old_end..]);
+	Text::from_cps(restored)
 }
 
 fn record_splice(es: &mut EditState, lo: i32, hi: i32, insert_len: i32) {
@@ -646,7 +742,7 @@ fn record_splice(es: &mut EditState, lo: i32, hi: i32, insert_len: i32) {
 	if !step.text_recorded {
 		step.record = UndoRecord::Splice {
 			at:           lo,
-			removed:      crate::rt::str_slice(&es.text, lo, hi),
+			removed:      es.text.slice_cps(lo, hi),
 			inserted_len: insert_len,
 		};
 		step.text_recorded = true;
@@ -665,10 +761,12 @@ fn record_splice(es: &mut EditState, lo: i32, hi: i32, insert_len: i32) {
 
 	let start = (*at).min(lo);
 	let end = old_end.max(hi);
-	let mut baseline = String::new();
-	append_codepoints(&mut baseline, &es.text, start, *at);
-	baseline.push_str(removed);
-	append_codepoints(&mut baseline, &es.text, old_end, end);
+	let mut baseline = es.text.slice_cps(start, *at);
+	baseline.extend_from_slice(removed);
+	baseline.extend_from_slice(
+		&es.text.cps()[usize::try_from(old_end).expect("negative splice end")
+			..usize::try_from(end).expect("negative splice end")],
+	);
 	step.record = UndoRecord::Splice {
 		at:           start,
 		removed:      baseline,
@@ -684,7 +782,8 @@ pub fn splice(es: &mut EditState, lo: i32, hi: i32, insert: &str) -> bool {
 	if lo == hi && insert.is_empty() {
 		return false;
 	}
-	let added = crate::rt::str_len(insert);
+	let insert_cps: Vec<u32> = insert.chars().map(u32::from).collect();
+	let added = i32::try_from(insert_cps.len()).expect("insert has too many codepoints");
 	record_splice(es, lo, hi, added);
 	es.accumulate_delta(crate::textm::TextDelta {
 		at:       lo,
@@ -693,14 +792,13 @@ pub fn splice(es: &mut EditState, lo: i32, hi: i32, insert: &str) -> bool {
 	});
 	if hi > lo {
 		es.spans.delete(lo, hi);
+		field_styles_delete(&mut es.field_styles, lo, hi);
 	}
 	if added > 0 {
 		es.spans.insert(lo, added);
+		field_styles_insert(&mut es.field_styles, lo, added);
 	}
-	let mut text = crate::rt::str_slice(&es.text, 0, lo);
-	text.push_str(insert);
-	text.push_str(&crate::rt::str_slice(&es.text, hi, crate::rt::str_len(&es.text)));
-	es.text = text;
+	es.text.splice(lo, hi, &insert_cps);
 	es.revision = es.revision.wrapping_add(1);
 	true
 }
@@ -773,9 +871,7 @@ pub fn backspace(es: &mut EditState) -> bool {
 	}
 
 	begin_mutation(es, MUT_DELETE);
-	let mut boundaries = Vec::new();
-	graphemes::boundaries(&es.text, &mut boundaries);
-	let previous = graphemes::prev_boundary(&boundaries, es.caret);
+	let previous = graphemes::prev_boundary_in(es.text.cps(), es.caret);
 	splice_out(es, previous, es.caret);
 	es.caret = previous;
 	es.anchor = previous;
@@ -788,15 +884,13 @@ pub fn del(es: &mut EditState) -> bool {
 		begin_mutation(es, MUT_DELETE);
 		return delete_selection_raw(es);
 	}
-	let end = crate::rt::str_len(&es.text);
+	let end = es.text.len();
 	if es.caret >= end {
 		return false;
 	}
 
 	begin_mutation(es, MUT_DELETE);
-	let mut boundaries = Vec::new();
-	graphemes::boundaries(&es.text, &mut boundaries);
-	let next = graphemes::next_boundary(&boundaries, es.caret, end);
+	let next = graphemes::next_boundary_in(es.text.cps(), es.caret);
 	splice_out(es, es.caret, next);
 	es.anchor = es.caret;
 	true
@@ -844,7 +938,9 @@ fn visit_word_stops(text: &str, mut visit: impl FnMut(usize) -> bool) {
 /// Stops begin at UAX #29 word segments and standalone non-whitespace
 /// segments. Trailing punctuation and symbols merge into an adjacent preceding
 /// word. At a stop, the preceding stop is chosen.
-pub fn word_prev(text: &str, caret: i32) -> i32 {
+pub fn word_prev(text: &Text, caret: i32) -> i32 {
+	let text = text.to_utf8();
+	let text = text.as_str();
 	let caret_byte = byte_offset(text, caret);
 	let mut previous = 0;
 	visit_word_stops(text, |byte| {
@@ -862,7 +958,9 @@ pub fn word_prev(text: &str, caret: i32) -> i32 {
 /// Stops begin at UAX #29 word segments and standalone non-whitespace
 /// segments. Trailing punctuation and symbols merge into an adjacent preceding
 /// word. A stop at the caret is skipped.
-pub fn word_next(text: &str, caret: i32) -> i32 {
+pub fn word_next(text: &Text, caret: i32) -> i32 {
+	let text = text.to_utf8();
+	let text = text.as_str();
 	let caret_byte = byte_offset(text, caret);
 	let mut following = text.len();
 	visit_word_stops(text, |byte| {
@@ -934,12 +1032,10 @@ pub fn move_caret(es: &mut EditState, delta: i32, select: bool, word: bool) {
 			word_next(&es.text, es.caret)
 		}
 	} else {
-		let mut boundaries = Vec::new();
-		graphemes::boundaries(&es.text, &mut boundaries);
 		if delta < 0 {
-			graphemes::prev_boundary(&boundaries, es.caret)
+			graphemes::prev_boundary_in(es.text.cps(), es.caret)
 		} else {
-			graphemes::next_boundary(&boundaries, es.caret, crate::rt::str_len(&es.text))
+			graphemes::next_boundary_in(es.text.cps(), es.caret)
 		}
 	};
 
@@ -962,7 +1058,7 @@ pub const fn home(es: &mut EditState, select: bool) {
 pub fn end(es: &mut EditState, select: bool) {
 	history_barrier(es);
 	es.goal_x = NO_GOAL_X;
-	es.caret = crate::rt::str_len(&es.text);
+	es.caret = es.text.len();
 	if !select {
 		es.anchor = es.caret;
 	}
@@ -973,7 +1069,7 @@ pub fn select_all(es: &mut EditState) {
 	history_barrier(es);
 	es.goal_x = NO_GOAL_X;
 	es.anchor = 0;
-	es.caret = crate::rt::str_len(&es.text);
+	es.caret = es.text.len();
 }
 
 /// Finds the visual line containing `caret`.
@@ -1237,9 +1333,10 @@ fn apply_history_step(es: &mut EditState, step: UndoStep) -> (UndoStep, bool) {
 	let (inverse_record, text_changed) = match step.record {
 		UndoRecord::Splice { at, removed, inserted_len } => {
 			let end = at.wrapping_add(inserted_len);
-			let inverse_removed = crate::rt::str_slice(&es.text, at, end);
+			let inverse_removed = es.text.slice_cps(at, end);
 			let changed = inverse_removed != removed;
-			let inverse_inserted_len = crate::rt::str_len(&removed);
+			let inverse_inserted_len =
+				i32::try_from(removed.len()).expect("removed text has too many codepoints");
 			es.accumulate_delta(crate::textm::TextDelta {
 				at,
 				removed: inserted_len,
@@ -1260,6 +1357,7 @@ fn apply_history_step(es: &mut EditState, step: UndoStep) -> (UndoStep, bool) {
 	let inverse_step = UndoStep {
 		record:        inverse_record,
 		spans:         std::mem::replace(&mut es.spans, step.spans),
+		field_styles:  std::mem::replace(&mut es.field_styles, step.field_styles),
 		caret:         std::mem::replace(&mut es.caret, step.caret),
 		anchor:        std::mem::replace(&mut es.anchor, step.anchor),
 		text_recorded: step.text_recorded,

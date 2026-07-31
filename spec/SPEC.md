@@ -145,6 +145,8 @@ cond       := IDENT | REF | "!" (IDENT | REF)
   default check inside an overriding `when` patch. It never enters SLIR.
 - `multiline` is a closed-vocabulary flag, legal only on a `field=` text
   node. Other placements produce `warn[attr]`.
+- `tab-size=N` is a numeric reserved attribute legal only on a `field=` text
+  node. Other placements produce `warn[attr]`.
 - `drag-ghost` is a closed-vocabulary paint flag legal only with `drag=`; it
   duplicates the source subtree above normal content while the drag is active.
 - `escape-blur` is an opt-in flag legal on an editable node. Escape clears
@@ -609,6 +611,7 @@ Small closed set; everything else is composition.
 | `color` | text | text color **or gradient paint** — gradient text maps the paint over the text node's content box (all lines share one box). **Inherits** |
 | `code-color` | `field=` text | optional inline-code text color or gradient paint (default: resolved `color`); applies only to code style runs and does not inherit |
 | `code-bg` | `field=` text | optional inline-code background paint (default none); paints each code run's advance by its visual line height, beneath selection and glyphs, and does not inherit |
+| `tab-size` | `field=` text | positive number of spaces inserted by plain Tab when the field is also `multiline`; absent, non-positive, and single-line values preserve focus traversal |
 | `family` | text | authored family name. **Inherits**; runtime registration may provide its actual face (§11.1) |
 | `size`, `weight`, `leading`, `tracking` | text | font metrics. **Inherit** (leading = line-height multiplier, default 1.4; tracking = letter-spacing in u, after every glyph) |
 | `strike` | text | boolean line-through decoration (default `false`). **Inherits**; bare `strike` means `true` |
@@ -1861,6 +1864,11 @@ thumbs at offset zero.
 Editing is kernel-owned on `field=` text nodes (§13.3). Fields are single-line
 unless they carry the `multiline` flag.
 
+A multiline field with a positive `tab-size=N` consumes an unmodified Tab and
+inserts N spaces at its caret through the normal committed-edit path, retaining
+focus and emitting Change; Shift+Tab still traverses focus, as does plain Tab
+when the attribute is absent or inapplicable.
+
 - `EditState` keeps caret/anchor/selection on **grapheme cluster** boundaries
   using the UAX #29 subset implemented by the Rust kernel. It also owns
   horizontal viewport offset, vertical goal-x, and bounded undo/redo history.
@@ -2061,6 +2069,22 @@ field's string, then write each half's runs. Reading both fields returns those
 normalized spans exactly. Hosts may use the revision in Change to ignore their
 own echoed write without discarding a later kernel edit.
 
+#### Host paint styles
+
+A host may replace a field's paint-only style list with
+`inst_set_field_styles`. Each ascending, non-overlapping half-open range carries
+codepoint offsets, an RGBA8 color, and an optional italic flag. Endpoints clamp
+to the committed text length; an invalid ordering or overlap rejects the whole
+write. The next call replaces the list, and `inst_set_field_text` clears it.
+
+Paint styles are adjusted by committed text splices with the same endpoint
+rules as inline spans: insertion inside or exactly at a range tail grows it,
+deletion shrinks it, and edits before later ranges shift them. Painting splits
+TEXT ops at these boundaries, overrides the resolved run color, and ORs
+synthetic italic into the paint operation. The ranges never alter font
+selection, measured advances, wrapping, caret or selection geometry, IME
+handling, rich-run revisions, or the committed plain-text authority.
+
 - Caret and IME geometry is line-aware and describes the LAST solve:
   x is the visual-line prefix width minus the field's horizontal edit scroll;
   y is the line origin; h is that line's height; w is 1. Hosts refresh it
@@ -2242,8 +2266,8 @@ slab render FILE -o OUT.{svg,png,apng,txt}
      [--t MS] [--dur S --fps N] [--state a,b] [--env portrait,dark,coarse]
      [--set param=value]... [--plain]
 slab conformance [--update] [--emit-slir DIR]
-slab gen wc   FILE -o DIR [--tag NAME] [--separate-ir]   # web-component module
-slab gen rust FILE -o OUT.rs                             # typed Rust module
+slab gen wc   FILE -o DIR [--tag NAME]   # web-component module + SLIR sidecar
+slab gen rust FILE -o OUT.rs             # typed Rust module + OUT.slir
 slab lsp                                 # stdio LSP server (diagnostics, completion, hover, formatting, slab/preview)
 ```
 
@@ -2263,9 +2287,10 @@ slab lsp                                 # stdio LSP server (diagnostics, comple
   `--fps` encode an APNG, one solve per frame; `--set` coerces to the
   declared param type and fails on unknown names or members; `--plain` is
   the ANSI-free golden cell format.
-- `gen wc` emits `<stem>.ts` + `.d.ts` + a bundled `.js` (one element for
-  the document, one per exported def); `gen rust` emits the typed module
-  of §13.1/§13.3.
+- `gen wc` emits `<stem>.js`, `<stem>.d.ts`, `<stem>.slir`, the shared web
+  runtime, and the kernel WASM sidecar (one element and SLIR per exported def);
+  generated classes fetch their SLIR URL. `gen rust` emits the typed module of
+  §13.1/§13.3 plus `OUT.slir`, included by the module with `include_bytes!`.
 
 Toolchain and driver binaries beside `slab`:
 
@@ -2391,7 +2416,7 @@ exporters print to stderr). Machine-readable source:
     `slab gen rust` and web event details carry a list item's stable key.
   - **SLIR 2.0** replaces the sectioned 1.x wire format with a
     Snappy-compressed protobuf envelope. Recompile documents and regenerate
-    embedded Rust/web artifacts; there is no compatibility shim.
+    Rust/web modules and their SLIR sidecars; there is no compatibility shim.
 - **1.0.0** — the kernel release. One pipeline replaces 0.5's parallel
   SDKs: ONE Rust compiler (`slab-compile`) lowers to binary **SLIR**
   (spec/SLIR.md); ONE semantic kernel owns layout, styling, motion, hit

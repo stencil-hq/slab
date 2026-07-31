@@ -8,7 +8,7 @@ use std::hash::Hasher;
 
 use rustc_hash::{FxHashMap as HashMap, FxHasher};
 
-use crate::{slir, value};
+use crate::{frame::ParamValue, slir, value};
 
 const NONE: u32 = u32::MAX;
 const NO_SLOT: usize = usize::MAX;
@@ -171,11 +171,12 @@ pub struct State {
 	pub lv_param:               Vec<u32>,
 	pub lv_index:               Vec<i32>,
 	pub lv_field:               Vec<u32>,
-	pub lv_kind:                Vec<u32>,
-	pub lv_num:                 Vec<f64>,
-	pub lv_str:                 Vec<String>,
-	pub lv_h:                   Vec<u32>,
-	pub lv_sym:                 Vec<String>,
+	lv_value:                   Vec<ValueSlot>,
+	lv_number:                  Vec<f64>,
+	lv_number_owner:            Vec<usize>,
+	lv_string:                  Vec<String>,
+	lv_string_owner:            Vec<usize>,
+	lv_boolean:                 Vec<u64>,
 	lv_slot:                    HashMap<(u32, i32, u32), usize>,
 	pub sy_id:                  Vec<u32>,
 	pub sy_each:                Vec<u32>,
@@ -214,23 +215,26 @@ pub struct State {
 	win_variable:               Vec<Option<VariableExtents>>,
 }
 
-/// A normalized value stored in a typed scalar list field.
-#[derive(Clone, Debug)]
-pub struct Val {
-	pub kind: u32,
-	pub num:  f64,
-	pub s:    String,
-	pub rgba: u32,
-	pub sym:  String,
+#[derive(Clone, Copy, Debug)]
+enum ValueSlot {
+	Text(u32),
+	Num(u32),
+	Pct(u32),
+	Color(u32),
+	Bool,
+	Enum(u32),
 }
 
 /// Borrowed scalar list value used by the kernel's read-only hot paths.
-pub(crate) struct ValRef<'a> {
-	pub kind: u32,
-	pub num:  f64,
-	pub s:    &'a str,
-	pub rgba: u32,
-	pub sym:  &'a str,
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum ValueRef<'a> {
+	Missing,
+	Text(&'a str),
+	Num(f64),
+	Pct(f64),
+	Color(u32),
+	Bool(bool),
+	Enum(&'a str),
 }
 
 fn index(value: i32) -> usize {
@@ -295,8 +299,26 @@ fn truncate_i32(value: f64) -> i32 {
 	value.trunc() as i32
 }
 
-const fn empty_val(kind: u32) -> Val {
-	Val { kind, num: 0.0, s: String::new(), rgba: 0, sym: String::new() }
+fn boolean(s: &State, slot: usize) -> bool {
+	s.lv_boolean
+		.get(slot / 64)
+		.is_some_and(|word| word & (1u64 << (slot % 64)) != 0)
+}
+
+fn set_boolean(s: &mut State, slot: usize, value: bool) {
+	let word = slot / 64;
+	if s.lv_boolean.len() <= word {
+		if !value {
+			return;
+		}
+		s.lv_boolean.resize(word + 1, 0);
+	}
+	let mask = 1u64 << (slot % 64);
+	if value {
+		s.lv_boolean[word] |= mask;
+	} else {
+		s.lv_boolean[word] &= !mask;
+	}
 }
 
 /// Creates empty runtime list state.
@@ -321,11 +343,12 @@ pub fn state_new() -> State {
 		lv_param:                Vec::new(),
 		lv_index:                Vec::new(),
 		lv_field:                Vec::new(),
-		lv_kind:                 Vec::new(),
-		lv_num:                  Vec::new(),
-		lv_str:                  Vec::new(),
-		lv_h:                    Vec::new(),
-		lv_sym:                  Vec::new(),
+		lv_value:                Vec::new(),
+		lv_number:               Vec::new(),
+		lv_number_owner:         Vec::new(),
+		lv_string:               Vec::new(),
+		lv_string_owner:         Vec::new(),
+		lv_boolean:              Vec::new(),
 		lv_slot:                 HashMap::default(),
 		sy_id:                   Vec::new(),
 		sy_each:                 Vec::new(),
@@ -545,50 +568,170 @@ pub fn resolve_path(d: &slir::Doc, s: &State, param: u32, path: &str) -> u32 {
 	list
 }
 
-/// Decodes and normalizes an attribute value for a scalar list field type.
-pub fn val_from_aval(d: &slir::Doc, kind: u32, ix: i32) -> Val {
+/// Decodes an attribute value for a scalar list field type.
+pub fn val_from_aval(d: &slir::Doc, kind: u32, ix: i32) -> ParamValue {
 	let decoded = value::decode(d, ix);
-	let mut out = empty_val(kind);
 	match kind {
-		0 if decoded.tag == slir::T_STR => slir::str_at(d, decoded.h).clone_into(&mut out.s),
-		1 | 2 => out.num = decoded.num,
-		3 => out.rgba = decoded.h,
-		4 => out.num = if decoded.num == 0.0 { 0.0 } else { 1.0 },
-		5 if decoded.tag == slir::T_ENUM_SYM => slir::str_at(d, decoded.h).clone_into(&mut out.sym),
-		_ => {},
+		slir::PARAM_TEXT => ParamValue::Text(if decoded.tag == slir::T_STR {
+			slir::str_at(d, decoded.h).to_owned()
+		} else {
+			String::new()
+		}),
+		slir::PARAM_NUM => ParamValue::Num(decoded.num),
+		slir::PARAM_PCT => ParamValue::Pct(decoded.num),
+		slir::PARAM_COLOR => ParamValue::Color(decoded.h),
+		slir::PARAM_BOOL => ParamValue::Bool(decoded.num != 0.0),
+		slir::PARAM_ENUM => ParamValue::Enum(if decoded.tag == slir::T_ENUM_SYM {
+			slir::str_at(d, decoded.h).to_owned()
+		} else {
+			String::new()
+		}),
+		_ => ParamValue::Text(String::new()),
 	}
-	out
 }
 
-/// Stores one normalized scalar field value and reports whether state changed.
-pub fn store(s: &mut State, list: u32, item_index: i32, field: u32, v: &Val) -> bool {
+fn number_slot(s: &mut State, owner: usize, value: f64, pct: bool) -> ValueSlot {
+	let lane = s.lv_number.len();
+	s.lv_number.push(value);
+	s.lv_number_owner.push(owner);
+	let lane = u32::try_from(lane).expect("list numeric lane exceeds u32");
+	if pct {
+		ValueSlot::Pct(lane)
+	} else {
+		ValueSlot::Num(lane)
+	}
+}
+fn string_slot(s: &mut State, owner: usize, value: &str, symbol: bool) -> ValueSlot {
+	let lane = s.lv_string.len();
+	s.lv_string.push(value.to_owned());
+	s.lv_string_owner.push(owner);
+	let lane = u32::try_from(lane).expect("list string lane exceeds u32");
+	if symbol {
+		ValueSlot::Enum(lane)
+	} else {
+		ValueSlot::Text(lane)
+	}
+}
+fn push_payload(s: &mut State, owner: usize, value: &ParamValue) -> ValueSlot {
+	match value {
+		ParamValue::Text(v) => string_slot(s, owner, v, false),
+		ParamValue::Num(v) => number_slot(s, owner, *v, false),
+		ParamValue::Pct(v) => number_slot(s, owner, *v, true),
+		ParamValue::Color(v) => ValueSlot::Color(*v),
+		ParamValue::Bool(v) => {
+			set_boolean(s, owner, *v);
+			ValueSlot::Bool
+		},
+		ParamValue::Enum(v) => string_slot(s, owner, v, true),
+	}
+}
+fn repair_number_owner(s: &mut State, lane: usize) {
+	if lane >= s.lv_number_owner.len() {
+		return;
+	}
+	let owner = s.lv_number_owner[lane];
+	let lane = u32::try_from(lane).expect("numeric lane exceeds u32");
+	s.lv_value[owner] = match s.lv_value[owner] {
+		ValueSlot::Num(_) => ValueSlot::Num(lane),
+		ValueSlot::Pct(_) => ValueSlot::Pct(lane),
+		_ => unreachable!(),
+	};
+}
+fn repair_string_owner(s: &mut State, lane: usize) {
+	if lane >= s.lv_string_owner.len() {
+		return;
+	}
+	let owner = s.lv_string_owner[lane];
+	let lane = u32::try_from(lane).expect("string lane exceeds u32");
+	s.lv_value[owner] = match s.lv_value[owner] {
+		ValueSlot::Text(_) => ValueSlot::Text(lane),
+		ValueSlot::Enum(_) => ValueSlot::Enum(lane),
+		_ => unreachable!(),
+	};
+}
+fn remove_payload(s: &mut State, owner: usize) {
+	match s.lv_value[owner] {
+		ValueSlot::Num(lane) | ValueSlot::Pct(lane) => {
+			let lane = lane as usize;
+			s.lv_number.swap_remove(lane);
+			s.lv_number_owner.swap_remove(lane);
+			repair_number_owner(s, lane);
+		},
+		ValueSlot::Text(lane) | ValueSlot::Enum(lane) => {
+			let lane = lane as usize;
+			s.lv_string.swap_remove(lane);
+			s.lv_string_owner.swap_remove(lane);
+			repair_string_owner(s, lane);
+		},
+		ValueSlot::Bool => set_boolean(s, owner, false),
+		ValueSlot::Color(_) => {},
+	}
+}
+fn value_ref(s: &State, slot: usize) -> ValueRef<'_> {
+	match s.lv_value[slot] {
+		ValueSlot::Text(i) => ValueRef::Text(&s.lv_string[i as usize]),
+		ValueSlot::Num(i) => ValueRef::Num(s.lv_number[i as usize]),
+		ValueSlot::Pct(i) => ValueRef::Pct(s.lv_number[i as usize]),
+		ValueSlot::Color(v) => ValueRef::Color(v),
+		ValueSlot::Bool => ValueRef::Bool(boolean(s, slot)),
+		ValueSlot::Enum(i) => ValueRef::Enum(&s.lv_string[i as usize]),
+	}
+}
+impl<'a> From<&'a ParamValue> for ValueRef<'a> {
+	fn from(v: &'a ParamValue) -> Self {
+		match v {
+			ParamValue::Text(v) => Self::Text(v),
+			ParamValue::Num(v) => Self::Num(*v),
+			ParamValue::Pct(v) => Self::Pct(*v),
+			ParamValue::Color(v) => Self::Color(*v),
+			ParamValue::Bool(v) => Self::Bool(*v),
+			ParamValue::Enum(v) => Self::Enum(v),
+		}
+	}
+}
+
+/// Stores one typed scalar field value and reports whether state changed.
+pub fn store(s: &mut State, list: u32, item_index: i32, field: u32, value: &ParamValue) -> bool {
 	let key = (list, item_index, field);
 	note_lookup();
 	if let Some(&slot) = s.lv_slot.get(&key) {
-		let changed = s.lv_kind[slot] != v.kind
-			|| s.lv_num[slot] != v.num
-			|| s.lv_str[slot] != v.s
-			|| s.lv_h[slot] != v.rgba
-			|| s.lv_sym[slot] != v.sym;
-		if changed {
-			s.lv_kind[slot] = v.kind;
-			s.lv_num[slot] = v.num;
-			s.lv_str[slot].clone_from(&v.s);
-			s.lv_h[slot] = v.rgba;
-			s.lv_sym[slot].clone_from(&v.sym);
+		if value_ref(s, slot) == ValueRef::from(value) {
+			return false;
 		}
-		return changed;
+		let updated_in_place = match (s.lv_value[slot], value) {
+			(ValueSlot::Text(lane), ParamValue::Text(value))
+			| (ValueSlot::Enum(lane), ParamValue::Enum(value)) => {
+				s.lv_string[lane as usize].clone_from(value);
+				true
+			},
+			(ValueSlot::Num(lane), ParamValue::Num(value))
+			| (ValueSlot::Pct(lane), ParamValue::Pct(value)) => {
+				s.lv_number[lane as usize] = *value;
+				true
+			},
+			(ValueSlot::Color(_), ParamValue::Color(value)) => {
+				s.lv_value[slot] = ValueSlot::Color(*value);
+				true
+			},
+			(ValueSlot::Bool, ParamValue::Bool(value)) => {
+				set_boolean(s, slot, *value);
+				true
+			},
+			_ => false,
+		};
+		if !updated_in_place {
+			remove_payload(s, slot);
+			s.lv_value[slot] = push_payload(s, slot, value);
+		}
+		return true;
 	}
 	let slot = s.lv_param.len();
 	s.lv_slot.insert(key, slot);
 	s.lv_param.push(list);
 	s.lv_index.push(item_index);
 	s.lv_field.push(field);
-	s.lv_kind.push(v.kind);
-	s.lv_num.push(v.num);
-	s.lv_str.push(v.s.clone());
-	s.lv_h.push(v.rgba);
-	s.lv_sym.push(v.sym.clone());
+	let descriptor = push_payload(s, slot, value);
+	s.lv_value.push(descriptor);
 	true
 }
 
@@ -776,18 +919,25 @@ pub fn remove_value(s: &mut State, k: i32) {
 	let slot = index(k);
 	s.lv_slot
 		.remove(&(s.lv_param[slot], s.lv_index[slot], s.lv_field[slot]));
+	let last = s.lv_value.len() - 1;
+	let moved_boolean = boolean(s, last);
+	remove_payload(s, slot);
 	s.lv_param.swap_remove(slot);
 	s.lv_index.swap_remove(slot);
 	s.lv_field.swap_remove(slot);
-	s.lv_kind.swap_remove(slot);
-	s.lv_num.swap_remove(slot);
-	s.lv_str.swap_remove(slot);
-	s.lv_h.swap_remove(slot);
-	s.lv_sym.swap_remove(slot);
+	s.lv_value.swap_remove(slot);
 	if slot < s.lv_param.len() {
 		s.lv_slot
 			.insert((s.lv_param[slot], s.lv_index[slot], s.lv_field[slot]), slot);
+		match s.lv_value[slot] {
+			ValueSlot::Num(lane) | ValueSlot::Pct(lane) => s.lv_number_owner[lane as usize] = slot,
+			ValueSlot::Text(lane) | ValueSlot::Enum(lane) => s.lv_string_owner[lane as usize] = slot,
+			ValueSlot::Bool => set_boolean(s, slot, moved_boolean),
+			ValueSlot::Color(_) => {},
+		}
 	}
+	set_boolean(s, last, false);
+	s.lv_boolean.truncate(s.lv_value.len().div_ceil(64));
 }
 
 /// Removes an assigned key slot without preserving storage order.
@@ -1112,34 +1262,25 @@ fn set_field_id(
 	list: u32,
 	item_index: i32,
 	field: &str,
-	v: &Val,
+	v: &ParamValue,
 ) -> i32 {
 	if item_index < 0 || item_index >= length(d, s, list) {
 		return -1;
 	}
 	let field_ix = field_ix(d, s, list, field);
-	if field_ix < 0 || d.list_field_type[index(field_ix)] != v.kind || v.kind == 6 {
+	if field_ix < 0 || d.list_field_type[index(field_ix)] != v.kind() || v.kind() == 6 {
 		return -1;
 	}
-	if v.kind == 5 {
+	if let ParamValue::Enum(symbol_value) = v {
 		let lo = d.list_field_enum_off[index(field_ix)];
 		let hi = lo.wrapping_add(d.list_field_enum_len[index(field_ix)]);
-		if !(lo..hi).any(|symbol| slir::str_at(d, d.list_enum_syms[index(symbol)]) == v.sym) {
+		if !(lo..hi).any(|symbol| slir::str_at(d, d.list_enum_syms[index(symbol)]) == symbol_value) {
 			return -1;
 		}
 	}
-	let mut normalized = empty_val(v.kind);
-	match v.kind {
-		0 => normalized.s.clone_from(&v.s),
-		1 | 2 => normalized.num = v.num,
-		3 => normalized.rgba = v.rgba,
-		4 => normalized.num = if v.num == 0.0 { 0.0 } else { 1.0 },
-		5 => normalized.sym.clone_from(&v.sym),
-		_ => return -1,
-	}
 	let schema = schema_for_list(s, list);
 	let relative = field_ix.wrapping_sub(d.list_field_off[index(schema)]);
-	i32::from(store(s, list, item_index, unsigned(relative), &normalized))
+	i32::from(store(s, list, item_index, unsigned(relative), v))
 }
 
 /// Changes one typed scalar field on a root-list item.
@@ -1149,7 +1290,7 @@ pub fn set_field(
 	param: u32,
 	item_index: i32,
 	field: &str,
-	v: &Val,
+	v: &ParamValue,
 ) -> i32 {
 	let list = root_id(d, s, param);
 	if list == NONE {
@@ -1167,7 +1308,7 @@ pub fn set_field_path(
 	path: &str,
 	item_index: i32,
 	field: &str,
-	v: &Val,
+	v: &ParamValue,
 ) -> i32 {
 	let list = resolve_path(d, s, param, path);
 	if list == NONE {
@@ -1234,29 +1375,49 @@ pub fn set_key_path(
 
 #[inline]
 /// Borrows a stored scalar field value without cloning its string variants.
-pub(crate) fn get_ref(s: &State, list: u32, item_index: i32, field: u32) -> ValRef<'_> {
+pub(crate) fn get_ref(s: &State, list: u32, item_index: i32, field: u32) -> ValueRef<'_> {
 	note_lookup();
 	let Some(&slot) = s.lv_slot.get(&(list, item_index, field)) else {
-		return ValRef { kind: 0, num: 0.0, s: "", rgba: 0, sym: "" };
+		return ValueRef::Missing;
 	};
-	ValRef {
-		kind: s.lv_kind[slot],
-		num:  s.lv_num[slot],
-		s:    &s.lv_str[slot],
-		rgba: s.lv_h[slot],
-		sym:  &s.lv_sym[slot],
-	}
+	value_ref(s, slot)
 }
 
 /// Returns a stored scalar field value or the empty sentinel when absent.
-pub fn get(_d: &slir::Doc, s: &State, list: u32, item_index: i32, field: u32) -> Val {
-	let value = get_ref(s, list, item_index, field);
-	Val {
-		kind: value.kind,
-		num:  value.num,
-		s:    value.s.to_owned(),
-		rgba: value.rgba,
-		sym:  value.sym.to_owned(),
+pub fn get(d: &slir::Doc, s: &State, list: u32, item_index: i32, field: u32) -> ParamValue {
+	match get_ref(s, list, item_index, field) {
+		ValueRef::Missing => {
+			let kind = usize::try_from(schema_for_list(s, list))
+				.ok()
+				.and_then(|schema| {
+					d.list_field_off
+						.get(schema)
+						.zip(d.list_field_len.get(schema))
+				})
+				.and_then(|(&off, &len)| {
+					i32::try_from(field)
+						.ok()
+						.filter(|&field| field < len)
+						.and_then(|field| off.checked_add(field))
+				})
+				.and_then(|absolute| usize::try_from(absolute).ok())
+				.and_then(|absolute| d.list_field_type.get(absolute))
+				.copied();
+			match kind {
+				Some(slir::PARAM_NUM) => ParamValue::Num(0.0),
+				Some(slir::PARAM_PCT) => ParamValue::Pct(0.0),
+				Some(slir::PARAM_COLOR) => ParamValue::Color(0),
+				Some(slir::PARAM_BOOL) => ParamValue::Bool(false),
+				Some(slir::PARAM_ENUM) => ParamValue::Enum(String::new()),
+				_ => ParamValue::Text(String::new()),
+			}
+		},
+		ValueRef::Text(value) => ParamValue::Text(value.to_owned()),
+		ValueRef::Num(value) => ParamValue::Num(value),
+		ValueRef::Pct(value) => ParamValue::Pct(value),
+		ValueRef::Color(value) => ParamValue::Color(value),
+		ValueRef::Bool(value) => ParamValue::Bool(value),
+		ValueRef::Enum(value) => ParamValue::Enum(value.to_owned()),
 	}
 }
 

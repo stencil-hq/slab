@@ -282,3 +282,104 @@ pub fn next_boundary(bounds: &[i32], at: i32, n: i32) -> i32 {
 		.min()
 		.unwrap_or(n)
 }
+
+const LF: u32 = 10;
+const CR: u32 = 13;
+
+/// Encodes `cps[start..end]` for windowed segmentation.
+fn window_str(cps: &[u32], start: i32, end: i32) -> String {
+	let start = usize::try_from(start).expect("negative window start");
+	let end = usize::try_from(end).expect("negative window end");
+	cps[start..end]
+		.iter()
+		.map(|&cp| char::from_u32(cp).expect("invalid codepoint"))
+		.collect()
+}
+
+/// Returns the codepoint index just after the last LF strictly before `at`.
+///
+/// UAX #29 breaks after every control (GB4), so this is always a true
+/// grapheme boundary: segmentation restarted here matches the full text.
+fn line_start(cps: &[u32], at: i32) -> i32 {
+	let mut index = at;
+	while index > 0 && cps[usize::try_from(index - 1).expect("negative index")] != LF {
+		index -= 1;
+	}
+	index
+}
+
+/// Returns the largest grapheme boundary strictly below `at`, or zero.
+///
+/// Equivalent to [`prev_boundary`] over [`boundaries`] of the full text,
+/// but segments only the caret's hard line: clusters never cross a LF, so
+/// the window between the previous newline and `at` reproduces the full
+/// boundary table locally. This is the backspace and left-arrow target.
+pub fn prev_boundary_in(cps: &[u32], at: i32) -> i32 {
+	let len = i32::try_from(cps.len()).expect("text has too many codepoints");
+	let at = at.clamp(0, len);
+	if at <= 0 {
+		return 0;
+	}
+	let before = cps[usize::try_from(at - 1).expect("negative index")];
+	if before == LF {
+		// The cluster ending at `at` is the newline itself: "\r\n" is one
+		// cluster (GB3); any other LF stands alone (GB4/GB5).
+		if at >= 2 && cps[usize::try_from(at - 2).expect("negative index")] == CR {
+			return at - 2;
+		}
+		return at - 1;
+	}
+	let start = line_start(cps, at);
+	let window = window_str(cps, start, at);
+	let mut bounds = Vec::new();
+	boundaries(&window, &mut bounds);
+	start.wrapping_add(
+		bounds
+			.iter()
+			.copied()
+			.filter(|&boundary| boundary < at.wrapping_sub(start))
+			.max()
+			.unwrap_or(0),
+	)
+}
+
+/// Returns the smallest grapheme boundary strictly above `at`, or the text
+/// length.
+///
+/// Windowed like [`prev_boundary_in`]; this is the delete and right-arrow
+/// target.
+pub fn next_boundary_in(cps: &[u32], at: i32) -> i32 {
+	let len = i32::try_from(cps.len()).expect("text has too many codepoints");
+	let at = at.clamp(0, len);
+	if at >= len {
+		return len;
+	}
+	let start = line_start(cps, at);
+	// End the window just past the next LF so a trailing "\r\n" pair stays
+	// whole; the position after a LF is always a true boundary (GB4).
+	let mut end = at;
+	while end < len && cps[usize::try_from(end).expect("negative index")] != LF {
+		end += 1;
+	}
+	if end < len {
+		end += 1;
+	}
+	let window = window_str(cps, start, end);
+	let mut bounds = Vec::new();
+	boundaries(&window, &mut bounds);
+	let fallback = end.wrapping_sub(start);
+	start.wrapping_add(
+		bounds
+			.iter()
+			.copied()
+			.filter(|&boundary| boundary > at.wrapping_sub(start))
+			.min()
+			.unwrap_or(fallback),
+	)
+}
+
+/// Writes the cluster boundaries of a codepoint slice, like [`boundaries`].
+pub fn boundaries_cps(cps: &[u32], out: &mut Vec<i32>) {
+	let text = window_str(cps, 0, i32::try_from(cps.len()).expect("text has too many codepoints"));
+	boundaries(&text, out);
+}

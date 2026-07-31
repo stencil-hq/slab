@@ -66,6 +66,7 @@ pub fn decode_doc(bytes: &[u8]) -> Result<(slab_kernel::slir::Doc, Vec<Vec<u8>>)
 	doc.font_cmap_cp = std::mem::take(&mut wire.font_cmap_cp);
 	doc.font_cmap_gid = std::mem::take(&mut wire.font_cmap_gid);
 	doc.font_adv = std::mem::take(&mut wire.font_adv);
+	doc.compiled_fonts = doc.font_upem.len();
 	doc.cond_kind = std::mem::take(&mut wire.cond_kind);
 	doc.cond_neg = std::mem::take(&mut wire.cond_neg);
 	doc.cond_op = std::mem::take(&mut wire.cond_op);

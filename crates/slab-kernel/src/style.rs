@@ -42,7 +42,7 @@ pub struct St {
 	pub scroll_cross_off: Vec<f64>,
 	/// Field nodes whose content is overridden by [`Self::field_text`].
 	pub field_node: Vec<u32>,
-	pub field_text: Vec<String>,
+	pub field_text: Vec<crate::text::Text>,
 	pub field_scroll_node: Vec<u32>,
 	pub field_scroll_off: Vec<f64>,
 	/// Keyed divider size overlays.
@@ -58,14 +58,8 @@ pub struct St {
 	/// Retained split-pane sizes keyed by canonical full scene key.
 	pub split_key: Vec<String>,
 	pub split_extent: Vec<f64>,
-	/// Current numeric values for numeric, percentage, and boolean parameters.
-	pub pv_num: Vec<f64>,
-	/// Current text parameter values.
-	pub pv_str: Vec<String>,
-	/// Current packed RGBA8 color parameter values.
-	pub pv_h: Vec<u32>,
-	/// Current enum parameter member names.
-	pub pv_sym: Vec<String>,
+	/// Compact retained scalar parameter values.
+	pub(crate) params: crate::params::ParamStore,
 	/// Stable host-registered image slots; inactive entries retain their unified
 	/// indices.
 	pub(crate) runtime_images: Vec<crate::frame::RuntimeImage>,
@@ -167,10 +161,7 @@ pub fn st_new() -> crate::style::St {
 		divider_footprint_changed: false,
 		split_key: vec![],
 		split_extent: vec![],
-		pv_num: vec![],
-		pv_str: vec![],
-		pv_h: vec![],
-		pv_sym: vec![],
+		params: crate::params::ParamStore::default(),
 		runtime_images: vec![],
 		img_missing: std::collections::HashSet::new(),
 		scene_strs: vec![String::new()],
@@ -252,10 +243,7 @@ pub fn init_params(d: &crate::slir::Doc, st: &mut crate::style::St) {
 			.and_then(|index| index.checked_add(1))
 			.unwrap_or(0)
 	};
-	st.pv_num.clear();
-	st.pv_str.clear();
-	st.pv_h.clear();
-	st.pv_sym.clear();
+	st.params.init(d);
 	st.scene_str_index.clear();
 	st.scene_strs.clear();
 	st.scene_strs.push(String::new());
@@ -286,21 +274,6 @@ pub fn init_params(d: &crate::slir::Doc, st: &mut crate::style::St) {
 	}
 	rebuild_aval_cache(d, st);
 	crate::list::init(d, &mut st.lists);
-	for &encoded in &d.parm_default {
-		let v = crate::value::decode(d, i32::from_ne_bytes(encoded.to_ne_bytes()));
-		st.pv_num.push(v.num);
-		st.pv_str.push(if v.tag == crate::slir::T_STR {
-			crate::slir::str_at(d, v.h).to_owned()
-		} else {
-			String::new()
-		});
-		st.pv_h.push(v.h);
-		st.pv_sym.push(if v.tag == crate::slir::T_ENUM_SYM {
-			crate::slir::str_at(d, v.h).to_owned()
-		} else {
-			String::new()
-		});
-	}
 }
 
 /// Returns whether a synthetic node no longer belongs to an active list item.
@@ -474,7 +447,7 @@ pub fn begin_solve(d: &crate::slir::Doc, st: &mut crate::style::St) {
 				0,
 				&st.env,
 				&st.states,
-				&st.pv_num,
+				&st.params,
 				0.0,
 				0.0,
 			));
@@ -491,7 +464,7 @@ pub fn begin_solve(d: &crate::slir::Doc, st: &mut crate::style::St) {
 				&st.states,
 				&st.ns_node,
 				&st.ns_sym,
-				&st.pv_num,
+				&st.params,
 				0.0,
 				0.0,
 			));
@@ -545,7 +518,7 @@ pub fn set_patch_flags(
 				node,
 				&st.env,
 				&st.states,
-				&st.pv_num,
+				&st.params,
 				cw,
 				ch,
 			);
@@ -780,7 +753,7 @@ pub struct FieldTextRev {
 ///
 /// The change is recorded as a full (non-spliceable) transition; edit-driven
 /// keystrokes go through [`field_set_spliced`] instead.
-pub fn field_set(st: &mut crate::style::St, node: u32, text: &str) {
+pub fn field_set(st: &mut crate::style::St, node: u32, text: &crate::text::Text) {
 	field_set_with(st, node, text, None);
 }
 
@@ -789,7 +762,7 @@ pub fn field_set(st: &mut crate::style::St, node: u32, text: &str) {
 pub fn field_set_spliced(
 	st: &mut crate::style::St,
 	node: u32,
-	text: &str,
+	text: &crate::text::Text,
 	delta: crate::textm::TextDelta,
 ) {
 	field_set_with(st, node, text, Some(delta));
@@ -798,7 +771,7 @@ pub fn field_set_spliced(
 fn field_set_with(
 	st: &mut crate::style::St,
 	node: u32,
-	text: &str,
+	text: &crate::text::Text,
 	delta: Option<crate::textm::TextDelta>,
 ) {
 	let lineage = st
@@ -812,11 +785,11 @@ fn field_set_with(
 		.iter()
 		.position(|&candidate| candidate == node)
 	{
-		text.clone_into(&mut st.field_text[index]);
+		st.field_text[index] = text.clone();
 		return;
 	}
 	st.field_node.push(node);
-	st.field_text.push(text.to_string());
+	st.field_text.push(text.clone());
 }
 
 /// Returns an editable field's horizontal text scroll, or zero when unset.
@@ -965,7 +938,7 @@ pub fn tup_at(d: &crate::slir::Doc, st: &crate::style::St, v: &crate::value::V, 
 		}
 		let member = index_i32(v.off.wrapping_add(k));
 		if d.tup_dyn_tag[member] == 1u32 {
-			return st.pv_num[index_u32(d.tup_dyn_param[member])];
+			return st.params.number(index_u32(d.tup_dyn_param[member]));
 		}
 		return d.tup_dyn_num[member];
 	}
@@ -1009,7 +982,7 @@ pub fn patch_on_for(d: &crate::slir::Doc, st: &crate::style::St, pi: i32, node: 
 		&st.states,
 		&st.ns_node,
 		&st.ns_sym,
-		&st.pv_num,
+		&st.params,
 		&st.lists,
 		0.0,
 		0.0,
@@ -1085,6 +1058,9 @@ fn patch_attr(
 #[inline(never)]
 fn attr_ix_slow(d: &crate::slir::Doc, st: &crate::style::St, node: u32, attr: u32) -> i32 {
 	let base = crate::list::base(&st.lists, d, node);
+	if base == crate::slir::NONE {
+		return -1;
+	}
 	let base_index = index_u32(base);
 	let mut value = st
 		.base_attr_values
@@ -1170,10 +1146,18 @@ fn resolve_attr_ref(
 	if v.tag == crate::slir::T_PARAM_REF {
 		let parameter = index_u32(v.h);
 		return match d.parm_type[parameter] {
-			1 => resolved_value(crate::slir::T_NUM, st.pv_num[parameter], 0),
-			2 => resolved_value(crate::slir::T_PCT, st.pv_num[parameter], 0),
-			3 => resolved_value(crate::slir::T_COLOR, 0.0, st.pv_h[parameter]),
-			4 => resolved_value(crate::slir::T_NUM, st.pv_num[parameter], 0),
+			crate::slir::PARAM_NUM => {
+				resolved_value(crate::slir::T_NUM, st.params.number(parameter), 0)
+			},
+			crate::slir::PARAM_PCT => {
+				resolved_value(crate::slir::T_PCT, st.params.number(parameter), 0)
+			},
+			crate::slir::PARAM_COLOR => {
+				resolved_value(crate::slir::T_COLOR, 0.0, st.params.color(parameter))
+			},
+			crate::slir::PARAM_BOOL => {
+				resolved_value(crate::slir::T_NUM, f64::from(u8::from(st.params.boolean(parameter))), 0)
+			},
 			_ => v,
 		};
 	}
@@ -1181,12 +1165,16 @@ fn resolve_attr_ref(
 		let parameter = u32::from_ne_bytes(crate::list::param_of(&st.lists, d, node).to_ne_bytes());
 		let item = crate::list::item_ix(&st.lists, d, node);
 		let value = crate::list::get_ref(&st.lists, parameter, item, v.h);
-		return match value.kind {
-			1 => resolved_value(crate::slir::T_NUM, value.num, 0),
-			2 => resolved_value(crate::slir::T_PCT, value.num, 0),
-			3 => resolved_value(crate::slir::T_COLOR, 0.0, value.rgba),
-			4 => resolved_value(crate::slir::T_NUM, value.num, 0),
-			_ => v,
+		return match value {
+			crate::list::ValueRef::Num(value) => resolved_value(crate::slir::T_NUM, value, 0),
+			crate::list::ValueRef::Pct(value) => resolved_value(crate::slir::T_PCT, value, 0),
+			crate::list::ValueRef::Color(value) => resolved_value(crate::slir::T_COLOR, 0.0, value),
+			crate::list::ValueRef::Bool(value) => {
+				resolved_value(crate::slir::T_NUM, f64::from(u8::from(value)), 0)
+			},
+			crate::list::ValueRef::Missing
+			| crate::list::ValueRef::Text(_)
+			| crate::list::ValueRef::Enum(_) => v,
 		};
 	}
 	v
@@ -1332,7 +1320,7 @@ pub fn attr_enum_ref<'a>(
 		return std::borrow::Cow::Borrowed(crate::slir::str_ref(d, v.h));
 	}
 	if v.tag == crate::slir::T_PARAM_REF && d.parm_type[index_u32(v.h)] == 5 {
-		return std::borrow::Cow::Borrowed(st.pv_sym[index_u32(v.h)].as_str());
+		return std::borrow::Cow::Borrowed(st.params.symbol(index_u32(v.h)));
 	}
 	if v.tag == crate::slir::T_PROP_REF {
 		let x = crate::list::get_ref(
@@ -1341,8 +1329,8 @@ pub fn attr_enum_ref<'a>(
 			crate::list::item_ix(&st.lists, d, node),
 			v.h,
 		);
-		if x.kind == 5u32 {
-			return std::borrow::Cow::Borrowed(x.sym);
+		if let crate::list::ValueRef::Enum(value) = x {
+			return std::borrow::Cow::Borrowed(value);
 		}
 	}
 	std::borrow::Cow::Borrowed("")
@@ -1365,7 +1353,7 @@ pub fn attr_str_ref<'a>(
 		return std::borrow::Cow::Borrowed(crate::slir::str_ref(d, v.h));
 	}
 	if v.tag == crate::slir::T_PARAM_REF && d.parm_type[index_u32(v.h)] == 0 {
-		return std::borrow::Cow::Borrowed(st.pv_str[index_u32(v.h)].as_str());
+		return std::borrow::Cow::Borrowed(st.params.text(index_u32(v.h)));
 	}
 	if v.tag == crate::slir::T_PROP_REF {
 		let x = crate::list::get_ref(
@@ -1374,8 +1362,8 @@ pub fn attr_str_ref<'a>(
 			crate::list::item_ix(&st.lists, d, node),
 			v.h,
 		);
-		if x.kind == 0u32 {
-			return std::borrow::Cow::Borrowed(x.s);
+		if let crate::list::ValueRef::Text(value) = x {
+			return std::borrow::Cow::Borrowed(value);
 		}
 	}
 	std::borrow::Cow::Borrowed("")
@@ -1509,14 +1497,17 @@ fn semantic_number(
 	valid.then_some(value.num)
 }
 
-/// Resolves text content in motion, edit override, patch, then base order.
-pub fn content_str(d: &crate::slir::Doc, st: &crate::style::St, node: u32) -> String {
+/// Resolves text content like [`content_str`], as shared codepoint text.
+///
+/// The editable-field branch returns the retained buffer by reference count,
+/// so re-solving a large field never copies its content.
+pub fn content_text(d: &crate::slir::Doc, st: &crate::style::St, node: u32) -> crate::text::Text {
 	let mv = crate::style::overlay_val(st, node, crate::slir::A_CONTENT);
 	if mv.tag == crate::slir::T_STR {
-		return crate::slir::str_at(d, mv.h).to_owned();
+		return crate::text::Text::from(crate::slir::str_at(d, mv.h));
 	}
 	if mv.tag == crate::slir::T_PARAM_REF && d.parm_type[index_u32(mv.h)] == 0 {
-		return st.pv_str[index_u32(mv.h)].clone();
+		return crate::text::Text::from(st.params.text(index_u32(mv.h)));
 	}
 	if let Some(index) = st
 		.field_node
@@ -1531,10 +1522,10 @@ pub fn content_str(d: &crate::slir::Doc, st: &crate::style::St, node: u32) -> St
 		crate::style::attr_ix(d, st, node, crate::slir::A_CONTENT),
 	);
 	if v.tag == crate::slir::T_STR {
-		return crate::slir::str_at(d, v.h).to_owned();
+		return crate::text::Text::from(crate::slir::str_at(d, v.h));
 	}
 	if v.tag == crate::slir::T_PARAM_REF && d.parm_type[index_u32(v.h)] == 0 {
-		return st.pv_str[index_u32(v.h)].clone();
+		return crate::text::Text::from(st.params.text(index_u32(v.h)));
 	}
 	if v.tag == crate::slir::T_PROP_REF {
 		let x = crate::list::get_ref(
@@ -1543,8 +1534,49 @@ pub fn content_str(d: &crate::slir::Doc, st: &crate::style::St, node: u32) -> St
 			crate::list::item_ix(&st.lists, d, node),
 			v.h,
 		);
-		if x.kind == 0u32 {
-			return x.s.to_string();
+		if let crate::list::ValueRef::Text(value) = x {
+			return crate::text::Text::from(value);
+		}
+	}
+	crate::text::Text::default()
+}
+
+/// Resolves text content in motion, edit override, patch, then base order.
+pub fn content_str(d: &crate::slir::Doc, st: &crate::style::St, node: u32) -> String {
+	let mv = crate::style::overlay_val(st, node, crate::slir::A_CONTENT);
+	if mv.tag == crate::slir::T_STR {
+		return crate::slir::str_at(d, mv.h).to_owned();
+	}
+	if mv.tag == crate::slir::T_PARAM_REF && d.parm_type[index_u32(mv.h)] == 0 {
+		return st.params.text(index_u32(mv.h)).to_owned();
+	}
+	if let Some(index) = st
+		.field_node
+		.iter()
+		.position(|&candidate| candidate == node)
+	{
+		return st.field_text[index].to_utf8();
+	}
+	let v = crate::value::decode_active(
+		d,
+		st.theme_index,
+		crate::style::attr_ix(d, st, node, crate::slir::A_CONTENT),
+	);
+	if v.tag == crate::slir::T_STR {
+		return crate::slir::str_at(d, v.h).to_owned();
+	}
+	if v.tag == crate::slir::T_PARAM_REF && d.parm_type[index_u32(v.h)] == 0 {
+		return st.params.text(index_u32(v.h)).to_owned();
+	}
+	if v.tag == crate::slir::T_PROP_REF {
+		let x = crate::list::get_ref(
+			&st.lists,
+			u32::from_ne_bytes(crate::list::param_of(&st.lists, d, node).to_ne_bytes()),
+			crate::list::item_ix(&st.lists, d, node),
+			v.h,
+		);
+		if let crate::list::ValueRef::Text(value) = x {
+			return value.to_owned();
 		}
 	}
 	String::new()
@@ -1941,7 +1973,7 @@ fn kw_at<'a>(
 		return Err(crate::slir::str_ref(d, v.h));
 	}
 	if v.tag == crate::slir::T_PARAM_REF && d.parm_type[index_u32(v.h)] == 5 {
-		return Err(st.pv_sym[index_u32(v.h)].as_str());
+		return Err(st.params.symbol(index_u32(v.h)));
 	}
 	if v.tag == crate::slir::T_PROP_REF {
 		let x = crate::list::get_ref(
@@ -1950,8 +1982,8 @@ fn kw_at<'a>(
 			crate::list::item_ix(&st.lists, d, node),
 			v.h,
 		);
-		if x.kind == 5u32 {
-			return Err(x.sym);
+		if let crate::list::ValueRef::Enum(value) = x {
+			return Err(value);
 		}
 	}
 	Err("")
@@ -2216,7 +2248,7 @@ pub struct RStyle {
 	pub code_bg:         u32,
 	pub code_bg_kind:    u32,
 	pub talign:          u32,
-	pub content:         String,
+	pub content:         crate::text::Text,
 	/// Resolved accessibility semantics copied into the scene entry.
 	pub sem:             Semantics,
 	pub img:             i32,
@@ -2679,7 +2711,7 @@ pub fn build_rstyle(
 		Ok(kw) => u32::from(kw.talign),
 		Err(s) => crate::style::talign_code(s),
 	};
-	st.rs[ri].content = crate::style::content_str(d, st, node);
+	st.rs[ri].content = crate::style::content_text(d, st, node);
 	let role = a11y_ref(d, st, node, crate::slir::A_ROLE, true);
 	let label = a11y_ref(d, st, node, crate::slir::A_LABEL, false);
 	let desc = a11y_ref(d, st, node, crate::slir::A_DESC, false);
@@ -2913,7 +2945,7 @@ pub fn rstyle_default(node: u32, kind: u32, line: u32) -> crate::style::RStyle {
 		code_bg: 0u32,
 		code_bg_kind: 0u32,
 		talign: 0u32,
-		content: String::new(),
+		content: crate::text::Text::default(),
 		sem: Semantics::default(),
 		img: (-1i32),
 		fit: 0u32,
@@ -3045,11 +3077,11 @@ mod attribute_cache_tests {
 			slab_slir::attrs::ATTR_COUNT,
 			"kernel ATTR_COUNT must match normative slab-slir table size"
 		);
-		let highest_id = crate::slir::A_SPLIT_FG;
+		let highest_id = crate::slir::A_TAB_SIZE;
 		assert_eq!(
 			(highest_id as usize) + 1,
 			crate::slir::ATTR_COUNT,
-			"A_SPLIT_FG must be the highest attribute ID"
+			"A_TAB_SIZE must be the highest attribute ID"
 		);
 		for &(id, name) in slab_slir::attrs::ATTRS {
 			assert!(

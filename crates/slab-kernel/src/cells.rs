@@ -1708,7 +1708,7 @@ fn overlay_caret(inst: &frame::Instance, fr: &flatten::Frame, grid: &mut CellGri
 	let mut cell = None;
 	if !multiline {
 		let state = &inst.ds.ed[index(edit_index)];
-		let display = edit::display_str(state);
+		let display = edit::display_text(state).to_utf8();
 		let columns = text_columns_before(&display, edit::display_caret(state));
 		for op in &fr.ops {
 			if let flatten::FrameOp::Text(text) = op

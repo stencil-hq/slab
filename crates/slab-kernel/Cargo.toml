@@ -9,7 +9,9 @@ workspace = true
 
 [dependencies]
 png.workspace = true
+libm.workspace = true
 rustc-hash.workspace = true
+slab-fonts.workspace = true
 rustybuzz.workspace = true
 serde.workspace = true
 unicode-bidi.workspace = true

@@ -286,7 +286,8 @@ pub struct Doc {
 	pub font_data_off: ::prost::alloc::vec::Vec<i32>,
 	#[prost(int32, repeated, tag = "141")]
 	pub font_data_len: ::prost::alloc::vec::Vec<i32>,
-	/// sfnt bytes sliced by `font_data_off`/`font_data_len`
+	/// sfnt bytes sliced by `font_data_off`/`font_data_len`; host-supplied
+	/// compile-time faces only, bundled-face tables are metrics-only
 	#[prost(bytes = "vec", tag = "142")]
 	pub font_data: ::prost::alloc::vec::Vec<u8>,
 }

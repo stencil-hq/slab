@@ -371,6 +371,15 @@ pub struct StaticSelection {
 	pub focus:    StaticEndpoint,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct FieldSelectCapture {
+	node:          u32,
+	anchor_offset: i32,
+	x:             f64,
+	y:             f64,
+	moved:         bool,
+}
+
 /// Dispatch-owned interaction state, keyed by node id.
 #[derive(Clone, Debug)]
 pub struct DState {
@@ -421,6 +430,8 @@ pub struct DState {
 	static_select_x:          f64,
 	static_select_y:          f64,
 	static_select_moved:      bool,
+	/// Active primary-pointer selection capture over an editable field.
+	field_select_capture:     Option<FieldSelectCapture>,
 	/// Field node ids, parallel to `ed`.
 	pub ed_node:              Vec<u32>,
 	/// Editing states parallel to `ed_node`.
@@ -468,6 +479,7 @@ pub const fn dstate_new() -> DState {
 		static_select_x:       0.0,
 		static_select_y:       0.0,
 		static_select_moved:   false,
+		field_select_capture:  None,
 		ed_node:               Vec::new(),
 		ed:                    Vec::new(),
 		follow_caret_pending:  false,
@@ -589,9 +601,9 @@ pub fn sig_of(d: &Doc, st: &St, node: u32, trigger: u32) -> i32 {
 		.map_or(-1, |(index, _)| i32::try_from(index).expect("too many signals"))
 }
 
-fn emit_signal(d: &Doc, st: &St, eff: &mut Effects, signal_index: usize, node: u32, text: &str) {
+fn emit_signal(d: &Doc, st: &St, eff: &mut Effects, signal_index: usize, node: u32, text: String) {
 	eff.sig_name.push(d.sign_name[signal_index]);
-	eff.sig_text.push(text.to_owned());
+	eff.sig_text.push(text);
 	eff.sig_runs.push(String::new());
 	eff.sig_item.push(list::item_key(&st.lists, d, node));
 	eff.sig_meta.push(SigMeta {
@@ -1010,8 +1022,8 @@ pub fn set_range(
 	}
 	let anchor_index = usize::try_from(anchor_index).expect("negative edit index");
 	let head_index = usize::try_from(head_index).expect("negative edit index");
-	let anchor_end = crate::rt::str_len(&ds.ed[anchor_index].text);
-	let head_end = crate::rt::str_len(&ds.ed[head_index].text);
+	let anchor_end = ds.ed[anchor_index].text.len();
+	let head_end = ds.ed[head_index].text.len();
 	let anchor_offset = anchor_offset.clamp(0, anchor_end);
 	let head_offset = head_offset.clamp(0, head_end);
 	let anchor_caret = if anchor_order < head_order {
@@ -1078,11 +1090,7 @@ pub(crate) fn sync_bound_text_param(d: &Doc, st: &mut St, node: u32, text: &str)
 	}) else {
 		return false;
 	};
-	if st.pv_str[param] == text {
-		return false;
-	}
-	text.clone_into(&mut st.pv_str[param]);
-	true
+	st.params.set_text(param, text)
 }
 
 /// Resets the edit buffers of fields synced to text parameter `param` after a
@@ -1127,14 +1135,14 @@ pub(crate) fn reset_synced_edits(
 		edit::history_barrier(&mut ds.ed[index]);
 		edit::begin_mutation(&mut ds.ed[index], edit::MUT_NONE);
 		let revision = ds.ed[index].revision;
-		let old_end = crate::rt::str_len(&ds.ed[index].text);
+		let old_end = ds.ed[index].text.len();
 		edit::splice(&mut ds.ed[index], 0, old_end, text);
 		ds.ed[index].revision = revision;
 		let end = crate::rt::str_len(text);
 		ds.ed[index].caret = end;
 		ds.ed[index].anchor = end;
 		edit::history_barrier(&mut ds.ed[index]);
-		style::field_set(st, node, text);
+		style::field_set(st, node, &crate::text::Text::from(text));
 		// The full content is now published; drop the whole-text splice so
 		// the next local edit cannot merge against a stale lineage.
 		ds.ed[index].reset_measure_delta();
@@ -1165,7 +1173,7 @@ pub(crate) fn queue_field_change(d: &Doc, st: &St, ds: &mut DState, node: u32, t
 		}
 	};
 	let mut effects = effects_new();
-	emit_signal(d, st, &mut effects, signal_index, node, text);
+	emit_signal(d, st, &mut effects, signal_index, node, text.to_string());
 	effects.sig_runs[0] = runs;
 	ds.pending_signals.push(PendingSignal {
 		name: effects.sig_name[0],
@@ -1192,7 +1200,7 @@ pub fn sync_field(
 ) {
 	let index = usize::try_from(ei).expect("negative edit index");
 	let node = ds.ed_node[index];
-	let display = edit::display_str(&ds.ed[index]);
+	let display = edit::display_text(&ds.ed[index]);
 	// Every synced edit or caret transition reveals the caret next solve.
 	ds.follow_caret_pending = true;
 	match ds.ed[index].take_measure_delta() {
@@ -1207,15 +1215,18 @@ pub fn sync_field(
 	if !text_changed {
 		return;
 	}
+	// Param sync and the Change payload both require a declared Change
+	// signal; without one, skip materializing the (possibly huge) text.
+	let signal_index = sig_of(d, st, node, 1);
+	if signal_index < 0 {
+		return;
+	}
 	let text = edit::text_str(&ds.ed[index]);
 	sync_bound_text_param(d, st, node, &text);
-	let signal_index = sig_of(d, st, node, 1);
-	if signal_index >= 0 {
-		let signal_index = usize::try_from(signal_index).expect("negative signal index");
-		emit_signal(d, st, eff, signal_index, node, &text);
-		*eff.sig_runs.last_mut().expect("signal payload exists") =
-			edit::spans_json(ds.ed[index].revision, &ds.ed[index].spans);
-	}
+	let signal_index = usize::try_from(signal_index).expect("negative signal index");
+	emit_signal(d, st, eff, signal_index, node, text);
+	*eff.sig_runs.last_mut().expect("signal payload exists") =
+		edit::spans_json(ds.ed[index].revision, &ds.ed[index].spans);
 }
 
 /// Finds the last resolved style for a node.
@@ -1291,12 +1302,12 @@ pub fn caret_effects(d: &Doc, st: &St, lay: &Lay, sc: &Scene, ds: &DState, eff: 
 			)
 		}
 	} else {
-		let text = edit::display_str(&ds.ed[edit_index]);
+		let state = &ds.ed[edit_index];
 		(
 			0,
 			sc.entries[scene_index].h,
 			0.0,
-			crate::textm::str_slice_w(d, font, size, tracking, &text, 0, caret),
+			crate::textm::slice_w(d, font, size, tracking, edit::display_text(state).cps(), 0, caret),
 		)
 	};
 	let entry = &sc.entries[scene_index];
@@ -1329,7 +1340,7 @@ pub fn deliver_trigger(
 		return false;
 	}
 	let signal_index = usize::try_from(signal_index).expect("negative signal index");
-	emit_signal(d, st, eff, signal_index, node, text);
+	emit_signal(d, st, eff, signal_index, node, text.to_string());
 	eff.repaint = true;
 	true
 }
@@ -1840,6 +1851,7 @@ fn cancel_pointer(d: &Doc, st: &mut St, ds: &mut DState, eff: &mut Effects) {
 	clear_drag(d, st, ds, eff);
 	ds.divider = None;
 	ds.split = None;
+	ds.field_select_capture = None;
 }
 
 /// Cancels a pointer gesture whose armed drag source is absent or disabled.
@@ -1906,7 +1918,7 @@ pub fn deliver_key_map(
 				&& slir::str_at(d, *name) == signal)
 				.then_some(index)
 		}) {
-			emit_signal(d, st, eff, signal_index, node, "");
+			emit_signal(d, st, eff, signal_index, node, String::new());
 			let meta = eff.sig_meta.last_mut().expect("activation has metadata");
 			key.clone_into(&mut meta.pressed_key);
 			meta.mods = mods;
@@ -1965,6 +1977,19 @@ pub fn activate_key_own(
 pub fn multiline(d: &Doc, st: &St, node: u32) -> bool {
 	let base = list::base(&st.lists, d, node);
 	d.node_flags[usize::try_from(base).expect("node id does not fit usize")] & slir::F_MULTILINE != 0
+}
+/// Returns the authored plain-Tab insertion width for an editable text node.
+fn tab_size(d: &Doc, st: &St, node: u32) -> Option<usize> {
+	let base = list::base(&st.lists, d, node);
+	if d.node_kind[usize::try_from(base).expect("node id does not fit usize")] != slir::K_TEXT {
+		return None;
+	}
+	let value = style::attr_num(d, st, node, slir::A_TAB_SIZE, 0.0);
+	if !value.is_finite() || value <= 0.0 {
+		return None;
+	}
+	let count = value.trunc() as usize;
+	(count > 0).then_some(count)
 }
 
 /// Finds the text-layout line containing a source position.
@@ -2383,12 +2408,11 @@ fn append_visual_piece(
 	*last_baseline = Some(baseline);
 }
 
-fn codepoint_slice(text: &str, start: i32, end: i32) -> String {
+fn codepoint_slice(text: &crate::text::Text, start: i32, end: i32) -> String {
 	let start = usize::try_from(start.max(0)).expect("nonnegative codepoint offset");
-	let len = usize::try_from(end.max(0))
-		.expect("nonnegative codepoint offset")
-		.saturating_sub(start);
-	text.chars().skip(start).take(len).collect()
+	let end = usize::try_from(end.max(0)).expect("nonnegative codepoint offset");
+	let cps = text.cps();
+	crate::rt::str_from_chars(&cps[start.min(cps.len())..end.clamp(start, cps.len())])
 }
 
 fn static_selection_text(
@@ -2461,7 +2485,7 @@ fn static_selection_text(
 		else {
 			continue;
 		};
-		let content = style::content_str(d, st, entry.node);
+		let content = style::content_text(d, st, entry.node);
 		let (pad_top, ascent, line_h) = if let Some(resolved) = st
 			.rs
 			.iter()
@@ -2496,7 +2520,7 @@ pub fn emit_submit(d: &Doc, st: &St, ds: &DState, eff: &mut Effects, ei: i32) {
 		return;
 	}
 	let signal_index = usize::try_from(signal_index).expect("negative signal index");
-	emit_signal(d, st, eff, signal_index, node, &edit::text_str(&ds.ed[edit_index]));
+	emit_signal(d, st, eff, signal_index, node, edit::text_str(&ds.ed[edit_index]));
 	eff.repaint = true;
 }
 
@@ -2571,12 +2595,12 @@ pub fn follow_caret(
 			)
 		}
 	} else {
-		let text = edit::display_str(&ds.ed[edit_index]);
+		let state = &ds.ed[edit_index];
 		(
 			0,
 			sc.entries[scene_index].h,
 			0.0,
-			crate::textm::str_slice_w(d, font, size, tracking, &text, 0, caret),
+			crate::textm::slice_w(d, font, size, tracking, edit::display_text(state).cps(), 0, caret),
 		)
 	};
 
@@ -2673,6 +2697,13 @@ pub fn route_edit_key(
 	let mut refresh = true;
 
 	match key {
+		"Tab" if mods == 0 && is_multiline => {
+			let Some(count) = tab_size(d, st, node) else {
+				return false;
+			};
+			let spaces = " ".repeat(count);
+			text_changed = edit::insert(&mut ds.ed[index], &spaces);
+		},
 		"Enter" => {
 			let submits = sig_of(d, st, node, 2) >= 0;
 			if is_multiline && (!submits || selecting || alt) {
@@ -2822,6 +2853,83 @@ pub fn route_edit_key(
 	}
 	true
 }
+fn update_field_select_capture(
+	d: &Doc,
+	st: &mut St,
+	lay: &Lay,
+	sc: &Scene,
+	ds: &mut DState,
+	path: &[i32],
+	x: f64,
+	y: f64,
+) -> bool {
+	let Some(capture) = ds.field_select_capture else {
+		return false;
+	};
+	if !capture.moved {
+		let dx = x - capture.x;
+		let dy = y - capture.y;
+		if dy.mul_add(dy, dx * dx) <= 16.0 {
+			return false;
+		}
+		if let Some(active) = ds.field_select_capture.as_mut() {
+			active.moved = true;
+		}
+	}
+
+	let source_index = ed_ix(ds, capture.node);
+	if source_index < 0
+		|| scene::index_of(sc, capture.node) < 0
+		|| crate::layout::text_layout_ix(lay, capture.node) < 0
+	{
+		ds.field_select_capture = None;
+		return false;
+	}
+	let source_index = usize::try_from(source_index).expect("negative edit index");
+	if ds.ed.iter().any(|state| state.composing) {
+		return false;
+	}
+
+	let hovered_focus = path
+		.iter()
+		.rev()
+		.copied()
+		.find(|&scene_index| {
+			sc.entries[usize::try_from(scene_index).expect("negative scene index")].flags
+				& slir::F_FOCUSABLE
+				!= 0
+		})
+		.map_or(slir::NONE, |scene_index| {
+			sc.entries[usize::try_from(scene_index).expect("negative scene index")].node
+		});
+	let head_node = if hovered_focus != slir::NONE && sig_of(d, st, hovered_focus, TR_CHANGE) >= 0 {
+		hovered_focus
+	} else {
+		capture.node
+	};
+	if head_node == capture.node {
+		let hit = field_caret_at(
+			&FieldHit { d, st, lay, sc, node: capture.node },
+			ds.ed[source_index].scroll_x,
+			x,
+			y,
+		);
+		let mut changed = clear_range(ds);
+		changed |= edit::set_selection(&mut ds.ed[source_index], hit, capture.anchor_offset);
+		return changed;
+	}
+
+	ensure_edit(d, st, ds, head_node);
+	let head_index = usize::try_from(ed_ix(ds, head_node)).expect("field edit state is missing");
+	let hit = field_caret_at(
+		&FieldHit { d, st, lay, sc, node: head_node },
+		ds.ed[head_index].scroll_x,
+		x,
+		y,
+	);
+	let anchor_key = scene::key_of(d, &st.lists, capture.node);
+	set_range(d, st, sc, ds, &anchor_key, capture.anchor_offset, head_node, hit)
+}
 
 /// Routes one event through the retained scene and aggregates its host effects.
 ///
@@ -2868,6 +2976,9 @@ pub fn dispatch(
 		E_POINTER_MOVE => {
 			if ds.drag_source != slir::NONE {
 				remember_drag_event(ds, ev, pointer_dx, pointer_dy);
+			}
+			if ds.field_select_capture.is_some() {
+				effects.repaint |= update_field_select_capture(d, st, lay, sc, ds, &path, ev.x, ev.y);
 			}
 			if ds.static_select_capture {
 				let dx = ev.x - ds.static_select_x;
@@ -3170,6 +3281,7 @@ pub fn dispatch(
 					effects.repaint |= list::is_split_sash(&st.lists, pressed);
 				}
 				if focus_target != slir::NONE && sig_of(d, st, focus_target, TR_CHANGE) >= 0 {
+					effects.repaint |= clear_static_selection(ds);
 					ensure_edit(d, st, ds, focus_target);
 					let edit_index =
 						usize::try_from(ed_ix(ds, focus_target)).expect("field edit state is missing");
@@ -3219,6 +3331,13 @@ pub fn dispatch(
 						};
 						effects.repaint |= edit::set_selection(&mut ds.ed[edit_index], hit, anchor);
 					}
+					ds.field_select_capture = Some(FieldSelectCapture {
+						node:          focus_target,
+						anchor_offset: hit,
+						x:             ev.x,
+						y:             ev.y,
+						moved:         false,
+					});
 				}
 				if focus_target != previous_focus
 					&& (focus_target == slir::NONE || sig_of(d, st, focus_target, TR_CHANGE) < 0)
@@ -3258,6 +3377,10 @@ pub fn dispatch(
 				{
 					apply_drag_meta(meta, ds, false, false);
 				}
+			}
+			if ev.button == 0 && ds.field_select_capture.is_some() {
+				effects.repaint |= update_field_select_capture(d, st, lay, sc, ds, &path, ev.x, ev.y);
+				ds.field_select_capture = None;
 			}
 			if ev.button == 0 && ds.static_select_capture {
 				let dx = ev.x - ds.static_select_x;
@@ -3364,6 +3487,9 @@ pub fn dispatch(
 		E_KEY_DOWN => {
 			let selecting = ev.mods & M_SHIFT != 0;
 			let focused = ds.fs.focus;
+			if ev.key == "Escape" {
+				ds.field_select_capture = None;
+			}
 
 			// Structural range edits preempt field-local mutation and authored
 			// key bindings; the host applies them to its block model.

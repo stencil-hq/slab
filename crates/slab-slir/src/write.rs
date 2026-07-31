@@ -157,7 +157,7 @@ pub(crate) fn to_pb(s: &Slir) -> pb::Doc {
 		doc.path_coords.extend_from_slice(&path.coords);
 	}
 
-	for font in &s.fonts {
+	for (index, font) in s.fonts.iter().enumerate() {
 		doc.font_family.push(font.family);
 		doc.font_class.push(u32::from(font.class));
 		doc.font_weight.push(u32::from(font.weight));
@@ -170,25 +170,41 @@ pub(crate) fn to_pb(s: &Slir) -> pb::Doc {
 			.push(i32::from(font.underline_position));
 		doc.font_underline_thickness
 			.push(i32::from(font.underline_thickness));
-		push_run(
-			&mut doc.font_data_off,
-			&mut doc.font_data_len,
-			doc.font_data.len(),
-			font.data.len(),
-		);
-		doc.font_data.extend_from_slice(&font.data);
-		push_run(
-			&mut doc.font_cmap_off,
-			&mut doc.font_cmap_len,
-			doc.font_cmap_cp.len(),
-			font.cmap.len(),
-		);
-		for &(codepoint, glyph) in &font.cmap {
-			doc.font_cmap_cp.push(codepoint);
-			doc.font_cmap_gid.push(u32::from(glyph));
+		// Identical payloads share one run: the same face often backs several
+		// family names and weights within a document.
+		if let Some(prior) = s.fonts[..index].iter().position(|p| p.data == font.data) {
+			doc.font_data_off.push(doc.font_data_off[prior]);
+			doc.font_data_len.push(doc.font_data_len[prior]);
+		} else {
+			push_run(
+				&mut doc.font_data_off,
+				&mut doc.font_data_len,
+				doc.font_data.len(),
+				font.data.len(),
+			);
+			doc.font_data.extend_from_slice(&font.data);
 		}
-		doc.font_adv
-			.extend(font.advances.iter().copied().map(u32::from));
+		// Advances share the cmap run bounds, so both must match to share.
+		if let Some(prior) = s.fonts[..index]
+			.iter()
+			.position(|p| p.cmap == font.cmap && p.advances == font.advances)
+		{
+			doc.font_cmap_off.push(doc.font_cmap_off[prior]);
+			doc.font_cmap_len.push(doc.font_cmap_len[prior]);
+		} else {
+			push_run(
+				&mut doc.font_cmap_off,
+				&mut doc.font_cmap_len,
+				doc.font_cmap_cp.len(),
+				font.cmap.len(),
+			);
+			for &(codepoint, glyph) in &font.cmap {
+				doc.font_cmap_cp.push(codepoint);
+				doc.font_cmap_gid.push(u32::from(glyph));
+			}
+			doc.font_adv
+				.extend(font.advances.iter().copied().map(u32::from));
+		}
 	}
 
 	for condition in &s.conds {

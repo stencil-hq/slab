@@ -336,12 +336,14 @@ pub const A_SELECT_BG: u32 = 100u32;
 pub const A_SPLIT_W: u32 = 101u32;
 /// Split sash paint while hovered or pressed.
 pub const A_SPLIT_FG: u32 = 102u32;
+/// Number of spaces inserted by plain Tab in an opted-in multiline field.
+pub const A_TAB_SIZE: u32 = 103u32;
 
 /// Field cancel binder channel fired on escape-blur.
 pub const A_CANCEL: u32 = 91u32;
 
 /// Total number of normative SLIR attributes (highest attribute ID + 1).
-pub const ATTR_COUNT: usize = (A_SPLIT_FG as usize) + 1;
+pub const ATTR_COUNT: usize = (A_TAB_SIZE as usize) + 1;
 
 /// Parameter types stored in [`Doc::parm_type`] and host parameter values.
 pub const PARAM_TEXT: u32 = 0u32;
@@ -435,6 +437,9 @@ pub struct Doc {
 	pub font_cmap_cp: Vec<u32>,
 	pub font_cmap_gid: Vec<u32>,
 	pub font_adv: Vec<u32>,
+	/// FONT tables present at decode. Later tables are runtime-registered:
+	/// they never resolve vendored fallback data (see [`face_data`]).
+	pub compiled_fonts: usize,
 	// WHEN pools.
 	pub cond_kind: Vec<u32>,
 	pub cond_neg: Vec<u32>,
@@ -642,6 +647,36 @@ pub fn font_data(d: &Doc, font: i32) -> &[u8] {
 	d.font_data
 		.get(start..start.saturating_add(length))
 		.unwrap_or(&[])
+}
+/// Returns the sfnt bytes shaping and paint must use for one font table.
+///
+/// Embedded data wins: the kernel shaped that table's glyph ids against
+/// exactly those bytes. Compiled tables without data resolve the vendored
+/// class asset — the compiler stopped embedding bundled faces, so every host
+/// resolves the identical vendored bytes instead. Runtime-registered tables
+/// without data return empty: the host owns that face and the table's
+/// cmap/advances drive layout.
+pub fn face_data(d: &Doc, font: i32) -> &[u8] {
+	let embedded = font_data(d, font);
+	if !embedded.is_empty() {
+		return embedded;
+	}
+	let Ok(index) = usize::try_from(font) else {
+		return &[];
+	};
+	if index >= d.compiled_fonts {
+		return &[];
+	}
+	let (Some(&class), Some(&weight)) = (d.font_class.get(index), d.font_weight.get(index)) else {
+		return &[];
+	};
+	let class = if class == 1 {
+		slab_fonts::CLASS_MONO
+	} else {
+		slab_fonts::CLASS_SANS
+	};
+	let weight = u16::try_from(weight).unwrap_or(400);
+	slab_fonts::asset(class, weight).bytes
 }
 
 /// Folds an ASCII uppercase codepoint to lowercase, leaving all others intact.

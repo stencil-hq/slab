@@ -1432,6 +1432,16 @@ fn walk_node(
 		let (vis_first, vis_end) =
 			visible_lines(text_layout.ls.len(), y + padding_top, text_layout.line_h, cull_band);
 		let shaper = textm::Shaper { d, cache: &l.shape_cache };
+		let field_styles: std::borrow::Cow<'_, [edit::FieldStyle]> = if field_clip {
+			let edit_index = dispatch::ed_ix(ds, node);
+			if edit_index >= 0 {
+				edit::display_field_styles(&ds.ed[index(edit_index)])
+			} else {
+				std::borrow::Cow::Borrowed(&[])
+			}
+		} else {
+			std::borrow::Cow::Borrowed(&[])
+		};
 
 		if rule.code_bg_kind != 0 {
 			for line_index in vis_first..vis_end {
@@ -1525,7 +1535,12 @@ fn walk_node(
 				- field_scroll_x;
 			let baseline =
 				f64::from(line).mul_add(text_layout.line_h, y + padding_top + text_layout.ascent);
-			let Some(shaped_line) = shaper.line(text_layout, line_index) else {
+			let shaped_line = if field_styles.is_empty() {
+				shaper.line(text_layout, line_index)
+			} else {
+				shaper.field_line(text_layout, line_index, field_styles.as_ref())
+			};
+			let Some(shaped_line) = shaped_line else {
 				continue;
 			};
 			for run in &shaped_line.runs {
@@ -1554,7 +1569,12 @@ fn walk_node(
 				let italic = run.style & (1 << edit::STYLE_ITALIC) != 0;
 				let underline = run.style & (1 << edit::STYLE_UNDERLINE) != 0;
 				let code = run.style & (1 << edit::STYLE_CODE) != 0;
-				let (run_color, run_color_kind) = if code && rule.code_color_kind != 0 {
+				let field_style = usize::try_from(run.field_style)
+					.ok()
+					.and_then(|index| field_styles.get(index));
+				let (run_color, run_color_kind) = if let Some(style) = field_style {
+					(style.rgba, 1)
+				} else if code && rule.code_color_kind != 0 {
 					(rule.code_color, rule.code_color_kind)
 				} else {
 					(rule.color, rule.color_kind)
@@ -1579,7 +1599,9 @@ fn walk_node(
 					color: run_color,
 					opacity: 1.0,
 					strike: rule.strike || strike,
-					italic: rule.italic || italic,
+					italic: rule.italic
+						|| italic || field_style
+						.is_some_and(|style| style.flags & edit::FieldStyle::ITALIC != 0),
 					underline: rule.underline || underline,
 					underline_offset,
 					underline_thickness,

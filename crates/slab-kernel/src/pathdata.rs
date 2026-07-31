@@ -2,7 +2,8 @@
 //!
 //! The full path grammar (`M L H V C S Q T A Z`, relative and absolute) is
 //! lowered to absolute `M L C Q Z`. `H`/`V` lower to `L`; `S`/`T` reflect
-//! their control point; `A` currently lowers to its chord.
+//! their control point; `A` lowers to cubic Bézier segments of at most a
+//! quarter turn each (degenerate arcs lower to their chord).
 
 /// Move-to verb byte.
 pub const VM: u8 = 0;
@@ -190,11 +191,23 @@ pub fn normalize(d: &str) -> Option<(Vec<u8>, Vec<f64>)> {
 					cy = ey;
 				},
 				b'A' => {
-					let _ = (number!(), number!(), number!(), number!(), number!());
+					let rx = number!();
+					let ry = number!();
+					let phi = number!().to_radians();
+					let large_arc = number!() != 0.0;
+					let sweep = number!() != 0.0;
 					let ex = absolute(number!(), cx);
 					let ey = absolute(number!(), cy);
-					verbs.push(VL);
-					coords.extend([ex, ey]);
+					arc_to_cubics(
+						&mut verbs,
+						&mut coords,
+						(cx, cy),
+						(ex, ey),
+						(rx, ry),
+						phi,
+						large_arc,
+						sweep,
+					);
 					prev_cubic = None;
 					prev_quad = None;
 					cx = ex;
@@ -211,6 +224,117 @@ pub fn normalize(d: &str) -> Option<(Vec<u8>, Vec<f64>)> {
 		return None;
 	}
 	Some((verbs, coords))
+}
+
+/// Lowers one elliptical-arc segment to cubic Béziers (SVG 1.1 F.6.5),
+/// splitting the sweep into segments of at most a quarter turn. Coincident
+/// endpoints omit the segment entirely (SVG F.6.2) and zero radii lower to
+/// the chord line (SVG F.6.6 degeneracies).
+///
+/// Transcendentals go through the pure-Rust `libm` crate, never the platform
+/// libm: this runs at compile time and its exact f64 results are serialized
+/// into SLIR, so native and WASM compilers must produce identical bytes.
+fn arc_to_cubics(
+	verbs: &mut Vec<u8>,
+	coords: &mut Vec<f64>,
+	(x1, y1): (f64, f64),
+	(x2, y2): (f64, f64),
+	(rx, ry): (f64, f64),
+	phi: f64,
+	large_arc: bool,
+	sweep: bool,
+) {
+	let (mut rx, mut ry) = (rx.abs(), ry.abs());
+	if x1 == x2 && y1 == y2 {
+		return;
+	}
+	if rx == 0.0 || ry == 0.0 {
+		verbs.push(VL);
+		coords.extend([x2, y2]);
+		return;
+	}
+	let (sin_phi, cos_phi) = libm::sincos(phi);
+	// Endpoint -> center parameterization (F.6.5).
+	let dx = f64::midpoint(x1, -x2);
+	let dy = f64::midpoint(y1, -y2);
+	let x1p = sin_phi.mul_add(dy, cos_phi * dx);
+	let y1p = cos_phi.mul_add(dy, -sin_phi * dx);
+	let lambda = (x1p / rx).mul_add(x1p / rx, (y1p / ry).powi(2));
+	if lambda > 1.0 {
+		let scale = lambda.sqrt();
+		rx *= scale;
+		ry *= scale;
+	}
+	let radii = rx * ry;
+	let rxs = rx * y1p;
+	let rys = ry * x1p;
+	let numerator = rys.mul_add(-rys, rxs.mul_add(-rxs, radii * radii)).max(0.0);
+	let denominator = rxs.mul_add(rxs, rys * rys);
+	let mut coefficient = (numerator / denominator).sqrt();
+	if large_arc == sweep {
+		coefficient = -coefficient;
+	}
+	let cxp = coefficient * rx * y1p / ry;
+	let cyp = -coefficient * ry * x1p / rx;
+	let center_x = cos_phi.mul_add(cxp, -sin_phi * cyp) + f64::midpoint(x1, x2);
+	let center_y = sin_phi.mul_add(cxp, cos_phi * cyp) + f64::midpoint(y1, y2);
+	let start = libm::atan2((y1p - cyp) / ry, (x1p - cxp) / rx);
+	let end = libm::atan2((-y1p - cyp) / ry, (-x1p - cxp) / rx);
+	let mut delta = end - start;
+	if sweep && delta < 0.0 {
+		delta += std::f64::consts::TAU;
+	} else if !sweep && delta > 0.0 {
+		delta -= std::f64::consts::TAU;
+	}
+	let point = |t: f64| {
+		let (sin_t, cos_t) = libm::sincos(t);
+		(
+			ry.mul_add(-sin_phi * sin_t, rx.mul_add(cos_phi * cos_t, center_x)),
+			ry.mul_add(cos_phi * sin_t, rx.mul_add(sin_phi * cos_t, center_y)),
+		)
+	};
+	let derivative = |t: f64| {
+		let (sin_t, cos_t) = libm::sincos(t);
+		(
+			ry.mul_add(-sin_phi * cos_t, -rx * cos_phi * sin_t),
+			ry.mul_add(cos_phi * cos_t, -rx * sin_phi * sin_t),
+		)
+	};
+	#[allow(
+		clippy::cast_possible_truncation,
+		clippy::cast_sign_loss,
+		reason = "segment count is in 1..=4"
+	)]
+	let segments = (delta.abs() / std::f64::consts::FRAC_PI_2).ceil().max(1.0) as usize;
+	let step = delta / segments as f64;
+	// Cubic approximation of an elliptical sweep: controls follow the arc
+	// tangents with the standard 4/3 * tan(step/4) handle length.
+	let handle = 4.0 / 3.0 * libm::tan(step / 4.0);
+	let (mut px, mut py) = (x1, y1);
+	let mut t = start;
+	for segment in 0..segments {
+		let t_next = t + step;
+		// Pin the final endpoint to the authored coordinates exactly.
+		let (ex, ey) = if segment + 1 == segments {
+			(x2, y2)
+		} else {
+			point(t_next)
+		};
+		let (d1x, d1y) = derivative(t);
+		let (d2x, d2y) = derivative(t_next);
+		verbs.push(VC);
+		coords.extend([
+			handle.mul_add(d1x, px),
+			handle.mul_add(d1y, py),
+			handle.mul_add(-d2x, ex),
+			handle.mul_add(-d2y, ey),
+			ex,
+			ey,
+		]);
+		px = ex;
+		py = ey;
+		t = t_next;
+	}
 }
 
 /// Returns `(min_x, min_y, max_x, max_y)` over normalized on-curve and control
@@ -263,5 +387,32 @@ mod tests {
 	fn reports_control_point_bounds() {
 		let (_, coords) = normalize("M-2 3 C8 -4 5 12 7 9").unwrap();
 		assert_eq!(bounds(&coords), Some((-2.0, -4.0, 8.0, 12.0)));
+	}
+
+	#[test]
+	fn arc_lowers_to_quarter_turn_cubics() {
+		// Half circle: r=7 from (10,3) to (10,17) -> two 90-degree cubics.
+		let (verbs, coords) = normalize("M10 3 A7 7 0 1 0 10 17").unwrap();
+		assert_eq!(verbs, vec![VM, VC, VC]);
+		// The authored endpoint is pinned exactly.
+		assert_eq!(coords[coords.len() - 2..], [10.0, 17.0]);
+		// The sweep passes through the circle's leftmost point (3, 10).
+		let (mid_x, mid_y) = (coords[6], coords[7]);
+		assert!((mid_x - 3.0).abs() < 1e-9, "mid_x={mid_x}");
+		assert!((mid_y - 10.0).abs() < 1e-9, "mid_y={mid_y}");
+	}
+
+	#[test]
+	fn degenerate_arc_lowers_to_chord() {
+		let (verbs, coords) = normalize("M0 0 A0 5 0 0 1 10 0").unwrap();
+		assert_eq!(verbs, vec![VM, VL]);
+		assert_eq!(coords[2..], [10.0, 0.0]);
+	}
+
+	#[test]
+	fn coincident_arc_endpoints_emit_no_segment() {
+		let (verbs, coords) = normalize("M0 0 A5 5 0 1 0 0 0").unwrap();
+		assert_eq!(verbs, vec![VM]);
+		assert_eq!(coords, vec![0.0, 0.0]);
 	}
 }

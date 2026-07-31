@@ -7,7 +7,7 @@
 
 use std::cmp::Ordering;
 
-use crate::{list, slir};
+use crate::{list, params::ParamStore, slir};
 
 /// Values from the host environment that may be referenced by conditions.
 #[derive(Clone, Debug)]
@@ -50,10 +50,10 @@ pub fn client_code(name: &str) -> i32 {
 ///
 /// A matching boolean parameter overrides the global state set. Unknown
 /// symbols are inactive.
-pub fn state_active(d: &slir::Doc, sym: u32, states: &[u32], pv_num: &[f64]) -> bool {
+pub(crate) fn state_active(d: &slir::Doc, sym: u32, states: &[u32], params: &ParamStore) -> bool {
 	for (p, &name) in d.parm_name.iter().enumerate() {
-		if name == sym && d.parm_type[p] == 4 {
-			return pv_num[p] != 0.0;
+		if name == sym && d.parm_type[p] == slir::PARAM_BOOL {
+			return params.boolean(p);
 		}
 	}
 	states.contains(&sym)
@@ -61,16 +61,16 @@ pub fn state_active(d: &slir::Doc, sym: u32, states: &[u32], pv_num: &[f64]) -> 
 
 /// Reports whether a symbol is enabled by parameters, global state, or a
 /// per-node state overlay, in that precedence order.
-pub fn state_active_ns(
+pub(crate) fn state_active_ns(
 	d: &slir::Doc,
 	sym: u32,
 	node: u32,
 	states: &[u32],
 	ns_node: &[u32],
 	ns_sym: &[u32],
-	pv_num: &[f64],
+	params: &ParamStore,
 ) -> bool {
-	if state_active(d, sym, states, pv_num) {
+	if state_active(d, sym, states, params) {
 		return true;
 	}
 	ns_node
@@ -100,13 +100,13 @@ pub fn cmp(base: f64, op: u32, num: f64) -> bool {
 /// the global pass over state, environment, client, and theme conditions.
 // These are the independent inputs to condition evaluation; bundling borrowed
 // runtime state would obscure precedence at this public kernel boundary.
-pub fn eval_cond(
+pub(crate) fn eval_cond(
 	d: &slir::Doc,
 	ci: i32,
 	_node: u32,
 	env: &Env,
 	states: &[u32],
-	pv_num: &[f64],
+	params: &ParamStore,
 	cw: f64,
 	ch: f64,
 ) -> bool {
@@ -114,7 +114,7 @@ pub fn eval_cond(
 	let kind = d.cond_kind[ci];
 	let sym = d.cond_sym[ci];
 	let active = match kind {
-		slir::C_STATE => state_active(d, sym, states, pv_num),
+		slir::C_STATE => state_active(d, sym, states, params),
 		slir::C_ENV => match slir::str_at(d, sym) {
 			"portrait" => env.vw < env.vh,
 			// This is deliberately the inverse of portrait. Expressing the
@@ -144,7 +144,7 @@ pub fn eval_cond(
 /// global states. Every other condition has the same behavior as [`eval_cond`].
 // Node-state evaluation adds the two parallel overlay slices to the base
 // condition inputs; keeping them explicit preserves their indexing contract.
-pub fn eval_cond_ns(
+pub(crate) fn eval_cond_ns(
 	d: &slir::Doc,
 	ci: i32,
 	node: u32,
@@ -152,16 +152,16 @@ pub fn eval_cond_ns(
 	states: &[u32],
 	ns_node: &[u32],
 	ns_sym: &[u32],
-	pv_num: &[f64],
+	params: &ParamStore,
 	cw: f64,
 	ch: f64,
 ) -> bool {
 	let condition = usize::try_from(ci).expect("condition index must be nonnegative");
 	if d.cond_kind[condition] != slir::C_STATE {
-		return eval_cond(d, ci, node, env, states, pv_num, cw, ch);
+		return eval_cond(d, ci, node, env, states, params, cw, ch);
 	}
 
-	let active = state_active_ns(d, d.cond_sym[condition], node, states, ns_node, ns_sym, pv_num);
+	let active = state_active_ns(d, d.cond_sym[condition], node, states, ns_node, ns_sym, params);
 	if d.cond_neg[condition] == 1 {
 		!active
 	} else {
@@ -175,7 +175,7 @@ pub fn eval_cond_ns(
 /// field index. All other conditions retain normal per-node behavior.
 // Item evaluation composes condition, node-state, list-state, and constraint
 // inputs. The explicit boundary mirrors that domain operation without copies.
-pub fn eval_cond_item(
+pub(crate) fn eval_cond_item(
 	d: &slir::Doc,
 	ci: i32,
 	node: u32,
@@ -183,14 +183,14 @@ pub fn eval_cond_item(
 	states: &[u32],
 	ns_node: &[u32],
 	ns_sym: &[u32],
-	pv_num: &[f64],
+	params: &ParamStore,
 	lists: &list::State,
 	cw: f64,
 	ch: f64,
 ) -> bool {
 	let condition = usize::try_from(ci).expect("condition index must be nonnegative");
 	if d.cond_kind[condition] != slir::C_PROP {
-		return eval_cond_ns(d, ci, node, env, states, ns_node, ns_sym, pv_num, cw, ch);
+		return eval_cond_ns(d, ci, node, env, states, ns_node, ns_sym, params, cw, ch);
 	}
 
 	let param = list::param_of(lists, d, node);
@@ -202,11 +202,12 @@ pub fn eval_cond_item(
 	let active = if param < 0 || item < 0 {
 		false
 	} else {
-		match value.kind {
-			0 => !value.s.is_empty(),
-			3 => value.rgba != 0,
-			5 => !value.sym.is_empty(),
-			_ => value.num != 0.0,
+		match value {
+			list::ValueRef::Missing => false,
+			list::ValueRef::Text(value) | list::ValueRef::Enum(value) => !value.is_empty(),
+			list::ValueRef::Num(value) | list::ValueRef::Pct(value) => value != 0.0,
+			list::ValueRef::Color(value) => value != 0,
+			list::ValueRef::Bool(value) => value,
 		}
 	};
 

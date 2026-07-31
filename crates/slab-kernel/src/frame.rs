@@ -12,6 +12,7 @@ use std::collections::BTreeSet;
 
 use serde::Serialize;
 
+pub use crate::edit::FieldStyle;
 use crate::{
 	dispatch::{self, DState, Effects, Event},
 	dumpjson, edit,
@@ -97,23 +98,35 @@ pub(crate) struct RuntimeImage {
 	pub(crate) active:     bool,
 }
 
-/// Host-facing parameter value.
-///
-/// `kind` must match the declared parameter type: `0` is text, `1` is a
-/// number, `2` is a percentage, `3` is RGBA color, `4` is a boolean encoded
-/// as numeric zero or one, and `5` is an enum symbol.
-#[derive(Clone, Debug, Serialize)]
-pub struct ParamValue {
-	/// Parameter type tag.
-	pub kind: u32,
-	/// Numeric, percentage, or boolean payload.
-	pub num:  f64,
-	/// Text payload.
-	pub s:    String,
-	/// Packed RGBA color payload.
-	pub rgba: u32,
-	/// Enum symbol payload.
-	pub sym:  String,
+/// One typed parameter value supplied by a host.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub enum ParamValue {
+	/// UTF-8 text.
+	Text(String),
+	/// A scalar number.
+	Num(f64),
+	/// A percentage.
+	Pct(f64),
+	/// A packed RGBA color.
+	Color(u32),
+	/// A boolean.
+	Bool(bool),
+	/// A declared enum symbol.
+	Enum(String),
+}
+
+impl ParamValue {
+	/// Returns the SLIR parameter type tag for this value.
+	pub const fn kind(&self) -> u32 {
+		match self {
+			Self::Text(_) => slir::PARAM_TEXT,
+			Self::Num(_) => slir::PARAM_NUM,
+			Self::Pct(_) => slir::PARAM_PCT,
+			Self::Color(_) => slir::PARAM_COLOR,
+			Self::Bool(_) => slir::PARAM_BOOL,
+			Self::Enum(_) => slir::PARAM_ENUM,
+		}
+	}
 }
 
 /// Host-facing caret and selection state for one bound field.
@@ -825,22 +838,24 @@ pub fn inst_set_field_text(i: &mut Instance, key: &str, text: &str) -> bool {
 		i.dirty = true;
 	}
 	let edit_index = dispatch::ed_ix(&i.ds, node);
-	let (previous, spans_changed, previous_revision, display_changed) = if edit_index >= 0 {
-		let index = usize::try_from(edit_index).expect("negative edit index");
-		let state = &i.ds.ed[index];
-		(
-			edit::text_str(state),
-			!state.spans.is_empty(),
-			state.revision,
-			edit::display_str(state) != text
-				|| state.caret != crate::rt::str_len(text)
-				|| state.anchor != state.caret,
-		)
-	} else {
-		let content = style::content_str(&i.doc, &i.st, node);
-		let changed = content != text;
-		(content, false, 0, changed)
-	};
+	let (previous, spans_changed, styles_changed, previous_revision, display_changed) =
+		if edit_index >= 0 {
+			let index = usize::try_from(edit_index).expect("negative edit index");
+			let state = &i.ds.ed[index];
+			(
+				edit::text_str(state),
+				!state.spans.is_empty(),
+				!state.field_styles.is_empty(),
+				state.revision,
+				edit::display_text(state) != text
+					|| state.caret != crate::rt::str_len(text)
+					|| state.anchor != state.caret,
+			)
+		} else {
+			let content = style::content_str(&i.doc, &i.st, node);
+			let changed = content != text;
+			(content, false, false, 0, changed)
+		};
 	let text_changed = previous != text;
 	let mut replacement = edit::es_new(node, text);
 	if text_changed || spans_changed {
@@ -859,13 +874,54 @@ pub fn inst_set_field_text(i: &mut Instance, key: &str, text: &str) -> bool {
 		style::field_scroll_set(&mut i.st, node, 0.0);
 	}
 	if display_changed {
-		style::field_set(&mut i.st, node, text);
+		style::field_set(&mut i.st, node, &crate::text::Text::from(text));
 	}
 	let param_changed = dispatch::sync_bound_text_param(&i.doc, &mut i.st, node, text);
 	if text_changed || spans_changed || param_changed {
 		dispatch::queue_field_change(&i.doc, &i.st, &mut i.ds, node, text);
 	}
-	if display_changed || spans_changed || param_changed || composing_changed || scroll_changed {
+	if display_changed
+		|| spans_changed
+		|| styles_changed
+		|| param_changed
+		|| composing_changed
+		|| scroll_changed
+	{
+		i.dirty = true;
+	}
+	true
+}
+
+/// Replaces all host paint-only styles for a keyed field.
+///
+/// Offsets are committed-text codepoint positions. The input must be ascending
+/// and non-overlapping before endpoints clamp to the text length; invalid
+/// payloads are rejected atomically.
+pub fn inst_set_field_styles(i: &mut Instance, key: &str, styles: &[FieldStyle]) -> bool {
+	let node = scene::node_by_key(&i.doc, &i.st.lists, key);
+	if node == slir::NONE || dispatch::sig_of(&i.doc, &i.st, node, dispatch::TR_CHANGE) < 0 {
+		return false;
+	}
+	let mut previous_end = i32::MIN;
+	for style in styles {
+		if style.start > style.end || style.start < previous_end {
+			return false;
+		}
+		previous_end = style.end;
+	}
+	dispatch::ensure_edit(&i.doc, &mut i.st, &mut i.ds, node);
+	let edit_index = usize::try_from(dispatch::ed_ix(&i.ds, node)).expect("field edit was bound");
+	let text_len = i.ds.ed[edit_index].text.len();
+	let mut replacement = Vec::with_capacity(styles.len());
+	for style in styles {
+		let start = style.start.clamp(0, text_len);
+		let end = style.end.clamp(0, text_len);
+		if start < end {
+			replacement.push(FieldStyle { start, end, rgba: style.rgba, flags: style.flags });
+		}
+	}
+	if i.ds.ed[edit_index].field_styles != replacement {
+		i.ds.ed[edit_index].field_styles = replacement;
 		i.dirty = true;
 	}
 	true
@@ -889,7 +945,7 @@ pub fn inst_field_text(i: &Instance, key: &str) -> Option<String> {
 
 fn collect_field_runs(state: &edit::EditState) -> FieldRuns {
 	let mut boundaries = Vec::new();
-	graphemes::boundaries(&state.text, &mut boundaries);
+	graphemes::boundaries_cps(state.text.cps(), &mut boundaries);
 	let mut spans = state.spans.clone();
 	let mut runs = Vec::new();
 	for style in 0..=edit::STYLE_CODE {
@@ -922,7 +978,7 @@ pub fn inst_field_runs(i: &Instance, key: &str) -> Option<FieldRuns> {
 	Some(collect_field_runs(&i.ds.ed[usize::try_from(edit_index).expect("negative edit index")]))
 }
 
-fn spans_from_field_runs(text: &str, runs: &FieldRuns) -> Option<edit::InlineSpans> {
+fn spans_from_field_runs(text: &crate::text::Text, runs: &FieldRuns) -> Option<edit::InlineSpans> {
 	if runs
 		.runs
 		.iter()
@@ -931,7 +987,7 @@ fn spans_from_field_runs(text: &str, runs: &FieldRuns) -> Option<edit::InlineSpa
 		return None;
 	}
 	let mut boundaries = Vec::new();
-	graphemes::boundaries(text, &mut boundaries);
+	graphemes::boundaries_cps(text.cps(), &mut boundaries);
 	let mut spans = edit::InlineSpans::default();
 	for run in &runs.runs {
 		let start = clamp_caret_offset(&boundaries, run.start);
@@ -1031,7 +1087,9 @@ pub fn inst_restore_fields(i: &mut Instance, snapshot: &FieldSnapshot) -> bool {
 		if !seen.insert(canonical) || !field.goal_x.is_finite() {
 			return false;
 		}
-		let Some(spans) = spans_from_field_runs(&field.text, &field.runs) else {
+		let Some(spans) =
+			spans_from_field_runs(&crate::text::Text::from(field.text.as_str()), &field.runs)
+		else {
 			return false;
 		};
 		let mut boundaries = Vec::new();
@@ -1054,10 +1112,10 @@ pub fn inst_restore_fields(i: &mut Instance, snapshot: &FieldSnapshot) -> bool {
 		let state = &i.ds.ed[edit_index];
 		let text_changed = state.text != field.text;
 		let spans_changed = state.spans != spans;
-		let display_changed = edit::display_str(state) != field.text;
+		let display_changed = edit::display_text(state) != field.text;
 		edit::restore_baseline(
 			&mut i.ds.ed[edit_index],
-			field.text.clone(),
+			&field.text,
 			spans,
 			caret,
 			anchor,
@@ -1066,7 +1124,7 @@ pub fn inst_restore_fields(i: &mut Instance, snapshot: &FieldSnapshot) -> bool {
 		);
 		let composing_changed = style::set_node_state(&i.doc, &mut i.st, node, "composing", false);
 		if display_changed {
-			style::field_set(&mut i.st, node, &field.text);
+			style::field_set(&mut i.st, node, &crate::text::Text::from(field.text.as_str()));
 		}
 		// The full content is now published; drop any pending splice lineage.
 		i.ds.ed[edit_index].reset_measure_delta();
@@ -1226,13 +1284,7 @@ fn inst_set_caret_inner(
 						|| (scene::key_of(&i.doc, &i.st.lists, previous_focus), source_state.anchor),
 						|range| (range.anchor_key.clone(), range.anchor_offset),
 					);
-				(
-					anchor_key,
-					anchor_offset,
-					previous_focus,
-					source_state.caret,
-					crate::rt::str_len(&source_state.text),
-				)
+				(anchor_key, anchor_offset, previous_focus, source_state.caret, source_state.text.len())
 			})
 		})
 		.flatten();
@@ -1246,7 +1298,7 @@ fn inst_set_caret_inner(
 	}
 	let index = usize::try_from(edit_index).expect("negative edit index");
 	let mut boundaries = Vec::new();
-	graphemes::boundaries(&i.ds.ed[index].text, &mut boundaries);
+	graphemes::boundaries_cps(i.ds.ed[index].text.cps(), &mut boundaries);
 	let mut caret = clamp_caret_offset(&boundaries, caret);
 	let mut anchor = clamp_caret_offset(&boundaries, anchor);
 	if let (Some(goal_x), Some(text_layout_index)) = (goal_x, text_layout_index) {
@@ -1282,7 +1334,7 @@ fn inst_set_caret_inner(
 		if let (Some(anchor_order), Some(head_order)) =
 			(field_scene_order(i, anchor_node), field_scene_order(i, node))
 		{
-			let head_end = crate::rt::str_len(&i.ds.ed[index].text);
+			let head_end = i.ds.ed[index].text.len();
 			let expected_anchor = if anchor_order < head_order {
 				0
 			} else {
@@ -1305,7 +1357,7 @@ fn inst_set_caret_inner(
 		&& let (Some(source_order), Some(head_order)) =
 			(field_scene_order(i, source_node), field_scene_order(i, node))
 	{
-		let head_end = crate::rt::str_len(&i.ds.ed[index].text);
+		let head_end = i.ds.ed[index].text.len();
 		let (expected_source, expected_anchor) = if source_order < head_order {
 			(source_end, 0)
 		} else {
@@ -1809,62 +1861,42 @@ pub fn inst_set_param(i: &mut Instance, param: u32, v: &ParamValue) -> bool {
 	let Ok(param_index) = usize::try_from(param) else {
 		return false;
 	};
-	if param_index >= i.doc.parm_name.len()
-		|| i.doc.parm_type[param_index] != v.kind
-		|| v.kind == slir::PARAM_LIST
-	{
+	if param_index >= i.doc.parm_name.len() || i.doc.parm_type[param_index] != v.kind() {
 		return false;
 	}
 
-	match v.kind {
-		0 => {
-			if i.st.pv_str[param_index] == v.s {
-				return true;
-			}
-			v.s.clone_into(&mut i.st.pv_str[param_index]);
-			// A host write to a field-synced text param resets non-composing
-			// edit buffers so the painted field follows the parameter.
-			dispatch::reset_synced_edits(&i.doc, &mut i.st, &mut i.ds, param_index, &v.s);
-		},
-		1 | 2 => {
-			if i.st.pv_num[param_index] == v.num {
-				return true;
-			}
-			i.st.pv_num[param_index] = v.num;
-		},
-		3 => {
-			if i.st.pv_h[param_index] == v.rgba {
-				return true;
-			}
-			i.st.pv_h[param_index] = v.rgba;
-		},
-		4 => {
-			let next = if v.num == 0.0 { 0.0 } else { 1.0 };
-			if i.st.pv_num[param_index] == next {
-				return true;
-			}
-			i.st.pv_num[param_index] = next;
-		},
-		5 => {
-			let enum_offset = i.doc.parm_enum_off[param_index];
-			let enum_len = i.doc.parm_enum_len[param_index];
-			let declared = (enum_offset..enum_offset.wrapping_add(enum_len)).any(|index| {
-				let index = usize::try_from(index).expect("negative parameter enum index");
-				let symbol = i.doc.parm_enum_syms[index];
-				let symbol = usize::try_from(symbol).expect("enum string index is too large");
-				i.doc.strs[symbol] == v.sym
-			});
-			if !declared {
-				return false;
-			}
-			if i.st.pv_sym[param_index] == v.sym {
-				return true;
-			}
-			v.sym.clone_into(&mut i.st.pv_sym[param_index]);
-		},
-		_ => {},
+	if let ParamValue::Enum(symbol) = v {
+		let enum_offset = i.doc.parm_enum_off[param_index];
+		let enum_len = i.doc.parm_enum_len[param_index];
+		let declared = (enum_offset..enum_offset.wrapping_add(enum_len)).any(|index| {
+			let index = usize::try_from(index).expect("negative parameter enum index");
+			let string = i.doc.parm_enum_syms[index];
+			let string = usize::try_from(string).expect("enum string index is too large");
+			i.doc.strs[string] == *symbol
+		});
+		if !declared {
+			return false;
+		}
 	}
-	i.dirty = true;
+
+	let changed = match v {
+		ParamValue::Text(value) => {
+			let changed = i.st.params.set_text(param_index, value);
+			if changed {
+				// A host write to a field-synced text param resets non-composing
+				// edit buffers so the painted field follows the parameter.
+				dispatch::reset_synced_edits(&i.doc, &mut i.st, &mut i.ds, param_index, value);
+			}
+			changed
+		},
+		ParamValue::Num(value) | ParamValue::Pct(value) => {
+			i.st.params.set_number(param_index, *value)
+		},
+		ParamValue::Color(value) => i.st.params.set_color(param_index, *value),
+		ParamValue::Bool(value) => i.st.params.set_boolean(param_index, *value),
+		ParamValue::Enum(value) => i.st.params.set_symbol(param_index, value),
+	};
+	i.dirty |= changed;
 	true
 }
 
@@ -1902,9 +1934,7 @@ pub fn inst_set_list_field(
 	field: &str,
 	v: &ParamValue,
 ) -> bool {
-	let value =
-		list::Val { kind: v.kind, num: v.num, s: v.s.clone(), rgba: v.rgba, sym: v.sym.clone() };
-	let changed = list::set_field_path(&i.doc, &mut i.st.lists, param, path, index, field, &value);
+	let changed = list::set_field_path(&i.doc, &mut i.st.lists, param, path, index, field, v);
 	if changed < 0 {
 		return false;
 	}

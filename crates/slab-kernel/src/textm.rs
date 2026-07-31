@@ -361,15 +361,17 @@ pub struct ShapedGlyph {
 #[derive(Clone, Debug)]
 pub struct ShapedRun {
 	/// Line-local slice bounds in logical order.
-	pub start:  i32,
-	pub end:    i32,
-	pub font:   i32,
+	pub start:       i32,
+	pub end:         i32,
+	pub font:        i32,
 	/// Bitset of `1 << edit::STYLE_*` inline overrides.
-	pub style:  u32,
-	pub rtl:    bool,
-	pub x:      f64,
-	pub width:  f64,
-	pub glyphs: Vec<ShapedGlyph>,
+	pub style:       u32,
+	/// Index into the field's paint-only style list, or `-1`.
+	pub field_style: i32,
+	pub rtl:         bool,
+	pub x:           f64,
+	pub width:       f64,
+	pub glyphs:      Vec<ShapedGlyph>,
 }
 
 /// A shaped caret unit with visual geometry and logical source bounds.
@@ -489,7 +491,7 @@ pub struct TextCacheEntry {
 	/// Rich-field spans that participated in this layout.
 	pub spans:       crate::edit::InlineSpans,
 	/// Resolved text content at measurement time.
-	pub content:     String,
+	pub content:     crate::text::Text,
 	/// [`crate::style::FieldTextRev`] revision this content was measured at;
 	/// zero when the node's content is not revision-tracked.
 	pub content_rev: u64,
@@ -600,6 +602,7 @@ pub(crate) fn line_shaped(
 		layout.src_ls[line],
 		layout.src_le[line],
 		&layout.spans,
+		&[],
 		&mut cache.borrow_mut(),
 	));
 	{
@@ -751,7 +754,7 @@ fn shape_font_run(
 	let run_end = i32::try_from(end).expect("text exceeds i32");
 	let mut glyphs = Vec::new();
 	let mut clusters = Vec::new();
-	let data = slir::font_data(d, font);
+	let data = slir::face_data(d, font);
 	let upem = usize::try_from(font)
 		.ok()
 		.and_then(|index| d.font_upem.get(index))
@@ -824,6 +827,7 @@ fn shape_font_run(
 				end: run_end,
 				font,
 				style: 0,
+				field_style: -1,
 				rtl,
 				x: line_x,
 				width: cursor - line_x,
@@ -883,6 +887,7 @@ fn shape_font_run(
 			end: run_end,
 			font,
 			style: 0,
+			field_style: -1,
 			rtl,
 			x: line_x,
 			width: cursor - line_x,
@@ -1116,6 +1121,32 @@ impl Shaper<'_> {
 	pub(crate) fn line(&self, layout: &TextLayout, line: usize) -> Option<Rc<ShapedLine>> {
 		line_shaped(self.d, self.cache, layout, line)
 	}
+
+	/// Shapes a field line with paint-only style boundaries.
+	///
+	/// This bypasses retained geometry because host ranges may change without
+	/// invalidating measurement. The base layout and its advances are untouched.
+	pub(crate) fn field_line(
+		&self,
+		layout: &TextLayout,
+		line: usize,
+		styles: &[crate::edit::FieldStyle],
+	) -> Option<Rc<ShapedLine>> {
+		let start = usize::try_from(*layout.ls.get(line)?).expect("negative line start");
+		let end = usize::try_from(layout.le[line]).expect("negative line end");
+		Some(Rc::new(shape_rich_line(
+			self.d,
+			layout.font,
+			layout.size,
+			layout.tracking,
+			&layout.chars[start..end],
+			layout.src_ls[line],
+			layout.src_le[line],
+			&layout.spans,
+			styles,
+			&mut self.cache.borrow_mut(),
+		)))
+	}
 }
 
 /// Returns the visual caret coordinate for a source position on one line.
@@ -1267,6 +1298,14 @@ fn rich_mask(spans: &crate::edit::InlineSpans, point: i32) -> u32 {
 	mask
 }
 
+fn field_style_index(styles: &[crate::edit::FieldStyle], point: i32) -> i32 {
+	let index = styles.partition_point(|style| style.end <= point);
+	styles
+		.get(index)
+		.filter(|style| style.start <= point)
+		.map_or(-1, |_| i32::try_from(index).expect("field style count exceeds i32"))
+}
+
 #[allow(
 	clippy::too_many_arguments,
 	reason = "rich shaping keeps metric and source inputs explicit"
@@ -1283,12 +1322,13 @@ fn shape_rich_line(
 	source_start: i32,
 	source_end: i32,
 	spans: &crate::edit::InlineSpans,
+	field_styles: &[crate::edit::FieldStyle],
 	cache: &mut ShapeCache,
 ) -> ShapedLine {
 	if chars.is_empty() {
 		return ShapedLine::default();
 	}
-	let masks: Vec<u32> = (0..chars.len())
+	let masks: Vec<(u32, i32)> = (0..chars.len())
 		.map(|local| {
 			let offset = source_start.wrapping_add(i32::try_from(local).expect("text exceeds i32"));
 			let point = if source_end > source_start {
@@ -1296,15 +1336,15 @@ fn shape_rich_line(
 			} else {
 				source_start
 			};
-			rich_mask(spans, point)
+			(rich_mask(spans, point), field_style_index(field_styles, point))
 		})
 		.collect();
 	let mut assigned = Vec::with_capacity(chars.len());
 	let mut segment_start = 0;
 	while segment_start < chars.len() {
-		let mask = masks[segment_start];
+		let mask = masks[segment_start].0;
 		let mut segment_end = segment_start + 1;
-		while segment_end < chars.len() && masks[segment_end] == mask {
+		while segment_end < chars.len() && masks[segment_end].0 == mask {
 			segment_end += 1;
 		}
 		let text: String = chars[segment_start..segment_end]
@@ -1322,7 +1362,7 @@ fn shape_rich_line(
 	// Paint geometry lands in the same advance space rich measurement uses:
 	// each codepoint charged to its span-selected font.
 	let pos =
-		advance_positions(d, size, tracking, chars, |local| rich_font(d, base_font, masks[local]));
+		advance_positions(d, size, tracking, chars, |local| rich_font(d, base_font, masks[local].0));
 
 	let text: String = chars
 		.iter()
@@ -1350,21 +1390,23 @@ fn shape_rich_line(
 		let mut run_start = start;
 		while run_start < end {
 			let font = assigned[run_start];
-			let style = masks[run_start];
+			let (style, field_style) = masks[run_start];
 			let mut run_end = run_start + 1;
-			while run_end < end && assigned[run_end] == font && masks[run_end] == style {
+			while run_end < end && assigned[run_end] == font && masks[run_end] == (style, field_style)
+			{
 				run_end += 1;
 			}
-			logical_runs.push((run_start, run_end, font, style));
+			logical_runs.push((run_start, run_end, font, style, field_style));
 			run_start = run_end;
 		}
 		if rtl {
 			logical_runs.reverse();
 		}
-		for (start, end, font, style) in logical_runs {
+		for (start, end, font, style, field_style) in logical_runs {
 			let (mut run, clusters) =
 				shape_font_run(d, chars, start, end, font, size, tracking, rtl, line.width, cache);
 			run.style = style;
+			run.field_style = field_style;
 			let (mut clusters, run_w) =
 				advance_normalize_run(&mut run, clusters, &grapheme_starts, &pos, line.width);
 			line.width += run_w;
@@ -1740,7 +1782,7 @@ pub(crate) fn rewrap_rich_layout(
 	base_font: i32,
 	size: f64,
 	tracking: f64,
-	text: &str,
+	text: &[u32],
 	max_w: f64,
 	max_lines: i32,
 	spans: &crate::edit::InlineSpans,
@@ -1749,7 +1791,7 @@ pub(crate) fn rewrap_rich_layout(
 	if spans.is_empty() {
 		return;
 	}
-	let src: Vec<u32> = text.chars().map(u32::from).collect();
+	let src = text;
 	layout.chars.clear();
 	layout.ls.clear();
 	layout.le.clear();
@@ -1771,9 +1813,7 @@ pub(crate) fn rewrap_rich_layout(
 		{
 			hard_end += 1;
 		}
-		rich_wrap_hard(
-			d, base_font, size, tracking, &src, hard_start, hard_end, max_w, spans, layout,
-		);
+		rich_wrap_hard(d, base_font, size, tracking, src, hard_start, hard_end, max_w, spans, layout);
 		if hard_end >= source_len {
 			break;
 		}
@@ -2274,13 +2314,14 @@ pub fn measure_text(
 	max_lines: i32,
 ) -> TextLayout {
 	let mut cache = ShapeCache::default();
+	let src: Vec<u32> = text.chars().map(u32::from).collect();
 	measure_text_cached(
 		d,
 		f,
 		size,
 		leading,
 		tracking,
-		text,
+		&src,
 		max_w,
 		wrap,
 		ellipsis,
@@ -2311,8 +2352,9 @@ pub fn measure_rich_text(
 	spans: &crate::edit::InlineSpans,
 ) -> TextLayout {
 	let mut cache = ShapeCache::default();
+	let src: Vec<u32> = text.chars().map(u32::from).collect();
 	measure_text_cached(
-		d, f, size, leading, tracking, text, max_w, wrap, ellipsis, max_lines, spans, &mut cache,
+		d, f, size, leading, tracking, &src, max_w, wrap, ellipsis, max_lines, spans, &mut cache,
 	)
 }
 
@@ -2527,42 +2569,44 @@ impl TextDelta {
 }
 
 /// Re-measures only the hard lines a contiguous edit touched, splicing the
-/// untouched prefix and suffix of the previous layout.
+/// affected window of `prev` in place.
 ///
-/// Returns `None` when the previous layout cannot support a splice (no hard
-/// tables, rich spans, or an out-of-range delta); the caller falls back to
-/// a full measure. The result is bit-identical to a full measure of `text`:
-/// hard lines measure independently and untouched lines keep their exact
-/// folds.
+/// Returns `false` when the previous layout cannot support a splice (no hard
+/// tables, or an out-of-range delta); the caller falls back to a full
+/// measure. `spans` is the post-edit span set; callers must prove it moved
+/// positionally with the edit ([`crate::edit::InlineSpans::follows_splice`]),
+/// which keeps retained prefix/suffix line signatures bit-identical. The
+/// result matches a full measure of `text`: hard lines measure
+/// independently, untouched lines keep their exact folds, and suffix tables
+/// shift by the edit's size without being rebuilt.
 #[allow(
 	clippy::too_many_arguments,
 	reason = "hot measurement path keeps the public measure inputs explicit"
 )]
-pub(crate) fn measure_text_spliced(
+pub(crate) fn measure_text_spliced_into(
 	d: &Doc,
 	f: i32,
 	size: f64,
-	leading: f64,
 	tracking: f64,
-	prev: &TextLayout,
-	text: &str,
+	prev: &mut TextLayout,
+	text: &[u32],
 	delta: TextDelta,
 	max_w: f64,
 	wrap: bool,
+	spans: &crate::edit::InlineSpans,
 	cache: &mut ShapeCache,
-) -> Option<TextLayout> {
-	if prev.hard_lines.is_empty() || !prev.spans.is_empty() {
-		return None;
+) -> bool {
+	if prev.hard_lines.is_empty() {
+		return false;
 	}
-	let mut src: Vec<u32> = Vec::with_capacity(text.len());
-	src.extend(text.chars().map(u32::from));
+	let src = text;
 	let new_len = i32::try_from(src.len()).expect("text exceeds i32");
 	let shift = delta.inserted.wrapping_sub(delta.removed);
 	let old_len = new_len.wrapping_sub(shift);
 	let old_at = delta.at;
 	let old_removed_end = delta.at.wrapping_add(delta.removed);
 	if old_at < 0 || old_removed_end > old_len {
-		return None;
+		return false;
 	}
 
 	// Affected hard window in the previous layout.
@@ -2582,106 +2626,170 @@ pub(crate) fn measure_text_spliced(
 	let win_start = prev.hard_src[h0];
 	let new_win_end = old_win_end.wrapping_add(shift);
 	if new_win_end < win_start || new_win_end > new_len {
-		return None;
+		return false;
 	}
 
 	let idx = |value: i32| usize::try_from(value).expect("nonnegative offset");
-	let mut layout = tl_new();
-	layout.line_h = line_h(size, leading);
-	layout.ascent = ascent(d, f, size, leading);
-	layout.font = f;
-	layout.size = size;
-	layout.tracking = tracking;
-
-	// Prefix: lines and chars before the affected window, verbatim.
 	let first_mid_line = idx(prev.hard_lines[h0]);
 	let prefix_chars = if first_mid_line < prev.ls.len() {
 		idx(prev.ls[first_mid_line])
 	} else {
 		prev.chars.len()
 	};
-	layout.chars.extend_from_slice(&prev.chars[..prefix_chars]);
-	layout.ls.extend_from_slice(&prev.ls[..first_mid_line]);
-	layout.le.extend_from_slice(&prev.le[..first_mid_line]);
-	layout
-		.src_ls
-		.extend_from_slice(&prev.src_ls[..first_mid_line]);
-	layout
-		.src_le
-		.extend_from_slice(&prev.src_le[..first_mid_line]);
-	layout
-		.line_w
-		.extend_from_slice(&prev.line_w[..first_mid_line]);
-	layout.hard_lines.extend_from_slice(&prev.hard_lines[..h0]);
-	layout.hard_src.extend_from_slice(&prev.hard_src[..h0]);
-	{
-		let prev_shaped = prev.shaped.borrow();
-		layout
-			.shaped
-			.get_mut()
-			.extend(prev_shaped[..first_mid_line].iter().cloned());
-	}
+	// Old suffix anchors, captured before any table mutates.
+	let (old_suffix_line, old_suffix_chars, old_suffix_out_line) = if h1 + 1 < hards {
+		let line = idx(prev.hard_lines[h1 + 1]);
+		(Some(line), idx(prev.ls[line]), prev.hard_lines[h1 + 1])
+	} else {
+		(None, prev.chars.len(), 0)
+	};
+	let old_mid_line_end = old_suffix_line.unwrap_or(prev.ls.len());
 
-	// Middle: re-measure the affected hard window through the memo.
+	// Re-measure the affected hard window into a scratch layout; its output
+	// offsets are window-local and rebase during the table splices below.
+	let mut mid = tl_new();
+	mid.font = f;
+	mid.size = size;
+	mid.tracking = tracking;
 	memo_hard_range(
 		d,
 		f,
 		size,
 		tracking,
-		&mut layout,
-		&src,
+		&mut mid,
+		src,
 		win_start,
 		new_win_end,
 		max_w,
 		wrap,
-		&crate::edit::InlineSpans::empty(),
+		spans,
 		cache,
 	);
-	let mid_lines = layout.ls.len();
-	layout
-		.shaped
-		.get_mut()
-		.resize(mid_lines, LineShape::Unshaped);
+	let mid_lines = mid.ls.len();
+	let mid_chars = mid.chars.len();
+	let mid_hards = mid.hard_lines.len();
+	let prefix_chars_shift = i32::try_from(prefix_chars).expect("text exceeds i32");
+	let out_shift = i32::try_from(prefix_chars + mid_chars).expect("text exceeds i32")
+		- i32::try_from(old_suffix_chars).expect("text exceeds i32");
+	let first_mid_line_shift = i32::try_from(first_mid_line).expect("line count exceeds i32");
 
-	// Suffix: lines and chars after the window, with shifted offsets.
-	if h1 + 1 < hards {
-		let first_suffix_line = idx(prev.hard_lines[h1 + 1]);
-		let suffix_chars = idx(prev.ls[first_suffix_line]);
-		let out_shift = i32::try_from(layout.chars.len()).expect("text exceeds i32")
-			- i32::try_from(suffix_chars).expect("text exceeds i32");
-		layout.chars.extend_from_slice(&prev.chars[suffix_chars..]);
-		for line in first_suffix_line..prev.ls.len() {
-			layout.ls.push(prev.ls[line].wrapping_add(out_shift));
-			layout.le.push(prev.le[line].wrapping_add(out_shift));
-			layout.src_ls.push(prev.src_ls[line].wrapping_add(shift));
-			layout.src_le.push(prev.src_le[line].wrapping_add(shift));
-			layout.line_w.push(prev.line_w[line]);
+	prev
+		.chars
+		.splice(prefix_chars..old_suffix_chars, mid.chars.drain(..));
+	prev.ls.splice(
+		first_mid_line..old_mid_line_end,
+		mid.ls
+			.iter()
+			.map(|&value| value.wrapping_add(prefix_chars_shift)),
+	);
+	prev.le.splice(
+		first_mid_line..old_mid_line_end,
+		mid.le
+			.iter()
+			.map(|&value| value.wrapping_add(prefix_chars_shift)),
+	);
+	prev
+		.src_ls
+		.splice(first_mid_line..old_mid_line_end, mid.src_ls.iter().copied());
+	prev
+		.src_le
+		.splice(first_mid_line..old_mid_line_end, mid.src_le.iter().copied());
+	prev
+		.line_w
+		.splice(first_mid_line..old_mid_line_end, mid.line_w.iter().copied());
+	prev.shaped.get_mut().splice(
+		first_mid_line..old_mid_line_end,
+		std::iter::repeat_n(LineShape::Unshaped, mid_lines),
+	);
+	// Rich pins index lines; drop pins in the replaced window and shift
+	// suffix pins with the spliced line count so eviction never unshapes a
+	// shifted line or indexes past a shrunk layout.
+	let pin_shift = isize::try_from(first_mid_line + mid_lines).expect("line count fits isize")
+		- isize::try_from(old_mid_line_end).expect("line count fits isize");
+	prev.rich_pins.get_mut().retain_mut(|pin| {
+		if *pin < first_mid_line {
+			return true;
 		}
-		let line_shift =
-			i32::try_from(mid_lines).expect("line count exceeds i32") - prev.hard_lines[h1 + 1];
-		for hard in h1 + 1..hards {
-			layout
-				.hard_lines
-				.push(prev.hard_lines[hard].wrapping_add(line_shift));
-			layout
-				.hard_src
-				.push(prev.hard_src[hard].wrapping_add(shift));
+		if *pin < old_mid_line_end {
+			return false;
 		}
-		let prev_shaped = prev.shaped.borrow();
-		layout
-			.shaped
-			.get_mut()
-			.extend(prev_shaped[first_suffix_line..].iter().cloned());
+		*pin = pin
+			.checked_add_signed(pin_shift)
+			.expect("shifted pin index in range");
+		true
+	});
+	prev.hard_lines.splice(
+		h0..=h1,
+		mid.hard_lines
+			.iter()
+			.map(|&value| value.wrapping_add(first_mid_line_shift)),
+	);
+	prev.hard_src.splice(h0..=h1, mid.hard_src.iter().copied());
+
+	// Suffix: shift retained offsets by the edit's output and source sizes.
+	if old_suffix_line.is_some() {
+		let new_suffix_line = first_mid_line + mid_lines;
+		for value in &mut prev.ls[new_suffix_line..] {
+			*value = value.wrapping_add(out_shift);
+		}
+		for value in &mut prev.le[new_suffix_line..] {
+			*value = value.wrapping_add(out_shift);
+		}
+		for value in &mut prev.src_ls[new_suffix_line..] {
+			*value = value.wrapping_add(shift);
+		}
+		for value in &mut prev.src_le[new_suffix_line..] {
+			*value = value.wrapping_add(shift);
+		}
+		let line_shift = i32::try_from(first_mid_line + mid_lines).expect("line count exceeds i32")
+			- old_suffix_out_line;
+		let new_hard_suffix = h0 + mid_hards;
+		for value in &mut prev.hard_lines[new_hard_suffix..] {
+			*value = value.wrapping_add(line_shift);
+		}
+		for value in &mut prev.hard_src[new_hard_suffix..] {
+			*value = value.wrapping_add(shift);
+		}
 	}
 
-	for line in 0..layout.line_w.len() {
-		if layout.line_w[line] > max_w + WIDTH_EPSILON {
-			layout.truncated = true;
+	// The window re-measured with the post-edit spans; retained lines keep
+	// signatures that rebase identically under the positional shift.
+	prev.spans = spans.clone();
+	prev.truncated = false;
+	for line in 0..prev.line_w.len() {
+		if prev.line_w[line] > max_w + WIDTH_EPSILON {
+			prev.truncated = true;
 		}
 	}
-	layout.w = layout.line_w.iter().copied().fold(0.0_f64, f64::max);
-	layout.h = layout.line_h * f64::from(line_count(&layout)).max(1.0);
-	Some(layout)
+	prev.w = prev.line_w.iter().copied().fold(0.0_f64, f64::max);
+	prev.h = prev.line_h * f64::from(line_count(prev)).max(1.0);
+	true
+}
+
+/// Clone-and-splice form of [`measure_text_spliced_into`] for differential
+/// verification; production callers splice the retained layout in place.
+#[allow(
+	clippy::too_many_arguments,
+	reason = "hot measurement path keeps the public measure inputs explicit"
+)]
+pub(crate) fn measure_text_spliced(
+	d: &Doc,
+	f: i32,
+	size: f64,
+	tracking: f64,
+	prev: &TextLayout,
+	text: &[u32],
+	delta: TextDelta,
+	max_w: f64,
+	wrap: bool,
+	spans: &crate::edit::InlineSpans,
+	cache: &mut ShapeCache,
+) -> Option<TextLayout> {
+	let mut next = prev.clone();
+	measure_text_spliced_into(
+		d, f, size, tracking, &mut next, text, delta, max_w, wrap, spans, cache,
+	)
+	.then_some(next)
 }
 
 pub(crate) fn measure_text_cached(
@@ -2690,7 +2798,7 @@ pub(crate) fn measure_text_cached(
 	size: f64,
 	leading: f64,
 	tracking: f64,
-	text: &str,
+	text: &[u32],
 	max_w: f64,
 	wrap: bool,
 	ellipsis: bool,
@@ -2698,8 +2806,7 @@ pub(crate) fn measure_text_cached(
 	spans: &crate::edit::InlineSpans,
 	cache: &mut ShapeCache,
 ) -> TextLayout {
-	let mut src: Vec<u32> = Vec::with_capacity(text.len());
-	src.extend(text.chars().map(u32::from));
+	let src = text;
 	let mut layout = tl_new();
 	layout.line_h = line_h(size, leading);
 	layout.ascent = ascent(d, f, size, leading);
@@ -2711,9 +2818,9 @@ pub(crate) fn measure_text_cached(
 	layout.tracking = tracking;
 	layout.spans = spans.clone();
 	if spans.is_empty() && !src.contains(&10) {
-		let width = measured_w(d, f, size, tracking, &src);
+		let width = measured_w(d, f, size, tracking, src);
 		if width <= max_w + WIDTH_EPSILON {
-			layout.chars = src;
+			layout.chars = src.to_vec();
 			finish_line(&mut layout, 0, 0, source_len, width);
 			layout.shaped.get_mut().push(LineShape::Unshaped);
 			layout.hard_lines.push(0);
@@ -2727,7 +2834,7 @@ pub(crate) fn measure_text_cached(
 	// wrap results instead of re-probing and re-shaping the whole text; only
 	// hard lines whose content or styling changed are measured again.
 	if !ellipsis && max_lines < 0 {
-		measure_hard_lines_memo(d, f, size, tracking, &mut layout, &src, max_w, wrap, spans, cache);
+		measure_hard_lines_memo(d, f, size, tracking, &mut layout, src, max_w, wrap, spans, cache);
 		*layout.shaped.get_mut() = vec![LineShape::Unshaped; layout.ls.len()];
 		return layout;
 	}
@@ -2741,7 +2848,7 @@ pub(crate) fn measure_text_cached(
 		}
 
 		if wrap {
-			wrap_hard_metrics(d, f, size, tracking, &mut layout, &src, hard_start, hard_end, max_w);
+			wrap_hard_metrics(d, f, size, tracking, &mut layout, src, hard_start, hard_end, max_w);
 		} else {
 			let output_start = i32::try_from(layout.chars.len()).expect("text exceeds i32");
 			for k in hard_start..hard_end {
@@ -2754,7 +2861,7 @@ pub(crate) fn measure_text_cached(
 				output_start,
 				hard_start,
 				hard_end,
-				slice_w(d, f, size, tracking, &src, hard_start, hard_end),
+				slice_w(d, f, size, tracking, src, hard_start, hard_end),
 			);
 		}
 

@@ -552,14 +552,13 @@ pub fn emit_scene(out: &mut Vec<u32>, fr: &flatten::Frame, index: i32) {
 	out.push(OBJECT_CLOSE);
 }
 
-fn emit_param_scalar(out: &mut Vec<u32>, kind: u32, num: f64, text: &str, rgba: u32, symbol: &str) {
-	match kind {
-		slir::PARAM_TEXT => emit_jstr(out, text),
-		slir::PARAM_NUM | slir::PARAM_PCT => emit_num(out, num),
-		slir::PARAM_COLOR => emit_color(out, rgba),
-		slir::PARAM_BOOL => emit_bool(out, num != 0.0),
-		slir::PARAM_ENUM => emit_jstr(out, symbol),
-		_ => emit(out, "null"),
+fn emit_param_scalar(out: &mut Vec<u32>, value: list::ValueRef<'_>) {
+	match value {
+		list::ValueRef::Missing => emit_jstr(out, ""),
+		list::ValueRef::Text(value) | list::ValueRef::Enum(value) => emit_jstr(out, value),
+		list::ValueRef::Num(value) | list::ValueRef::Pct(value) => emit_num(out, value),
+		list::ValueRef::Color(value) => emit_color(out, value),
+		list::ValueRef::Bool(value) => emit_bool(out, value),
 	}
 }
 
@@ -599,7 +598,16 @@ fn emit_param_list(out: &mut Vec<u32>, d: &slir::Doc, st: &style::St, param: u32
 				emit_param_list(out, d, st, param, &nested_path);
 			} else {
 				let value = list::get_ref(&st.lists, list_id, item, relative);
-				emit_param_scalar(out, kind, value.num, value.s, value.rgba, value.sym);
+				match value {
+					list::ValueRef::Missing => match kind {
+						slir::PARAM_TEXT | slir::PARAM_ENUM => emit_jstr(out, ""),
+						slir::PARAM_NUM | slir::PARAM_PCT => emit_num(out, 0.0),
+						slir::PARAM_COLOR => emit_color(out, 0),
+						slir::PARAM_BOOL => emit_bool(out, false),
+						_ => emit_jstr(out, ""),
+					},
+					value => emit_param_scalar(out, value),
+				}
 			}
 		}
 		out.push(OBJECT_CLOSE);
@@ -615,14 +623,27 @@ pub fn param_json(d: &slir::Doc, st: &style::St, param: u32) -> Option<String> {
 	if kind == slir::PARAM_LIST {
 		emit_param_list(&mut out, d, st, param, "");
 	} else {
-		emit_param_scalar(
-			&mut out,
-			kind,
-			st.pv_num[index],
-			&st.pv_str[index],
-			st.pv_h[index],
-			&st.pv_sym[index],
-		);
+		match kind {
+			slir::PARAM_TEXT => {
+				emit_param_scalar(&mut out, list::ValueRef::Text(st.params.text(index)));
+			},
+			slir::PARAM_NUM => {
+				emit_param_scalar(&mut out, list::ValueRef::Num(st.params.number(index)));
+			},
+			slir::PARAM_PCT => {
+				emit_param_scalar(&mut out, list::ValueRef::Pct(st.params.number(index)));
+			},
+			slir::PARAM_COLOR => {
+				emit_param_scalar(&mut out, list::ValueRef::Color(st.params.color(index)));
+			},
+			slir::PARAM_BOOL => {
+				emit_param_scalar(&mut out, list::ValueRef::Bool(st.params.boolean(index)));
+			},
+			slir::PARAM_ENUM => {
+				emit_param_scalar(&mut out, list::ValueRef::Enum(st.params.symbol(index)));
+			},
+			_ => emit(&mut out, "null"),
+		}
 	}
 	Some(crate::rt::str_from_chars(&out))
 }

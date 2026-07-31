@@ -2478,7 +2478,7 @@ pub fn text_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &
 		.map_or(&empty_spans, |index| &l.rich_spans[index]);
 	let tracked_rev = st.text_rev.get(&node).map_or(0, |lineage| lineage.rev);
 	let tracked_delta = st.text_rev.get(&node).and_then(|lineage| lineage.delta);
-	let params_match = |entry: &crate::textm::TextCacheEntry| {
+	let params_match_shape = |entry: &crate::textm::TextCacheEntry| {
 		entry.font == font
 			&& entry.size == size.to_bits()
 			&& entry.leading == leading.to_bits()
@@ -2487,13 +2487,15 @@ pub fn text_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &
 			&& entry.wrap == wrap
 			&& entry.ellipsis == ellipsis
 			&& entry.max_lines == max_lines
-			&& entry.spans == *rich_spans
+	};
+	let params_match = |entry: &crate::textm::TextCacheEntry| {
+		params_match_shape(entry) && entry.spans == *rich_spans
 	};
 	// Revision equality proves content equality for tracked fields, skipping
 	// a full-content compare on every solve; untracked nodes still compare.
-	let entry_matches = |entry: &crate::textm::TextCacheEntry, content: &str| {
+	let entry_matches = |entry: &crate::textm::TextCacheEntry, content: &crate::text::Text| {
 		params_match(entry)
-			&& ((tracked_rev != 0 && entry.content_rev == tracked_rev) || entry.content == content)
+			&& ((tracked_rev != 0 && entry.content_rev == tracked_rev) || entry.content == *content)
 	};
 	let cached = match st.text_layout_cache.get(&node) {
 		Some(entry) if entry_matches(entry, &st.rs[idx(ri)].content) => Some(entry.layout.clone()),
@@ -2511,77 +2513,99 @@ pub fn text_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &
 		l.tls.push(layout);
 	} else {
 		// One contiguous edit against the previously measured revision can
-		// splice the prior layout instead of re-measuring the whole field.
-		let spliced = if tracked_rev != 0 && rich_spans.is_empty() && !ellipsis && max_lines < 0 {
-			tracked_delta.and_then(|delta| {
-				let entry = st.text_layout_cache.get(&node)?;
-				if !params_match(entry) || entry.content_rev.wrapping_add(1) != tracked_rev {
-					return None;
-				}
-				crate::textm::measure_text_spliced(
+		// splice the retained layout in place instead of re-measuring the
+		// whole field. Taking the entry out of the cache makes its layout
+		// uniquely held ([`lay_reset`] dropped last solve's references), so
+		// no copy of the retained tables is made.
+		let spliced = if tracked_rev != 0
+			&& !ellipsis
+			&& max_lines < 0
+			&& let Some(delta) = tracked_delta
+			&& let Some(mut entry) = st.text_layout_cache.remove(&node)
+		{
+			if params_match_shape(&entry)
+				&& entry.content_rev.wrapping_add(1) == tracked_rev
+				&& entry.spans.follows_splice(rich_spans, delta)
+			{
+				let target = std::rc::Rc::make_mut(&mut entry.layout);
+				if crate::textm::measure_text_spliced_into(
 					d,
 					font,
 					size,
-					leading,
 					tracking,
-					&entry.layout,
-					&st.rs[idx(ri)].content,
+					target,
+					st.rs[idx(ri)].content.cps(),
 					delta,
 					avail_w,
 					wrap,
+					rich_spans,
 					l.shape_cache.get_mut(),
-				)
-			})
+				) {
+					entry.content = st.rs[idx(ri)].content.clone();
+					entry.content_rev = tracked_rev;
+					entry.spans = rich_spans.clone();
+					let layout = entry.layout.clone();
+					st.text_layout_cache.insert(node, entry);
+					Some(layout)
+				} else {
+					// Stale lineage: drop the entry; the full measure below
+					// re-inserts a fresh one.
+					None
+				}
+			} else {
+				st.text_layout_cache.insert(node, entry);
+				None
+			}
 		} else {
 			None
 		};
-		let layout = if let Some(layout) = spliced {
-			layout
+		if let Some(layout) = spliced {
+			l.tls.push(layout);
 		} else {
-			crate::textm::measure_text_cached(
+			let layout = std::rc::Rc::new(crate::textm::measure_text_cached(
 				d,
 				font,
 				size,
 				leading,
 				tracking,
-				&st.rs[idx(ri)].content,
+				st.rs[idx(ri)].content.cps(),
 				avail_w,
 				wrap,
 				ellipsis,
 				max_lines,
 				rich_spans,
 				l.shape_cache.get_mut(),
-			)
-		};
-		let layout = std::rc::Rc::new(layout);
-		// Bound the hot generation; the demoted generation still serves probes
-		// until the next swap, so eviction never re-measures a whole frame.
-		if st.text_layout_cache.len() >= 4096 {
-			std::mem::swap(&mut st.text_layout_cache, &mut st.text_layout_cache_cold);
-			st.text_layout_cache.clear();
+			));
+			// Bound the hot generation; the demoted generation still serves
+			// probes until the next swap, so eviction never re-measures a
+			// whole frame.
+			if st.text_layout_cache.len() >= 4096 {
+				std::mem::swap(&mut st.text_layout_cache, &mut st.text_layout_cache_cold);
+				st.text_layout_cache.clear();
+			}
+			st.text_layout_cache
+				.insert(node, crate::textm::TextCacheEntry {
+					font,
+					size: size.to_bits(),
+					leading: leading.to_bits(),
+					tracking: tracking.to_bits(),
+					max_w: avail_w.to_bits(),
+					wrap,
+					ellipsis,
+					max_lines,
+					spans: rich_spans.clone(),
+					content: st.rs[idx(ri)].content.clone(),
+					content_rev: tracked_rev,
+					layout: layout.clone(),
+				});
+			l.tls.push(layout);
 		}
-		st.text_layout_cache
-			.insert(node, crate::textm::TextCacheEntry {
-				font,
-				size: size.to_bits(),
-				leading: leading.to_bits(),
-				tracking: tracking.to_bits(),
-				max_w: avail_w.to_bits(),
-				wrap,
-				ellipsis,
-				max_lines,
-				spans: rich_spans.clone(),
-				content: st.rs[idx(ri)].content.clone(),
-				content_rev: tracked_rev,
-				layout: layout.clone(),
-			});
-		l.tls.push(layout);
 	}
 	let ti = len_i32(&l.tls).wrapping_sub(1i32);
 	if l.tls[idx(ti)].truncated && ((flags & crate::slir::F_ELLIPSIS) == 0u32) {
 		let mut head: Vec<u32> = vec![];
 		let mut taken = 0i32;
-		for cp in st.rs[idx(ri)].content.chars().map(u32::from) {
+		for cp in st.rs[idx(ri)].content.cps().iter().copied() {
 			if taken >= 40i32 {
 				break;
 			}
@@ -2822,9 +2846,7 @@ pub fn para_measure(d: &Doc, st: &mut St, l: &mut Lay, node: u32, ri: i32, cn: &
 			st.rs[idx(ri)].underline,
 		);
 		cs.clear();
-		for cp in st.rs[idx(sri)].content.chars().map(u32::from) {
-			cs.push(cp);
-		}
+		cs.extend_from_slice(st.rs[idx(sri)].content.cps());
 		let n = len_i32(&cs);
 		let base = len_i32(&l.para_chars);
 		for k in 0i32..(n) {

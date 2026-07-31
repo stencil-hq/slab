@@ -106,9 +106,22 @@ pub fn pv(d: &Doc, st: &St, v: &V) -> V {
 
 	let parameter = index(i32::try_from(resolved.h).expect("parameter index exceeds i32"));
 	match d.parm_type[parameter] {
-		1 | 4 => V { tag: slir::T_NUM, num: st.pv_num[parameter], h: 0, off: 0, ln: 0 },
-		2 => V { tag: slir::T_PCT, num: st.pv_num[parameter], h: 0, off: 0, ln: 0 },
-		3 => V { tag: slir::T_COLOR, num: 0.0, h: st.pv_h[parameter], off: 0, ln: 0 },
+		slir::PARAM_NUM => {
+			V { tag: slir::T_NUM, num: st.params.number(parameter), h: 0, off: 0, ln: 0 }
+		},
+		slir::PARAM_PCT => {
+			V { tag: slir::T_PCT, num: st.params.number(parameter), h: 0, off: 0, ln: 0 }
+		},
+		slir::PARAM_COLOR => {
+			V { tag: slir::T_COLOR, num: 0.0, h: st.params.color(parameter), off: 0, ln: 0 }
+		},
+		slir::PARAM_BOOL => V {
+			tag: slir::T_NUM,
+			num: f64::from(u8::from(st.params.boolean(parameter))),
+			h:   0,
+			off: 0,
+			ln:  0,
+		},
 		_ => resolved,
 	}
 }
