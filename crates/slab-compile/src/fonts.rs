@@ -9,6 +9,10 @@ use slab_slir::FontE;
 /// weight this table represents in the document, independent of the weight
 /// declared inside `bytes`. The complete cmap is required because host strings
 /// can introduce any face-supported codepoint after compilation.
+///
+/// The table carries no sfnt payload: vendored faces resolve at run time
+/// through [`slab_kernel::slir::face_data`], and callers embed bytes only for
+/// host-supplied compile-time faces the kernels cannot resolve themselves.
 pub fn build_table(class: u8, weight: u16, bytes: &[u8]) -> FontE {
 	let metrics = parse_metrics(bytes).expect("registered font parses");
 	let mut cmap = Vec::new();
@@ -32,7 +36,7 @@ pub fn build_table(class: u8, weight: u16, bytes: &[u8]) -> FontE {
 		default_advance: metrics.default_advance,
 		underline_position: metrics.underline_position,
 		underline_thickness: metrics.underline_thickness,
-		data: bytes.to_vec(),
+		data: Vec::new(),
 		cmap,
 		advances,
 	}

@@ -315,6 +315,13 @@ interface DriveApi {
       DriveObject & { ok: true; changed: boolean }
    >;
    'field.get': Endpoint<{ key: DriveSceneKey }, DriveObject & { text: string }>;
+   'field.styles': Endpoint<
+      {
+         key: DriveSceneKey;
+         ranges: Array<[start: number, end: number, color: string, italic?: boolean]>;
+      },
+      Ok
+   >;
    'state.set': Endpoint<{ name: string; on: boolean }, Ok>;
    'state.node': Endpoint<{ key: DriveSceneKey; name: string; on: boolean }, Ok>;
    'focus.get': Endpoint<

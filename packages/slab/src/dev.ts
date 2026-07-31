@@ -2,14 +2,12 @@ import { type FSWatcher, mkdirSync, watch, writeFileSync } from 'node:fs';
 import { createServer, type Server, type ServerResponse } from 'node:http';
 import { dirname, extname, relative, resolve, sep } from 'node:path';
 
-export const DEV_USAGE =
-   'usage: slab dev FILE [-o DIR] [--tag NAME] [--separate-ir] [--host HOST] [--port N]\n';
+export const DEV_USAGE = 'usage: slab dev FILE [-o DIR] [--tag NAME] [--host HOST] [--port N]\n';
 
 export type DevOptions = {
    file: string;
    out: string;
    tag?: string;
-   separateIr: boolean;
    host: string;
    port: number;
 };
@@ -38,7 +36,6 @@ export function parseDevArgs(args: string[]): DevOptions {
    let tag: string | undefined;
    let host = '127.0.0.1';
    let port = 3000;
-   let separateIr = false;
 
    for (let index = 0; index < args.length; index += 1) {
       const argument = args[index] as string;
@@ -58,8 +55,6 @@ export function parseDevArgs(args: string[]): DevOptions {
          port = Number(value);
          if (port > 65_535) throw new DevUsageError('--port must be an integer from 0 to 65535');
          index += 1;
-      } else if (argument === '--separate-ir') {
-         separateIr = true;
       } else if (argument.startsWith('-')) {
          throw new DevUsageError(`unknown flag ${argument}`);
       } else if (file === undefined) {
@@ -82,7 +77,6 @@ export function parseDevArgs(args: string[]): DevOptions {
       file: source,
       out: output,
       tag,
-      separateIr,
       host,
       port,
    };

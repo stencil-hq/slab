@@ -64,13 +64,12 @@ col w=420 h=100 scroll=both clip {
 "#;
 	let mut instance = compile_instance(source, 420.0, 100.0);
 	assert!(frame::inst_set_list_len(&mut instance, 1, "", 1));
-	let mut pv =
-		frame::ParamValue { kind: 4, num: 1.0, s: String::new(), rgba: 0, sym: String::new() };
+	let mut pv = frame::ParamValue::Bool(true);
 	assert!(frame::inst_set_list_field(&mut instance, 1, "", 0, "split", &pv));
 	let strings = painted_strings(&mut instance);
 	assert_eq!(strings, vec!["SPLIT".to_string()], "split=true");
 
-	pv.num = 0.0;
+	pv = frame::ParamValue::Bool(false);
 	assert!(frame::inst_set_list_field(&mut instance, 1, "", 0, "split", &pv));
 	let strings = painted_strings(&mut instance);
 	assert_eq!(strings, vec!["UNIFIED".to_string()], "split=false");
@@ -165,13 +164,14 @@ col w=300 h=180 strike=param.crossed {
 "#;
 	let mut instance = compile_instance(source, 300.0, 180.0);
 	assert!(frame::inst_set_list_len(&mut instance, 1, "", 1));
-	assert!(frame::inst_set_list_field(&mut instance, 1, "", 0, "done", &frame::ParamValue {
-		kind: 4,
-		num:  1.0,
-		s:    String::new(),
-		rgba: 0,
-		sym:  String::new(),
-	},));
+	assert!(frame::inst_set_list_field(
+		&mut instance,
+		1,
+		"",
+		0,
+		"done",
+		&frame::ParamValue::Bool(true),
+	));
 	let fr = frame::inst_frame(&mut instance, 0.0);
 	let runs: Vec<(&str, bool)> = fr
 		.ops

@@ -29,7 +29,7 @@ slab fmt FILE... [--check]                   canonical formatting ('-' filters s
 slab render FILE -o OUT.{svg,png,apng,txt} [--theme NAME]   static export
 slab gen wc FILE -o DIR [--tag NAME]         emit a web component and its runtime/WASM sidecars
 slab gen react FILE -o DIR [--tag NAME]      emit a web component plus a typed React wrapper
-slab dev FILE [-o DIR] [--tag NAME] [--separate-ir] [--host HOST] [--port N]
+slab dev FILE [-o DIR] [--tag NAME] [--host HOST] [--port N]
                                                 serve a live web-component preview
 slab gen rust FILE -o OUT.rs                 emit a typed Rust module
 slab drive                                    requires the native slab-cli
@@ -41,6 +41,10 @@ slab --version                                package + compiler version and git
 `slab check` prints both the embedded compiler version and this package
 version before diagnostics, making a stale global install or lockfile visible.
 `--state` previews document-global states only; it does not target one node.
+
+`gen wc` and `gen react` emit `.slir` files that generated JavaScript fetches
+at runtime. `gen rust` emits `OUT.slir` beside `OUT.rs`; the module uses
+`include_bytes!` to include that sidecar, so keep the pair together in source.
 
 Interactive/drive commands (`slab drive`, the SDP server used by
 `@stencil-hq/dslab`) live in the native CLI only: install with
@@ -72,9 +76,9 @@ bunx @stencil-hq/slab gen wc doc.slab -o dist --tag my-doc
 <my-doc style="display:block;width:800px;height:600px"></my-doc>
 ```
 
-The generated module registers the custom element and is emitted alongside the
-shared web runtime and kernel WASM sidecar. Keep those files together when
-deploying the output. Set attributes/properties for params and listen on
+The generated module registers the custom element and is emitted alongside its
+`.slir` document, the shared web runtime, and the kernel WASM sidecar. Keep
+those files together when deploying the output. Set attributes/properties for
 `CustomEvent`s for signals (see the `signals` export).
 
 ## Library use
@@ -148,7 +152,7 @@ module therefore keeps the OLD class registered.
 Instead of pretending otherwise, the module gets a self-accepting footer that
 swaps document bytes through the stable registered class:
 
-1. decode the new module's embedded SLIR,
+1. fetch the updated module's external SLIR,
 2. `Registered.hotReplaceSlir(bytes)` — future mounts of the tag decode the
    new document,
 3. `el.loadSlir(bytes)` on every mounted instance — live elements re-mount

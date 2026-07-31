@@ -3,13 +3,7 @@ import { SlabElement } from './slab-runtime.js';
 export { itemKey } from './slab-runtime.js';
 {% for d in docs %}
 export class {{ d.class }} extends SlabElement {
-{%- if separate_ir %}
    static slir = new URL('./{{ d.ir_name }}', import.meta.url).href;
-   static slirIsUrl = true;
-{%- else %}
-   static slir =
-      '{{ d.slir_base64 }}';
-{%- endif %}
    static observedAttributes = [{{ d.observed_attributes | join(", ") }}];
 {%- if d.list_rows | length > 0 %}
    static listSchemaRows = [

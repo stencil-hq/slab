@@ -370,13 +370,11 @@ canvas w=40 h=20 {
 			.any(|op| matches!(op, slab_kernel::flatten::FrameOp::PathDraw(path) if path.path < 0))
 	);
 
-	assert!(slab_kernel::frame::inst_set_param(&mut instance, 0, &slab_kernel::frame::ParamValue {
-		kind: 0,
-		num:  0.0,
-		s:    "not path data".into(),
-		rgba: 0,
-		sym:  String::new(),
-	}));
+	assert!(slab_kernel::frame::inst_set_param(
+		&mut instance,
+		0,
+		&slab_kernel::frame::ParamValue::Text("not path data".into()),
+	));
 	let invalid = slab_kernel::frame::inst_frame(&mut instance, 16.0);
 	assert_eq!(
 		invalid

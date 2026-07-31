@@ -52,7 +52,7 @@ async function start(
    generate: () => DevBuildResult,
 ): Promise<DevSession> {
    const session = await startDevServer(
-      { file: source, out, host: '127.0.0.1', port: 0, separateIr: false },
+      { file: source, out, host: '127.0.0.1', port: 0 },
       generate,
       () => {},
    );
@@ -95,17 +95,9 @@ class Events {
 
 describe('parseDevArgs', () => {
    test('accepts port zero and rejects invalid arguments', () => {
-      const options = parseDevArgs([
-         'doc.slab',
-         '--port',
-         '0',
-         '--host',
-         'localhost',
-         '--separate-ir',
-      ]);
+      const options = parseDevArgs(['doc.slab', '--port', '0', '--host', 'localhost']);
       expect(options.port).toBe(0);
       expect(options.host).toBe('localhost');
-      expect(options.separateIr).toBe(true);
       expect(() => parseDevArgs([])).toThrow(DevUsageError);
       expect(() => parseDevArgs(['doc.slab', '--port', '-1'])).toThrow('--port');
       expect(() => parseDevArgs(['doc.slab', '--wat'])).toThrow('unknown flag');

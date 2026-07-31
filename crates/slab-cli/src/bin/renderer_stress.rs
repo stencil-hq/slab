@@ -11,7 +11,6 @@ use slab_kernel::{
 		Instance, ParamValue, inst_frame_update, inst_set_env, inst_set_list_field,
 		inst_set_list_key, inst_set_list_len, inst_set_param, inst_set_scroll,
 	},
-	slir::{PARAM_BOOL, PARAM_NUM, PARAM_TEXT},
 };
 
 const ROW_COUNT: i32 = 20_000;
@@ -19,10 +18,6 @@ const WARMUP_FRAMES: usize = 48;
 const MEASURED_FRAMES: usize = 480;
 const CLEAN_FRAMES: usize = 100_000;
 const ROW_HEIGHT: f64 = 26.0;
-
-const fn value(kind: u32, num: f64, text: String) -> ParamValue {
-	ParamValue { kind, num, s: text, rgba: 0, sym: String::new() }
-}
 
 fn param(instance: &Instance, name: &str) -> Result<u32, String> {
 	instance
@@ -56,9 +51,9 @@ fn populate_graph(instance: &mut Instance, rows: u32) -> Result<(), String> {
 		return Err("cannot size graph.rows".to_owned());
 	}
 
-	let lane = value(PARAM_TEXT, 0.0, "M 0 13 L 18 13 C 22 13 22 5 28 5 L 94 5".to_owned());
-	let selected = value(PARAM_BOOL, 1.0, String::new());
-	let node_x = value(PARAM_NUM, 42.0, String::new());
+	let lane = ParamValue::Text("M 0 13 L 18 13 C 22 13 22 5 28 5 L 94 5".to_owned());
+	let selected = ParamValue::Bool(true);
+	let node_x = ParamValue::Num(42.0);
 
 	for index in 0..ROW_COUNT {
 		let key = format!("commit-{index:05}");
@@ -70,23 +65,17 @@ fn populate_graph(instance: &mut Instance, rows: u32) -> Result<(), String> {
 			rows,
 			index,
 			"subject",
-			&value(PARAM_TEXT, 0.0, format!("Retained renderer change {index:05}")),
+			&ParamValue::Text(format!("Retained renderer change {index:05}")),
 		)?;
 		set_field(
 			instance,
 			rows,
 			index,
 			"description",
-			&value(PARAM_TEXT, 0.0, "Reuse layout state and cached paint records".to_owned()),
+			&ParamValue::Text("Reuse layout state and cached paint records".to_owned()),
 		)?;
-		set_field(
-			instance,
-			rows,
-			index,
-			"date",
-			&value(PARAM_TEXT, 0.0, "2026-07-28 12:00".to_owned()),
-		)?;
-		set_field(instance, rows, index, "sha", &value(PARAM_TEXT, 0.0, format!("{index:08x}")))?;
+		set_field(instance, rows, index, "date", &ParamValue::Text("2026-07-28 12:00".to_owned()))?;
+		set_field(instance, rows, index, "sha", &ParamValue::Text(format!("{index:08x}")))?;
 		set_field(instance, rows, index, "lane_c0", &lane)?;
 		if index % 97 == 0 {
 			set_field(instance, rows, index, "selected", &selected)?;
@@ -114,7 +103,7 @@ fn update_frame(
 	}
 
 	let width = if step & 1 == 0 { 326.0 } else { 334.0 };
-	if !inst_set_param(instance, message_width, &value(PARAM_NUM, width, String::new())) {
+	if !inst_set_param(instance, message_width, &ParamValue::Num(width)) {
 		return Err("cannot set message_width".to_owned());
 	}
 
@@ -123,7 +112,7 @@ fn update_frame(
 	} else {
 		"Retained renderer update B"
 	};
-	set_field(instance, rows, row, "subject", &value(PARAM_TEXT, 0.0, subject.to_owned()))?;
+	set_field(instance, rows, row, "subject", &ParamValue::Text(subject.to_owned()))?;
 
 	if step.is_multiple_of(40) {
 		let width = if step.is_multiple_of(80) {

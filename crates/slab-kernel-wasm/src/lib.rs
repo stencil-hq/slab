@@ -9,7 +9,7 @@ mod frame_buf;
 mod snapshot;
 
 pub use frame_buf::FrameBuf;
-use slab_kernel::{cells, dispatch, dumpjson, frame as kframe};
+use slab_kernel::{cells, dispatch, dumpjson, frame as kframe, slir};
 use wasm_bindgen::prelude::*;
 
 /// Decodes the optional JSON `[[start,end], ...]` composition clause payload.
@@ -26,6 +26,25 @@ fn decode_clauses(json: Option<String>) -> Vec<(i32, i32)> {
 #[wasm_bindgen]
 pub struct KInst {
 	inner: kframe::Instance,
+}
+
+fn decode_param_value(
+	kind: u32,
+	num: f64,
+	value: &str,
+	rgba: u32,
+	boolean: bool,
+	symbol: &str,
+) -> Option<kframe::ParamValue> {
+	match kind {
+		slir::PARAM_TEXT => Some(kframe::ParamValue::Text(value.to_owned())),
+		slir::PARAM_NUM => Some(kframe::ParamValue::Num(num)),
+		slir::PARAM_PCT => Some(kframe::ParamValue::Pct(num)),
+		slir::PARAM_COLOR => Some(kframe::ParamValue::Color(rgba)),
+		slir::PARAM_BOOL => Some(kframe::ParamValue::Bool(boolean)),
+		slir::PARAM_ENUM => Some(kframe::ParamValue::Enum(symbol.to_owned())),
+		_ => None,
+	}
 }
 
 #[wasm_bindgen]
@@ -50,15 +69,13 @@ impl KInst {
 		num: f64,
 		value: &str,
 		rgba: u32,
+		boolean: bool,
 		symbol: &str,
 	) -> bool {
-		kframe::inst_set_param(&mut self.inner, param, &kframe::ParamValue {
-			kind,
-			num,
-			s: value.to_owned(),
-			rgba,
-			sym: symbol.to_owned(),
-		})
+		let Some(value) = decode_param_value(kind, num, value, rgba, boolean, symbol) else {
+			return false;
+		};
+		kframe::inst_set_param(&mut self.inner, param, &value)
 	}
 
 	/// Returns the item count for a root or nested list.
@@ -87,15 +104,13 @@ impl KInst {
 		num: f64,
 		value: &str,
 		rgba: u32,
+		boolean: bool,
 		symbol: &str,
 	) -> bool {
-		kframe::inst_set_list_field(&mut self.inner, param, path, index, field, &kframe::ParamValue {
-			kind,
-			num,
-			s: value.to_owned(),
-			rgba,
-			sym: symbol.to_owned(),
-		})
+		let Some(value) = decode_param_value(kind, num, value, rgba, boolean, symbol) else {
+			return false;
+		};
+		kframe::inst_set_list_field(&mut self.inner, param, path, index, field, &value)
 	}
 
 	/// Registers runtime font metrics and returns the selected font-table index.
@@ -167,6 +182,25 @@ impl KInst {
 	/// Replaces one keyed field edit buffer and queues its Change signal.
 	pub fn set_field_text(&mut self, key: &str, text: &str) -> bool {
 		kframe::inst_set_field_text(&mut self.inner, key, text)
+	}
+
+	/// Replaces paint-only field styles from flat start/end/rgba/flags quads.
+	pub fn set_field_styles(&mut self, key: &str, flat: &[i32]) -> bool {
+		if !flat.len().is_multiple_of(4) {
+			return false;
+		}
+		let styles: Vec<kframe::FieldStyle> = flat
+			.as_chunks::<4>()
+			.0
+			.iter()
+			.map(|quad| kframe::FieldStyle {
+				start: quad[0],
+				end:   quad[1],
+				rgba:  quad[2] as u32,
+				flags: quad[3] as u32,
+			})
+			.collect();
+		kframe::inst_set_field_styles(&mut self.inner, key, &styles)
 	}
 
 	/// Returns one keyed field's committed text.
@@ -517,6 +551,13 @@ impl KInst {
 	/// Returns one embedded or runtime image payload by unified table index.
 	pub fn image_data(&self, image: i32) -> Vec<u8> {
 		kframe::inst_img_bytes(&self.inner, image).to_vec()
+	}
+
+	/// Returns the sfnt bytes one FONT table shapes and paints with: embedded
+	/// data or the vendored bundled face; empty for metrics-only runtime
+	/// tables whose face the host owns.
+	pub fn font_data(&self, font: i32) -> Vec<u8> {
+		slab_kernel::slir::face_data(self.inner.doc(), font).to_vec()
 	}
 
 	/// Returns image dimensions, format, and generation as JSON.

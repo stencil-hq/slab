@@ -1,4 +1,4 @@
-//! `slab gen react FILE -o DIR [--tag NAME] [--separate-ir]` — emit the full
+//! `slab gen react FILE -o DIR [--tag NAME]` — emit the full
 //! `gen wc` file set plus a typed React wrapper (`<stem>.tsx`) for a compiled
 //! `.slab` document. Thin front end over [`slab_compile::react::generate`];
 //! this module keeps only argument parsing and filesystem writes.
@@ -14,7 +14,7 @@ use slab_compile::{
 	wc::{WcFile, WcOptions},
 };
 
-const GEN_USAGE: &str = "usage: slab gen react FILE -o DIR [--tag NAME] [--separate-ir]";
+const GEN_USAGE: &str = "usage: slab gen react FILE -o DIR [--tag NAME]";
 
 fn usage_err(msg: &str) -> ExitCode {
 	eprintln!("error: {msg}");
@@ -40,7 +40,6 @@ pub fn cmd_gen_react(args: &[String]) -> ExitCode {
 	let mut file: Option<PathBuf> = None;
 	let mut out: Option<PathBuf> = None;
 	let mut tag: Option<String> = None;
-	let mut separate_ir = false;
 	let mut it = args.iter();
 	while let Some(a) = it.next() {
 		match a.as_str() {
@@ -52,7 +51,6 @@ pub fn cmd_gen_react(args: &[String]) -> ExitCode {
 				Some(v) => tag = Some(v.clone()),
 				None => return usage_err("missing value for --tag"),
 			},
-			"--separate-ir" => separate_ir = true,
 			other if other.starts_with('-') => {
 				return usage_err(&format!("unknown flag {other}"));
 			},
@@ -84,7 +82,7 @@ pub fn cmd_gen_react(args: &[String]) -> ExitCode {
 	let stem = file
 		.file_stem()
 		.map_or_else(|| "slab".into(), |s| s.to_string_lossy().into_owned());
-	let wopts = WcOptions { tag, separate_ir };
+	let wopts = WcOptions { tag };
 
 	let (files, diags) = generate(&src, &copts, &wopts, &stem);
 	for d in &diags.0 {
@@ -109,7 +107,7 @@ pub fn cmd_gen_react(args: &[String]) -> ExitCode {
 		}
 	}
 	eprintln!(
-		"wrote {} + {stem}.js + .d.ts + slab-runtime.js + wasm/slab_kernel_bg.wasm (single \
+		"wrote {} + {stem}.js + .slir + .d.ts + slab-runtime.js + wasm/slab_kernel_bg.wasm (single \
 		 Rust/WASM runtime; {n_elems} element{})",
 		out.join(format!("{stem}.tsx")).display(),
 		if n_elems == 1 { "" } else { "s" }

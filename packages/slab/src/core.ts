@@ -12,6 +12,10 @@ import { wasm } from './wasm.ts';
 const RUNTIME_IMPORT = "import { SlabElement } from './slab-runtime.js';";
 /** Replacement import resolving the same runtime through the published package. */
 const WSLAB_IMPORT = "import { SlabElement } from '@stencil-hq/wslab';";
+/** Exact runtime re-export emitted by `slab gen wc`. */
+const RUNTIME_EXPORT = "export { itemKey } from './slab-runtime.js';";
+/** Replacement re-export resolving through the published package. */
+const WSLAB_EXPORT = "export { itemKey } from '@stencil-hq/wslab';";
 
 /** Imported source text and file dependencies for one root document. */
 export interface SlabImports {
@@ -97,6 +101,14 @@ export interface SlabElementTag {
    className: string;
 }
 
+/** One external binary emitted beside a generated JavaScript module. */
+export interface SlabSidecar {
+   /** Module-relative output name. */
+   name: string;
+   /** Compiled binary contents. */
+   bytes: Uint8Array;
+}
+
 /** Everything a bundler needs from one compiled `.slab` module. */
 export interface SlabModule {
    /** ES module text with the runtime import rewritten to `@stencil-hq/wslab`. */
@@ -105,6 +117,8 @@ export interface SlabModule {
    dts: string;
    /** `<stem>.d.slab.ts` content derived from {@link SlabModule.dts}. */
    declaration: string;
+   /** External SLIR files referenced by {@link SlabModule.code}. */
+   sidecars: SlabSidecar[];
    /** Absolute paths of the image assets read into the compile (watch these). */
    assets: string[];
    /** Absolute paths of imported Slab modules read into the compile. */
@@ -189,23 +203,44 @@ export function writeDeclaration(file: string, declaration: string): boolean {
    return true;
 }
 
-/** Self-accepting Vite HMR footer: when a stale class is still registered for
- * a tag, swap the new module's SLIR bytes through it (`hotReplaceSlir`) and
- * re-mount every live element via `loadSlir`. */
+/** Rewrite generated `new URL` expressions to bundler-owned asset imports. */
+export function withSlirImports(
+   code: string,
+   sidecars: readonly SlabSidecar[],
+   specifier: (sidecar: SlabSidecar, index: number) => string,
+): string {
+   const imports: string[] = [];
+   let rewritten = code;
+   for (const [index, sidecar] of sidecars.entries()) {
+      const binding = `__slabSlir${index}`;
+      const expression = `new URL('./${sidecar.name}', import.meta.url).href`;
+      if (!rewritten.includes(expression)) {
+         throw new Error(`slab: generated module is missing the URL for ${sidecar.name}`);
+      }
+      imports.push(`import ${binding} from ${JSON.stringify(specifier(sidecar, index))};`);
+      rewritten = rewritten.replace(expression, binding);
+   }
+   return `${imports.join('\n')}\n${rewritten}`;
+}
+
+/** Self-accepting Vite HMR footer that fetches each updated SLIR sidecar and
+ * swaps it through the stable registered element class. */
 export function hmrFooter(tags: SlabElementTag[]): string {
    const pairs = tags.map((t) => `['${t.tag}', ${t.className}]`).join(', ');
    return `
 if (import.meta.hot) {
    import.meta.hot.accept();
-   for (const [tag, next] of [${pairs}]) {
-      const current = customElements.get(tag);
-      if (current === undefined || current === next) continue;
-      const slir = next.slir;
-      const bytes =
-         typeof slir === 'string' ? Uint8Array.from(atob(slir), (c) => c.charCodeAt(0)) : slir;
-      current.hotReplaceSlir(bytes);
-      for (const el of document.querySelectorAll(tag)) el.loadSlir(bytes);
-   }
+   void (async () => {
+      for (const [tag, next] of [${pairs}]) {
+         const current = customElements.get(tag);
+         if (current === undefined || current === next) continue;
+         const response = await fetch(next.slir, { cache: 'no-store' });
+         if (!response.ok) throw new Error(\`slab: fetching SLIR failed (\${response.status})\`);
+         const bytes = new Uint8Array(await response.arrayBuffer());
+         current.hotReplaceSlir(bytes);
+         for (const el of document.querySelectorAll(tag)) el.loadSlir(bytes);
+      }
+   })();
 }
 `;
 }
@@ -218,7 +253,7 @@ export function compileSlab(file: string, source: string): SlabModule {
    const baseDir = dirname(resolve(file));
    const imports = loadImports(file, source);
    const { assetsJson, paths } = collectAssets(source, baseDir, imports.sourcesJson);
-   const optsJson = JSON.stringify({ separateIr: false, stem, sourceName: file });
+   const optsJson = JSON.stringify({ stem, sourceName: file });
    let resultJson: string;
    try {
       resultJson = W.gen_wc_with_sources(source, optsJson, assetsJson, imports.sourcesJson);
@@ -237,10 +272,20 @@ export function compileSlab(file: string, source: string): SlabModule {
    if (moduleText === undefined || dts === undefined) {
       throw new Error(`slab: gen_wc returned no ${stem}.js/${stem}.d.ts for ${file}`);
    }
-   if (!moduleText.includes(RUNTIME_IMPORT)) {
+   const sidecars = result.files
+      .filter((generated) => generated.name.endsWith('.slir'))
+      .map((generated): SlabSidecar => {
+         if (generated.b64 === undefined) {
+            throw new Error(`slab: gen_wc returned non-binary ${generated.name}`);
+         }
+         return { name: generated.name, bytes: Buffer.from(generated.b64, 'base64') };
+      });
+   if (!moduleText.includes(RUNTIME_IMPORT) || !moduleText.includes(RUNTIME_EXPORT)) {
       throw new Error(`slab: generated module for ${file} is missing the runtime import`);
    }
-   const code = moduleText.replace(RUNTIME_IMPORT, WSLAB_IMPORT);
+   const code = moduleText
+      .replace(RUNTIME_IMPORT, WSLAB_IMPORT)
+      .replace(RUNTIME_EXPORT, WSLAB_EXPORT);
    const tags: SlabElementTag[] = [];
    for (const m of code.matchAll(/customElements\.define\('([^']+)', ([A-Za-z_$][\w$]*)\)/g)) {
       tags.push({ tag: m[1] as string, className: m[2] as string });
@@ -250,6 +295,7 @@ export function compileSlab(file: string, source: string): SlabModule {
       dts,
       declaration: toDeclaration(dts),
       assets: paths,
+      sidecars,
       imports: imports.paths,
       tags,
       warnings: result.diagnostics,

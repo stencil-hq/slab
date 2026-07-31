@@ -228,6 +228,9 @@ await page.addInitScript(() => {
 const kernelWasmResponse = page.waitForResponse((response) =>
    new URL(response.url()).pathname.endsWith('/dist/wasm/slab_kernel_bg.wasm'),
 );
+const slirResponse = page.waitForResponse((response) =>
+   new URL(response.url()).pathname.endsWith('/dist/10-settings.slir'),
+);
 await page.goto(`http://127.0.0.1:${server.port}/`);
 const kernelWasm = await kernelWasmResponse;
 const kernelWasmBytes = kernelWasm.ok() ? (await kernelWasm.body()).byteLength : 0;
@@ -236,6 +239,9 @@ check(
    kernelWasm.ok() && kernelWasmBytes > 0,
    `${kernelWasm.status()} ${kernelWasmBytes} bytes`,
 );
+const slir = await slirResponse;
+const slirBytes = slir.ok() ? (await slir.body()).byteLength : 0;
+check('SLIR sidecar loaded', slir.ok() && slirBytes > 0, `${slir.status()} ${slirBytes} bytes`);
 
 // (a) upgrade + paint
 await page.evaluate(() => customElements.whenDefined('t-settings'));
@@ -299,6 +305,44 @@ if (save) {
    });
    check('save CustomEvent fired', true, 'detail null (Activate)');
 }
+
+// (d) embedded fonts: every FONT table with embedded sfnt bytes installs a
+// loaded page FontFace, shadow spans resolve to those families, and a
+// detach/reattach repaints from the per-class cache without duplicating faces.
+const facesBefore = await page.evaluate(() =>
+   [...document.fonts].filter((f) => f.family.startsWith('slab-f')).map((f) => f.status),
+);
+check(
+   'embedded FontFaces installed',
+   facesBefore.length > 0 && facesBefore.every((status) => status === 'loaded'),
+   `${facesBefore.length} faces: ${facesBefore.join(',') || 'none'}`,
+);
+const spanFamily = await page.evaluate(() => {
+   const span = document.getElementById('host')?.shadowRoot?.querySelector('.slab-ops span');
+   return span ? getComputedStyle(span).fontFamily : '';
+});
+check('spans paint an embedded family', spanFamily.includes('slab-f'), spanFamily);
+await page.evaluate(() => {
+   const host = document.getElementById('host');
+   const parent = host?.parentElement;
+   if (host && parent) {
+      host.remove();
+      parent.append(host);
+   }
+});
+await page.waitForFunction(
+   () =>
+      (document.getElementById('host')?.shadowRoot?.querySelectorAll('.slab-ops span').length ??
+         0) > 0,
+);
+const facesAfter = await page.evaluate(
+   () => [...document.fonts].filter((f) => f.family.startsWith('slab-f')).length,
+);
+check(
+   'remount reuses cached embedded faces',
+   facesAfter === facesBefore.length,
+   `${facesBefore.length} -> ${facesAfter}`,
+);
 
 await browser.close();
 server.stop();

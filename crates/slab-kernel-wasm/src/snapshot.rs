@@ -3,17 +3,39 @@
 use serde::Serialize;
 use slab_kernel::{
 	dispatch::Effects,
-	frame::{HoleRect, Instance},
+	frame::{HoleRect, Instance, ParamValue},
 	hit, list, motion, scene, slir,
 };
 
 #[derive(Serialize)]
 struct OwnedParamSnapshot {
-	kind: u32,
-	num:  f64,
-	s:    String,
-	rgba: u32,
-	sym:  String,
+	kind:    u32,
+	num:     f64,
+	s:       String,
+	rgba:    u32,
+	boolean: bool,
+	sym:     String,
+}
+
+impl From<ParamValue> for OwnedParamSnapshot {
+	fn from(value: ParamValue) -> Self {
+		let mut snapshot = Self {
+			kind:    value.kind(),
+			num:     0.0,
+			s:       String::new(),
+			rgba:    0,
+			boolean: false,
+			sym:     String::new(),
+		};
+		match value {
+			ParamValue::Text(value) => snapshot.s = value,
+			ParamValue::Num(value) | ParamValue::Pct(value) => snapshot.num = value,
+			ParamValue::Color(value) => snapshot.rgba = value,
+			ParamValue::Bool(value) => snapshot.boolean = value,
+			ParamValue::Enum(value) => snapshot.sym = value,
+		}
+		snapshot
+	}
 }
 
 #[derive(Serialize)]
@@ -300,13 +322,7 @@ pub fn statics_json(instance: &Instance) -> String {
 					ListFieldDef {
 						name: string_at(document, document.list_field_name[field_index]),
 						ty,
-						default_value: OwnedParamSnapshot {
-							kind: value.kind,
-							num:  value.num,
-							s:    value.s,
-							rgba: value.rgba,
-							sym:  value.sym,
-						},
+						default_value: OwnedParamSnapshot::from(value),
 						enum_symbols: enum_symbols(
 							document,
 							document.list_field_enum_off[field_index],

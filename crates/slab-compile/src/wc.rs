@@ -1,17 +1,15 @@
 //! Web-component generation.
 //!
 //! Moved lib-side from the CLI so the wasm build can emit the same `gen wc`
-//! outputs. Produces a self-contained browser ES module per document plus the
-//! shared minified web client and single Rust kernel compiled to WASM, bundled
-//! once by `just gen` and baked into the binary (so `gen wc` is relocatable and
-//! bun-free at run time).
+//! outputs. Produces browser ES modules whose SLIR documents are fetched from
+//! binary sidecars, plus the shared web client and Rust kernel WASM.
 //!
 //! Outputs (deterministic, byte-stable across runs):
 //! - `<stem>.js`  — plain browser ES module; imports `./slab-runtime.js`.
 //! - `<stem>.d.ts`— typed declarations + `HTMLElementTagNameMap` entries.
+//! - `<stem>.slir`— compiled binary document (plus one per export).
 //! - `slab-runtime.js` — the shared text runtime bundle.
 //! - `wasm/slab_kernel_bg.wasm` — the binary Rust kernel WASM sidecar.
-//! - `--separate-ir` additionally emits `<stem>.slir` (and one per export).
 
 use std::fmt::Write as _;
 
@@ -29,9 +27,7 @@ use crate::{
 /// `gen wc` options.
 pub struct WcOptions {
 	/// Override the main element tag (default `slab-<stem>`).
-	pub tag:         Option<String>,
-	/// Emit separate `.slir` files the classes fetch at runtime.
-	pub separate_ir: bool,
+	pub tag: Option<String>,
 }
 
 /// One emitted file. `text` flags UTF-8 (the module, declarations, and runtime
@@ -227,28 +223,6 @@ fn sanitize_tag(s: &str) -> String {
 			}
 		})
 		.collect()
-}
-
-fn base64(data: &[u8]) -> String {
-	const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-	let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
-	for chunk in data.chunks(3) {
-		let b = [chunk[0], *chunk.get(1).unwrap_or(&0), *chunk.get(2).unwrap_or(&0)];
-		let v = (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2]);
-		out.push(T[(v >> 18) as usize & 63] as char);
-		out.push(T[(v >> 12) as usize & 63] as char);
-		out.push(if chunk.len() > 1 {
-			T[(v >> 6) as usize & 63] as char
-		} else {
-			'='
-		});
-		out.push(if chunk.len() > 2 {
-			T[v as usize & 63] as char
-		} else {
-			'='
-		});
-	}
-	out
 }
 
 fn same_list_row(doc: &DocSpec, left: usize, right: usize) -> bool {
@@ -458,7 +432,7 @@ fn merged_signals(docs: &[DocSpec]) -> Vec<(&str, bool)> {
 	merged
 }
 
-fn emit_module(docs: &[DocSpec], separate_ir: bool) -> String {
+fn emit_module(docs: &[DocSpec]) -> String {
 	let docs_json: Vec<serde_json::Value> = docs
 		.iter()
 		.map(|d| {
@@ -569,7 +543,6 @@ fn emit_module(docs: &[DocSpec], separate_ir: bool) -> String {
 				"tag": d.tag,
 				"class": d.class,
 				"ir_name": d.ir_name,
-				"slir_base64": base64(&d.bytes),
 				"observed_attributes": observed_attributes,
 				"list_rows": list_rows_json,
 				"lists": lists_json,
@@ -601,7 +574,6 @@ fn emit_module(docs: &[DocSpec], separate_ir: bool) -> String {
 
 	let ctx = json!({
 		"docs": docs_json,
-		"separate_ir": separate_ir,
 		"merged_signals": merged_signals_json,
 	});
 
@@ -825,17 +797,13 @@ pub(crate) fn doc_specs(
 	(Some(docs), diags)
 }
 
-/// Assemble the `gen wc` file set for compiled [`DocSpec`]s: the module,
-/// declarations, runtime and kernel sidecars, plus `.slir` blobs under
-/// `--separate-ir`.
-pub(crate) fn files_of(docs: &[DocSpec], w: &WcOptions, stem: &str) -> Vec<WcFile> {
-	let module = emit_module(docs, w.separate_ir);
+/// Assemble the `gen wc` module, declarations, and binary sidecars.
+pub(crate) fn files_of(docs: &[DocSpec], stem: &str) -> Vec<WcFile> {
+	let module = emit_module(docs);
 	let dts = emit_dts(docs);
-	let mut files = Vec::new();
-	if w.separate_ir {
-		for d in docs {
-			files.push(WcFile { name: d.ir_name.clone(), bytes: d.bytes.clone(), text: false });
-		}
+	let mut files = Vec::with_capacity(docs.len() + 4);
+	for d in docs {
+		files.push(WcFile { name: d.ir_name.clone(), bytes: d.bytes.clone(), text: false });
 	}
 	files.push(WcFile { name: format!("{stem}.js"), bytes: module.into_bytes(), text: true });
 	files.push(WcFile { name: format!("{stem}.d.ts"), bytes: dts.into_bytes(), text: true });
@@ -855,9 +823,8 @@ pub(crate) fn files_of(docs: &[DocSpec], w: &WcOptions, stem: &str) -> Vec<WcFil
 /// Generate the full `gen wc` file set for a `.slab` source.
 ///
 /// `stem` is the output basename (the CLI passes the input file stem). Every
-/// successful set includes the text `slab-runtime.js` and binary
-/// `wasm/slab_kernel_bg.wasm` sidecars, plus `.slir` blobs under
-/// `--separate-ir`; the file list is `None` on compile failure.
+/// successful set includes each compiled `.slir`, the text runtime, and the
+/// binary kernel WASM; the file list is `None` on compile failure.
 pub fn generate(
 	src: &str,
 	copts: &Options,
@@ -868,7 +835,7 @@ pub fn generate(
 	let Some(docs) = docs else {
 		return (None, diags);
 	};
-	(Some(files_of(&docs, w, stem)), diags)
+	(Some(files_of(&docs, stem)), diags)
 }
 
 #[cfg(test)]
@@ -877,29 +844,41 @@ mod tests {
 	use crate::Options;
 
 	#[test]
-	fn generate_always_emits_binary_kernel_wasm_at_runtime_url() {
-		for separate_ir in [false, true] {
-			let options = WcOptions { tag: None, separate_ir };
-			let (files, _) = generate("text \"hello\"", &Options::default(), &options, "hello");
-			let files = files.expect("minimal document should compile");
-			let wasm = files
-				.iter()
-				.find(|file| file.name == "wasm/slab_kernel_bg.wasm")
-				.expect("kernel WASM sidecar");
-			assert!(!wasm.text);
-			assert_eq!(wasm.bytes.as_slice(), KERNEL_WASM);
+	fn generate_always_emits_external_runtime_sidecars() {
+		let options = WcOptions { tag: None };
+		let (files, _) = generate("text \"hello\"", &Options::default(), &options, "hello");
+		let files = files.expect("minimal document should compile");
+		let wasm = files
+			.iter()
+			.find(|file| file.name == "wasm/slab_kernel_bg.wasm")
+			.expect("kernel WASM sidecar");
+		assert!(!wasm.text);
+		assert_eq!(wasm.bytes.as_slice(), KERNEL_WASM);
 
-			let runtime = files
-				.iter()
-				.find(|file| file.name == "slab-runtime.js")
-				.expect("JavaScript runtime sidecar");
-			assert!(runtime.text);
-		}
+		let slir = files
+			.iter()
+			.find(|file| file.name == "hello.slir")
+			.expect("SLIR sidecar");
+		assert!(!slir.text);
+		assert!(!slir.bytes.is_empty());
+
+		let module = files
+			.iter()
+			.find(|file| file.name == "hello.js")
+			.and_then(|file| std::str::from_utf8(&file.bytes).ok())
+			.expect("JavaScript module");
+		assert!(module.contains("new URL('./hello.slir', import.meta.url).href"));
+
+		let runtime = files
+			.iter()
+			.find(|file| file.name == "slab-runtime.js")
+			.expect("JavaScript runtime sidecar");
+		assert!(runtime.text);
 	}
 
 	#[test]
 	fn generated_signal_details_share_typed_metadata() {
-		let options = WcOptions { tag: None, separate_ir: false };
+		let options = WcOptions { tag: None };
 		let source = r"
 row {
   box press=pressed context=menu dblclick=twice drag=started pointer-move=moved pointer-up=released drag-update=updated drag-end=ended drop=dropped
@@ -952,7 +931,7 @@ params {
 }
 col { each param.trees }
 "#;
-		let options = WcOptions { tag: None, separate_ir: false };
+		let options = WcOptions { tag: None };
 		let (files, diagnostics) = generate(
 			source,
 			&Options { embed_assets: false, ..Options::default() },
@@ -1014,7 +993,7 @@ col#app { col#list { each param.rows } }
 tokens { color { page #112233 } }
 col#canvas bg=color.page { text "tokens" }
 "#;
-		let options = WcOptions { tag: None, separate_ir: false };
+		let options = WcOptions { tag: None };
 		let (files, diagnostics) = generate(source, &Options::default(), &options, "tokens");
 		assert!(!diagnostics.has_errors(), "{:?}", diagnostics.0);
 		let files = files.expect("token web component");
@@ -1056,7 +1035,7 @@ col {
   each param.editor.rows
 }
 "#;
-		let options = WcOptions { tag: None, separate_ir: false };
+		let options = WcOptions { tag: None };
 		let (files, diagnostics) = generate(source, &Options::default(), &options, "editor");
 		assert!(!diagnostics.has_errors(), "{:?}", diagnostics.0);
 		let files = files.expect("grouped parameter web component");
@@ -1116,7 +1095,7 @@ col#app { col#list { each param.rows key=rows } }
 		}
 
 		// The generated module and declarations expose the same surface.
-		let options = WcOptions { tag: None, separate_ir: false };
+		let options = WcOptions { tag: None };
 		let (files, diagnostics) = generate(source, &compile_options, &options, "items");
 		assert!(!diagnostics.has_errors(), "{:?}", diagnostics.0);
 		let files = files.expect("item key web component");

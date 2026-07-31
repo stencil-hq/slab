@@ -9,6 +9,7 @@ import {
    hmrFooter,
    SlabCompileError,
    toDeclaration,
+   withSlirImports,
    writeDeclaration,
 } from '../src/core.ts';
 
@@ -45,6 +46,22 @@ describe('compileSlab', () => {
       expect(mod.tags).toEqual([{ tag: 'slab-hello', className: 'SlabHelloElement' }]);
       expect(mod.warnings).toEqual([]);
       expect(mod.assets).toEqual([]);
+      expect(mod.sidecars).toHaveLength(1);
+      expect(mod.sidecars[0]?.name).toBe('hello.slir');
+      expect(
+         Buffer.from(mod.sidecars[0]?.bytes ?? [])
+            .subarray(0, 4)
+            .toString(),
+      ).toBe('SLIR');
+      expect(mod.code).toContain("new URL('./hello.slir', import.meta.url).href");
+      const bundled = withSlirImports(
+         mod.code,
+         mod.sidecars,
+         (sidecar) => `virtual:${sidecar.name}`,
+      );
+      expect(bundled).toContain('import __slabSlir0 from "virtual:hello.slir";');
+      expect(bundled).toContain('static slir = __slabSlir0;');
+      expect(bundled).not.toContain("new URL('./hello.slir'");
    });
 
    test('collects referenced image assets and reports their paths', () => {
@@ -138,6 +155,7 @@ describe('hmrFooter', () => {
       const footer = hmrFooter([{ tag: 'slab-hello', className: 'SlabHelloElement' }]);
       expect(footer).toContain('import.meta.hot.accept();');
       expect(footer).toContain("['slab-hello', SlabHelloElement]");
+      expect(footer).toContain("fetch(next.slir, { cache: 'no-store' })");
       expect(footer).toContain('current.hotReplaceSlir(bytes);');
       expect(footer).toContain('el.loadSlir(bytes)');
    });

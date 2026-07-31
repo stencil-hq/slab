@@ -1360,7 +1360,8 @@ fn apply_attr_concrete(ctx: &mut Ctx, sink: &mut Sink, key: &str, rv: &RVal, lin
 					sink.set(at::attr_id(key).expect("boolean attribute id is defined"), tv);
 				}
 			},
-			"value-now" | "value-min" | "value-max" | "level" | "pos-in-set" | "set-size" => {
+			"value-now" | "value-min" | "value-max" | "level" | "pos-in-set" | "set-size"
+			| "tab-size" => {
 				if let Some(tv) = expect_prop_ty(ctx, *field, &[ParamType::Num], line, key) {
 					sink.set(at::attr_id(key).expect("numeric attribute id is defined"), tv);
 				}
@@ -1624,6 +1625,15 @@ fn apply_attr_concrete(ctx: &mut Ctx, sink: &mut Sink, key: &str, rv: &RVal, lin
 				}
 			} else if let Some(v) = num_val(ctx, rv, line, key) {
 				sink.set(at::SPLIT_W, TVal::Num(v.max(0.0)));
+			}
+		},
+		"tab-size" => {
+			if let RVal::Param(ix) = rv {
+				if let Some(tv) = expect_param_ty(ctx, *ix, &[ParamType::Num], line, key) {
+					sink.set(at::TAB_SIZE, tv);
+				}
+			} else if let Some(v) = num_val(ctx, rv, line, key) {
+				sink.set(at::TAB_SIZE, TVal::Num(v));
 			}
 		},
 		"scrollbar-fg" | "scrollbar-bg" => {
@@ -3777,6 +3787,10 @@ fn expand_builtin(
 	if node.flags & fl::ESCAPE_BLUR != 0 && (kind != nk::TEXT || node.field.is_none()) {
 		ctx.warn("attr", "`escape-blur` applies only to text nodes with field=".into(), a.line);
 		node.flags &= !fl::ESCAPE_BLUR;
+	}
+	if sink.get(at::TAB_SIZE).is_some() && (kind != nk::TEXT || node.field.is_none()) {
+		ctx.warn("attr", "`tab-size` applies only to text nodes with field=".into(), a.line);
+		sink.entries.retain(|entry| entry.id != at::TAB_SIZE);
 	}
 	if node.submit.is_some() && (kind != nk::TEXT || node.field.is_none()) {
 		ctx.warn("attr", "submit= applies only to text nodes with field=".into(), a.line);

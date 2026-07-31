@@ -24,47 +24,37 @@ enum Prepared {
 	List { param: u32, ops: Vec<ListOp> },
 }
 
-const fn empty_value(kind: u32) -> ParamValue {
-	ParamValue { kind, num: 0.0, s: String::new(), rgba: 0, sym: String::new() }
-}
-
 /// Coerce the scalar spelling shared by CLI `--set` and SDP `param.set`.
 ///
 /// This preserves the historical text/number/percentage/color/bool/enum rules.
 /// Percentages accept `60` or `"60%"` and are unclamped: `pct` is the generic
 /// parent-relative percentage type, so values above 100% stay legitimate.
 pub fn coerce_scalar(kind: u32, raw: &str) -> Result<ParamValue, String> {
-	let mut value = empty_value(kind);
 	match kind {
-		0 => value.s = raw.to_string(),
-		1 => {
-			value.num = raw
-				.parse()
-				.map_err(|_| format!("'{raw}' is not a number"))?;
-		},
-		2 => {
-			value.num = raw
-				.strip_suffix('%')
+		0 => Ok(ParamValue::Text(raw.to_string())),
+		1 => Ok(ParamValue::Num(
+			raw.parse()
+				.map_err(|_| format!("'{raw}' is not a number"))?,
+		)),
+		2 => Ok(ParamValue::Pct(
+			raw.strip_suffix('%')
 				.unwrap_or(raw)
 				.parse()
-				.map_err(|_| format!("'{raw}' is not a percentage"))?;
-		},
+				.map_err(|_| format!("'{raw}' is not a percentage"))?,
+		)),
 		3 => {
 			let color =
 				crate::color::parse_rgba(raw).ok_or_else(|| format!("'{raw}' is not a color"))?;
-			value.rgba = crate::color::rgba_word(color);
+			Ok(ParamValue::Color(crate::color::rgba_word(color)))
 		},
-		4 => {
-			value.num = match raw {
-				"true" | "1" | "on" => 1.0,
-				"false" | "0" | "off" => 0.0,
-				_ => return Err(format!("'{raw}' is not a bool")),
-			}
-		},
-		5 => value.sym = raw.to_string(),
-		_ => return Err(format!("unsupported param type {kind}")),
+		4 => Ok(ParamValue::Bool(match raw {
+			"true" | "1" | "on" => true,
+			"false" | "0" | "off" => false,
+			_ => return Err(format!("'{raw}' is not a bool")),
+		})),
+		5 => Ok(ParamValue::Enum(raw.to_string())),
+		_ => Err(format!("unsupported param type {kind}")),
 	}
-	Ok(value)
 }
 
 fn enum_contains(doc: &Doc, off: i32, len: i32, candidate: &str) -> bool {
@@ -77,64 +67,60 @@ fn scalar_enum_contains(doc: &Doc, param: usize, candidate: &str) -> bool {
 		.any(|ix| kslir::str_at(doc, doc.parm_enum_syms[ix as usize]) == candidate)
 }
 
-fn default_field_value(doc: &Doc, field: usize) -> ParamValue {
+fn default_field_value(doc: &Doc, field: usize) -> Result<ParamValue, String> {
 	let kind = doc.list_field_type[field];
 	let decoded = slab_kernel::value::decode(doc, doc.list_field_default[field] as i32);
-	let mut value = empty_value(kind);
 	match kind {
-		0 => {
-			if decoded.tag == kslir::T_STR {
-				value.s.clone_from(&doc.strs[decoded.h as usize]);
-			}
-		},
-		1 | 2 | 4 => value.num = decoded.num,
-		3 => value.rgba = decoded.h,
-		5 if decoded.tag == kslir::T_ENUM_SYM => {
-			value.sym.clone_from(&doc.strs[decoded.h as usize]);
-		},
-		_ => {},
+		0 => Ok(ParamValue::Text(if decoded.tag == kslir::T_STR {
+			doc.strs[decoded.h as usize].clone()
+		} else {
+			String::new()
+		})),
+		1 => Ok(ParamValue::Num(decoded.num)),
+		2 => Ok(ParamValue::Pct(decoded.num)),
+		3 => Ok(ParamValue::Color(decoded.h)),
+		4 => Ok(ParamValue::Bool(decoded.num != 0.0)),
+		5 => Ok(ParamValue::Enum(if decoded.tag == kslir::T_ENUM_SYM {
+			doc.strs[decoded.h as usize].clone()
+		} else {
+			String::new()
+		})),
+		_ => Err(format!("unsupported field type {kind}")),
 	}
-	value
 }
 
 fn json_field_value(doc: &Doc, field: usize, value: &Value) -> Result<ParamValue, String> {
 	let kind = doc.list_field_type[field];
-	let mut out = empty_value(kind);
 	match kind {
-		0 => {
-			out.s = value
+		0 => Ok(ParamValue::Text(
+			value
 				.as_str()
 				.ok_or_else(|| "must be a string".to_string())?
-				.to_string();
-		},
-		1 => {
-			out.num = value
+				.to_string(),
+		)),
+		1 => Ok(ParamValue::Num(
+			value
 				.as_f64()
-				.ok_or_else(|| "must be a number".to_string())?;
-		},
-		2 => {
-			out.num = value
+				.ok_or_else(|| "must be a number".to_string())?,
+		)),
+		2 => Ok(ParamValue::Pct(
+			value
 				.as_f64()
-				.ok_or_else(|| "must be a percentage number".to_string())?;
-		},
+				.ok_or_else(|| "must be a percentage number".to_string())?,
+		)),
 		3 => {
 			let raw = value
 				.as_str()
 				.ok_or_else(|| "must be a color string".to_string())?;
 			let color =
 				crate::color::parse_rgba(raw).ok_or_else(|| format!("'{raw}' is not a color"))?;
-			out.rgba = crate::color::rgba_word(color);
+			Ok(ParamValue::Color(crate::color::rgba_word(color)))
 		},
-		4 => {
-			out.num = if value
+		4 => Ok(ParamValue::Bool(
+			value
 				.as_bool()
-				.ok_or_else(|| "must be a boolean".to_string())?
-			{
-				1.0
-			} else {
-				0.0
-			};
-		},
+				.ok_or_else(|| "must be a boolean".to_string())?,
+		)),
 		5 => {
 			let member = value
 				.as_str()
@@ -147,12 +133,11 @@ fn json_field_value(doc: &Doc, field: usize, value: &Value) -> Result<ParamValue
 			) {
 				return Err(format!("unknown enum member '{member}'"));
 			}
-			out.sym = member.to_string();
+			Ok(ParamValue::Enum(member.to_string()))
 		},
-		FIELD_LIST => return Err("list fields are prepared recursively".to_string()),
-		_ => return Err(format!("unsupported field type {kind}")),
+		FIELD_LIST => Err("list fields are prepared recursively".to_string()),
+		_ => Err(format!("unsupported field type {kind}")),
 	}
-	Ok(out)
 }
 
 /// Joins the kernel's `<index>.<field>` list-path grammar (`""` = root).
@@ -251,7 +236,8 @@ fn prepare_list_level(
 			let value = match object.get(name) {
 				Some(raw_value) => json_field_value(doc, field, raw_value)
 					.map_err(|e| format!("item {index} field '{name}': {e}"))?,
-				None => default_field_value(doc, field),
+				None => default_field_value(doc, field)
+					.map_err(|e| format!("item {index} field '{name}': {e}"))?,
 			};
 			ops.push(ListOp::Field {
 				path: path.to_owned(),
@@ -288,8 +274,10 @@ fn prepare(doc: &Doc, name: &str, raw: &str) -> Result<Prepared, String> {
 		return prepare_list(doc, param, raw);
 	}
 	let value = coerce_scalar(kind, raw)?;
-	if kind == 5 && !scalar_enum_contains(doc, param, &value.sym) {
-		return Err(format!("unknown enum member '{}'", value.sym));
+	if let ParamValue::Enum(member) = &value
+		&& !scalar_enum_contains(doc, param, member)
+	{
+		return Err(format!("unknown enum member '{member}'"));
 	}
 	Ok(Prepared::Scalar { param: param as u32, value })
 }

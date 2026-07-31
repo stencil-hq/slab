@@ -60,6 +60,10 @@ describe('vite plugin', () => {
       expect(result?.code).toContain('import.meta.hot.accept();');
       expect(result?.code).toContain("customElements.get('slab-hello')");
       expect(result?.code).toContain('hotReplaceSlir');
+      expect(result?.code).toContain('from "virtual:slab-slir/');
+      expect(result?.code).not.toContain('%00');
+      expect(result?.code).toContain(':hello.slir');
+      expect(result?.code).toContain("fetch(next.slir, { cache: 'no-store' })");
       expect(context.watched).toEqual([FIXTURE]);
    });
 
@@ -67,6 +71,8 @@ describe('vite plugin', () => {
       const { result } = run(slab({ declarations: false }), FIXTURE, 'build');
       expect(result?.code).toContain('export class SlabHelloElement extends SlabElement');
       expect(result?.code).not.toContain('import.meta.hot');
+      expect(result?.code).toContain('from "virtual:slab-slir/');
+      expect(result?.code).not.toContain("new URL('./hello.slir'");
    });
 
    test('writes the sibling declaration by default', () => {

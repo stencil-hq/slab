@@ -202,7 +202,7 @@ fn expand(path: &str, name: Option<&str>, fonts: &[(String, String)]) -> Result<
 		fonts:        font_bytes,
 	};
 	let (module, diags, imports) =
-		slab_compile::rustgen::generate_with_import_paths(&src, &opts, path);
+		slab_compile::rustgen::generate_embedded_with_import_paths(&src, &opts, path);
 	tracked.extend(imports.iter().map(|import| import.display().to_string()));
 	let module = match module {
 		Some(m) if !diags.has_errors() => {

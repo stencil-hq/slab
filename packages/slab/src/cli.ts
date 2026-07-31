@@ -12,7 +12,7 @@
 // errors (matching the Rust CLI codes).
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, extname, join, resolve } from 'node:path';
+import { basename, dirname, extname, join, resolve } from 'node:path';
 import { loadImports } from './core.ts';
 import {
    DEV_USAGE,
@@ -48,9 +48,9 @@ commands:
   fmt FILE... [--check]                    reformat sources in place ('-' filters
                                            stdin to stdout; --check: diff exit 1)
   render FILE -o OUT.{svg,png,apng,txt}    static export (see \`slab render --help\`)
-  gen wc FILE -o DIR [--tag NAME] [--separate-ir]   emit a web-component module
-  gen react FILE -o DIR [--tag NAME] [--separate-ir]   emit a web component + typed React wrapper
-  dev FILE [-o DIR] [--tag NAME] [--separate-ir] [--host HOST] [--port N]
+  gen wc FILE -o DIR [--tag NAME]         emit a web-component module
+  gen react FILE -o DIR [--tag NAME]      emit a web component + typed React wrapper
+  dev FILE [-o DIR] [--tag NAME] [--host HOST] [--port N]
                                             serve a live web-component preview
   gen rust FILE -o OUT.rs                  emit a typed Rust module (native client)
   drive                                    requires native slab-cli (see below)
@@ -72,8 +72,8 @@ const RENDER_USAGE = `usage: slab render FILE [-o OUT.{svg,png,apng,txt}]
                         [--env portrait,dark,coarse] [--set param=value]... [--plain] [-v]
   --state previews document-global states only; it cannot target one node.
 `;
-const GEN_USAGE = `usage: slab gen wc FILE -o DIR [--tag NAME] [--separate-ir]
-       slab gen react FILE -o DIR [--tag NAME] [--separate-ir]
+const GEN_USAGE = `usage: slab gen wc FILE -o DIR [--tag NAME]
+       slab gen react FILE -o DIR [--tag NAME]
        slab gen rust FILE -o OUT.rs
 `;
 const DRIVE_USAGE = `usage: slab drive [FILE] [OPTIONS]
@@ -371,7 +371,6 @@ function cmdGenWc(args: string[]): void {
    let file: string | undefined;
    let out: string | undefined;
    let tag: string | undefined;
-   let separateIr = false;
    const it = args[Symbol.iterator]();
    while (true) {
       const r = it.next();
@@ -385,8 +384,7 @@ function cmdGenWc(args: string[]): void {
          const v = it.next();
          if (v.done) usageErr('missing value for --tag');
          tag = v.value as string;
-      } else if (a === '--separate-ir') separateIr = true;
-      else if (a.startsWith('-')) usageErr(`unknown flag ${a}`);
+      } else if (a.startsWith('-')) usageErr(`unknown flag ${a}`);
       else if (!file) file = a;
       else usageErr(`unexpected argument '${a}'`);
    }
@@ -400,7 +398,7 @@ function cmdGenWc(args: string[]): void {
          .pop() ?? 'slab';
    const W = wasm();
    const assetsJson = assetsJsonFor(src, baseDir, sourcesJson);
-   const optsJson = JSON.stringify({ tag, separateIr, stem, sourceName: file });
+   const optsJson = JSON.stringify({ tag, stem, sourceName: file });
    let resultJson: string;
    try {
       resultJson = W.gen_wc_with_sources(src, optsJson, assetsJson, sourcesJson);
@@ -425,7 +423,7 @@ function cmdGenWc(args: string[]): void {
       }
    }
    process.stderr.write(
-      `wrote ${join(out, `${stem}.js`)} + .d.ts + slab-runtime.js (${nElems} element${nElems === 1 ? '' : 's'})\n`,
+      `wrote ${join(out, `${stem}.js`)} + .slir + .d.ts + slab-runtime.js (${nElems} element${nElems === 1 ? '' : 's'})\n`,
    );
 }
 
@@ -433,7 +431,6 @@ function cmdGenReact(args: string[]): void {
    let file: string | undefined;
    let out: string | undefined;
    let tag: string | undefined;
-   let separateIr = false;
    const it = args[Symbol.iterator]();
    while (true) {
       const r = it.next();
@@ -447,8 +444,7 @@ function cmdGenReact(args: string[]): void {
          const v = it.next();
          if (v.done) usageErr('missing value for --tag');
          tag = v.value as string;
-      } else if (a === '--separate-ir') separateIr = true;
-      else if (a.startsWith('-')) usageErr(`unknown flag ${a}`);
+      } else if (a.startsWith('-')) usageErr(`unknown flag ${a}`);
       else if (!file) file = a;
       else usageErr(`unexpected argument '${a}'`);
    }
@@ -462,7 +458,7 @@ function cmdGenReact(args: string[]): void {
          .pop() ?? 'slab';
    const W = wasm();
    const assetsJson = assetsJsonFor(src, baseDir, sourcesJson);
-   const optsJson = JSON.stringify({ tag, separateIr, stem, sourceName: file });
+   const optsJson = JSON.stringify({ tag, stem, sourceName: file });
    let resultJson: string;
    try {
       resultJson = W.gen_react_with_sources(src, optsJson, assetsJson, sourcesJson);
@@ -487,7 +483,7 @@ function cmdGenReact(args: string[]): void {
       }
    }
    process.stderr.write(
-      `wrote ${join(out, `${stem}.tsx`)} + ${stem}.js + .d.ts + slab-runtime.js (${nElems} element${nElems === 1 ? '' : 's'})\n`,
+      `wrote ${join(out, `${stem}.tsx`)} + ${stem}.js + .slir + .d.ts + slab-runtime.js (${nElems} element${nElems === 1 ? '' : 's'})\n`,
    );
 }
 
@@ -512,7 +508,6 @@ async function cmdDev(args: string[]): Promise<void> {
       const assetsJson = assetsJsonFor(src, baseDir, sourcesJson);
       const optsJson = JSON.stringify({
          tag: options.tag,
-         separateIr: options.separateIr,
          stem,
          sourceName: options.file,
       });
@@ -587,19 +582,29 @@ function cmdGenRust(args: string[]): void {
    const sourcesJson = loadImports(resolve(file), src).sourcesJson;
    const W = wasm();
    const assetsJson = assetsJsonFor(src, baseDir, sourcesJson, file);
+   const outExtension = extname(out);
+   const slirOut = `${out.slice(0, out.length - outExtension.length)}.slir`;
    let resultJson: string;
    try {
-      resultJson = W.gen_rust_with_sources(src, assetsJson, sourcesJson);
+      resultJson = W.gen_rust_with_sources(src, basename(slirOut), assetsJson, sourcesJson);
    } catch (e) {
       printDiags(String(e));
       process.exit(1);
    }
-   const result = JSON.parse(resultJson) as { module: string; diagnostics: Diag[] };
+   const result = JSON.parse(resultJson) as {
+      module: string;
+      slir: string;
+      diagnostics: Diag[];
+   };
    for (const d of result.diagnostics) process.stderr.write(`${d.formatted}\n`);
    if (result.diagnostics.some((d) => d.level === 'error')) process.exit(1);
    mkdirSync(dirname(resolve(out)), { recursive: true });
+   const slir = Buffer.from(result.slir, 'base64');
    writeFileSync(out, result.module);
-   process.stderr.write(`wrote ${out} (${result.module.length} bytes)\n`);
+   writeFileSync(slirOut, slir);
+   process.stderr.write(
+      `wrote ${out} + ${slirOut} (${result.module.length} + ${slir.length} bytes)\n`,
+   );
 }
 
 /** Prints renderer capability notes: everything under `-v`, otherwise one
@@ -686,9 +691,9 @@ if (
 ) {
    process.stdout.write(
       rest[0] === 'wc'
-         ? 'usage: slab gen wc FILE -o DIR [--tag NAME] [--separate-ir]\n'
+         ? 'usage: slab gen wc FILE -o DIR [--tag NAME]\n'
          : rest[0] === 'react'
-           ? 'usage: slab gen react FILE -o DIR [--tag NAME] [--separate-ir]\n'
+           ? 'usage: slab gen react FILE -o DIR [--tag NAME]\n'
            : 'usage: slab gen rust FILE -o OUT.rs\n',
    );
    process.exit(0);

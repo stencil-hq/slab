@@ -67,10 +67,19 @@ console.log('pack: cargo run -q -p xtask -- kernel-wasm');
 run(['cargo', 'run', '-q', '-p', 'xtask', '--', 'kernel-wasm']);
 
 // 3. Build the compiler wasm crate.
-console.log('pack: cargo build --release --target wasm32-unknown-unknown -p slab-wasm');
-run(['cargo', 'build', '--release', '--target', 'wasm32-unknown-unknown', '-p', 'slab-wasm']);
+console.log('pack: cargo build --profile dist --target wasm32-unknown-unknown -p slab-wasm');
+run([
+   'cargo',
+   'build',
+   '--profile',
+   'dist',
+   '--target',
+   'wasm32-unknown-unknown',
+   '-p',
+   'slab-wasm',
+]);
 
-const wasmPath = join(ROOT, 'target/wasm32-unknown-unknown/release/slab_wasm.wasm');
+const wasmPath = join(ROOT, 'target/wasm32-unknown-unknown/dist/slab_wasm.wasm');
 if (!existsSync(wasmPath)) {
    console.error(`pack: expected wasm output at ${wasmPath}`);
    process.exit(1);

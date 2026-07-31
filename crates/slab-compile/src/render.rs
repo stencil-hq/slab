@@ -34,11 +34,12 @@ impl RegisteredFont {
 /// carry document font indices, and host registration appends tables past the
 /// compiled ones. Returns `None` when the document has no such table.
 ///
-/// The table's own embedded data wins: the kernel shaped those glyph ids
-/// against exactly those bytes, so outlines from any other face paint
-/// mojibake. Tables without embedded data fall back to a host-registered face
-/// of the same family — nearest weight, later registration breaking ties —
-/// and finally to the bundled class asset.
+/// The table's resolved shaping bytes win — embedded data or, for compiled
+/// tables, the vendored class asset (see [`slab_kernel::slir::face_data`]):
+/// the kernel shaped those glyph ids against exactly those bytes, so outlines
+/// from any other face paint mojibake. Metrics-only runtime tables fall back
+/// to a host-registered face of the same family — nearest weight, later
+/// registration breaking ties — and finally to the bundled class asset.
 pub fn face_bytes<'a>(
 	doc: &'a Doc,
 	font: usize,
@@ -46,9 +47,9 @@ pub fn face_bytes<'a>(
 ) -> Option<&'a [u8]> {
 	let &class = doc.font_class.get(font)?;
 	let weight = doc.font_weight[font];
-	let embedded = slir::font_data(doc, i32::try_from(font).expect("font index fits i32"));
-	if !embedded.is_empty() {
-		return Some(embedded);
+	let resolved = slir::face_data(doc, i32::try_from(font).expect("font index fits i32"));
+	if !resolved.is_empty() {
+		return Some(resolved);
 	}
 	let family = doc
 		.strs

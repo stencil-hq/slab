@@ -12,7 +12,7 @@
 //! - `gen-caps` emits `crates/slab-kernel/src/caps.rs` (per-client feature
 //!   levels as u8 tables plus note/diagnostic-code strings).
 
-use std::{fmt::Write as _, path::Path, process::ExitCode};
+use std::{fmt::Write as _, process::ExitCode};
 
 /// Client columns; index = the kernel client code (`inst_set_env`).
 const CLIENTS: [&str; 5] = ["web", "gpu", "tui", "svg", "png"];
@@ -320,26 +320,13 @@ pub fn cmd_gen_caps() -> ExitCode {
 	};
 	let root = super::repo_root();
 	let rs_path = root.join("crates/slab-kernel/src/caps.rs");
-	if let Err(e) = std::fs::write(&rs_path, caps_rs(&feats)) {
-		eprintln!("error: {}: {e}", rs_path.display());
-		return ExitCode::from(2);
+	match super::write_generated_rust(&rs_path, &caps_rs(&feats)) {
+		Ok(true) => eprintln!("gen-caps: wrote {}", rs_path.display()),
+		Ok(false) => eprintln!("gen-caps: {} up to date", rs_path.display()),
+		Err(e) => {
+			eprintln!("error: {}: {e}", rs_path.display());
+			return ExitCode::from(2);
+		},
 	}
-	eprintln!("gen-caps: wrote {}", rs_path.display());
-	rustfmt(&rs_path);
 	ExitCode::SUCCESS
-}
-
-/// Best-effort formatting: the file is valid without rustfmt, while formatting
-/// keeps `cargo fmt --check` green on the committed tree.
-fn rustfmt(path: &Path) {
-	match std::process::Command::new("rustfmt")
-		.arg("--edition")
-		.arg("2024")
-		.arg(path)
-		.status()
-	{
-		Ok(s) if s.success() => {},
-		Ok(s) => eprintln!("gen-caps: rustfmt exited with {s}; left unformatted"),
-		Err(_) => eprintln!("gen-caps: rustfmt not found; left unformatted"),
-	}
 }

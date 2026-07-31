@@ -165,8 +165,14 @@ export declare class {{ d.class }} extends HTMLElement {
    addEventListener(type: 'slab-diagnostics', listener: (event: CustomEvent<SlabDiagnosticsDetail>) => void, options?: boolean | AddEventListenerOptions): void;
    /** Replace a keyed field buffer and reset its edit history. */
    setFieldText(key: string, text: string): boolean;
+   /** Replace paint-only styles over committed field codepoint ranges. */
+   setFieldStyles(key: string, ranges: Array<{ start: number; end: number; color: string; italic?: boolean }>): boolean;
    /** Read a keyed field's committed text. */
    fieldText(key: string): string | undefined;
+   /** Read a keyed field's directed caret and anchor offsets. */
+   getCaret(key: string): { caret: number; anchor: number } | null;
+   /** Set a keyed field's directed caret and optional anchor offsets. */
+   setCaret(key: string, caret: number, anchor?: number): boolean;
    /** Set a keyed scroll offset on axis 0 (main) or 1 (cross). */
    setScroll(key: string, axis: number, off: number): boolean;
    /** Read a keyed scroll offset on axis 0 (main) or 1 (cross). */

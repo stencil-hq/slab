@@ -216,9 +216,9 @@ slab render FILE -o OUT.{svg,png,apng,txt}
      [--width N --height N] [--scale N]
      [--t MS] [--dur S --fps N] [--state a,b] [--env portrait,dark,coarse]
      [--set param=value]... [--plain]
-slab gen wc    FILE -o DIR [--tag NAME] [--separate-ir]  # web-component module
-slab gen react FILE -o DIR [--tag NAME] [--separate-ir]  # typed React wrapper
-slab gen rust  FILE -o OUT.rs                             # typed Rust module
+slab gen wc    FILE -o DIR [--tag NAME]  # web component + fetched SLIR
+slab gen react FILE -o DIR [--tag NAME]  # React wrapper + fetched SLIR
+slab gen rust  FILE -o OUT.rs            # typed module + included OUT.slir
 ```
 
 Native-only: `slab conformance [--update]`, `slab lsp` (stdio LSP:

@@ -981,7 +981,9 @@ pub fn emit(ex: &Expanded, opts: &Options, diags: &mut Diagnostics) -> Slir {
 
 	// FONT tables cross every authored or statically knowable property-bound
 	// family with every required snapped weight. The class supplies fallback
-	// metrics.
+	// metrics. Tables backed by a vendored asset stay metrics-only — every
+	// kernel resolves the identical bundled face at run time — while
+	// host-supplied compile-time faces embed their sfnt bytes.
 	let mut families = BTreeSet::from([String::new()]);
 	let mut weights = BTreeSet::from([400u16]);
 	families.extend(ex.font_families.iter().cloned());
@@ -1004,6 +1006,9 @@ pub fn emit(ex: &Expanded, opts: &Options, diags: &mut Diagnostics) -> Slir {
 		for &weight in &weights {
 			let bytes = custom.unwrap_or_else(|| font_assets::asset(class, weight).bytes);
 			let mut table = fonts::build_table(class, weight, bytes);
+			if let Some(custom) = custom {
+				table.data = custom.to_vec();
+			}
 			table.family = em.intern(&family);
 			em.slir.fonts.push(table);
 		}

@@ -338,7 +338,7 @@ pub fn gen_wc(source: &str, opts_json: &str, assets_json: &str) -> Result<String
 }
 
 /// `gen wc` — emit web-component files. `opts_json`:
-/// `{tag?, separateIr, stem}`. Returns `{files:[{name, b64?|text?}],
+/// `{tag?, stem}`. Returns `{files:[{name, b64?|text?}],
 /// diagnostics:[…]}`.
 #[wasm_bindgen]
 pub fn gen_wc_with_sources(
@@ -349,10 +349,7 @@ pub fn gen_wc_with_sources(
 ) -> Result<String, JsValue> {
 	let v: serde_json::Value =
 		serde_json::from_str(opts_json).map_err(|e| JsValue::from_str(&format!("bad opts: {e}")))?;
-	let wopts = WcOptions {
-		tag:         v["tag"].as_str().map(String::from),
-		separate_ir: v["separateIr"].as_bool().unwrap_or(false),
-	};
+	let wopts = WcOptions { tag: v["tag"].as_str().map(String::from) };
 	let stem = v["stem"].as_str().unwrap_or("slab");
 	let copts = opts_with_sources(true, ".", assets_json, sources_json);
 	let (files, diags) = gen_wc_files(source, &copts, &wopts, stem);
@@ -386,7 +383,7 @@ pub fn gen_react(source: &str, opts_json: &str, assets_json: &str) -> Result<Str
 }
 
 /// `gen react` — emit web-component files plus the typed React wrapper.
-/// `opts_json`: `{tag?, separateIr, stem}`. Returns
+/// `opts_json`: `{tag?, stem}`. Returns
 /// `{files:[{name, b64?|text?}], diagnostics:[…]}`.
 #[wasm_bindgen]
 pub fn gen_react_with_sources(
@@ -397,10 +394,7 @@ pub fn gen_react_with_sources(
 ) -> Result<String, JsValue> {
 	let v: serde_json::Value =
 		serde_json::from_str(opts_json).map_err(|e| JsValue::from_str(&format!("bad opts: {e}")))?;
-	let wopts = WcOptions {
-		tag:         v["tag"].as_str().map(String::from),
-		separate_ir: v["separateIr"].as_bool().unwrap_or(false),
-	};
+	let wopts = WcOptions { tag: v["tag"].as_str().map(String::from) };
 	let stem = v["stem"].as_str().unwrap_or("slab");
 	let copts = opts_with_sources(true, ".", assets_json, sources_json);
 	let (files, diags) = gen_react_files(source, &copts, &wopts, stem);
@@ -427,17 +421,19 @@ pub fn gen_react_with_sources(
 	Ok(serde_json::to_string(&result).unwrap_or_else(|_| "{}".into()))
 }
 
-/// Generate a typed Rust module without virtual imports.
+/// Generate a typed Rust module and SLIR sidecar without virtual imports.
 #[wasm_bindgen]
-pub fn gen_rust(source: &str, assets_json: &str) -> Result<String, JsValue> {
-	gen_rust_with_sources(source, assets_json, "{}")
+pub fn gen_rust(source: &str, slir_name: &str, assets_json: &str) -> Result<String, JsValue> {
+	gen_rust_with_sources(source, slir_name, assets_json, "{}")
 }
 
-/// `gen rust` — emit a typed Rust module. Returns
-/// `{module: string, diagnostics:[…]}`.
+/// `gen rust` — emit a typed Rust module and its included SLIR sidecar.
+///
+/// Returns `{module: string, slir: base64, diagnostics:[…]}`.
 #[wasm_bindgen]
 pub fn gen_rust_with_sources(
 	source: &str,
+	slir_name: &str,
 	assets_json: &str,
 	sources_json: &str,
 ) -> Result<String, JsValue> {
@@ -446,13 +442,14 @@ pub fn gen_rust_with_sources(
 		.and_then(|value| value["$slabSourceName"].as_str().map(String::from))
 		.unwrap_or_else(|| "slab".into());
 	let copts = opts_with_sources(true, ".", assets_json, sources_json);
-	let (module, diags) = gen_rust_src(source, &copts, &source_name);
+	let (output, diags) = gen_rust_src(source, &copts, &source_name, slir_name);
 	let diags_j = diags_json(&diags, &source_name);
-	let Some(module) = module else {
+	let Some(output) = output else {
 		return Err(JsValue::from_str(&diags_j));
 	};
 	let result = serde_json::json!({
-		 "module": module,
+		 "module": output.module,
+		 "slir": b64_encode(&output.slir),
 		 "diagnostics": serde_json::from_str::<serde_json::Value>(&diags_j).unwrap_or(serde_json::Value::Array(vec![])),
 	});
 	Ok(serde_json::to_string(&result).unwrap_or_else(|_| "{}".into()))

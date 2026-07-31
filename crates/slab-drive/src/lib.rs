@@ -76,6 +76,7 @@
 //! | `field.caret.set` | `{"key":str,"caret":i32,"anchor":i32,"goal_x":f64|null?}` | `{"ok":true,"changed":bool}` |
 //! | `field.runs.get` | `{"key":str}` | `{"rev":u64,"runs":[{"style":u32,"start":i32,"end":i32}]}` |
 //! | `field.runs.set` | `{"key":str,"rev":u64,"runs":[...]}` | `{"ok":true,"changed":bool}` |
+//! | `field.styles` | `{"key":str,"ranges":[[start,end,"#rrggbb",italic?],...]}` | replaces paint-only field styles |
 //! | `field.style.toggle` | `{"key":str,"style":u32}` | `{"ok":true,"changed":bool}` |
 //! | `field.range.get` | none | `{"range":{"anchor":{"key","offset"},"head":{"key","offset"}}|null}` |
 //! | `field.range.clear` | none | `{"ok":true,"changed":bool}` |
@@ -198,6 +199,7 @@ const METHODS: &[&str] = &[
 	"field.caret.set",
 	"field.runs.get",
 	"field.runs.set",
+	"field.styles",
 	"field.style.toggle",
 	"field.range.get",
 	"field.range.clear",
@@ -1153,6 +1155,7 @@ fn handle(
 		"field.caret.set" => field_caret_set(session, params(value)),
 		"field.runs.get" => field_runs_get(session, params(value)),
 		"field.runs.set" => field_runs_set(session, params(value)),
+		"field.styles" => field_styles(session, params(value)),
 		"field.style.toggle" => field_style_toggle(session, params(value)),
 		"field.range.get" => field_range_get(session),
 		"field.range.clear" => field_range_clear(session),
@@ -1585,6 +1588,72 @@ fn field_runs_set(session: &mut Session, object: &Map<String, Value>) -> Protoco
 		.expect("validated field remains available after setting runs")
 		.revision;
 	Ok(json!({"ok": true, "changed": after != before}))
+}
+
+fn parse_field_style_color(value: &Value) -> ProtocolResult<u32> {
+	let text = value
+		.as_str()
+		.ok_or_else(|| invalid("field style color must be a string"))?;
+	let hex = text
+		.strip_prefix('#')
+		.filter(|hex| hex.len() == 6 || hex.len() == 8)
+		.ok_or_else(|| invalid("field style color must be #rrggbb or #rrggbbaa"))?;
+	let parsed = u32::from_str_radix(hex, 16)
+		.map_err(|_| invalid("field style color must be #rrggbb or #rrggbbaa"))?;
+	let (rgb, alpha) = if hex.len() == 6 {
+		(parsed, 0xff)
+	} else {
+		(parsed >> 8, parsed & 0xff)
+	};
+	Ok(((rgb >> 16) & 0xff) | (rgb & 0x00ff00) | ((rgb & 0xff) << 16) | (alpha << 24))
+}
+
+fn field_styles(session: &mut Session, object: &Map<String, Value>) -> ProtocolResult {
+	let query = required_str(object, "key")?.to_string();
+	let values = object
+		.get("ranges")
+		.and_then(Value::as_array)
+		.ok_or_else(|| invalid("'ranges' must be an array"))?;
+	let mut styles = Vec::with_capacity(values.len());
+	let mut previous_end = i32::MIN;
+	for value in values {
+		let range = value
+			.as_array()
+			.filter(|range| range.len() == 3 || range.len() == 4)
+			.ok_or_else(|| invalid("field style ranges must be [start,end,color,italic?]"))?;
+		let start = range[0]
+			.as_i64()
+			.and_then(|value| i32::try_from(value).ok())
+			.ok_or_else(|| invalid("field style start must be an i32"))?;
+		let end = range[1]
+			.as_i64()
+			.and_then(|value| i32::try_from(value).ok())
+			.ok_or_else(|| invalid("field style end must be an i32"))?;
+		let flags = match range.get(3) {
+			None => 0,
+			Some(value) => u32::from(
+				value
+					.as_bool()
+					.ok_or_else(|| invalid("field style italic must be boolean"))?,
+			),
+		};
+		if start > end || start < previous_end {
+			return Err(invalid("field style ranges must be ascending and non-overlapping"));
+		}
+		previous_end = end;
+		styles.push(frame::FieldStyle {
+			start,
+			end,
+			rgba: parse_field_style_color(&range[2])?,
+			flags,
+		});
+	}
+	let key = resolved_field_key(session, &query)?;
+	let doc = ensure_frame(session)?;
+	if !frame::inst_set_field_styles(&mut doc.inst, &key, &styles) {
+		return Err(domain(format!("cannot set styles for field '{key}'")));
+	}
+	Ok(json!({"ok": true}))
 }
 
 fn field_style_toggle(session: &mut Session, object: &Map<String, Value>) -> ProtocolResult {
@@ -3008,9 +3077,30 @@ text#field param.draft field=draft size=14 w=200 nowrap
 			r#"{"method":"field.runs.set","params":{"key":"field","rev":0,"runs":[{"style":0,"start":0,"end":4},{"style":"bold","start":1,"end":2}]}}"#,
 		);
 		assert_eq!(malformed.response["error"]["code"], ERR_PARAMS);
+
 		let after =
 			pump.request(&mut instance, r#"{"method":"field.runs.get","params":{"key":"field"}}"#);
 		assert_eq!(result(&after), result(&before));
+	}
+	#[test]
+	fn field_styles_validate_wire_and_reach_kernel() {
+		let (slir, mut instance, images) = live_document();
+		let mut pump = RequestPump::new("test.slab", slir, images);
+		let set = pump.request(
+			&mut instance,
+			r##"{"method":"field.styles","params":{"key":"field","ranges":[[1,3,"#112233",true],[4,5,"#44556677"]]}}"##,
+		);
+		assert_eq!(result(&set), &json!({"ok": true}));
+		assert_eq!(instance.ds.ed[0].field_styles, [
+			frame::FieldStyle { start: 1, end: 3, rgba: 0xff33_2211, flags: 1 },
+			frame::FieldStyle { start: 4, end: 5, rgba: 0x7766_5544, flags: 0 },
+		]);
+		let malformed = pump.request(
+			&mut instance,
+			r##"{"method":"field.styles","params":{"key":"field","ranges":[[0,3,"#112233"],[2,4,"#445566"]]}}"##,
+		);
+		assert_eq!(malformed.response["error"]["code"], ERR_PARAMS);
+		assert_eq!(instance.ds.ed[0].field_styles.len(), 2, "wire rejection is atomic");
 	}
 
 	#[test]

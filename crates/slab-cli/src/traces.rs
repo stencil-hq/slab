@@ -166,51 +166,36 @@ pub fn typed_value_parts(
 	kind_name: &str,
 	raw: &serde_json::Value,
 ) -> Result<slab_kernel::frame::ParamValue, String> {
-	let kind = match kind_name {
-		"text" => 0,
-		"num" => 1,
-		"pct" => 2,
-		"color" => 3,
-		"bool" => 4,
-		"enum" => 5,
-		other => return Err(format!("unknown param kind '{other}'")),
-	};
-	let mut pv = slab_kernel::frame::ParamValue {
-		kind,
-		num: 0.0,
-		s: String::new(),
-		rgba: 0,
-		sym: String::new(),
-	};
-	match kind {
-		0 => {
-			pv.s = raw
-				.as_str()
+	use slab_kernel::frame::ParamValue;
+	match kind_name {
+		"text" => Ok(ParamValue::Text(
+			raw.as_str()
 				.ok_or_else(|| "text value must be a string".to_string())?
-				.to_string();
-		},
-		1 | 2 => {
-			pv.num = raw
-				.as_f64()
-				.ok_or_else(|| "numeric value must be a number".to_string())?;
-		},
-		3 => {
-			pv.rgba = json_u32(raw).ok_or_else(|| "color value must be a u32".to_string())?;
-		},
-		4 => {
-			pv.num = raw
-				.as_f64()
-				.or_else(|| raw.as_bool().map(|value| if value { 1.0 } else { 0.0 }))
-				.ok_or_else(|| "bool value must be a number or boolean".to_string())?;
-		},
-		_ => {
-			pv.sym = raw
-				.as_str()
+				.to_string(),
+		)),
+		"num" => Ok(ParamValue::Num(
+			raw.as_f64()
+				.ok_or_else(|| "numeric value must be a number".to_string())?,
+		)),
+		"pct" => Ok(ParamValue::Pct(
+			raw.as_f64()
+				.ok_or_else(|| "numeric value must be a number".to_string())?,
+		)),
+		"color" => Ok(ParamValue::Color(
+			json_u32(raw).ok_or_else(|| "color value must be a u32".to_string())?,
+		)),
+		"bool" => Ok(ParamValue::Bool(
+			raw.as_bool()
+				.or_else(|| raw.as_f64().map(|value| value != 0.0))
+				.ok_or_else(|| "bool value must be a number or boolean".to_string())?,
+		)),
+		"enum" => Ok(ParamValue::Enum(
+			raw.as_str()
 				.ok_or_else(|| "enum value must be a string".to_string())?
-				.to_string();
-		},
+				.to_string(),
+		)),
+		other => Err(format!("unknown param kind '{other}'")),
 	}
-	Ok(pv)
 }
 
 fn typed_value(v: &serde_json::Value) -> Result<slab_kernel::frame::ParamValue, String> {

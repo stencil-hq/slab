@@ -1,8 +1,8 @@
 //! Generates typed Rust modules for the native GPU client.
 //!
 //! Moved lib-side from the CLI so the wasm build can emit the same output.
-//! Produces a single-file module embedding the SLIR and exposing a typed
-//! `Doc` wrapper over `slab_kernel::frame::Instance`.
+//! Produces a typed module that includes an external SLIR sidecar and exposes
+//! a `Doc` wrapper over `slab_kernel::frame::Instance`.
 //!
 //! Output is deterministic. Regenerate + reformat with:
 //! `cargo run -q -p slab-cli -- gen rust FILE -o OUT.rs && cargo fmt`
@@ -15,30 +15,75 @@ use slab_syntax::diag::Diagnostics;
 
 use crate::{
 	Options,
-	tmpl::{pascal, snake},
+	tmpl::{pascal, rust_string, snake},
 };
 
 const TEMPLATE: &str = include_str!("../templates/rust.tmpl");
 
-/// Generates a typed Rust module for compiled `.slab` source.
-///
-/// `src_name` is the input file path (used only in the generated header
-/// comment). Returns the module source (or `None` on compile failure) and the
-/// compile diagnostics.
-pub fn generate(src: &str, copts: &Options, src_name: &str) -> (Option<String>, Diagnostics) {
-	let (module, diagnostics, _) = generate_with_import_paths(src, copts, src_name);
-	(module, diagnostics)
+/// A generated typed Rust module and its external SLIR sidecar.
+pub struct RustOutput {
+	/// Rust source containing the typed document API.
+	pub module: String,
+	/// Binary SLIR included by the generated source.
+	pub slir:   Vec<u8>,
 }
 
-/// Generate a typed module and return each filesystem import used by the
-/// source.
+/// Generates a typed Rust module and external SLIR for compiled `.slab` source.
+///
+/// `src_name` is the input path used in the generated header. `slir_path` is
+/// written into `include_bytes!` and must resolve relative to the generated
+/// Rust source.
+pub fn generate(
+	src: &str,
+	copts: &Options,
+	src_name: &str,
+	slir_path: &str,
+) -> (Option<RustOutput>, Diagnostics) {
+	let (output, diagnostics, _) = generate_with_import_paths(src, copts, src_name, slir_path);
+	(output, diagnostics)
+}
+
+/// Generates a typed module and returns each filesystem import used by source.
 ///
 /// Build-time hosts use the paths to register precise rebuild dependencies.
 pub fn generate_with_import_paths(
 	src: &str,
 	copts: &Options,
 	src_name: &str,
+	slir_path: &str,
+) -> (Option<RustOutput>, Diagnostics, Vec<PathBuf>) {
+	let (compiled, diagnostics, imports) = compile(src, copts);
+	let Some((slir, bytes)) = compiled else {
+		return (None, diagnostics, imports);
+	};
+	let slir_expr = format!("include_bytes!({})", rust_string(slir_path));
+	let module = emit_module(&slir, bytes.len(), &slir_expr, src_name);
+	(Some(RustOutput { module, slir: bytes }), diagnostics, imports)
+}
+
+/// Generates an inline module for [`slab_macro::include_doc!`](https://docs.rs/slab-macro).
+///
+/// Proc-macro expansion has no stable caller output directory for a sidecar;
+/// the source `.slab` file and imports are still tracked through
+/// `include_bytes!` declarations emitted by `slab-macro`.
+pub fn generate_embedded_with_import_paths(
+	src: &str,
+	copts: &Options,
+	src_name: &str,
 ) -> (Option<String>, Diagnostics, Vec<PathBuf>) {
+	let (compiled, diagnostics, imports) = compile(src, copts);
+	let Some((slir, bytes)) = compiled else {
+		return (None, diagnostics, imports);
+	};
+	let slir_expr = byte_string(&bytes);
+	let module = emit_module(&slir, bytes.len(), &slir_expr, src_name);
+	(Some(module), diagnostics, imports)
+}
+
+/// Compiled document plus its encoded SLIR bytes.
+type CompiledDoc = (Slir, Vec<u8>);
+
+fn compile(src: &str, copts: &Options) -> (Option<CompiledDoc>, Diagnostics, Vec<PathBuf>) {
 	let mut diagnostics = Diagnostics::new();
 	let units = crate::import::closure(src, copts, &mut diagnostics);
 	let imports = units
@@ -50,8 +95,7 @@ pub fn generate_with_import_paths(
 		return (None, diagnostics, imports);
 	};
 	let bytes = slab_slir::write(&slir);
-	let module = emit_module(&slir, &bytes, src_name);
-	(Some(module), diagnostics, imports)
+	(Some((slir, bytes)), diagnostics, imports)
 }
 
 /// Unique signals in SIGN order: `(name, has_text)`. A name bound to multiple
@@ -132,7 +176,7 @@ fn list_type_name(names: &[(usize, String)], slir: &Slir, row: usize) -> String 
 		.expect("nested list schema type was not collected")
 }
 
-fn emit_module(slir: &Slir, bytes: &[u8], src_name: &str) -> String {
+fn emit_module(slir: &Slir, bytes_len: usize, slir_expr: &str, src_name: &str) -> String {
 	let keys: Vec<serde_json::Value> = crate::wc::static_scene_keys(slir)
 		.into_iter()
 		.map(|(name, key)| {
@@ -330,25 +374,25 @@ fn emit_module(slir: &Slir, bytes: &[u8], src_name: &str) -> String {
 						(String::new(), String::new())
 					};
 
-					let fill_expr = match field.ty {
-						0 => format!("pv.s = item.{member}.clone();"),
-						1 | 2 => format!("pv.num = item.{member};"),
-						3 => format!("pv.rgba = item.{member};"),
-						4 => format!("pv.num = if item.{member} {{ 1.0 }} else {{ 0.0 }};"),
-						5 => format!("pv.sym = item.{member}.clone();"),
+					let value_expr = match field.ty {
+						0 => format!("ParamValue::Text(item.{member}.clone())"),
+						1 => format!("ParamValue::Num(item.{member})"),
+						2 => format!("ParamValue::Pct(item.{member})"),
+						3 => format!("ParamValue::Color(item.{member})"),
+						4 => format!("ParamValue::Bool(item.{member})"),
+						5 => format!("ParamValue::Enum(item.{member}.clone())"),
 						_ => String::new(),
 					};
 
 					json!({
 						"field_name": field_name,
 						"member": member,
-						"ty": field.ty,
 						"is_enum": is_enum,
 						"enum_rejected_cond": enum_rejected_cond,
 						"is_list": is_list,
 						"child_validator": child_validator,
 						"child_helper": child_helper,
-						"fill_expr": fill_expr,
+						"value_expr": value_expr,
 					})
 				})
 				.collect();
@@ -381,12 +425,13 @@ fn emit_module(slir: &Slir, bytes: &[u8], src_name: &str) -> String {
 		.map(|(i, p)| {
 			let name = slir.str_at(p.name).to_string();
 			let method_name = snake(&name);
-			let (sig, fill_expr) = match p.ty {
-				0 => ("v: &str", "pv.s = v.to_string();"),
-				1 | 2 => ("v: f64", "pv.num = v;"),
-				3 => ("v: Rgba", "pv.rgba = v;"),
-				4 => ("v: bool", "pv.num = if v { 1.0 } else { 0.0 };"),
-				_ => ("v: &str", "pv.sym = v.to_string();"),
+			let (sig, value_expr) = match p.ty {
+				0 => ("v: &str", "ParamValue::Text(v.to_string())"),
+				1 => ("v: f64", "ParamValue::Num(v)"),
+				2 => ("v: f64", "ParamValue::Pct(v)"),
+				3 => ("v: Rgba", "ParamValue::Color(v)"),
+				4 => ("v: bool", "ParamValue::Bool(v)"),
+				_ => ("v: &str", "ParamValue::Enum(v.to_string())"),
 			};
 			let doc_note = match p.ty {
 				0 => "text".to_string(),
@@ -405,9 +450,8 @@ fn emit_module(slir: &Slir, bytes: &[u8], src_name: &str) -> String {
 				"index": i,
 				"name": name,
 				"method_name": method_name,
-				"ty": p.ty,
 				"sig": sig,
-				"fill_expr": fill_expr,
+				"value_expr": value_expr,
 				"doc_note": doc_note,
 			})
 		})
@@ -415,8 +459,8 @@ fn emit_module(slir: &Slir, bytes: &[u8], src_name: &str) -> String {
 
 	let ctx = json!({
 		"src_name": src_name,
-		"bytes_len": bytes.len(),
-		"slir_byte_str": byte_string(bytes),
+		"bytes_len": bytes_len,
+		"slir_expr": slir_expr,
 		"keys": keys,
 		"item_key_groups": item_key_groups,
 		"params": params,
@@ -444,10 +488,17 @@ row {
   box dblclick=twice drag=started drag-update=updated drag-end=ended
 }
 ";
-		let (module, diagnostics) =
-			generate(source, &Options { embed_assets: false, ..Options::default() }, "gestures.slab");
+		let (module, diagnostics) = generate(
+			source,
+			&Options { embed_assets: false, ..Options::default() },
+			"gestures.slab",
+			"gestures.slir",
+		);
 		assert!(!diagnostics.has_errors(), "{:?}", diagnostics.0);
-		let module = module.expect("gesture module");
+		let output = module.expect("gesture module");
+		assert!(output.module.contains(r#"include_bytes!("gestures.slir")"#));
+		assert!(slab_slir::instance(&output.slir).is_ok(), "generated SLIR sidecar must decode");
+		let module = output.module;
 		assert_eq!(module.matches("pub struct SignalMeta").count(), 1);
 		assert!(module.contains("Pressed {"));
 		assert!(module.contains("Resized {"));
@@ -498,10 +549,14 @@ params {
 }
 col { each param.trees }
 "#;
-		let (module, diagnostics) =
-			generate(source, &Options { embed_assets: false, ..Options::default() }, "trees.slab");
+		let (module, diagnostics) = generate(
+			source,
+			&Options { embed_assets: false, ..Options::default() },
+			"trees.slab",
+			"trees.slir",
+		);
 		assert!(!diagnostics.has_errors(), "{:?}", diagnostics.0);
-		let module = module.expect("recursive list module");
+		let module = module.expect("recursive list module").module;
 		assert!(module.contains("pub struct TreesItem"));
 		assert!(module.contains("pub children: Vec<TreesItem>"));
 		assert!(module.contains("fn validate_trees(items: &[TreesItem]) -> bool"));
@@ -522,10 +577,14 @@ tokens { color { accent #336699 } }
 params { rows list(Row) = [] }
 col#app { col#items { each param.rows } }
 ";
-		let (module, diagnostics) =
-			generate(source, &Options { embed_assets: false, ..Options::default() }, "host.slab");
+		let (module, diagnostics) = generate(
+			source,
+			&Options { embed_assets: false, ..Options::default() },
+			"host.slab",
+			"host.slir",
+		);
 		assert!(!diagnostics.has_errors(), "{:?}", diagnostics.0);
-		let module = module.expect("host module");
+		let module = module.expect("host module").module;
 		assert!(module.contains("pub const APP: &str = \"#app\""));
 		assert!(module.contains("pub const ITEMS: &str = \"#app/#items\""));
 		assert!(!module.contains("\n    pub const ITEM:"));
@@ -555,10 +614,14 @@ col#app { col#items { each param.rows } }
 params editor { font_size num = 14 }
 col { rect w=param.editor.font_size }
 ";
-		let (module, diagnostics) =
-			generate(source, &Options { embed_assets: false, ..Options::default() }, "editor.slab");
+		let (module, diagnostics) = generate(
+			source,
+			&Options { embed_assets: false, ..Options::default() },
+			"editor.slab",
+			"editor.slir",
+		);
 		assert!(!diagnostics.has_errors(), "{:?}", diagnostics.0);
-		let module = module.expect("grouped parameter module");
+		let module = module.expect("grouped parameter module").module;
 		assert!(module.contains("pub const PARAM_EDITOR_FONT_SIZE: u32 = 0;"));
 		assert!(module.contains("pub fn set_editor_font_size(&mut self, v: f64) -> bool"));
 		assert!(module.contains("/// Set param `editor.font_size` (num)"));

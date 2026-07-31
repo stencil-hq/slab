@@ -190,7 +190,7 @@ pub fn generate(
 	let Some(docs) = docs else {
 		return (None, diags);
 	};
-	let mut files = files_of(&docs, w, stem);
+	let mut files = files_of(&docs, stem);
 	files.push(WcFile {
 		name:  format!("{stem}.tsx"),
 		bytes: emit_tsx(&docs, stem).into_bytes(),
@@ -229,7 +229,7 @@ col#root {
 
 	#[test]
 	fn wrapper_declares_typed_props_handlers_and_property_assignment() {
-		let options = WcOptions { tag: None, separate_ir: false };
+		let options = WcOptions { tag: None };
 		let (files, diagnostics) = generate(
 			SOURCE,
 			&Options { embed_assets: false, ..Options::default() },
@@ -283,7 +283,7 @@ col#root {
 
 	#[test]
 	fn wrapper_generation_is_deterministic_and_keeps_wc_files() {
-		let options = WcOptions { tag: None, separate_ir: false };
+		let options = WcOptions { tag: None };
 		let copts = Options { embed_assets: false, ..Options::default() };
 		let (first, diagnostics) = generate(SOURCE, &copts, &options, "settings");
 		assert!(!diagnostics.has_errors(), "{:?}", diagnostics.0);
@@ -299,6 +299,7 @@ col#root {
 
 		for expected in [
 			"settings.js",
+			"settings.slir",
 			"settings.d.ts",
 			"slab-runtime.js",
 			"wasm/slab_kernel_bg.wasm",
@@ -313,7 +314,7 @@ col#root {
 params editor { font_size num = 14 }
 col { rect w=param.editor.font_size }
 ";
-		let options = WcOptions { tag: None, separate_ir: false };
+		let options = WcOptions { tag: None };
 		let (files, diagnostics) = generate(
 			source,
 			&Options { embed_assets: false, ..Options::default() },

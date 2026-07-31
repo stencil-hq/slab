@@ -158,10 +158,16 @@ def Panel() {
 	);
 	let bytes = slab_slir::write(&slir);
 	let (mut instance, _) = slab_slir::instance(&bytes).expect("decoded instance");
-	assert_eq!(instance.st.pv_num[0], 1.0);
+	assert_eq!(
+		slab_kernel::frame::inst_param_json(&instance, "panel.open").as_deref(),
+		Some("true")
+	);
 	apply_sets(&mut instance, &[("panel.open".to_string(), "false".to_string())])
 		.expect("dotted host set");
-	assert_eq!(instance.st.pv_num[0], 0.0);
+	assert_eq!(
+		slab_kernel::frame::inst_param_json(&instance, "panel.open").as_deref(),
+		Some("false")
+	);
 }
 
 #[test]

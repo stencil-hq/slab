@@ -34,7 +34,7 @@ commands:
   render FILE -o OUT.{svg,png,apng,txt}    static export (see `slab render --help`)
   drive [FILE] [--port N] [--width N] [--height N]   NDJSON automation protocol (SDP)
   lsp                                      LSP server over stdio (editors)
-  gen wc FILE -o DIR [--tag NAME] [--separate-ir]   emit a web-component module
+  gen wc FILE -o DIR [--tag NAME]       emit a web-component module
   gen react FILE -o DIR [--tag NAME]       emit a web component + typed React wrapper
   gen rust FILE -o OUT.rs                  emit a typed Rust module (native client)
   gen go FILE -o OUT.go [--package NAME]   emit a typed Go module (clients/go runtime)
@@ -47,8 +47,8 @@ usage: slab check FILE [--width N] [--height N] [--state a,b]
 const BUILD_USAGE: &str = "usage: slab build FILE -o OUT.slir [--no-embed-assets]\n";
 const DUMP_USAGE: &str = "usage: slab dump FILE.slir\n";
 const GEN_USAGE: &str = "\
-usage: slab gen wc FILE -o DIR [--tag NAME] [--separate-ir]
-       slab gen react FILE -o DIR [--tag NAME] [--separate-ir]
+usage: slab gen wc FILE -o DIR [--tag NAME]
+       slab gen react FILE -o DIR [--tag NAME]
        slab gen rust FILE -o OUT.rs
        slab gen go FILE -o OUT.go [--package NAME]
 ";

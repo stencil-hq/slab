@@ -1,4 +1,4 @@
-//! `slab gen wc FILE -o DIR [--tag NAME] [--separate-ir]` — emit a web
+//! `slab gen wc FILE -o DIR [--tag NAME]` — emit a web
 //! component module, declarations, the text web client, and its single Rust
 //! kernel WASM sidecar for a compiled `.slab` document. Thin front end over
 //! [`slab_compile::wc::generate`]; this module keeps only argument parsing and
@@ -14,7 +14,7 @@ use slab_compile::{
 	wc::{WcFile, WcOptions, generate},
 };
 
-const GEN_USAGE: &str = "usage: slab gen wc FILE -o DIR [--tag NAME] [--separate-ir]";
+const GEN_USAGE: &str = "usage: slab gen wc FILE -o DIR [--tag NAME]";
 
 fn usage_err(msg: &str) -> ExitCode {
 	eprintln!("error: {msg}");
@@ -41,7 +41,6 @@ pub fn cmd_gen_wc(args: &[String]) -> ExitCode {
 	let mut file: Option<PathBuf> = None;
 	let mut out: Option<PathBuf> = None;
 	let mut tag: Option<String> = None;
-	let mut separate_ir = false;
 	let mut it = args.iter();
 	while let Some(a) = it.next() {
 		match a.as_str() {
@@ -53,7 +52,6 @@ pub fn cmd_gen_wc(args: &[String]) -> ExitCode {
 				Some(v) => tag = Some(v.clone()),
 				None => return usage_err("missing value for --tag"),
 			},
-			"--separate-ir" => separate_ir = true,
 			other if other.starts_with('-') => {
 				return usage_err(&format!("unknown flag {other}"));
 			},
@@ -85,7 +83,7 @@ pub fn cmd_gen_wc(args: &[String]) -> ExitCode {
 	let stem = file
 		.file_stem()
 		.map_or_else(|| "slab".into(), |s| s.to_string_lossy().into_owned());
-	let wopts = WcOptions { tag, separate_ir };
+	let wopts = WcOptions { tag };
 
 	let (files, diags) = generate(&src, &copts, &wopts, &stem);
 	for d in &diags.0 {
@@ -110,8 +108,8 @@ pub fn cmd_gen_wc(args: &[String]) -> ExitCode {
 		}
 	}
 	eprintln!(
-		"wrote {} + .d.ts + slab-runtime.js + wasm/slab_kernel_bg.wasm (single Rust/WASM runtime; \
-		 {n_elems} element{})",
+		"wrote {} + .slir + .d.ts + slab-runtime.js + wasm/slab_kernel_bg.wasm (single Rust/WASM \
+		 runtime; {n_elems} element{})",
 		out.join(format!("{stem}.js")).display(),
 		if n_elems == 1 { "" } else { "s" }
 	);
