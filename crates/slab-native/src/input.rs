@@ -163,7 +163,8 @@ pub fn selection_text(i: &Instance) -> Option<String> {
 	let state = i.ds.ed.get(usize::try_from(index).ok()?)?;
 	let lo = usize::try_from(edit::sel_lo(state)).ok()?;
 	let hi = usize::try_from(edit::sel_hi(state)).ok()?;
-	Some(state.text.chars().skip(lo).take(hi - lo).collect())
+	let cps = state.text.cps();
+	Some(slab_kernel::rt::str_from_chars(cps.get(lo..hi)?))
 }
 
 /// IME composition tracker translating winit [`Ime`] events into kernel

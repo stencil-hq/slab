@@ -4,6 +4,7 @@ export interface ParamValue {
    num: number;
    s: string;
    rgba: number;
+   boolean: boolean;
    sym: string;
 }
 
@@ -177,6 +178,7 @@ export interface Effects {
    sig_runs: string[];
    sig_item: string[];
    sig_meta: SigMeta[];
+   scrolls: ScrollChange[];
    range_edit?: RangeEdit;
    copy_text?: string;
    has_static_selection?: boolean;

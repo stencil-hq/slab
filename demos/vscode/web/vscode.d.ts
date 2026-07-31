@@ -104,6 +104,22 @@ export interface SceneNode {
    text: string;
 }
 
+export interface MenuItemsItem {
+   /** Stable per-item identity; defaults to the array index. */
+   key?: string | number;
+   "label"?: string;
+   "enabled"?: boolean;
+}
+
+export interface QoRowsItem {
+   /** Stable per-item identity; defaults to the array index. */
+   key?: string | number;
+   "name"?: string;
+   "dir"?: string;
+   "letter"?: string;
+   "selected"?: boolean;
+}
+
 export interface RootItem {
    /** Stable per-item identity; defaults to the array index. */
    key?: string | number;
@@ -111,8 +127,23 @@ export interface RootItem {
    "horizontal"?: boolean;
    "show_mdb"?: boolean;
    "show_store"?: boolean;
+   "show_edit"?: boolean;
+   "show_find"?: boolean;
+   "find_status"?: string;
+   "curline"?: number;
+   "curline_on"?: boolean;
+   "gutter"?: string;
+   "crumbs"?: RootCrumbsItem[];
    "tabs"?: RootTabsItem[];
    "children"?: RootItem[];
+}
+
+export interface RootCrumbsItem {
+   /** Stable per-item identity; defaults to the array index. */
+   key?: string | number;
+   "seg"?: string;
+   "letter"?: string;
+   "last"?: boolean;
 }
 
 export interface RootTabsItem {
@@ -124,6 +155,67 @@ export interface RootTabsItem {
    "badge"?: string;
    "active"?: boolean;
    "hot"?: boolean;
+   "preview"?: boolean;
+   "dirty"?: boolean;
+}
+
+export interface TreeItem {
+   /** Stable per-item identity; defaults to the array index. */
+   key?: string | number;
+   "name"?: string;
+   "letter"?: string;
+   "icon"?: string;
+   "tint"?: string | number;
+   "badge"?: string;
+   "indent"?: number;
+   "dir"?: boolean;
+   "open"?: boolean;
+}
+
+export interface ScmChangesItem {
+   /** Stable per-item identity; defaults to the array index. */
+   key?: string | number;
+   "file"?: string;
+   "badge"?: string;
+}
+
+export interface ChatSessionsItem {
+   /** Stable per-item identity; defaults to the array index. */
+   key?: string | number;
+   "title"?: string;
+}
+
+export interface ProblemsRowsItem {
+   /** Stable per-item identity; defaults to the array index. */
+   key?: string | number;
+   "icon"?: string;
+   "file"?: string;
+   "line"?: string;
+   "msg"?: string;
+   "tint"?: string | number;
+}
+
+export interface SearchResultsItem {
+   /** Stable per-item identity; defaults to the array index. */
+   key?: string | number;
+   "file"?: string;
+   "line"?: string;
+   "preview"?: string;
+}
+
+export interface ExtRowsItem {
+   /** Stable per-item identity; defaults to the array index. */
+   key?: string | number;
+   "name"?: string;
+   "publisher"?: string;
+}
+
+export interface CrumbsItem {
+   /** Stable per-item identity; defaults to the array index. */
+   key?: string | number;
+   "seg"?: string;
+   "letter"?: string;
+   "last"?: boolean;
 }
 
 export interface TabsItem {
@@ -135,6 +227,8 @@ export interface TabsItem {
    "badge"?: string;
    "active"?: boolean;
    "hot"?: boolean;
+   "preview"?: boolean;
+   "dirty"?: boolean;
 }
 
 export interface ChildrenItem {
@@ -144,8 +238,23 @@ export interface ChildrenItem {
    "horizontal"?: boolean;
    "show_mdb"?: boolean;
    "show_store"?: boolean;
+   "show_edit"?: boolean;
+   "show_find"?: boolean;
+   "find_status"?: string;
+   "curline"?: number;
+   "curline_on"?: boolean;
+   "gutter"?: string;
+   "crumbs"?: ChildrenCrumbsItem[];
    "tabs"?: ChildrenTabsItem[];
    "children"?: ChildrenItem[];
+}
+
+export interface ChildrenCrumbsItem {
+   /** Stable per-item identity; defaults to the array index. */
+   key?: string | number;
+   "seg"?: string;
+   "letter"?: string;
+   "last"?: boolean;
 }
 
 export interface ChildrenTabsItem {
@@ -157,35 +266,84 @@ export interface ChildrenTabsItem {
    "badge"?: string;
    "active"?: boolean;
    "hot"?: boolean;
+   "preview"?: boolean;
+   "dirty"?: boolean;
 }
 
 /** Canonical full scene keys for authored `#id` nodes. */
 export declare const SlabVscodeElementKeys: {
-   readonly "sidebar": "col@0/row@1/#sidebar";
-   readonly "sashL": "col@0/row@1/#sashL";
-   readonly "center": "col@0/row@1/#center";
-   readonly "grid": "col@0/row@1/#center/#grid";
-   readonly "egroups": "col@0/row@1/#center/#grid/#egroups";
-   readonly "sashP": "col@0/row@1/#center/#sashP";
-   readonly "panel": "col@0/row@1/#center/#panel";
-   readonly "sashR": "col@0/row@1/#sashR";
-   readonly "chat": "col@0/row@1/#chat";
+   readonly "sidebar": "stack@0/col@0/row@1/#sidebar";
+   readonly "views": "stack@0/col@0/row@1/#sidebar/#views";
+   readonly "view-explorer": "stack@0/col@0/row@1/#sidebar/#views/#view-explorer";
+   readonly "treescroll": "stack@0/col@0/row@1/#sidebar/#views/#view-explorer/#treescroll";
+   readonly "treerows": "stack@0/col@0/row@1/#sidebar/#views/#view-explorer/#treescroll/#treerows";
+   readonly "view-search": "stack@0/col@0/row@1/#sidebar/#views/#view-search";
+   readonly "searchrows": "stack@0/col@0/row@1/#sidebar/#views/#view-search/#searchrows";
+   readonly "view-scm": "stack@0/col@0/row@1/#sidebar/#views/#view-scm";
+   readonly "scmrows": "stack@0/col@0/row@1/#sidebar/#views/#view-scm/#scmrows";
+   readonly "view-debug": "stack@0/col@0/row@1/#sidebar/#views/#view-debug";
+   readonly "view-ext": "stack@0/col@0/row@1/#sidebar/#views/#view-ext";
+   readonly "extrows": "stack@0/col@0/row@1/#sidebar/#views/#view-ext/#extrows";
+   readonly "sashL": "stack@0/col@0/row@1/#sashL";
+   readonly "center": "stack@0/col@0/row@1/#center";
+   readonly "grid": "stack@0/col@0/row@1/#center/#grid";
+   readonly "egroups": "stack@0/col@0/row@1/#center/#grid/#egroups";
+   readonly "sashP": "stack@0/col@0/row@1/#center/#sashP";
+   readonly "panel": "stack@0/col@0/row@1/#center/#panel";
+   readonly "panelviews": "stack@0/col@0/row@1/#center/#panel/#panelviews";
+   readonly "panel-problems": "stack@0/col@0/row@1/#center/#panel/#panelviews/#panel-problems";
+   readonly "problemrows": "stack@0/col@0/row@1/#center/#panel/#panelviews/#panel-problems/#problemrows";
+   readonly "panel-output": "stack@0/col@0/row@1/#center/#panel/#panelviews/#panel-output";
+   readonly "panel-debugc": "stack@0/col@0/row@1/#center/#panel/#panelviews/#panel-debugc";
+   readonly "panel-terminal": "stack@0/col@0/row@1/#center/#panel/#panelviews/#panel-terminal";
+   readonly "panel-ports": "stack@0/col@0/row@1/#center/#panel/#panelviews/#panel-ports";
+   readonly "sashR": "stack@0/col@0/row@1/#sashR";
+   readonly "chat": "stack@0/col@0/row@1/#chat";
+   readonly "sessionrows": "stack@0/col@0/row@1/#chat/#sessionrows";
+   readonly "menu": "stack@0/#menu";
+   readonly "menuitems": "stack@0/#menu/#menuitems";
+   readonly "quickopen": "stack@0/#quickopen";
+   readonly "qorows": "stack@0/#quickopen/#qorows";
+   readonly "qorowitems": "stack@0/#quickopen/#qorows/#qorowitems";
 };
 export type SlabVscodeElementSceneKey = (typeof SlabVscodeElementKeys)[keyof typeof SlabVscodeElementKeys];
 
 /** Template-relative scene keys per `each` list; join with `itemKey`. */
 export declare const SlabVscodeElementItemKeys: {
+   readonly "treerows": {
+      readonly each: "stack@0/col@0/row@1/#sidebar/#views/#view-explorer/#treescroll/#treerows";
+      readonly item: {
+      };
+   };
+   readonly "searchrows": {
+      readonly each: "stack@0/col@0/row@1/#sidebar/#views/#view-search/#searchrows";
+      readonly item: {
+      };
+   };
+   readonly "scmrows": {
+      readonly each: "stack@0/col@0/row@1/#sidebar/#views/#view-scm/#scmrows";
+      readonly item: {
+      };
+   };
+   readonly "extrows": {
+      readonly each: "stack@0/col@0/row@1/#sidebar/#views/#view-ext/#extrows";
+      readonly item: {
+      };
+   };
    readonly "egroups": {
-      readonly each: "col@0/row@1/#center/#grid/#egroups";
+      readonly each: "stack@0/col@0/row@1/#center/#grid/#egroups";
       readonly item: {
          readonly "panes": "stack@0/#panes";
          readonly "kids": "stack@0/#panes/#kids";
          readonly "chrome": "stack@0/#chrome";
-         readonly "strip": "stack@0/#chrome/#strip";
-         readonly "tabs": "stack@0/#chrome/#strip/#tabs";
+         readonly "strip": "stack@0/#chrome/row@0/#strip";
+         readonly "tabs": "stack@0/#chrome/row@0/#strip/#tabs";
          readonly "crumb": "stack@0/#chrome/#crumb";
+         readonly "crumbseach": "stack@0/#chrome/#crumb/#crumbseach";
          readonly "ed": "stack@0/#chrome/#ed";
          readonly "content": "stack@0/#chrome/#ed/#content";
+         readonly "edscroll": "stack@0/#chrome/#ed/#content/#edscroll";
+         readonly "curline": "stack@0/#chrome/#ed/#content/#edscroll/stack@0/col@0/#curline";
          readonly "zone": "stack@0/#chrome/#ed/#zone";
       };
    };
@@ -195,11 +353,36 @@ export declare const SlabVscodeElementItemKeys: {
       };
    };
    readonly "tabs": {
-      readonly each: "stack@0/#chrome/#strip/#tabs";
+      readonly each: "stack@0/#chrome/row@0/#strip/#tabs";
       readonly item: {
          readonly "body": "col@0/stack@0/#body";
          readonly "indl": "col@0/stack@0/#indl";
          readonly "indr": "col@0/stack@0/#indr";
+      };
+   };
+   readonly "crumbseach": {
+      readonly each: "stack@0/#chrome/#crumb/#crumbseach";
+      readonly item: {
+      };
+   };
+   readonly "problemrows": {
+      readonly each: "stack@0/col@0/row@1/#center/#panel/#panelviews/#panel-problems/#problemrows";
+      readonly item: {
+      };
+   };
+   readonly "sessionrows": {
+      readonly each: "stack@0/col@0/row@1/#chat/#sessionrows";
+      readonly item: {
+      };
+   };
+   readonly "menuitems": {
+      readonly each: "stack@0/#menu/#menuitems";
+      readonly item: {
+      };
+   };
+   readonly "qorowitems": {
+      readonly each: "stack@0/#quickopen/#qorows/#qorowitems";
+      readonly item: {
       };
    };
 };
@@ -233,8 +416,14 @@ export declare class SlabVscodeElement extends HTMLElement {
    addEventListener(type: 'slab-diagnostics', listener: (event: CustomEvent<SlabDiagnosticsDetail>) => void, options?: boolean | AddEventListenerOptions): void;
    /** Replace a keyed field buffer and reset its edit history. */
    setFieldText(key: string, text: string): boolean;
+   /** Replace paint-only styles over committed field codepoint ranges. */
+   setFieldStyles(key: string, ranges: Array<{ start: number; end: number; color: string; italic?: boolean }>): boolean;
    /** Read a keyed field's committed text. */
    fieldText(key: string): string | undefined;
+   /** Read a keyed field's directed caret and anchor offsets. */
+   getCaret(key: string): { caret: number; anchor: number } | null;
+   /** Set a keyed field's directed caret and optional anchor offsets. */
+   setCaret(key: string, caret: number, anchor?: number): boolean;
    /** Set a keyed scroll offset on axis 0 (main) or 1 (cross). */
    setScroll(key: string, axis: number, off: number): boolean;
    /** Read a keyed scroll offset on axis 0 (main) or 1 (cross). */
@@ -265,8 +454,258 @@ export declare class SlabVscodeElement extends HTMLElement {
    setNodeState(key: string, name: string, on: boolean): boolean;
    /** Return the current retained scene, stable until the next solve. */
    sceneSnapshot(): readonly SceneNode[];
+   get 'menu.open'(): boolean | undefined;
+   set 'menu.open'(v: boolean);
+   get 'menu.anchor'(): string | undefined;
+   set 'menu.anchor'(v: string);
+   get 'menu.items'(): MenuItemsItem[];
+   set 'menu.items'(v: MenuItemsItem[]);
+   get 'qo.open'(): boolean | undefined;
+   set 'qo.open'(v: boolean);
+   get 'qo.sel'(): number | undefined;
+   set 'qo.sel'(v: number);
+   get 'qo.rows'(): QoRowsItem[];
+   set 'qo.rows'(v: QoRowsItem[]);
    get 'root'(): RootItem[];
    set 'root'(v: RootItem[]);
+   get 'nav.canback'(): boolean | undefined;
+   set 'nav.canback'(v: boolean);
+   get 'nav.canfwd'(): boolean | undefined;
+   set 'nav.canfwd'(v: boolean);
+   get 'status.lang'(): string | undefined;
+   set 'status.lang'(v: string);
+   get 'status.caret'(): string | undefined;
+   set 'status.caret'(v: string);
+   get 'status.errs'(): string | undefined;
+   set 'status.errs'(v: string);
+   get 'status.warns'(): string | undefined;
+   set 'status.warns'(v: string);
+   get 'panel.problems'(): boolean | undefined;
+   set 'panel.problems'(v: boolean);
+   get 'panel.output'(): boolean | undefined;
+   set 'panel.output'(v: boolean);
+   get 'panel.debugc'(): boolean | undefined;
+   set 'panel.debugc'(v: boolean);
+   get 'panel.terminal'(): boolean | undefined;
+   set 'panel.terminal'(v: boolean);
+   get 'panel.ports'(): boolean | undefined;
+   set 'panel.ports'(v: boolean);
+   get 'panel.termlog'(): string | undefined;
+   set 'panel.termlog'(v: string);
+   get 'tree'(): TreeItem[];
+   set 'tree'(v: TreeItem[]);
+   get 'scm.changes'(): ScmChangesItem[];
+   set 'scm.changes'(v: ScmChangesItem[]);
+   get 'chat.sessions'(): ChatSessionsItem[];
+   set 'chat.sessions'(v: ChatSessionsItem[]);
+   get 'chat.typing'(): boolean | undefined;
+   set 'chat.typing'(v: boolean);
+   get 'problems.filtering'(): boolean | undefined;
+   set 'problems.filtering'(v: boolean);
+   get 'problems.rows'(): ProblemsRowsItem[];
+   set 'problems.rows'(v: ProblemsRowsItem[]);
+   get 'sidebar.explorer'(): boolean | undefined;
+   set 'sidebar.explorer'(v: boolean);
+   get 'sidebar.search'(): boolean | undefined;
+   set 'sidebar.search'(v: boolean);
+   get 'sidebar.scm'(): boolean | undefined;
+   set 'sidebar.scm'(v: boolean);
+   get 'sidebar.debug'(): boolean | undefined;
+   set 'sidebar.debug'(v: boolean);
+   get 'sidebar.ext'(): boolean | undefined;
+   set 'sidebar.ext'(v: boolean);
+   get 'search.results'(): SearchResultsItem[];
+   set 'search.results'(v: SearchResultsItem[]);
+   get 'ext.rows'(): ExtRowsItem[];
+   set 'ext.rows'(v: ExtRowsItem[]);
+   /** Set one scalar parameter by name. */
+   setParam(name: string, v: unknown): boolean;
+   /** Resolve after the next retained solve and painted frame. */
+   whenSettled(): Promise<void>;
+   /** Read the last scalar parameter value accepted by this element. */
+   getParam(name: string): unknown;
+   /** Replace a root or nested list at its runtime path. */
+   setList(name: string, path: string, v: unknown): boolean;
+   /** Read the last root or nested list accepted at its runtime path. */
+   getList(name: string, path: string): unknown;
+}
+
+/** Canonical full scene keys for authored `#id` nodes. */
+export declare const SlabMenuRowElementKeys: {
+};
+export type SlabMenuRowElementSceneKey = (typeof SlabMenuRowElementKeys)[keyof typeof SlabMenuRowElementKeys];
+
+/** Template-relative scene keys per `each` list; join with `itemKey`. */
+export declare const SlabMenuRowElementItemKeys: {
+};
+
+export declare class SlabMenuRowElement extends HTMLElement {
+   /** Expose scene geometry on globalThis.__slabDebug for tests. */
+   static debug: boolean;
+   /** Current compiler-declared theme; empty means authored values. */
+   get theme(): string;
+   set theme(v: string);
+   setTheme(name: string): boolean;
+   getTheme(): string;
+   /** Read one resolved token for the active theme. */
+   getToken(path: string): string | number | undefined;
+   /** Move focus to a keyed node; an empty key clears focus. */
+   setFocus(key: string, visible?: boolean): boolean;
+   /** Clear kernel focus and its visible focus ring. */
+   clearFocus(): boolean;
+   /** Reveal, materialize, and focus one virtual-list item. */
+   focusItem(each: string, index: number): boolean;
+   /** Explain the most recent failed focus request. */
+   focusNote(): string;
+   /** Return the focused scene key, or null when focus is clear. */
+   focusedKey(): string | null;
+   /** Report whether the focused node is an editable field. */
+   inEditField(): boolean;
+   /** Most recently painted frame, including complete diagnostics. */
+   readonly lastFrame: SlabFrame | null;
+   /** Cumulative per-instance diagnostics since the document mounted. */
+   readonly diagnostics: readonly FrameDiagnostic[];
+   addEventListener(type: 'slab-diagnostics', listener: (event: CustomEvent<SlabDiagnosticsDetail>) => void, options?: boolean | AddEventListenerOptions): void;
+   /** Replace a keyed field buffer and reset its edit history. */
+   setFieldText(key: string, text: string): boolean;
+   /** Replace paint-only styles over committed field codepoint ranges. */
+   setFieldStyles(key: string, ranges: Array<{ start: number; end: number; color: string; italic?: boolean }>): boolean;
+   /** Read a keyed field's committed text. */
+   fieldText(key: string): string | undefined;
+   /** Read a keyed field's directed caret and anchor offsets. */
+   getCaret(key: string): { caret: number; anchor: number } | null;
+   /** Set a keyed field's directed caret and optional anchor offsets. */
+   setCaret(key: string, caret: number, anchor?: number): boolean;
+   /** Set a keyed scroll offset on axis 0 (main) or 1 (cross). */
+   setScroll(key: string, axis: number, off: number): boolean;
+   /** Read a keyed scroll offset on axis 0 (main) or 1 (cross). */
+   getScroll(key: string, axis: number): number;
+   /** Register or replace a named runtime image. */
+   imgRegister(name: string, width: number, height: number, format: number, bytes: Uint8Array): number;
+   /** Unregister a named runtime image. */
+   imgUnregister(name: string): boolean;
+   /** Read runtime or embedded image metadata by unified index. */
+   imgInfo(image: number): readonly [width: number, height: number, format: number, generation: number] | null;
+   /** Read runtime or embedded image bytes by unified index. */
+   imgBytes(image: number): Uint8Array;
+   /** Scroll ancestors minimally to reveal a keyed node. */
+   reveal(key: string, margin: number): boolean;
+   /** Reveal one virtual-list item using the requested alignment. */
+   revealItem(each: string, index: number, align: number): boolean;
+   /** Read a virtual list's materialized half-open item window. */
+   eachWindow(each: string): readonly [start: number, end: number];
+   /** Set the extent overlay controlled by a keyed divider. */
+   setDivider(key: string, extent: number): boolean;
+   /** Read a keyed divider's extent overlay. */
+   getDivider(key: string): number;
+   /** Set one retained split-pane size. */
+   setSplit(paneKey: string, size: number): boolean;
+   /** Read one retained split-pane size. */
+   getSplit(paneKey: string): number;
+   /** Set one host app state (selected, disabled, custom idents) on a keyed node. */
+   setNodeState(key: string, name: string, on: boolean): boolean;
+   /** Return the current retained scene, stable until the next solve. */
+   sceneSnapshot(): readonly SceneNode[];
+   get 'label'(): string | undefined;
+   set 'label'(v: string);
+   get 'enabled'(): boolean | undefined;
+   set 'enabled'(v: boolean);
+   /** Set one scalar parameter by name. */
+   setParam(name: string, v: unknown): boolean;
+   /** Resolve after the next retained solve and painted frame. */
+   whenSettled(): Promise<void>;
+   /** Read the last scalar parameter value accepted by this element. */
+   getParam(name: string): unknown;
+   /** Replace a root or nested list at its runtime path. */
+   setList(name: string, path: string, v: unknown): boolean;
+   /** Read the last root or nested list accepted at its runtime path. */
+   getList(name: string, path: string): unknown;
+}
+
+/** Canonical full scene keys for authored `#id` nodes. */
+export declare const SlabQoRowElementKeys: {
+};
+export type SlabQoRowElementSceneKey = (typeof SlabQoRowElementKeys)[keyof typeof SlabQoRowElementKeys];
+
+/** Template-relative scene keys per `each` list; join with `itemKey`. */
+export declare const SlabQoRowElementItemKeys: {
+};
+
+export declare class SlabQoRowElement extends HTMLElement {
+   /** Expose scene geometry on globalThis.__slabDebug for tests. */
+   static debug: boolean;
+   /** Current compiler-declared theme; empty means authored values. */
+   get theme(): string;
+   set theme(v: string);
+   setTheme(name: string): boolean;
+   getTheme(): string;
+   /** Read one resolved token for the active theme. */
+   getToken(path: string): string | number | undefined;
+   /** Move focus to a keyed node; an empty key clears focus. */
+   setFocus(key: string, visible?: boolean): boolean;
+   /** Clear kernel focus and its visible focus ring. */
+   clearFocus(): boolean;
+   /** Reveal, materialize, and focus one virtual-list item. */
+   focusItem(each: string, index: number): boolean;
+   /** Explain the most recent failed focus request. */
+   focusNote(): string;
+   /** Return the focused scene key, or null when focus is clear. */
+   focusedKey(): string | null;
+   /** Report whether the focused node is an editable field. */
+   inEditField(): boolean;
+   /** Most recently painted frame, including complete diagnostics. */
+   readonly lastFrame: SlabFrame | null;
+   /** Cumulative per-instance diagnostics since the document mounted. */
+   readonly diagnostics: readonly FrameDiagnostic[];
+   addEventListener(type: 'slab-diagnostics', listener: (event: CustomEvent<SlabDiagnosticsDetail>) => void, options?: boolean | AddEventListenerOptions): void;
+   /** Replace a keyed field buffer and reset its edit history. */
+   setFieldText(key: string, text: string): boolean;
+   /** Replace paint-only styles over committed field codepoint ranges. */
+   setFieldStyles(key: string, ranges: Array<{ start: number; end: number; color: string; italic?: boolean }>): boolean;
+   /** Read a keyed field's committed text. */
+   fieldText(key: string): string | undefined;
+   /** Read a keyed field's directed caret and anchor offsets. */
+   getCaret(key: string): { caret: number; anchor: number } | null;
+   /** Set a keyed field's directed caret and optional anchor offsets. */
+   setCaret(key: string, caret: number, anchor?: number): boolean;
+   /** Set a keyed scroll offset on axis 0 (main) or 1 (cross). */
+   setScroll(key: string, axis: number, off: number): boolean;
+   /** Read a keyed scroll offset on axis 0 (main) or 1 (cross). */
+   getScroll(key: string, axis: number): number;
+   /** Register or replace a named runtime image. */
+   imgRegister(name: string, width: number, height: number, format: number, bytes: Uint8Array): number;
+   /** Unregister a named runtime image. */
+   imgUnregister(name: string): boolean;
+   /** Read runtime or embedded image metadata by unified index. */
+   imgInfo(image: number): readonly [width: number, height: number, format: number, generation: number] | null;
+   /** Read runtime or embedded image bytes by unified index. */
+   imgBytes(image: number): Uint8Array;
+   /** Scroll ancestors minimally to reveal a keyed node. */
+   reveal(key: string, margin: number): boolean;
+   /** Reveal one virtual-list item using the requested alignment. */
+   revealItem(each: string, index: number, align: number): boolean;
+   /** Read a virtual list's materialized half-open item window. */
+   eachWindow(each: string): readonly [start: number, end: number];
+   /** Set the extent overlay controlled by a keyed divider. */
+   setDivider(key: string, extent: number): boolean;
+   /** Read a keyed divider's extent overlay. */
+   getDivider(key: string): number;
+   /** Set one retained split-pane size. */
+   setSplit(paneKey: string, size: number): boolean;
+   /** Read one retained split-pane size. */
+   getSplit(paneKey: string): number;
+   /** Set one host app state (selected, disabled, custom idents) on a keyed node. */
+   setNodeState(key: string, name: string, on: boolean): boolean;
+   /** Return the current retained scene, stable until the next solve. */
+   sceneSnapshot(): readonly SceneNode[];
+   get 'name'(): string | undefined;
+   set 'name'(v: string);
+   get 'dir'(): string | undefined;
+   set 'dir'(v: string);
+   get 'letter'(): string | undefined;
+   set 'letter'(v: string);
+   get 'selected'(): boolean | undefined;
+   set 'selected'(v: boolean);
    /** Set one scalar parameter by name. */
    setParam(name: string, v: unknown): boolean;
    /** Resolve after the next retained solve and painted frame. */
@@ -320,8 +759,14 @@ export declare class SlabEditorTabElement extends HTMLElement {
    addEventListener(type: 'slab-diagnostics', listener: (event: CustomEvent<SlabDiagnosticsDetail>) => void, options?: boolean | AddEventListenerOptions): void;
    /** Replace a keyed field buffer and reset its edit history. */
    setFieldText(key: string, text: string): boolean;
+   /** Replace paint-only styles over committed field codepoint ranges. */
+   setFieldStyles(key: string, ranges: Array<{ start: number; end: number; color: string; italic?: boolean }>): boolean;
    /** Read a keyed field's committed text. */
    fieldText(key: string): string | undefined;
+   /** Read a keyed field's directed caret and anchor offsets. */
+   getCaret(key: string): { caret: number; anchor: number } | null;
+   /** Set a keyed field's directed caret and optional anchor offsets. */
+   setCaret(key: string, caret: number, anchor?: number): boolean;
    /** Set a keyed scroll offset on axis 0 (main) or 1 (cross). */
    setScroll(key: string, axis: number, off: number): boolean;
    /** Read a keyed scroll offset on axis 0 (main) or 1 (cross). */
@@ -364,6 +809,104 @@ export declare class SlabEditorTabElement extends HTMLElement {
    set 'active'(v: boolean);
    get 'hot'(): boolean | undefined;
    set 'hot'(v: boolean);
+   get 'preview'(): boolean | undefined;
+   set 'preview'(v: boolean);
+   get 'dirty'(): boolean | undefined;
+   set 'dirty'(v: boolean);
+   /** Set one scalar parameter by name. */
+   setParam(name: string, v: unknown): boolean;
+   /** Resolve after the next retained solve and painted frame. */
+   whenSettled(): Promise<void>;
+   /** Read the last scalar parameter value accepted by this element. */
+   getParam(name: string): unknown;
+   /** Replace a root or nested list at its runtime path. */
+   setList(name: string, path: string, v: unknown): boolean;
+   /** Read the last root or nested list accepted at its runtime path. */
+   getList(name: string, path: string): unknown;
+}
+
+/** Canonical full scene keys for authored `#id` nodes. */
+export declare const SlabCrumbElementKeys: {
+};
+export type SlabCrumbElementSceneKey = (typeof SlabCrumbElementKeys)[keyof typeof SlabCrumbElementKeys];
+
+/** Template-relative scene keys per `each` list; join with `itemKey`. */
+export declare const SlabCrumbElementItemKeys: {
+};
+
+export declare class SlabCrumbElement extends HTMLElement {
+   /** Expose scene geometry on globalThis.__slabDebug for tests. */
+   static debug: boolean;
+   /** Current compiler-declared theme; empty means authored values. */
+   get theme(): string;
+   set theme(v: string);
+   setTheme(name: string): boolean;
+   getTheme(): string;
+   /** Read one resolved token for the active theme. */
+   getToken(path: string): string | number | undefined;
+   /** Move focus to a keyed node; an empty key clears focus. */
+   setFocus(key: string, visible?: boolean): boolean;
+   /** Clear kernel focus and its visible focus ring. */
+   clearFocus(): boolean;
+   /** Reveal, materialize, and focus one virtual-list item. */
+   focusItem(each: string, index: number): boolean;
+   /** Explain the most recent failed focus request. */
+   focusNote(): string;
+   /** Return the focused scene key, or null when focus is clear. */
+   focusedKey(): string | null;
+   /** Report whether the focused node is an editable field. */
+   inEditField(): boolean;
+   /** Most recently painted frame, including complete diagnostics. */
+   readonly lastFrame: SlabFrame | null;
+   /** Cumulative per-instance diagnostics since the document mounted. */
+   readonly diagnostics: readonly FrameDiagnostic[];
+   addEventListener(type: 'slab-diagnostics', listener: (event: CustomEvent<SlabDiagnosticsDetail>) => void, options?: boolean | AddEventListenerOptions): void;
+   /** Replace a keyed field buffer and reset its edit history. */
+   setFieldText(key: string, text: string): boolean;
+   /** Replace paint-only styles over committed field codepoint ranges. */
+   setFieldStyles(key: string, ranges: Array<{ start: number; end: number; color: string; italic?: boolean }>): boolean;
+   /** Read a keyed field's committed text. */
+   fieldText(key: string): string | undefined;
+   /** Read a keyed field's directed caret and anchor offsets. */
+   getCaret(key: string): { caret: number; anchor: number } | null;
+   /** Set a keyed field's directed caret and optional anchor offsets. */
+   setCaret(key: string, caret: number, anchor?: number): boolean;
+   /** Set a keyed scroll offset on axis 0 (main) or 1 (cross). */
+   setScroll(key: string, axis: number, off: number): boolean;
+   /** Read a keyed scroll offset on axis 0 (main) or 1 (cross). */
+   getScroll(key: string, axis: number): number;
+   /** Register or replace a named runtime image. */
+   imgRegister(name: string, width: number, height: number, format: number, bytes: Uint8Array): number;
+   /** Unregister a named runtime image. */
+   imgUnregister(name: string): boolean;
+   /** Read runtime or embedded image metadata by unified index. */
+   imgInfo(image: number): readonly [width: number, height: number, format: number, generation: number] | null;
+   /** Read runtime or embedded image bytes by unified index. */
+   imgBytes(image: number): Uint8Array;
+   /** Scroll ancestors minimally to reveal a keyed node. */
+   reveal(key: string, margin: number): boolean;
+   /** Reveal one virtual-list item using the requested alignment. */
+   revealItem(each: string, index: number, align: number): boolean;
+   /** Read a virtual list's materialized half-open item window. */
+   eachWindow(each: string): readonly [start: number, end: number];
+   /** Set the extent overlay controlled by a keyed divider. */
+   setDivider(key: string, extent: number): boolean;
+   /** Read a keyed divider's extent overlay. */
+   getDivider(key: string): number;
+   /** Set one retained split-pane size. */
+   setSplit(paneKey: string, size: number): boolean;
+   /** Read one retained split-pane size. */
+   getSplit(paneKey: string): number;
+   /** Set one host app state (selected, disabled, custom idents) on a keyed node. */
+   setNodeState(key: string, name: string, on: boolean): boolean;
+   /** Return the current retained scene, stable until the next solve. */
+   sceneSnapshot(): readonly SceneNode[];
+   get 'seg'(): string | undefined;
+   set 'seg'(v: string);
+   get 'letter'(): string | undefined;
+   set 'letter'(v: string);
+   get 'last'(): boolean | undefined;
+   set 'last'(v: boolean);
    /** Set one scalar parameter by name. */
    setParam(name: string, v: unknown): boolean;
    /** Resolve after the next retained solve and painted frame. */
@@ -381,11 +924,14 @@ export declare const SlabEGroupElementKeys: {
    readonly "panes": "EGroup@0/stack@0/#panes";
    readonly "kids": "EGroup@0/stack@0/#panes/#kids";
    readonly "chrome": "EGroup@0/stack@0/#chrome";
-   readonly "strip": "EGroup@0/stack@0/#chrome/#strip";
-   readonly "tabs": "EGroup@0/stack@0/#chrome/#strip/#tabs";
+   readonly "strip": "EGroup@0/stack@0/#chrome/row@0/#strip";
+   readonly "tabs": "EGroup@0/stack@0/#chrome/row@0/#strip/#tabs";
    readonly "crumb": "EGroup@0/stack@0/#chrome/#crumb";
+   readonly "crumbseach": "EGroup@0/stack@0/#chrome/#crumb/#crumbseach";
    readonly "ed": "EGroup@0/stack@0/#chrome/#ed";
    readonly "content": "EGroup@0/stack@0/#chrome/#ed/#content";
+   readonly "edscroll": "EGroup@0/stack@0/#chrome/#ed/#content/#edscroll";
+   readonly "curline": "EGroup@0/stack@0/#chrome/#ed/#content/#edscroll/stack@0/col@0/#curline";
    readonly "zone": "EGroup@0/stack@0/#chrome/#ed/#zone";
 };
 export type SlabEGroupElementSceneKey = (typeof SlabEGroupElementKeys)[keyof typeof SlabEGroupElementKeys];
@@ -398,11 +944,14 @@ export declare const SlabEGroupElementItemKeys: {
          readonly "panes": "stack@0/#panes";
          readonly "kids": "stack@0/#panes/#kids";
          readonly "chrome": "stack@0/#chrome";
-         readonly "strip": "stack@0/#chrome/#strip";
-         readonly "tabs": "stack@0/#chrome/#strip/#tabs";
+         readonly "strip": "stack@0/#chrome/row@0/#strip";
+         readonly "tabs": "stack@0/#chrome/row@0/#strip/#tabs";
          readonly "crumb": "stack@0/#chrome/#crumb";
+         readonly "crumbseach": "stack@0/#chrome/#crumb/#crumbseach";
          readonly "ed": "stack@0/#chrome/#ed";
          readonly "content": "stack@0/#chrome/#ed/#content";
+         readonly "edscroll": "stack@0/#chrome/#ed/#content/#edscroll";
+         readonly "curline": "stack@0/#chrome/#ed/#content/#edscroll/stack@0/col@0/#curline";
          readonly "zone": "stack@0/#chrome/#ed/#zone";
       };
    };
@@ -412,19 +961,29 @@ export declare const SlabEGroupElementItemKeys: {
       };
    };
    readonly "tabs": {
-      readonly each: "stack@0/#chrome/#strip/#tabs";
+      readonly each: "stack@0/#chrome/row@0/#strip/#tabs";
       readonly item: {
          readonly "body": "col@0/stack@0/#body";
          readonly "indl": "col@0/stack@0/#indl";
          readonly "indr": "col@0/stack@0/#indr";
       };
    };
+   readonly "crumbseach": {
+      readonly each: "stack@0/#chrome/#crumb/#crumbseach";
+      readonly item: {
+      };
+   };
    readonly "tabs_2": {
-      readonly each: "EGroup@0/stack@0/#chrome/#strip/#tabs";
+      readonly each: "EGroup@0/stack@0/#chrome/row@0/#strip/#tabs";
       readonly item: {
          readonly "body": "col@0/stack@0/#body";
          readonly "indl": "col@0/stack@0/#indl";
          readonly "indr": "col@0/stack@0/#indr";
+      };
+   };
+   readonly "crumbseach_2": {
+      readonly each: "EGroup@0/stack@0/#chrome/#crumb/#crumbseach";
+      readonly item: {
       };
    };
 };
@@ -458,8 +1017,14 @@ export declare class SlabEGroupElement extends HTMLElement {
    addEventListener(type: 'slab-diagnostics', listener: (event: CustomEvent<SlabDiagnosticsDetail>) => void, options?: boolean | AddEventListenerOptions): void;
    /** Replace a keyed field buffer and reset its edit history. */
    setFieldText(key: string, text: string): boolean;
+   /** Replace paint-only styles over committed field codepoint ranges. */
+   setFieldStyles(key: string, ranges: Array<{ start: number; end: number; color: string; italic?: boolean }>): boolean;
    /** Read a keyed field's committed text. */
    fieldText(key: string): string | undefined;
+   /** Read a keyed field's directed caret and anchor offsets. */
+   getCaret(key: string): { caret: number; anchor: number } | null;
+   /** Set a keyed field's directed caret and optional anchor offsets. */
+   setCaret(key: string, caret: number, anchor?: number): boolean;
    /** Set a keyed scroll offset on axis 0 (main) or 1 (cross). */
    setScroll(key: string, axis: number, off: number): boolean;
    /** Read a keyed scroll offset on axis 0 (main) or 1 (cross). */
@@ -498,6 +1063,20 @@ export declare class SlabEGroupElement extends HTMLElement {
    set 'show_mdb'(v: boolean);
    get 'show_store'(): boolean | undefined;
    set 'show_store'(v: boolean);
+   get 'show_edit'(): boolean | undefined;
+   set 'show_edit'(v: boolean);
+   get 'show_find'(): boolean | undefined;
+   set 'show_find'(v: boolean);
+   get 'find_status'(): string | undefined;
+   set 'find_status'(v: string);
+   get 'curline'(): number | undefined;
+   set 'curline'(v: number);
+   get 'curline_on'(): boolean | undefined;
+   set 'curline_on'(v: boolean);
+   get 'gutter'(): string | undefined;
+   set 'gutter'(v: string);
+   get 'crumbs'(): CrumbsItem[];
+   set 'crumbs'(v: CrumbsItem[]);
    get 'tabs'(): TabsItem[];
    set 'tabs'(v: TabsItem[]);
    get 'children'(): ChildrenItem[];
@@ -514,14 +1093,592 @@ export declare class SlabEGroupElement extends HTMLElement {
    getList(name: string, path: string): unknown;
 }
 
+/** Canonical full scene keys for authored `#id` nodes. */
+export declare const SlabTreeRowElementKeys: {
+};
+export type SlabTreeRowElementSceneKey = (typeof SlabTreeRowElementKeys)[keyof typeof SlabTreeRowElementKeys];
+
+/** Template-relative scene keys per `each` list; join with `itemKey`. */
+export declare const SlabTreeRowElementItemKeys: {
+};
+
+export declare class SlabTreeRowElement extends HTMLElement {
+   /** Expose scene geometry on globalThis.__slabDebug for tests. */
+   static debug: boolean;
+   /** Current compiler-declared theme; empty means authored values. */
+   get theme(): string;
+   set theme(v: string);
+   setTheme(name: string): boolean;
+   getTheme(): string;
+   /** Read one resolved token for the active theme. */
+   getToken(path: string): string | number | undefined;
+   /** Move focus to a keyed node; an empty key clears focus. */
+   setFocus(key: string, visible?: boolean): boolean;
+   /** Clear kernel focus and its visible focus ring. */
+   clearFocus(): boolean;
+   /** Reveal, materialize, and focus one virtual-list item. */
+   focusItem(each: string, index: number): boolean;
+   /** Explain the most recent failed focus request. */
+   focusNote(): string;
+   /** Return the focused scene key, or null when focus is clear. */
+   focusedKey(): string | null;
+   /** Report whether the focused node is an editable field. */
+   inEditField(): boolean;
+   /** Most recently painted frame, including complete diagnostics. */
+   readonly lastFrame: SlabFrame | null;
+   /** Cumulative per-instance diagnostics since the document mounted. */
+   readonly diagnostics: readonly FrameDiagnostic[];
+   addEventListener(type: 'slab-diagnostics', listener: (event: CustomEvent<SlabDiagnosticsDetail>) => void, options?: boolean | AddEventListenerOptions): void;
+   /** Replace a keyed field buffer and reset its edit history. */
+   setFieldText(key: string, text: string): boolean;
+   /** Replace paint-only styles over committed field codepoint ranges. */
+   setFieldStyles(key: string, ranges: Array<{ start: number; end: number; color: string; italic?: boolean }>): boolean;
+   /** Read a keyed field's committed text. */
+   fieldText(key: string): string | undefined;
+   /** Read a keyed field's directed caret and anchor offsets. */
+   getCaret(key: string): { caret: number; anchor: number } | null;
+   /** Set a keyed field's directed caret and optional anchor offsets. */
+   setCaret(key: string, caret: number, anchor?: number): boolean;
+   /** Set a keyed scroll offset on axis 0 (main) or 1 (cross). */
+   setScroll(key: string, axis: number, off: number): boolean;
+   /** Read a keyed scroll offset on axis 0 (main) or 1 (cross). */
+   getScroll(key: string, axis: number): number;
+   /** Register or replace a named runtime image. */
+   imgRegister(name: string, width: number, height: number, format: number, bytes: Uint8Array): number;
+   /** Unregister a named runtime image. */
+   imgUnregister(name: string): boolean;
+   /** Read runtime or embedded image metadata by unified index. */
+   imgInfo(image: number): readonly [width: number, height: number, format: number, generation: number] | null;
+   /** Read runtime or embedded image bytes by unified index. */
+   imgBytes(image: number): Uint8Array;
+   /** Scroll ancestors minimally to reveal a keyed node. */
+   reveal(key: string, margin: number): boolean;
+   /** Reveal one virtual-list item using the requested alignment. */
+   revealItem(each: string, index: number, align: number): boolean;
+   /** Read a virtual list's materialized half-open item window. */
+   eachWindow(each: string): readonly [start: number, end: number];
+   /** Set the extent overlay controlled by a keyed divider. */
+   setDivider(key: string, extent: number): boolean;
+   /** Read a keyed divider's extent overlay. */
+   getDivider(key: string): number;
+   /** Set one retained split-pane size. */
+   setSplit(paneKey: string, size: number): boolean;
+   /** Read one retained split-pane size. */
+   getSplit(paneKey: string): number;
+   /** Set one host app state (selected, disabled, custom idents) on a keyed node. */
+   setNodeState(key: string, name: string, on: boolean): boolean;
+   /** Return the current retained scene, stable until the next solve. */
+   sceneSnapshot(): readonly SceneNode[];
+   get 'name'(): string | undefined;
+   set 'name'(v: string);
+   get 'letter'(): string | undefined;
+   set 'letter'(v: string);
+   get 'icon'(): string | undefined;
+   set 'icon'(v: string);
+   get 'tint'(): string | number | undefined;
+   set 'tint'(v: string | number);
+   get 'badge'(): string | undefined;
+   set 'badge'(v: string);
+   get 'indent'(): number | undefined;
+   set 'indent'(v: number);
+   get 'dir'(): boolean | undefined;
+   set 'dir'(v: boolean);
+   get 'open'(): boolean | undefined;
+   set 'open'(v: boolean);
+   /** Set one scalar parameter by name. */
+   setParam(name: string, v: unknown): boolean;
+   /** Resolve after the next retained solve and painted frame. */
+   whenSettled(): Promise<void>;
+   /** Read the last scalar parameter value accepted by this element. */
+   getParam(name: string): unknown;
+   /** Replace a root or nested list at its runtime path. */
+   setList(name: string, path: string, v: unknown): boolean;
+   /** Read the last root or nested list accepted at its runtime path. */
+   getList(name: string, path: string): unknown;
+}
+
+/** Canonical full scene keys for authored `#id` nodes. */
+export declare const SlabChangeRowElementKeys: {
+};
+export type SlabChangeRowElementSceneKey = (typeof SlabChangeRowElementKeys)[keyof typeof SlabChangeRowElementKeys];
+
+/** Template-relative scene keys per `each` list; join with `itemKey`. */
+export declare const SlabChangeRowElementItemKeys: {
+};
+
+export declare class SlabChangeRowElement extends HTMLElement {
+   /** Expose scene geometry on globalThis.__slabDebug for tests. */
+   static debug: boolean;
+   /** Current compiler-declared theme; empty means authored values. */
+   get theme(): string;
+   set theme(v: string);
+   setTheme(name: string): boolean;
+   getTheme(): string;
+   /** Read one resolved token for the active theme. */
+   getToken(path: string): string | number | undefined;
+   /** Move focus to a keyed node; an empty key clears focus. */
+   setFocus(key: string, visible?: boolean): boolean;
+   /** Clear kernel focus and its visible focus ring. */
+   clearFocus(): boolean;
+   /** Reveal, materialize, and focus one virtual-list item. */
+   focusItem(each: string, index: number): boolean;
+   /** Explain the most recent failed focus request. */
+   focusNote(): string;
+   /** Return the focused scene key, or null when focus is clear. */
+   focusedKey(): string | null;
+   /** Report whether the focused node is an editable field. */
+   inEditField(): boolean;
+   /** Most recently painted frame, including complete diagnostics. */
+   readonly lastFrame: SlabFrame | null;
+   /** Cumulative per-instance diagnostics since the document mounted. */
+   readonly diagnostics: readonly FrameDiagnostic[];
+   addEventListener(type: 'slab-diagnostics', listener: (event: CustomEvent<SlabDiagnosticsDetail>) => void, options?: boolean | AddEventListenerOptions): void;
+   /** Replace a keyed field buffer and reset its edit history. */
+   setFieldText(key: string, text: string): boolean;
+   /** Replace paint-only styles over committed field codepoint ranges. */
+   setFieldStyles(key: string, ranges: Array<{ start: number; end: number; color: string; italic?: boolean }>): boolean;
+   /** Read a keyed field's committed text. */
+   fieldText(key: string): string | undefined;
+   /** Read a keyed field's directed caret and anchor offsets. */
+   getCaret(key: string): { caret: number; anchor: number } | null;
+   /** Set a keyed field's directed caret and optional anchor offsets. */
+   setCaret(key: string, caret: number, anchor?: number): boolean;
+   /** Set a keyed scroll offset on axis 0 (main) or 1 (cross). */
+   setScroll(key: string, axis: number, off: number): boolean;
+   /** Read a keyed scroll offset on axis 0 (main) or 1 (cross). */
+   getScroll(key: string, axis: number): number;
+   /** Register or replace a named runtime image. */
+   imgRegister(name: string, width: number, height: number, format: number, bytes: Uint8Array): number;
+   /** Unregister a named runtime image. */
+   imgUnregister(name: string): boolean;
+   /** Read runtime or embedded image metadata by unified index. */
+   imgInfo(image: number): readonly [width: number, height: number, format: number, generation: number] | null;
+   /** Read runtime or embedded image bytes by unified index. */
+   imgBytes(image: number): Uint8Array;
+   /** Scroll ancestors minimally to reveal a keyed node. */
+   reveal(key: string, margin: number): boolean;
+   /** Reveal one virtual-list item using the requested alignment. */
+   revealItem(each: string, index: number, align: number): boolean;
+   /** Read a virtual list's materialized half-open item window. */
+   eachWindow(each: string): readonly [start: number, end: number];
+   /** Set the extent overlay controlled by a keyed divider. */
+   setDivider(key: string, extent: number): boolean;
+   /** Read a keyed divider's extent overlay. */
+   getDivider(key: string): number;
+   /** Set one retained split-pane size. */
+   setSplit(paneKey: string, size: number): boolean;
+   /** Read one retained split-pane size. */
+   getSplit(paneKey: string): number;
+   /** Set one host app state (selected, disabled, custom idents) on a keyed node. */
+   setNodeState(key: string, name: string, on: boolean): boolean;
+   /** Return the current retained scene, stable until the next solve. */
+   sceneSnapshot(): readonly SceneNode[];
+   get 'file'(): string | undefined;
+   set 'file'(v: string);
+   get 'badge'(): string | undefined;
+   set 'badge'(v: string);
+   /** Set one scalar parameter by name. */
+   setParam(name: string, v: unknown): boolean;
+   /** Resolve after the next retained solve and painted frame. */
+   whenSettled(): Promise<void>;
+   /** Read the last scalar parameter value accepted by this element. */
+   getParam(name: string): unknown;
+   /** Replace a root or nested list at its runtime path. */
+   setList(name: string, path: string, v: unknown): boolean;
+   /** Read the last root or nested list accepted at its runtime path. */
+   getList(name: string, path: string): unknown;
+}
+
+/** Canonical full scene keys for authored `#id` nodes. */
+export declare const SlabSessionRowElementKeys: {
+};
+export type SlabSessionRowElementSceneKey = (typeof SlabSessionRowElementKeys)[keyof typeof SlabSessionRowElementKeys];
+
+/** Template-relative scene keys per `each` list; join with `itemKey`. */
+export declare const SlabSessionRowElementItemKeys: {
+};
+
+export declare class SlabSessionRowElement extends HTMLElement {
+   /** Expose scene geometry on globalThis.__slabDebug for tests. */
+   static debug: boolean;
+   /** Current compiler-declared theme; empty means authored values. */
+   get theme(): string;
+   set theme(v: string);
+   setTheme(name: string): boolean;
+   getTheme(): string;
+   /** Read one resolved token for the active theme. */
+   getToken(path: string): string | number | undefined;
+   /** Move focus to a keyed node; an empty key clears focus. */
+   setFocus(key: string, visible?: boolean): boolean;
+   /** Clear kernel focus and its visible focus ring. */
+   clearFocus(): boolean;
+   /** Reveal, materialize, and focus one virtual-list item. */
+   focusItem(each: string, index: number): boolean;
+   /** Explain the most recent failed focus request. */
+   focusNote(): string;
+   /** Return the focused scene key, or null when focus is clear. */
+   focusedKey(): string | null;
+   /** Report whether the focused node is an editable field. */
+   inEditField(): boolean;
+   /** Most recently painted frame, including complete diagnostics. */
+   readonly lastFrame: SlabFrame | null;
+   /** Cumulative per-instance diagnostics since the document mounted. */
+   readonly diagnostics: readonly FrameDiagnostic[];
+   addEventListener(type: 'slab-diagnostics', listener: (event: CustomEvent<SlabDiagnosticsDetail>) => void, options?: boolean | AddEventListenerOptions): void;
+   /** Replace a keyed field buffer and reset its edit history. */
+   setFieldText(key: string, text: string): boolean;
+   /** Replace paint-only styles over committed field codepoint ranges. */
+   setFieldStyles(key: string, ranges: Array<{ start: number; end: number; color: string; italic?: boolean }>): boolean;
+   /** Read a keyed field's committed text. */
+   fieldText(key: string): string | undefined;
+   /** Read a keyed field's directed caret and anchor offsets. */
+   getCaret(key: string): { caret: number; anchor: number } | null;
+   /** Set a keyed field's directed caret and optional anchor offsets. */
+   setCaret(key: string, caret: number, anchor?: number): boolean;
+   /** Set a keyed scroll offset on axis 0 (main) or 1 (cross). */
+   setScroll(key: string, axis: number, off: number): boolean;
+   /** Read a keyed scroll offset on axis 0 (main) or 1 (cross). */
+   getScroll(key: string, axis: number): number;
+   /** Register or replace a named runtime image. */
+   imgRegister(name: string, width: number, height: number, format: number, bytes: Uint8Array): number;
+   /** Unregister a named runtime image. */
+   imgUnregister(name: string): boolean;
+   /** Read runtime or embedded image metadata by unified index. */
+   imgInfo(image: number): readonly [width: number, height: number, format: number, generation: number] | null;
+   /** Read runtime or embedded image bytes by unified index. */
+   imgBytes(image: number): Uint8Array;
+   /** Scroll ancestors minimally to reveal a keyed node. */
+   reveal(key: string, margin: number): boolean;
+   /** Reveal one virtual-list item using the requested alignment. */
+   revealItem(each: string, index: number, align: number): boolean;
+   /** Read a virtual list's materialized half-open item window. */
+   eachWindow(each: string): readonly [start: number, end: number];
+   /** Set the extent overlay controlled by a keyed divider. */
+   setDivider(key: string, extent: number): boolean;
+   /** Read a keyed divider's extent overlay. */
+   getDivider(key: string): number;
+   /** Set one retained split-pane size. */
+   setSplit(paneKey: string, size: number): boolean;
+   /** Read one retained split-pane size. */
+   getSplit(paneKey: string): number;
+   /** Set one host app state (selected, disabled, custom idents) on a keyed node. */
+   setNodeState(key: string, name: string, on: boolean): boolean;
+   /** Return the current retained scene, stable until the next solve. */
+   sceneSnapshot(): readonly SceneNode[];
+   get 'title'(): string | undefined;
+   set 'title'(v: string);
+   /** Set one scalar parameter by name. */
+   setParam(name: string, v: unknown): boolean;
+   /** Resolve after the next retained solve and painted frame. */
+   whenSettled(): Promise<void>;
+   /** Read the last scalar parameter value accepted by this element. */
+   getParam(name: string): unknown;
+   /** Replace a root or nested list at its runtime path. */
+   setList(name: string, path: string, v: unknown): boolean;
+   /** Read the last root or nested list accepted at its runtime path. */
+   getList(name: string, path: string): unknown;
+}
+
+/** Canonical full scene keys for authored `#id` nodes. */
+export declare const SlabSearchRowElementKeys: {
+};
+export type SlabSearchRowElementSceneKey = (typeof SlabSearchRowElementKeys)[keyof typeof SlabSearchRowElementKeys];
+
+/** Template-relative scene keys per `each` list; join with `itemKey`. */
+export declare const SlabSearchRowElementItemKeys: {
+};
+
+export declare class SlabSearchRowElement extends HTMLElement {
+   /** Expose scene geometry on globalThis.__slabDebug for tests. */
+   static debug: boolean;
+   /** Current compiler-declared theme; empty means authored values. */
+   get theme(): string;
+   set theme(v: string);
+   setTheme(name: string): boolean;
+   getTheme(): string;
+   /** Read one resolved token for the active theme. */
+   getToken(path: string): string | number | undefined;
+   /** Move focus to a keyed node; an empty key clears focus. */
+   setFocus(key: string, visible?: boolean): boolean;
+   /** Clear kernel focus and its visible focus ring. */
+   clearFocus(): boolean;
+   /** Reveal, materialize, and focus one virtual-list item. */
+   focusItem(each: string, index: number): boolean;
+   /** Explain the most recent failed focus request. */
+   focusNote(): string;
+   /** Return the focused scene key, or null when focus is clear. */
+   focusedKey(): string | null;
+   /** Report whether the focused node is an editable field. */
+   inEditField(): boolean;
+   /** Most recently painted frame, including complete diagnostics. */
+   readonly lastFrame: SlabFrame | null;
+   /** Cumulative per-instance diagnostics since the document mounted. */
+   readonly diagnostics: readonly FrameDiagnostic[];
+   addEventListener(type: 'slab-diagnostics', listener: (event: CustomEvent<SlabDiagnosticsDetail>) => void, options?: boolean | AddEventListenerOptions): void;
+   /** Replace a keyed field buffer and reset its edit history. */
+   setFieldText(key: string, text: string): boolean;
+   /** Replace paint-only styles over committed field codepoint ranges. */
+   setFieldStyles(key: string, ranges: Array<{ start: number; end: number; color: string; italic?: boolean }>): boolean;
+   /** Read a keyed field's committed text. */
+   fieldText(key: string): string | undefined;
+   /** Read a keyed field's directed caret and anchor offsets. */
+   getCaret(key: string): { caret: number; anchor: number } | null;
+   /** Set a keyed field's directed caret and optional anchor offsets. */
+   setCaret(key: string, caret: number, anchor?: number): boolean;
+   /** Set a keyed scroll offset on axis 0 (main) or 1 (cross). */
+   setScroll(key: string, axis: number, off: number): boolean;
+   /** Read a keyed scroll offset on axis 0 (main) or 1 (cross). */
+   getScroll(key: string, axis: number): number;
+   /** Register or replace a named runtime image. */
+   imgRegister(name: string, width: number, height: number, format: number, bytes: Uint8Array): number;
+   /** Unregister a named runtime image. */
+   imgUnregister(name: string): boolean;
+   /** Read runtime or embedded image metadata by unified index. */
+   imgInfo(image: number): readonly [width: number, height: number, format: number, generation: number] | null;
+   /** Read runtime or embedded image bytes by unified index. */
+   imgBytes(image: number): Uint8Array;
+   /** Scroll ancestors minimally to reveal a keyed node. */
+   reveal(key: string, margin: number): boolean;
+   /** Reveal one virtual-list item using the requested alignment. */
+   revealItem(each: string, index: number, align: number): boolean;
+   /** Read a virtual list's materialized half-open item window. */
+   eachWindow(each: string): readonly [start: number, end: number];
+   /** Set the extent overlay controlled by a keyed divider. */
+   setDivider(key: string, extent: number): boolean;
+   /** Read a keyed divider's extent overlay. */
+   getDivider(key: string): number;
+   /** Set one retained split-pane size. */
+   setSplit(paneKey: string, size: number): boolean;
+   /** Read one retained split-pane size. */
+   getSplit(paneKey: string): number;
+   /** Set one host app state (selected, disabled, custom idents) on a keyed node. */
+   setNodeState(key: string, name: string, on: boolean): boolean;
+   /** Return the current retained scene, stable until the next solve. */
+   sceneSnapshot(): readonly SceneNode[];
+   get 'file'(): string | undefined;
+   set 'file'(v: string);
+   get 'line'(): string | undefined;
+   set 'line'(v: string);
+   get 'preview'(): string | undefined;
+   set 'preview'(v: string);
+   /** Set one scalar parameter by name. */
+   setParam(name: string, v: unknown): boolean;
+   /** Resolve after the next retained solve and painted frame. */
+   whenSettled(): Promise<void>;
+   /** Read the last scalar parameter value accepted by this element. */
+   getParam(name: string): unknown;
+   /** Replace a root or nested list at its runtime path. */
+   setList(name: string, path: string, v: unknown): boolean;
+   /** Read the last root or nested list accepted at its runtime path. */
+   getList(name: string, path: string): unknown;
+}
+
+/** Canonical full scene keys for authored `#id` nodes. */
+export declare const SlabProblemRowElementKeys: {
+};
+export type SlabProblemRowElementSceneKey = (typeof SlabProblemRowElementKeys)[keyof typeof SlabProblemRowElementKeys];
+
+/** Template-relative scene keys per `each` list; join with `itemKey`. */
+export declare const SlabProblemRowElementItemKeys: {
+};
+
+export declare class SlabProblemRowElement extends HTMLElement {
+   /** Expose scene geometry on globalThis.__slabDebug for tests. */
+   static debug: boolean;
+   /** Current compiler-declared theme; empty means authored values. */
+   get theme(): string;
+   set theme(v: string);
+   setTheme(name: string): boolean;
+   getTheme(): string;
+   /** Read one resolved token for the active theme. */
+   getToken(path: string): string | number | undefined;
+   /** Move focus to a keyed node; an empty key clears focus. */
+   setFocus(key: string, visible?: boolean): boolean;
+   /** Clear kernel focus and its visible focus ring. */
+   clearFocus(): boolean;
+   /** Reveal, materialize, and focus one virtual-list item. */
+   focusItem(each: string, index: number): boolean;
+   /** Explain the most recent failed focus request. */
+   focusNote(): string;
+   /** Return the focused scene key, or null when focus is clear. */
+   focusedKey(): string | null;
+   /** Report whether the focused node is an editable field. */
+   inEditField(): boolean;
+   /** Most recently painted frame, including complete diagnostics. */
+   readonly lastFrame: SlabFrame | null;
+   /** Cumulative per-instance diagnostics since the document mounted. */
+   readonly diagnostics: readonly FrameDiagnostic[];
+   addEventListener(type: 'slab-diagnostics', listener: (event: CustomEvent<SlabDiagnosticsDetail>) => void, options?: boolean | AddEventListenerOptions): void;
+   /** Replace a keyed field buffer and reset its edit history. */
+   setFieldText(key: string, text: string): boolean;
+   /** Replace paint-only styles over committed field codepoint ranges. */
+   setFieldStyles(key: string, ranges: Array<{ start: number; end: number; color: string; italic?: boolean }>): boolean;
+   /** Read a keyed field's committed text. */
+   fieldText(key: string): string | undefined;
+   /** Read a keyed field's directed caret and anchor offsets. */
+   getCaret(key: string): { caret: number; anchor: number } | null;
+   /** Set a keyed field's directed caret and optional anchor offsets. */
+   setCaret(key: string, caret: number, anchor?: number): boolean;
+   /** Set a keyed scroll offset on axis 0 (main) or 1 (cross). */
+   setScroll(key: string, axis: number, off: number): boolean;
+   /** Read a keyed scroll offset on axis 0 (main) or 1 (cross). */
+   getScroll(key: string, axis: number): number;
+   /** Register or replace a named runtime image. */
+   imgRegister(name: string, width: number, height: number, format: number, bytes: Uint8Array): number;
+   /** Unregister a named runtime image. */
+   imgUnregister(name: string): boolean;
+   /** Read runtime or embedded image metadata by unified index. */
+   imgInfo(image: number): readonly [width: number, height: number, format: number, generation: number] | null;
+   /** Read runtime or embedded image bytes by unified index. */
+   imgBytes(image: number): Uint8Array;
+   /** Scroll ancestors minimally to reveal a keyed node. */
+   reveal(key: string, margin: number): boolean;
+   /** Reveal one virtual-list item using the requested alignment. */
+   revealItem(each: string, index: number, align: number): boolean;
+   /** Read a virtual list's materialized half-open item window. */
+   eachWindow(each: string): readonly [start: number, end: number];
+   /** Set the extent overlay controlled by a keyed divider. */
+   setDivider(key: string, extent: number): boolean;
+   /** Read a keyed divider's extent overlay. */
+   getDivider(key: string): number;
+   /** Set one retained split-pane size. */
+   setSplit(paneKey: string, size: number): boolean;
+   /** Read one retained split-pane size. */
+   getSplit(paneKey: string): number;
+   /** Set one host app state (selected, disabled, custom idents) on a keyed node. */
+   setNodeState(key: string, name: string, on: boolean): boolean;
+   /** Return the current retained scene, stable until the next solve. */
+   sceneSnapshot(): readonly SceneNode[];
+   get 'icon'(): string | undefined;
+   set 'icon'(v: string);
+   get 'file'(): string | undefined;
+   set 'file'(v: string);
+   get 'line'(): string | undefined;
+   set 'line'(v: string);
+   get 'msg'(): string | undefined;
+   set 'msg'(v: string);
+   get 'tint'(): string | number | undefined;
+   set 'tint'(v: string | number);
+   /** Set one scalar parameter by name. */
+   setParam(name: string, v: unknown): boolean;
+   /** Resolve after the next retained solve and painted frame. */
+   whenSettled(): Promise<void>;
+   /** Read the last scalar parameter value accepted by this element. */
+   getParam(name: string): unknown;
+   /** Replace a root or nested list at its runtime path. */
+   setList(name: string, path: string, v: unknown): boolean;
+   /** Read the last root or nested list accepted at its runtime path. */
+   getList(name: string, path: string): unknown;
+}
+
+/** Canonical full scene keys for authored `#id` nodes. */
+export declare const SlabExtRowElementKeys: {
+};
+export type SlabExtRowElementSceneKey = (typeof SlabExtRowElementKeys)[keyof typeof SlabExtRowElementKeys];
+
+/** Template-relative scene keys per `each` list; join with `itemKey`. */
+export declare const SlabExtRowElementItemKeys: {
+};
+
+export declare class SlabExtRowElement extends HTMLElement {
+   /** Expose scene geometry on globalThis.__slabDebug for tests. */
+   static debug: boolean;
+   /** Current compiler-declared theme; empty means authored values. */
+   get theme(): string;
+   set theme(v: string);
+   setTheme(name: string): boolean;
+   getTheme(): string;
+   /** Read one resolved token for the active theme. */
+   getToken(path: string): string | number | undefined;
+   /** Move focus to a keyed node; an empty key clears focus. */
+   setFocus(key: string, visible?: boolean): boolean;
+   /** Clear kernel focus and its visible focus ring. */
+   clearFocus(): boolean;
+   /** Reveal, materialize, and focus one virtual-list item. */
+   focusItem(each: string, index: number): boolean;
+   /** Explain the most recent failed focus request. */
+   focusNote(): string;
+   /** Return the focused scene key, or null when focus is clear. */
+   focusedKey(): string | null;
+   /** Report whether the focused node is an editable field. */
+   inEditField(): boolean;
+   /** Most recently painted frame, including complete diagnostics. */
+   readonly lastFrame: SlabFrame | null;
+   /** Cumulative per-instance diagnostics since the document mounted. */
+   readonly diagnostics: readonly FrameDiagnostic[];
+   addEventListener(type: 'slab-diagnostics', listener: (event: CustomEvent<SlabDiagnosticsDetail>) => void, options?: boolean | AddEventListenerOptions): void;
+   /** Replace a keyed field buffer and reset its edit history. */
+   setFieldText(key: string, text: string): boolean;
+   /** Replace paint-only styles over committed field codepoint ranges. */
+   setFieldStyles(key: string, ranges: Array<{ start: number; end: number; color: string; italic?: boolean }>): boolean;
+   /** Read a keyed field's committed text. */
+   fieldText(key: string): string | undefined;
+   /** Read a keyed field's directed caret and anchor offsets. */
+   getCaret(key: string): { caret: number; anchor: number } | null;
+   /** Set a keyed field's directed caret and optional anchor offsets. */
+   setCaret(key: string, caret: number, anchor?: number): boolean;
+   /** Set a keyed scroll offset on axis 0 (main) or 1 (cross). */
+   setScroll(key: string, axis: number, off: number): boolean;
+   /** Read a keyed scroll offset on axis 0 (main) or 1 (cross). */
+   getScroll(key: string, axis: number): number;
+   /** Register or replace a named runtime image. */
+   imgRegister(name: string, width: number, height: number, format: number, bytes: Uint8Array): number;
+   /** Unregister a named runtime image. */
+   imgUnregister(name: string): boolean;
+   /** Read runtime or embedded image metadata by unified index. */
+   imgInfo(image: number): readonly [width: number, height: number, format: number, generation: number] | null;
+   /** Read runtime or embedded image bytes by unified index. */
+   imgBytes(image: number): Uint8Array;
+   /** Scroll ancestors minimally to reveal a keyed node. */
+   reveal(key: string, margin: number): boolean;
+   /** Reveal one virtual-list item using the requested alignment. */
+   revealItem(each: string, index: number, align: number): boolean;
+   /** Read a virtual list's materialized half-open item window. */
+   eachWindow(each: string): readonly [start: number, end: number];
+   /** Set the extent overlay controlled by a keyed divider. */
+   setDivider(key: string, extent: number): boolean;
+   /** Read a keyed divider's extent overlay. */
+   getDivider(key: string): number;
+   /** Set one retained split-pane size. */
+   setSplit(paneKey: string, size: number): boolean;
+   /** Read one retained split-pane size. */
+   getSplit(paneKey: string): number;
+   /** Set one host app state (selected, disabled, custom idents) on a keyed node. */
+   setNodeState(key: string, name: string, on: boolean): boolean;
+   /** Return the current retained scene, stable until the next solve. */
+   sceneSnapshot(): readonly SceneNode[];
+   get 'name'(): string | undefined;
+   set 'name'(v: string);
+   get 'publisher'(): string | undefined;
+   set 'publisher'(v: string);
+   /** Set one scalar parameter by name. */
+   setParam(name: string, v: unknown): boolean;
+   /** Resolve after the next retained solve and painted frame. */
+   whenSettled(): Promise<void>;
+   /** Read the last scalar parameter value accepted by this element. */
+   getParam(name: string): unknown;
+   /** Replace a root or nested list at its runtime path. */
+   setList(name: string, path: string, v: unknown): boolean;
+   /** Read the last root or nested list accepted at its runtime path. */
+   getList(name: string, path: string): unknown;
+}
+
 /** Signal CustomEvent names → detail types. */
 export declare const signals: {
+   readonly 'nav_back': SignalDetail;
+   readonly 'nav_fwd': SignalDetail;
+   readonly 'activity_pick': SignalDetail;
    readonly 'tree_pick': SignalDetail;
+   readonly 'sidebar_search_change': TextSignalDetail;
+   readonly 'search_pick': SignalDetail;
+   readonly 'scm_pick': SignalDetail;
+   readonly 'ext_search_change': TextSignalDetail;
    readonly 'sash_sidebar': TextSignalDetail;
    readonly 'split_resize': TextSignalDetail;
-   readonly 'strip_new': SignalDetail;
+   readonly 'strip_dbl': SignalDetail;
    readonly 'strip_drop': SignalDetail;
    readonly 'tab_press': SignalDetail;
+   readonly 'tab_menu': SignalDetail;
    readonly 'tab_dbl': SignalDetail;
    readonly 'tab_drag': SignalDetail;
    readonly 'tab_drop': SignalDetail;
@@ -530,19 +1687,41 @@ export declare const signals: {
    readonly 'tab_end': SignalDetail;
    readonly 'tab_close': SignalDetail;
    readonly 'editor_drop': SignalDetail;
+   readonly 'code_change': TextSignalDetail;
    readonly 'find_change': TextSignalDetail;
+   readonly 'find_submit': TextSignalDetail;
+   readonly 'find_close': SignalDetail;
    readonly 'sash_panel': TextSignalDetail;
    readonly 'panel_pick': SignalDetail;
-   readonly 'filter_change': TextSignalDetail;
+   readonly 'problems_filter_change': TextSignalDetail;
+   readonly 'panel_max': SignalDetail;
+   readonly 'panel_close': SignalDetail;
+   readonly 'problem_pick': SignalDetail;
+   readonly 'term_change': TextSignalDetail;
+   readonly 'term_send': TextSignalDetail;
    readonly 'sash_center': TextSignalDetail;
    readonly 'chat_change': TextSignalDetail;
+   readonly 'chat_send': TextSignalDetail;
+   readonly 'status_problems': SignalDetail;
+   readonly 'menu_pick': SignalDetail;
+   readonly 'qo_change': TextSignalDetail;
+   readonly 'qo_pick': SignalDetail;
 };
 export type SignalName = keyof typeof signals;
 
 declare global {
    interface HTMLElementTagNameMap {
       'slab-vscode': SlabVscodeElement;
+      'slab-menu-row': SlabMenuRowElement;
+      'slab-qo-row': SlabQoRowElement;
       'slab-editor-tab': SlabEditorTabElement;
+      'slab-crumb': SlabCrumbElement;
       'slab-e-group': SlabEGroupElement;
+      'slab-tree-row': SlabTreeRowElement;
+      'slab-change-row': SlabChangeRowElement;
+      'slab-session-row': SlabSessionRowElement;
+      'slab-search-row': SlabSearchRowElement;
+      'slab-problem-row': SlabProblemRowElement;
+      'slab-ext-row': SlabExtRowElement;
    }
 }

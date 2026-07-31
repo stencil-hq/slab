@@ -1,5 +1,5 @@
-//! The generated module's contract, kernel-only (no GPU): the embedded SLIR
-//! decodes, a click on the Save button decodes to `Signal::Save`, and typing
+//! The generated module's contract, kernel-only (no GPU): the included SLIR
+//! decodes, a click on the Save button becomes `Signal::Save`, and typing
 //! into the focused field emits `Signal::Draft(text)`.
 
 use slab_kernel::{
@@ -27,7 +27,7 @@ const fn ev(etype: u32, x: f64, y: f64) -> Event {
 #[test]
 fn save_click_and_draft_change() {
 	let mut doc = Doc::new();
-	assert!(doc.ok(), "embedded SLIR failed to decode");
+	assert!(doc.ok(), "included SLIR failed to decode");
 	doc.set_env(900.0, 640.0, false, false);
 	let fr = doc.frame(0.0);
 

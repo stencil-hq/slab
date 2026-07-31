@@ -225,7 +225,7 @@ impl PlayerCore {
 	pub fn new() -> Result<Self, String> {
 		let mut doc = gen_player::Doc::new();
 		if !doc.ok() {
-			return Err(format!("embedded SLIR failed to decode: {:?}", doc.inst.doc().errs));
+			return Err(format!("included SLIR failed to decode: {:?}", doc.inst.doc().errs));
 		}
 		let queue_bytes = (0..PLAYLIST.len())
 			.map(queue_slir)

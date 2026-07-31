@@ -33,7 +33,7 @@ const fn ev(etype: u32, x: f64, y: f64) -> Event {
 
 fn solved_doc() -> Doc {
 	let mut doc = Doc::new();
-	assert!(doc.ok(), "embedded SLIR failed to decode");
+	assert!(doc.ok(), "included SLIR failed to decode");
 	doc.set_env(360.0, 640.0, false, false);
 	doc
 }

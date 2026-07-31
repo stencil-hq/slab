@@ -47,6 +47,11 @@ interface DebugGlobal {
    __slabDebug?: Map<Element, { geom(): SceneGeom[] }>;
    __sig?: Record<string, unknown[]>;
    __hugFrames?: { w: number; h: number }[];
+   __pointerFocus?: {
+      activeClass: string;
+      imeHidden: string | null;
+      imeFocused: boolean;
+   }[];
 }
 const consoleErrors: string[] = [];
 
@@ -688,6 +693,21 @@ check(
       deferredApiResult.inEditField,
    JSON.stringify(deferredApiResult),
 );
+await page.evaluate(() => {
+   const host = document.getElementById('web-interactions-host');
+   if (!host) return;
+   const state = globalThis as DebugGlobal;
+   state.__pointerFocus = [];
+   host.addEventListener('pointerdown', () => {
+      const shadow = host.shadowRoot;
+      const ime = shadow?.querySelector<HTMLTextAreaElement>('.slab-ime');
+      state.__pointerFocus?.push({
+         activeClass: shadow?.activeElement?.className ?? '',
+         imeHidden: ime?.getAttribute('aria-hidden') ?? null,
+         imeFocused: shadow?.activeElement === ime,
+      });
+   });
+});
 
 let interactionKey = '';
 if (interactionField) {
@@ -786,6 +806,7 @@ const focusBeforeIme = await page.evaluate(() => {
       tag: active?.tagName ?? '',
       className: active?.className ?? '',
       key: active instanceof HTMLElement ? (active.dataset.slabKey ?? '') : '',
+      pointerDown: (globalThis as DebugGlobal).__pointerFocus?.[0],
    };
 });
 check(
@@ -793,19 +814,29 @@ check(
    focusBeforeIme.tag === 'TEXTAREA' && focusBeforeIme.className === 'slab-ime',
    JSON.stringify(focusBeforeIme),
 );
-await page.evaluate(() => {
-   document
-      .getElementById('web-interactions-host')
-      ?.shadowRoot?.querySelector<HTMLTextAreaElement>('.slab-ime')
-      ?.focus();
-});
+check(
+   '(m) field pointerdown unhides the IME before focusing it',
+   focusBeforeIme.pointerDown?.imeFocused === true && focusBeforeIme.pointerDown.imeHidden === null,
+   JSON.stringify(focusBeforeIme.pointerDown),
+);
+const compositionRange = await page.evaluate((key) => {
+   const host = document.getElementById('web-interactions-host') as HTMLElement & {
+      setCaret(key: string, caret: number, anchor?: number): boolean;
+   };
+   const ime = host.shadowRoot?.querySelector<HTMLTextAreaElement>('.slab-ime');
+   ime?.focus();
+   const end = ime?.value.length ?? 0;
+   host.setCaret(key, end, end);
+   ime?.setSelectionRange(end, end);
+   return { start: ime?.selectionStart ?? 0, end: ime?.selectionEnd ?? 0 };
+}, interactionKey);
 const cdp = await page.context().newCDPSession(page);
 await cdp.send('Input.imeSetComposition', {
    text: '漢',
    selectionStart: 1,
    selectionEnd: 1,
-   replacementStart: 0,
-   replacementEnd: 0,
+   replacementStart: compositionRange.start,
+   replacementEnd: compositionRange.end,
 });
 await cdp.send('Input.insertText', { text: '漢' });
 await page.waitForTimeout(100);
@@ -974,6 +1005,47 @@ check(
    '(m) Cmd/Ctrl copy, cut, and paste synchronize the kernel field',
    copied === 'seed漢' && cut === 'seed漢' && pasted === 'pasted',
    JSON.stringify({ copied, cut, pasted }),
+);
+await page.evaluate(async () => {
+   const host = document.getElementById('web-interactions-host') as HTMLElement & {
+      clearFocus(): boolean;
+      whenSettled(): Promise<void>;
+   };
+   host.clearFocus();
+   await host.whenSettled();
+});
+const selectableText = await nodeCenter('/missing', 'web-interactions-host');
+check('(m) selectable text located', selectableText !== null, JSON.stringify(selectableText));
+if (selectableText) {
+   await page.mouse.move(selectableText.cx - selectableText.w / 2 + 1, selectableText.cy);
+   await page.mouse.down();
+   await page.mouse.move(selectableText.cx + selectableText.w / 2 - 1, selectableText.cy, {
+      steps: 4,
+   });
+   await page.mouse.up();
+}
+await page.waitForTimeout(100);
+const staticSelectionFocus = await page.evaluate(() => {
+   const shadow = document.getElementById('web-interactions-host')?.shadowRoot;
+   const ime = shadow?.querySelector<HTMLTextAreaElement>('.slab-ime');
+   return {
+      activeClass: shadow?.activeElement?.className ?? '',
+      imeHidden: ime?.getAttribute('aria-hidden'),
+      imeFocused: shadow?.activeElement === ime,
+      pointerDown: (globalThis as DebugGlobal).__pointerFocus?.at(-1),
+   };
+});
+await page.keyboard.press('ControlOrMeta+C');
+const staticSelectionCopy = await page.evaluate(() => navigator.clipboard.readText());
+check(
+   '(m) static selection pointerdown keeps the hidden IME unfocused and remains copyable',
+   staticSelectionFocus.pointerDown?.activeClass === 'slab-a11y' &&
+      staticSelectionFocus.pointerDown.imeHidden === 'true' &&
+      !staticSelectionFocus.pointerDown.imeFocused &&
+      !staticSelectionFocus.imeFocused &&
+      staticSelectionFocus.imeHidden === 'true' &&
+      staticSelectionCopy === 'A◐B',
+   JSON.stringify({ ...staticSelectionFocus, copied: staticSelectionCopy }),
 );
 
 const dragSource = await nodeCenter('/source', 'web-interactions-host');
@@ -1567,7 +1639,7 @@ const showcaseLoaded = await page.evaluate(() => {
    return host !== null;
 });
 check('(l) showcase loaded', showcaseLoaded, 'showcase element rendered');
-const nestedReplay = await page.evaluate(() => {
+const nestedReplay = await page.evaluate(async () => {
    interface ShowcaseHost extends HTMLElement {
       setList(name: string, path: string, value: unknown): boolean;
       getList(name: string, path: string): unknown;
@@ -1597,7 +1669,7 @@ const nestedReplay = await page.evaluate(() => {
    }
    const bytes =
       typeof encoded === 'string'
-         ? Uint8Array.from(atob(encoded), (character) => character.charCodeAt(0))
+         ? new Uint8Array(await (await fetch(encoded)).arrayBuffer())
          : encoded;
    const loaded = host.loadSlir(bytes);
    return { rootAccepted, childAccepted, loaded, cached: host.getList('commits', '0.tags') };

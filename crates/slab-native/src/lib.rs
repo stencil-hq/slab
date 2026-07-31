@@ -15,6 +15,7 @@ pub mod atlas;
 pub mod demo;
 pub mod gen_player;
 pub mod gen_settings;
+pub mod gen_vscode;
 pub mod holes;
 pub mod input;
 pub mod player;
@@ -25,6 +26,8 @@ pub(crate) mod stats;
 pub mod surface;
 pub mod tess;
 pub mod view;
+pub mod vscode;
+pub mod vscode_fs;
 
 /// A decoded native document together with the image payloads that are kept
 /// out of the kernel document and runtime-provided font faces.

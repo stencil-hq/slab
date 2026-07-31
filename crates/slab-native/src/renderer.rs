@@ -155,15 +155,17 @@ struct GradGpu {
 
 /// Resolves the sfnt bytes one FONT table must be rasterized with.
 ///
-/// The table's own embedded data wins: the kernel shaped this frame's glyph
-/// ids against exactly those bytes, so any other face would paint mismatched
-/// outlines. Tables from documents that carry no embedded sfnt data fall back
-/// to a host-registered face of the same family — nearest weight, later
-/// registration breaking ties — and finally to the bundled class asset.
+/// The table's resolved shaping bytes win — embedded data or, for compiled
+/// tables, the vendored class asset (see [`slab_kernel::slir::face_data`]):
+/// the kernel shaped this frame's glyph ids against exactly those bytes, so
+/// any other face would paint mismatched outlines. Metrics-only runtime
+/// tables fall back to a host-registered face of the same family — nearest
+/// weight, later registration breaking ties — and finally to the bundled
+/// class asset.
 fn face_bytes<'a>(doc: &'a Doc, font: usize, registered: &'a [RegisteredFont]) -> &'a [u8] {
-	let embedded = slir::font_data(doc, i32::try_from(font).expect("font index fits i32"));
-	if !embedded.is_empty() {
-		return embedded;
+	let resolved = slir::face_data(doc, i32::try_from(font).expect("font index fits i32"));
+	if !resolved.is_empty() {
+		return resolved;
 	}
 	let family = doc
 		.strs

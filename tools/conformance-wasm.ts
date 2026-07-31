@@ -208,6 +208,7 @@ interface ParamValue {
    num: number;
    value: string;
    rgba: number;
+   boolean: boolean;
    symbol: string;
 }
 
@@ -671,6 +672,9 @@ function parseParamValue(value: unknown, context: string): ParamValue {
       num: requiredNumber(field(snapshot, 'num'), `${context}.num`),
       value: requiredString(field(snapshot, 's'), `${context}.s`),
       rgba: requiredNumber(field(snapshot, 'rgba'), `${context}.rgba`) >>> 0,
+      boolean:
+         optionalBoolean(field(snapshot, 'boolean'), `${context}.boolean`) ??
+         failShape(`${context}.boolean`),
       symbol: requiredString(field(snapshot, 'sym'), `${context}.sym`),
    };
 }
@@ -749,7 +753,7 @@ function clientCode(name: string): number {
 }
 
 function emptyParam(kind: number): ParamValue {
-   return { kind, num: 0, value: '', rgba: 0, symbol: '' };
+   return { kind, num: 0, value: '', rgba: 0, boolean: false, symbol: '' };
 }
 
 function traceParamValue(param: ParamInput): ParamValue {
@@ -768,9 +772,9 @@ function traceParamValue(param: ParamInput): ParamValue {
       value.rgba = u32(param.value, 'color value must be a u32');
    } else if (kind === 4) {
       if (typeof param.value === 'boolean') {
-         value.num = param.value ? 1 : 0;
+         value.boolean = param.value;
       } else if (typeof param.value === 'number' && Number.isFinite(param.value)) {
-         value.num = param.value;
+         value.boolean = param.value !== 0;
       } else {
          throw new Error('bool value must be a number or boolean');
       }
@@ -782,7 +786,15 @@ function traceParamValue(param: ParamInput): ParamValue {
 }
 
 function setParam(inst: KInst, param: number, value: ParamValue): boolean {
-   return inst.set_param(param, value.kind, value.num, value.value, value.rgba, value.symbol);
+   return inst.set_param(
+      param,
+      value.kind,
+      value.num,
+      value.value,
+      value.rgba,
+      value.boolean,
+      value.symbol,
+   );
 }
 
 function setListField(
@@ -802,6 +814,7 @@ function setListField(
       value.num,
       value.value,
       value.rgba,
+      value.boolean,
       value.symbol,
    );
 }
@@ -924,8 +937,8 @@ function coerceScalar(param: ParamDef, raw: string): ParamValue {
       if (rgba === null) throw new Error(`'${raw}' is not a color`);
       value.rgba = rgba;
    } else if (param.ty === 4) {
-      if (raw === 'true' || raw === '1' || raw === 'on') value.num = 1;
-      else if (raw === 'false' || raw === '0' || raw === 'off') value.num = 0;
+      if (raw === 'true' || raw === '1' || raw === 'on') value.boolean = true;
+      else if (raw === 'false' || raw === '0' || raw === 'off') value.boolean = false;
       else throw new Error(`'${raw}' is not a bool`);
    } else if (param.ty === 5) {
       if (!param.enumSymbols.includes(raw)) throw new Error(`unknown enum member '${raw}'`);
@@ -953,7 +966,7 @@ function coerceListField(fieldDef: ListFieldDef, raw: unknown): ParamValue {
       value.rgba = rgba;
    } else if (fieldDef.ty === 4) {
       if (typeof raw !== 'boolean') throw new Error('must be a boolean');
-      value.num = raw ? 1 : 0;
+      value.boolean = raw;
    } else if (fieldDef.ty === 5) {
       if (typeof raw !== 'string') throw new Error('must be an enum string');
       if (!fieldDef.enumSymbols.includes(raw)) throw new Error(`unknown enum member '${raw}'`);

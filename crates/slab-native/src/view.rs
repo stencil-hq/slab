@@ -129,6 +129,13 @@ pub trait ShellHost<U> {
 		}
 	}
 
+	/// Runs once per rendered frame, immediately after the kernel solve and
+	/// before paint — the only point where the scene is guaranteed fresh.
+	/// Hosts stage scene-dependent writes (content seeding, split sizing)
+	/// here; a mutation marks the instance dirty, so the shell schedules the
+	/// follow-up frame that paints it.
+	fn after_solve(&mut self, _document: &mut NativeDocument) {}
+
 	/// Handles one application event, returning `true` when redraw is required.
 	///
 	/// SDP hosts use this hook to drain queued requests against `document`.
@@ -501,6 +508,9 @@ where
 		if let Some(measurement) = &mut measurement {
 			measurement.end_kernel();
 		}
+		// Scene-dependent host work runs against exactly this solve; signals
+		// handled below may stage new work, which the follow-up frame drains.
+		self.host.after_solve(&mut self.doc);
 		let pending = kframe::inst_take_signals(&mut self.doc.inst);
 		self.host.effects(&mut self.doc, &pending);
 		self.refresh_accessibility(&fr, size);

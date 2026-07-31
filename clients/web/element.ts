@@ -118,13 +118,6 @@ function sheet(): CSSStyleSheet {
    return baseSheet;
 }
 
-function decodeBase64(s: string): Uint8Array {
-   const bin = atob(s);
-   const out = new Uint8Array(bin.length);
-   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
-   return out;
-}
-
 const E_POINTER_MOVE = 0;
 const E_POINTER_DOWN = 1;
 const E_POINTER_UP = 2;
@@ -159,6 +152,13 @@ function modsOf(e: {
    return modifiers;
 }
 
+export interface FieldStyleRange {
+   start: number;
+   end: number;
+   color: string;
+   italic?: boolean;
+}
+
 /** '#rgb' | '#rgba' | '#rrggbb' | '#rrggbbaa' → SLIR rgba8 (r in the low byte). */
 export function parseColor(s: string): number | null {
    const h = s.startsWith('#') ? s.slice(1) : s;
@@ -185,7 +185,7 @@ export function parseColor(s: string): number | null {
 
 /** Coerce a JS value to a kernel parameter payload for the declared type. */
 export function coerceParam(kind: number, value: unknown): ParamValue | null {
-   const param: ParamValue = { kind, num: 0, s: '', rgba: 0, sym: '' };
+   const param: ParamValue = { kind, num: 0, s: '', rgba: 0, boolean: false, sym: '' };
    switch (kind) {
       case 0:
          param.s = String(value ?? '');
@@ -209,10 +209,13 @@ export function coerceParam(kind: number, value: unknown): ParamValue | null {
          return param;
       }
       case 4:
-         param.num =
-            value === false || value === 0 || value === 'false' || value === '0' || value == null
-               ? 0
-               : 1;
+         param.boolean = !(
+            value === false ||
+            value === 0 ||
+            value === 'false' ||
+            value === '0' ||
+            value == null
+         );
          return param;
       case 5:
          param.sym = String(value ?? '');
@@ -276,6 +279,8 @@ interface RegisteredFace {
    bytes: Uint8Array;
    metrics: FontMetrics;
    cssFamily: string;
+   /** Monotonic registration order; later registrations win weight ties. */
+   seq: number;
 }
 
 interface RuntimeImageRegistration {
@@ -286,7 +291,8 @@ interface RuntimeImageRegistration {
    bytes: Uint8Array;
 }
 
-// Page-level registrations are keyed by the authored family case-insensitively.
+// Page-level registrations are keyed by authored family (case-insensitively)
+// plus parsed weight, so several weights of one family coexist.
 const registeredFaces = new Map<string, RegisteredFace>();
 const mountedElements = new Set<SlabElement>();
 let fontSeq = 0;
@@ -338,6 +344,21 @@ function fontKey(name: string): string {
       key += code >= 65 && code <= 90 ? String.fromCharCode(code + 32) : name[i];
    }
    return key;
+}
+/** Latest-registered face of a family nearest the requested weight (kernel tie-break). */
+function nearestRegisteredFace(family: string, weight: number): RegisteredFace | undefined {
+   const familyKey = fontKey(family);
+   let best: RegisteredFace | undefined;
+   let bestDistance = Infinity;
+   for (const face of registeredFaces.values()) {
+      if (fontKey(face.family) !== familyKey) continue;
+      const distance = Math.abs(face.metrics.weight - weight);
+      if (distance < bestDistance || (distance === bestDistance && face.seq > (best?.seq ?? -1))) {
+         best = face;
+         bestDistance = distance;
+      }
+   }
+   return best;
 }
 
 function isSlabConstructor(value: unknown): value is CachedSlabConstructor {
@@ -410,9 +431,8 @@ export class SlabElement extends HTMLElement {
     * clock instead of replaying eligible ones as CSS. Frames then cost a
     * paint each, and every host reading the kernel sees the motion. */
    static lift = true;
-   /** Generated subclasses embed SLIR as base64 here (or a URL with slirIsUrl). */
+   /** URL of the generated SLIR sidecar, or bytes installed by a live-preview host. */
    static slir: string | Uint8Array = '';
-   static slirIsUrl = false;
    /** Generated subclasses describe list element fields here. */
    static listSchemas: Readonly<Record<string, ListSchema>> = {};
    /** Generated schema rows referenced by nested list fields. */
@@ -457,6 +477,7 @@ export class SlabElement extends HTMLElement {
    #contextEdit: { start: number; end: number; x: number; y: number } | null = null;
    #contextTimer = 0;
    #ownImageUrls: string[] = [];
+   #ownFontFaces: FontFace[] = [];
    #appliedFonts = new Set<string>();
    #ro: ResizeObserver | null = null;
    #holeRo: ResizeObserver | null = null;
@@ -467,6 +488,7 @@ export class SlabElement extends HTMLElement {
    #props = new Map<string, unknown>();
    #lists = new Map<string, Map<string, readonly Record<string, unknown>[]>>();
    #scrolls = new Map<string, Map<number, number>>();
+   #fieldStyles = new Map<string, FieldStyleRange[]>();
    #runtimeImages = new Map<string, RuntimeImageRegistration>();
    #dividers = new Map<string, number>();
    #splits = new Map<string, number>();
@@ -493,6 +515,7 @@ export class SlabElement extends HTMLElement {
       this.#ops.setAttribute('aria-hidden', 'true');
       this.#a11yLayer = document.createElement('div');
       this.#a11yLayer.className = 'slab-a11y';
+      this.#a11yLayer.tabIndex = -1;
       this.#a11yLayer.addEventListener('focusin', (event) => {
          const target = event.target;
          if (
@@ -621,8 +644,8 @@ export class SlabElement extends HTMLElement {
       }
       const cls = slabConstructor(this);
       const bytes = await SlabElement.#loadSlir(cls);
-      // Subclasses without embedded SLIR (live-preview hosts) mount later
-      // through loadSlir().
+      // Subclasses without a SLIR URL (live-preview hosts) mount later through
+      // loadSlir().
       if (bytes.length === 0) return;
       if (!this.#mount(bytes, true)) return;
       this.#wire();
@@ -668,10 +691,10 @@ export class SlabElement extends HTMLElement {
       painter.invalidate = () => this.#schedule();
       if (cached) {
          const cls = slabConstructor(this);
-         painter.fonts = SlabElement.#fonts(cls, statics);
+         painter.fonts = SlabElement.#fonts(cls, statics, inst);
          painter.imageUrls = SlabElement.#images(cls, statics, inst);
       } else {
-         painter.fonts = SlabElement.#fontsFor(statics);
+         painter.fonts = SlabElement.#fontsFor(statics, inst, this.#ownFontFaces);
          const urls = SlabElement.#imagesFor(statics, inst);
          this.#ownImageUrls = urls.filter((url): url is string => url !== null);
          painter.imageUrls = urls;
@@ -698,6 +721,7 @@ export class SlabElement extends HTMLElement {
       for (const [key, axes] of this.#scrolls) {
          for (const [axis, offset] of axes) this.setScroll(key, axis, offset);
       }
+      for (const [key, ranges] of this.#fieldStyles) this.setFieldStyles(key, ranges);
       for (const [name, image] of this.#runtimeImages) {
          image.image = inst.img_register(
             name,
@@ -773,6 +797,8 @@ export class SlabElement extends HTMLElement {
       this.#editFocus = 0xffffffff;
       for (const url of this.#ownImageUrls) URL.revokeObjectURL(url);
       this.#ownImageUrls = [];
+      for (const face of this.#ownFontFaces) document.fonts.delete(face);
+      this.#ownFontFaces = [];
       this.#inst?.free();
       this.#inst = null;
       this.#statics = null;
@@ -783,23 +809,25 @@ export class SlabElement extends HTMLElement {
       this.#diagnosticsSignature = '';
    }
 
-   /** Replace this class's cached SLIR with `bytes` so every future mount decodes them (HMR hook; pair with `loadSlir()` on live elements). */
+   /** Replace this class's cached SLIR with `bytes` so future mounts decode them (HMR hook; pair with `loadSlir()` on live elements). */
    static hotReplaceSlir(bytes: Uint8Array): void {
-      const cls = SlabElement as CachedSlabConstructor;
+      const cls: CachedSlabConstructor = SlabElement;
       cls[kBytes] = Promise.resolve(bytes);
       cls.slir = bytes;
-      cls.slirIsUrl = false;
    }
 
    static #loadSlir(cls: CachedSlabConstructor): Promise<Uint8Array> {
       if (!Object.hasOwn(cls, kBytes)) {
-         if (cls.slirIsUrl) {
-            cls[kBytes] = fetch(String(cls.slir)).then(async (response) => {
-               if (!response.ok) throw new Error(`slab: fetching SLIR failed (${response.status})`);
-               return new Uint8Array(await response.arrayBuffer());
-            });
-         } else if (typeof cls.slir === 'string') {
-            cls[kBytes] = Promise.resolve(decodeBase64(cls.slir));
+         if (typeof cls.slir === 'string') {
+            cls[kBytes] =
+               cls.slir.length === 0
+                  ? Promise.resolve(new Uint8Array(0))
+                  : fetch(cls.slir).then(async (response) => {
+                       if (!response.ok) {
+                          throw new Error(`slab: fetching SLIR failed (${response.status})`);
+                       }
+                       return new Uint8Array(await response.arrayBuffer());
+                    });
          } else {
             cls[kBytes] = Promise.resolve(cls.slir);
          }
@@ -807,30 +835,51 @@ export class SlabElement extends HTMLElement {
       return cls[kBytes] ?? Promise.resolve(new Uint8Array(0));
    }
 
-   static #fonts(cls: CachedSlabConstructor, statics: Statics): (FontCss | null)[] {
+   static #fonts(cls: CachedSlabConstructor, statics: Statics, inst: KInst): (FontCss | null)[] {
       const cached = Object.hasOwn(cls, kFonts) ? cls[kFonts] : undefined;
       if (cached) return cached;
-      const fonts = SlabElement.#fontsFor(statics);
+      const fonts = SlabElement.#fontsFor(statics, inst);
       cls[kFonts] = fonts;
       return fonts;
    }
 
-   /** Resolve authored names through registered faces, otherwise use CSS family
-    * lookup with the compiled class as the generic fallback. */
-   static #fontsFor(statics: Statics): (FontCss | null)[] {
+   /** Resolve each FONT table to a paintable CSS family. A table's own
+    * embedded sfnt bytes win — the kernel shaped this document's glyph ids
+    * and advances against exactly those bytes, so any other face would paint
+    * mismatched runs (native renderer parity). Tables without embedded data
+    * fall back to a page-registered face of the same family, then to CSS
+    * family lookup with the compiled class as the generic fallback.
+    * `ownFaces` collects created FontFaces for element-scoped cleanup;
+    * class-cached callers omit it and keep faces for the page lifetime. */
+   static #fontsFor(statics: Statics, inst: KInst, ownFaces?: FontFace[]): (FontCss | null)[] {
       const fonts: (FontCss | null)[] = [];
       for (let index = 0; index < statics.font_upem.length; index++) {
          const named = statics.strs[statics.font_family[index]] ?? '';
          const fallback = statics.font_class[index] === 1 ? 'monospace' : 'sans-serif';
-         const face = registeredFaces.get(fontKey(named));
-         fonts.push({
-            family:
+         const upem = statics.font_upem[index];
+         const ascent = statics.font_ascent[index];
+         const descent = statics.font_descent[index];
+         let family: string;
+         const embedded = inst.font_data(index);
+         if (embedded.length > 0 && typeof FontFace === 'function') {
+            const cssFamily = `slab-f${fontSeq++}`;
+            const face = new FontFace(cssFamily, Uint8Array.from(embedded).buffer, {
+               weight: String(statics.font_weight[index]),
+               ascentOverride: `${(ascent / upem) * 100}%`,
+               descentOverride: `${(-descent / upem) * 100}%`,
+               lineGapOverride: '0%',
+            });
+            document.fonts.add(face);
+            void face.load().catch(() => undefined);
+            ownFaces?.push(face);
+            family = `${cssFamily}, ${fallback}`;
+         } else {
+            const face = nearestRegisteredFace(named, statics.font_weight[index]);
+            family =
                face?.cssFamily ??
-               (named !== '' ? `${JSON.stringify(named)}, ${fallback}` : fallback),
-            upem: statics.font_upem[index],
-            ascent: statics.font_ascent[index],
-            descent: statics.font_descent[index],
-         });
+               (named !== '' ? `${JSON.stringify(named)}, ${fallback}` : fallback);
+         }
+         fonts.push({ family, upem, ascent, descent });
       }
       return fonts;
    }
@@ -908,9 +957,9 @@ export class SlabElement extends HTMLElement {
    static registerFont(name: string, bytes: Uint8Array): boolean {
       const metrics = parseFontMetrics(bytes);
       if (!metrics) return false;
-      const key = fontKey(name);
+      const key = `${fontKey(name)}\u0000${metrics.weight}`;
       const cssFamily = `slab-f${fontSeq++}`;
-      const face: RegisteredFace = { family: name, bytes, metrics, cssFamily };
+      const face: RegisteredFace = { family: name, bytes, metrics, cssFamily, seq: fontSeq };
       registeredFaces.set(key, face);
       if (typeof FontFace === 'function') {
          const source = Uint8Array.from(bytes).buffer;
@@ -1079,7 +1128,6 @@ export class SlabElement extends HTMLElement {
          if (event.button === 0) {
             event.preventDefault();
             this.setPointerCapture(event.pointerId);
-            this.#ime.focus({ preventScroll: true });
          }
          const chained =
             event.button === this.#clickButton &&
@@ -1100,6 +1148,16 @@ export class SlabElement extends HTMLElement {
                modifiers: modsOf(event),
             }),
          );
+         if (event.button === 0) {
+            // The kernel decides whether this pointer starts editing before
+            // browser focus can expose the otherwise hidden IME.
+            if (effects.has_ime) {
+               this.#ime.removeAttribute('aria-hidden');
+               this.#ime.focus({ preventScroll: true });
+            } else {
+               this.#a11yLayer.focus({ preventScroll: true });
+            }
+         }
          if (contextEdit && (effects.has_ime || this.#focusNode !== 0xffffffff)) {
             this.#contextEdit = contextEdit;
             this.#restoreContextEdit();
@@ -1145,10 +1203,11 @@ export class SlabElement extends HTMLElement {
             }),
          );
          if (effects.has_static_selection) {
-            // Static selection is not kernel focus. Keep the component itself
-            // as the browser copy-command target without adding a tab stop.
-            if (!this.hasAttribute('tabindex')) this.tabIndex = -1;
-            this.focus({ preventScroll: true });
+            // Keep copy commands inside the component without delegating focus
+            // to the idle IME, which is intentionally hidden from AT.
+            const copyTarget =
+               this.#a11yLayer.querySelector<HTMLElement>('[data-slab-focused]') ?? this.#a11yLayer;
+            copyTarget.focus({ preventScroll: true });
          }
          if (event.button === 2 && this.#contextEdit) this.#restoreContextEdit();
       };
@@ -1513,7 +1572,17 @@ export class SlabElement extends HTMLElement {
          if (definition.name !== name) continue;
          const param = coerceParam(definition.ty, value);
          if (!param) return false;
-         if (!inst.set_param(index, param.kind, param.num, param.s, param.rgba, param.sym)) {
+         if (
+            !inst.set_param(
+               index,
+               param.kind,
+               param.num,
+               param.s,
+               param.rgba,
+               param.boolean,
+               param.sym,
+            )
+         ) {
             return false;
          }
          this.#props.set(name, value);
@@ -1539,6 +1608,49 @@ export class SlabElement extends HTMLElement {
    setFieldText(key: string, text: string): boolean {
       const inst = this.#inst;
       if (!inst?.set_field_text(key, text)) return false;
+      this.#fieldStyles.delete(key);
+      this.#schedule();
+      return true;
+   }
+
+   /** Replace paint-only color and italic ranges over committed field codepoints. */
+   setFieldStyles(key: string, ranges: FieldStyleRange[]): boolean {
+      let previousEnd = Number.NEGATIVE_INFINITY;
+      const flat = new Int32Array(ranges.length * 4);
+      for (let index = 0; index < ranges.length; index++) {
+         const range = ranges[index];
+         const color = parseColor(range.color);
+         if (
+            color === null ||
+            !/^#[0-9a-fA-F]{6}(?:[0-9a-fA-F]{2})?$/.test(range.color) ||
+            !Number.isInteger(range.start) ||
+            !Number.isInteger(range.end) ||
+            range.start < -0x80000000 ||
+            range.start > 0x7fffffff ||
+            range.end < -0x80000000 ||
+            range.end > 0x7fffffff ||
+            range.start > range.end ||
+            range.start < previousEnd
+         ) {
+            return false;
+         }
+         const offset = index * 4;
+         flat[offset] = range.start;
+         flat[offset + 1] = range.end;
+         flat[offset + 2] = color;
+         flat[offset + 3] = range.italic ? 1 : 0;
+         previousEnd = range.end;
+      }
+      const retained = ranges.map((range) => ({ ...range }));
+      const inst = this.#inst;
+      if (!inst) {
+         if (retained.length === 0) this.#fieldStyles.delete(key);
+         else this.#fieldStyles.set(key, retained);
+         return true;
+      }
+      if (!inst.set_field_styles(key, flat)) return false;
+      if (retained.length === 0) this.#fieldStyles.delete(key);
+      else this.#fieldStyles.set(key, retained);
       this.#schedule();
       return true;
    }
@@ -1546,6 +1658,19 @@ export class SlabElement extends HTMLElement {
    /** Read one keyed field buffer, or undefined when the key is not an editable field. */
    fieldText(key: string): string | undefined {
       return this.#inst?.field_text(key);
+   }
+   /** Read one keyed field's directed caret and anchor offsets. */
+   getCaret(key: string): { caret: number; anchor: number } | null {
+      const json = this.#inst?.get_caret_json(key);
+      return json === undefined ? null : (JSON.parse(json) as { caret: number; anchor: number });
+   }
+   /** Set one keyed field's directed caret and optional anchor offsets. */
+   setCaret(key: string, caret: number, anchor = caret): boolean {
+      const inst = this.#inst;
+      if (!inst) return false;
+      if (!inst.set_caret(key, caret, anchor)) return false;
+      this.#schedule();
+      return true;
    }
    /** Return the focused retained scene key, or null when kernel focus is clear. */
    focusedKey(): string | null {
@@ -1761,6 +1886,7 @@ export class SlabElement extends HTMLElement {
                      param.num,
                      param.s,
                      param.rgba,
+                     param.boolean,
                      param.sym,
                   )
                ) {
@@ -2116,6 +2242,21 @@ export class SlabElement extends HTMLElement {
       // label (it is only aria-hidden while idle and unfocusable); any other
       // kernel focus moves real DOM focus onto the focused semantic node.
       const editing = this.#focusNode !== 0xffffffff;
+      const activeElement = this.shadowRoot?.activeElement;
+      // Never steal focus from outside the component; mirror only while the
+      // shadow tree already holds it. Move focus off the IME before hiding it:
+      // Chromium rejects aria-hidden on the active focus holder.
+      if (activeElement !== null && activeElement !== undefined) {
+         if (focused && activeElement !== focused && !(editing && activeElement === this.#ime)) {
+            focused.focus({ preventScroll: true });
+         } else if (
+            !focused &&
+            activeElement instanceof HTMLElement &&
+            (activeElement === this.#ime || activeElement.classList.contains('slab-a11y-node'))
+         ) {
+            activeElement.blur();
+         }
+      }
       if (editing) {
          this.#ime.removeAttribute('aria-hidden');
          setOptionalAttribute(this.#ime, 'aria-label', focusedNode?.label || null);
@@ -2124,19 +2265,6 @@ export class SlabElement extends HTMLElement {
          this.#ime.setAttribute('aria-hidden', 'true');
          this.#ime.removeAttribute('aria-label');
          this.#ime.removeAttribute('aria-activedescendant');
-      }
-      const activeElement = this.shadowRoot?.activeElement;
-      // Never steal focus from outside the component; mirror only while the
-      // shadow tree already holds it.
-      if (activeElement === null || activeElement === undefined) return;
-      if (focused && activeElement !== focused && !(editing && activeElement === this.#ime)) {
-         focused.focus({ preventScroll: true });
-      } else if (
-         !focused &&
-         activeElement instanceof HTMLElement &&
-         activeElement.classList.contains('slab-a11y-node')
-      ) {
-         activeElement.blur();
       }
    }
 

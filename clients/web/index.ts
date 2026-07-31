@@ -3,6 +3,7 @@
 
 export {
    coerceParam,
+   type FieldStyleRange,
    parseColor,
    type SignalMeta,
    type SlabDebugEntry,

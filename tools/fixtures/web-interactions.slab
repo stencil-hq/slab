@@ -27,7 +27,9 @@ col key=board w=320 h=320 gap=16 bg=color.page {
     para { span "drag" strike=true color=#ffffff size=14 }
   }
   box key=target w=80 h=48 drop=dropped bg=#226644
-  text "A◐B" key=missing w=64 h=16 size=14 color=#ffffff
+  box key=missing w=64 h=16 select {
+    text "A◐B" size=14 color=#ffffff
+  }
   box key=overflow w=400 h=1 bg=#000000
   box key=dbl w=80 h=24 act=tapped dblclick=boom bg=#8844aa
   each param.rows key=rows

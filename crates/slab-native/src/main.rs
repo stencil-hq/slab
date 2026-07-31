@@ -1,13 +1,14 @@
 //! `slab-native` — native wgpu client: open any `.slab` document, or run
-//! the baked-in demo binaries' documents (`--demo settings|player|modern`).
+//! the baked-in demo binaries' documents (`--demo
+//! settings|player|modern|vscode`).
 
 use std::process::ExitCode;
 
-use slab_native::{demo, player, view};
+use slab_native::{demo, player, view, vscode};
 
 const USAGE: &str = "\
 usage: slab-native FILE.slab [options]
-       slab-native --demo settings|player|modern [options]
+       slab-native --demo settings|player|modern|vscode [options]
 
 options:
   --headless-frame OUT.png   render one frame offscreen and write a PNG
@@ -186,7 +187,25 @@ fn main() -> ExitCode {
 				},
 			}
 		},
-		Some(other) => err(format!("unknown demo '{other}' (only: settings, player, modern)")),
-		None => err("missing FILE.slab or --demo settings|player|modern".into()),
+		Some("vscode") => {
+			// the VS Code replica references a 1568×844 screenshot
+			if !size_set.0 {
+				opts.width = 1568.0;
+			}
+			if !size_set.1 {
+				opts.height = 844.0;
+			}
+			match vscode::run(opts) {
+				Ok(()) => ExitCode::SUCCESS,
+				Err(e) => {
+					eprintln!("error: {e}");
+					ExitCode::FAILURE
+				},
+			}
+		},
+		Some(other) => {
+			err(format!("unknown demo '{other}' (only: settings, player, modern, vscode)"))
+		},
+		None => err("missing FILE.slab or --demo settings|player|modern|vscode".into()),
 	}
 }

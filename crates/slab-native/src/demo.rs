@@ -120,7 +120,7 @@ fn rows_slir() -> Result<Vec<u8>, String> {
 fn settings_doc(theme: Option<&str>) -> Result<gen_settings::Doc, String> {
 	let mut doc = gen_settings::Doc::new();
 	if !doc.ok() {
-		return Err(format!("embedded SLIR failed to decode: {:?}", doc.inst.doc().errs));
+		return Err(format!("included SLIR failed to decode: {:?}", doc.inst.doc().errs));
 	}
 	if let Some(name) = theme
 		&& !doc.set_theme(name)
