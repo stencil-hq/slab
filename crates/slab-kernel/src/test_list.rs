@@ -1,4 +1,4 @@
-use crate::{dispatch, frame, list, motion, scene, slir, style};
+use crate::{dispatch, dumpjson, frame, list, motion, scene, slir, style};
 
 /// Appends an attribute value to the fixture document and returns its index.
 pub fn aval(d: &mut slir::Doc, tag: u32, lo: u32, hi: u32, num: f64) -> u32 {
@@ -131,20 +131,84 @@ pub fn test_list_defaults_extend_truncate_and_atomic_rejection() {
 	let d = list_doc();
 	let mut st = fresh(&d);
 	assert_eq!(list::length(&d, &st.lists, 0), 2, "default list length");
-	assert_eq!(list::get(&d, &st.lists, 0, 0, 0).s, "A", "normalized first default");
-	assert_eq!(list::get(&d, &st.lists, 0, 0, 1).num, 1.0, "typed bool default");
+	assert_eq!(
+		list::get(&d, &st.lists, 0, 0, 0),
+		frame::ParamValue::Text("A".into()),
+		"normalized first default"
+	);
+	assert_eq!(
+		list::get(&d, &st.lists, 0, 0, 1),
+		frame::ParamValue::Bool(true),
+		"typed bool default"
+	);
 
-	let before = list::get(&d, &st.lists, 0, 0, 0).s;
-	let bad = list::Val { kind: 1, num: 9.0, s: String::new(), rgba: 0, sym: String::new() };
+	let before = list::get(&d, &st.lists, 0, 0, 0);
+	let bad = frame::ParamValue::Num(9.0);
 	assert_eq!(
 		list::set_field(&d, &mut st.lists, 0, 0, "label", &bad),
 		-1,
 		"type mismatch rejected"
 	);
-	assert_eq!(list::get(&d, &st.lists, 0, 0, 0).s, before, "rejection has no partial write");
+	assert_eq!(list::get(&d, &st.lists, 0, 0, 0), before, "rejection has no partial write");
 	assert_eq!(list::set_len(&d, &mut st.lists, 0, 1), 1, "truncate changes");
 	assert_eq!(list::set_len(&d, &mut st.lists, 0, 2), 1, "extend changes");
-	assert_eq!(list::get(&d, &st.lists, 0, 1, 0).s, "", "extend seeds schema default");
+	assert_eq!(
+		list::get(&d, &st.lists, 0, 1, 0),
+		frame::ParamValue::Text(String::new()),
+		"extend seeds schema default"
+	);
+}
+
+/// Verifies removed list scalar slots serialize with their schema types without
+/// corrupting neighbors.
+pub fn test_list_removed_scalar_slots_emit_schema_typed_json() {
+	let mut d = list_doc();
+	let count_name = u32::try_from(d.strs.len()).expect("fixture string count fits in u32");
+	d.strs.push("count".into());
+	let count_default = aval(&mut d, slir::T_NUM, 0, 0, 0.0);
+	let first_count = aval(&mut d, slir::T_NUM, 0, 0, 7.0);
+	let second_count = aval(&mut d, slir::T_NUM, 0, 0, 11.0);
+	let item_values = [
+		d.list_item_value_val[0],
+		d.list_item_value_val[1],
+		first_count,
+		d.list_item_value_val[2],
+		d.list_item_value_val[1],
+		second_count,
+	];
+
+	d.list_field_len[0] = 3;
+	d.list_field_name.push(count_name);
+	d.list_field_type.push(slir::PARAM_NUM);
+	d.list_field_default.push(count_default);
+	d.list_field_enum_off.push(0);
+	d.list_field_enum_len.push(0);
+	d.list_item_field_off.clear();
+	d.list_item_field_off.extend([0, 3]);
+	d.list_item_field_len.clear();
+	d.list_item_field_len.extend([3, 3]);
+	d.list_item_value_field.clear();
+	d.list_item_value_field.extend([0, 1, 2, 0, 1, 2]);
+	d.list_item_value_val.clear();
+	d.list_item_value_val.extend(item_values);
+
+	let mut st = fresh(&d);
+	assert_eq!(
+		dumpjson::param_json(&d, &st, 0).as_deref(),
+		Some(
+			r#"[{"key":"0","label":"A","shown":true,"count":7},{"key":"1","label":"B","shown":true,"count":11}]"#
+		),
+		"fixture materializes typed scalar values"
+	);
+	list::remove_value(&mut st.lists, 5);
+	list::remove_value(&mut st.lists, 4);
+	assert_eq!(
+		dumpjson::param_json(&d, &st, 0).as_deref(),
+		Some(
+			r#"[{"key":"0","label":"A","shown":true,"count":7},{"key":"1","label":"B","shown":false,"count":0}]"#
+		),
+		"missing scalars use schema JSON types while the neighboring item remains intact"
+	);
 }
 
 /// Verifies that patches, state, focus, and content remain isolated per item.
@@ -231,7 +295,7 @@ pub fn test_list_keyed_reorder_identity_prune_and_key_addressing() {
 	assert_eq!(scene::node_by_key(&d, &st.lists, "list~a/row"), a, "synthetic key addressing");
 	style::set_node_state(&d, &mut st, a, "selected", true);
 	style::scroll_set(&mut st, a, 12.0);
-	style::field_set(&mut st, a, "draft");
+	style::field_set(&mut st, a, &crate::text::Text::from("draft"));
 	style::field_scroll_set(&mut st, a, 4.0);
 	assert_eq!(list::set_key(&d, &mut st.lists, 0, 0, "b"), 1, "transient duplicate accepted");
 	assert_eq!(list::set_key(&d, &mut st.lists, 0, 1, "a"), 1, "complete direct swap");
@@ -339,7 +403,7 @@ pub fn test_recursive_list_paths_materialization_and_pruning() {
 	assert_eq!(list::set_len_path(&d, &mut st.lists, 0, "", 1), 1);
 	assert_eq!(list::set_key_path(&d, &mut st.lists, 0, "", 0, "root"), 1);
 	assert_eq!(list::set_len_path(&d, &mut st.lists, 0, "0.children", 2), 1);
-	let child = list::Val { kind: 0, num: 0.0, s: "child".into(), rgba: 0, sym: String::new() };
+	let child = frame::ParamValue::Text("child".into());
 	assert_eq!(list::set_field_path(&d, &mut st.lists, 0, "0.children", 0, "label", &child), 1);
 	assert_eq!(list::set_key_path(&d, &mut st.lists, 0, "0.children", 0, "child"), 1);
 	assert_eq!(list::set_len_path(&d, &mut st.lists, 0, "0.children.0.children", 1), 1);
@@ -620,11 +684,9 @@ fn virtual_lookup_work_is_independent_of_logical_length() {
 		let d = virtual_list_doc();
 		let mut st = fresh(&d);
 		assert_eq!(list::set_len(&d, &mut st.lists, 0, len), 1);
-		let mut label =
-			list::Val { kind: 0, num: 0.0, s: String::new(), rgba: 0, sym: String::new() };
 		for item in 0..len {
 			let key = format!("key-{item}");
-			label.s.clone_from(&key);
+			let label = frame::ParamValue::Text(key.clone());
 			assert_eq!(list::set_key(&d, &mut st.lists, 0, item, &key), 1);
 			assert_eq!(list::set_field(&d, &mut st.lists, 0, item, "label", &label), 1);
 		}
@@ -681,15 +743,18 @@ pub fn test_recursive_list_defaults_and_reextension_are_clean() {
 	let mut st = fresh(&d);
 	let root = list::root_id(&d, &st.lists, 0);
 	assert_eq!(list::length(&d, &st.lists, root), 1);
-	assert_eq!(list::get(&d, &st.lists, root, 0, 0).s, "root");
+	assert_eq!(list::get(&d, &st.lists, root, 0, 0), frame::ParamValue::Text("root".into()));
 	let children = list::resolve_path(&d, &st.lists, 0, "0.children");
 	assert_ne!(children, slir::NONE);
 	assert_eq!(list::length(&d, &st.lists, children), 1);
-	assert_eq!(list::get(&d, &st.lists, children, 0, 0).s, "child");
+	assert_eq!(list::get(&d, &st.lists, children, 0, 0), frame::ParamValue::Text("child".into()));
 	let grandchildren = list::resolve_path(&d, &st.lists, 0, "0.children.0.children");
 	assert_ne!(grandchildren, slir::NONE);
 	assert_eq!(list::length(&d, &st.lists, grandchildren), 1);
-	assert_eq!(list::get(&d, &st.lists, grandchildren, 0, 0).s, "leaf");
+	assert_eq!(
+		list::get(&d, &st.lists, grandchildren, 0, 0),
+		frame::ParamValue::Text("leaf".into())
+	);
 	assert_eq!(
 		list::length(
 			&d,
@@ -705,7 +770,7 @@ pub fn test_recursive_list_defaults_and_reextension_are_clean() {
 	let fresh_children = list::resolve_path(&d, &st.lists, 0, "0.children");
 	assert_ne!(fresh_children, slir::NONE);
 	assert_eq!(list::length(&d, &st.lists, fresh_children), 0);
-	assert_eq!(list::get(&d, &st.lists, root, 0, 0).s, "");
+	assert_eq!(list::get(&d, &st.lists, root, 0, 0), frame::ParamValue::Text(String::new()));
 }
 
 /// Exercises the full first-frame settle and scroll/reveal path for 10k
@@ -1042,4 +1107,130 @@ pub fn test_reveal_item_parks_below_pinned_sticky_header() {
 		1960.0,
 		"end alignment still parks the item at the viewport bottom"
 	);
+}
+
+/// Verifies Boolean field storage across word boundaries and through the
+/// truncation path's swap-removal of later surviving values.
+pub fn test_list_boolean_word_boundary_and_swap_removal() {
+	let mut d = list_doc();
+	d.list_field_type[0] = slir::PARAM_BOOL;
+	let empty_label = d.list_field_default[0];
+	let false_default = d.list_field_default[1];
+	let spare_name = u32::try_from(d.strs.len()).expect("fixture string count fits in u32");
+	d.strs.push("spares".into());
+	let empty_list = aval(&mut d, slir::T_LIST_DEFAULT, 0, 0, 0.0);
+	d.parm_name.push(spare_name);
+	d.parm_type.push(slir::PARAM_LIST);
+	d.parm_default.push(empty_list);
+	d.parm_enum_off.push(0);
+	d.parm_enum_len.push(0);
+	d.parm_site_off.push(0);
+	d.parm_site_len.push(0);
+	d.list_param.push(1);
+	d.list_field_off.push(2);
+	d.list_field_len.push(2);
+	d.list_field_name.extend([2, 3]);
+	d.list_field_type
+		.extend([slir::PARAM_BOOL, slir::PARAM_BOOL]);
+	d.list_field_default.extend([empty_label, false_default]);
+	d.list_field_enum_off.extend([0, 0]);
+	d.list_field_enum_len.extend([0, 0]);
+
+	let mut st = fresh(&d);
+	assert_eq!(list::set_len(&d, &mut st.lists, 0, 66), 1);
+	assert_eq!(
+		list::set_field(&d, &mut st.lists, 0, 0, "shown", &frame::ParamValue::Bool(false)),
+		1,
+		"normalize the fixture's true first-item override"
+	);
+	for item in 0..66 {
+		let expected = item % 3 == 1;
+		if expected {
+			assert_eq!(
+				list::set_field(&d, &mut st.lists, 0, item, "shown", &frame::ParamValue::Bool(true),),
+				1,
+				"set patterned Boolean item {item}"
+			);
+		}
+	}
+	assert_eq!(
+		list::set_field(&d, &mut st.lists, 0, 32, "label", &frame::ParamValue::Bool(true)),
+		1,
+		"word-boundary bit 64 changes"
+	);
+	let items = list::resolve_path(&d, &st.lists, 0, "");
+	for item in 0..66 {
+		assert_eq!(
+			list::get(&d, &st.lists, items, item, 1),
+			frame::ParamValue::Bool(item % 3 == 1),
+			"Boolean item {item} before truncation"
+		);
+	}
+	assert_eq!(list::get(&d, &st.lists, items, 31, 1), frame::ParamValue::Bool(true), "bit 63");
+	assert_eq!(list::get(&d, &st.lists, items, 32, 0), frame::ParamValue::Bool(true), "bit 64");
+
+	assert_eq!(list::set_len(&d, &mut st.lists, 1, 2), 1);
+	assert_eq!(list::set_field(&d, &mut st.lists, 1, 0, "shown", &frame::ParamValue::Bool(true)), 1);
+	let spares = list::resolve_path(&d, &st.lists, 1, "");
+	assert_eq!(list::get(&d, &st.lists, spares, 0, 1), frame::ParamValue::Bool(true));
+	assert_eq!(list::get(&d, &st.lists, spares, 1, 1), frame::ParamValue::Bool(false));
+
+	assert_eq!(
+		list::set_len(&d, &mut st.lists, 0, 63),
+		1,
+		"truncation removes values preceding the surviving spare-list slots"
+	);
+	for item in 0..63 {
+		assert_eq!(
+			list::get(&d, &st.lists, items, item, 1),
+			frame::ParamValue::Bool(item % 3 == 1),
+			"surviving Boolean item {item}"
+		);
+	}
+	assert_eq!(
+		list::get(&d, &st.lists, items, 32, 0),
+		frame::ParamValue::Bool(true),
+		"bit 64 survives unrelated removals"
+	);
+	assert_eq!(
+		list::get(&d, &st.lists, spares, 0, 1),
+		frame::ParamValue::Bool(true),
+		"true moved slot retains its bit"
+	);
+	assert_eq!(
+		list::get(&d, &st.lists, spares, 1, 1),
+		frame::ParamValue::Bool(false),
+		"false moved slot does not inherit a stale bit"
+	);
+	assert_eq!(
+		list::set_field(&d, &mut st.lists, 1, 0, "shown", &frame::ParamValue::Bool(false)),
+		1,
+		"moved true slot remains addressable"
+	);
+	assert_eq!(
+		list::set_field(&d, &mut st.lists, 1, 1, "shown", &frame::ParamValue::Bool(true)),
+		1,
+		"moved false slot remains addressable"
+	);
+	assert_eq!(list::get(&d, &st.lists, spares, 0, 1), frame::ParamValue::Bool(false));
+	assert_eq!(list::get(&d, &st.lists, spares, 1, 1), frame::ParamValue::Bool(true));
+
+	assert_eq!(list::set_len(&d, &mut st.lists, 0, 66), 1);
+	for item in 63..66 {
+		assert_eq!(
+			list::get(&d, &st.lists, items, item, 1),
+			frame::ParamValue::Bool(false),
+			"re-extended Boolean item {item} starts from its schema default"
+		);
+	}
+	assert_eq!(
+		list::set_field(&d, &mut st.lists, 0, 64, "shown", &frame::ParamValue::Bool(true)),
+		1
+	);
+	assert_eq!(
+		list::set_field(&d, &mut st.lists, 0, 64, "shown", &frame::ParamValue::Bool(true)),
+		0,
+		"equal post-removal update is a no-op"
+	);
+	assert_eq!(list::get(&d, &st.lists, items, 64, 1), frame::ParamValue::Bool(true));
 }

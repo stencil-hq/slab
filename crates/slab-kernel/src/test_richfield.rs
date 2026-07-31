@@ -491,13 +491,7 @@ pub fn test_change_signal_runs_revision_and_param_reset() {
 	let before = frame::inst_field_runs(&instance, "field-key")
 		.expect("runs")
 		.revision;
-	assert!(frame::inst_set_param(&mut instance, 0, &ParamValue {
-		kind: 0,
-		num:  0.0,
-		s:    "host".into(),
-		rgba: 0,
-		sym:  String::new(),
-	},));
+	assert!(frame::inst_set_param(&mut instance, 0, &ParamValue::Text("host".into()),));
 	assert_eq!(
 		frame::inst_field_runs(&instance, "field-key")
 			.expect("runs")
@@ -650,4 +644,178 @@ pub fn test_composition_commit_preserves_spans() {
 	assert!(state.compose_clauses.is_empty(), "commit clears clause overlay");
 	assert_eq!(state.text, "a漢c");
 	assert_eq!(state.spans.bold.0, [(0, 2)]);
+}
+
+/// Host paint styles replace atomically, reject overlap, and clear with text.
+pub fn test_field_styles_set_reject_overlap_and_clear_with_text() {
+	let mut instance = field();
+	let styles =
+		[edit::FieldStyle { start: -2, end: 2, rgba: 0x4433_2211, flags: 0 }, edit::FieldStyle {
+			start: 3,
+			end:   99,
+			rgba:  0x8877_6655,
+			flags: 1,
+		}];
+	assert!(frame::inst_set_field_text(&mut instance, "field-key", "abcd"));
+	assert!(frame::inst_set_field_styles(&mut instance, "field-key", &styles));
+	assert_eq!(instance.ds.ed[0].field_styles, [
+		edit::FieldStyle { start: 0, end: 2, rgba: 0x4433_2211, flags: 0 },
+		edit::FieldStyle { start: 3, end: 4, rgba: 0x8877_6655, flags: 1 },
+	]);
+	let rejected = [edit::FieldStyle { start: 0, end: 3, rgba: 1, flags: 0 }, edit::FieldStyle {
+		start: 2,
+		end:   4,
+		rgba:  2,
+		flags: 0,
+	}];
+	assert!(!frame::inst_set_field_styles(&mut instance, "field-key", &rejected));
+	assert_eq!(instance.ds.ed[0].field_styles.len(), 2, "rejection is atomic");
+	assert!(!frame::inst_set_field_styles(&mut instance, "missing", &[]));
+	assert!(frame::inst_set_field_text(&mut instance, "field-key", "abcd"));
+	assert!(instance.ds.ed[0].field_styles.is_empty());
+}
+
+/// Paint-only ranges split both lines without changing the measured layout.
+pub fn test_field_styles_split_two_line_paint_color_and_italic() {
+	let mut instance = field();
+	instance.doc.node_flags[0] |= crate::slir::F_MULTILINE;
+	assert!(frame::inst_set_field_text(&mut instance, "field-key", "ab\ncd"));
+	let before = frame::inst_frame(&mut instance, 0.0);
+	let before_widths = instance.lay.tls[0].line_w.clone();
+	assert!(frame::inst_set_field_styles(&mut instance, "field-key", &[edit::FieldStyle {
+		start: 1,
+		end:   4,
+		rgba:  0x7f33_2211,
+		flags: 1,
+	}],));
+	let painted = frame::inst_frame(&mut instance, 0.0);
+	assert_eq!(instance.lay.tls[0].line_w, before_widths, "styles are paint-only");
+	let mut segments = Vec::new();
+	for op in &painted.ops {
+		if let FrameOp::Text(text) = op {
+			segments.push((
+				painted.strings[usize::try_from(text.str_ref).expect("string ref")].clone(),
+				text.color,
+				text.italic,
+			));
+		}
+	}
+	assert_eq!(segments, [
+		(
+			"a".into(),
+			before
+				.ops
+				.iter()
+				.find_map(|op| {
+					match op {
+						FrameOp::Text(text) => Some(text.color),
+						_ => None,
+					}
+				})
+				.expect("base text color"),
+			false
+		),
+		("b".into(), 0x7f33_2211, true),
+		("c".into(), 0x7f33_2211, true),
+		(
+			"d".into(),
+			before
+				.ops
+				.iter()
+				.find_map(|op| {
+					match op {
+						FrameOp::Text(text) => Some(text.color),
+						_ => None,
+					}
+				})
+				.expect("base text color"),
+			false
+		),
+	]);
+}
+
+/// Codepoint offsets track multibyte text through splices and split emoji
+/// paint.
+pub fn test_field_styles_multibyte_splice_adjustment() {
+	let mut instance = field();
+	assert!(frame::inst_set_field_text(&mut instance, "field-key", "aé😀b"));
+	assert!(frame::inst_set_field_styles(&mut instance, "field-key", &[edit::FieldStyle {
+		start: 2,
+		end:   3,
+		rgba:  0xddcc_bbaa,
+		flags: 0,
+	}],));
+	let painted = frame::inst_frame(&mut instance, 0.0);
+	let segments: Vec<_> = painted
+		.ops
+		.iter()
+		.filter_map(|op| match op {
+			FrameOp::Text(text) => Some((
+				painted.strings[usize::try_from(text.str_ref).expect("string ref")].as_str(),
+				text.color,
+			)),
+			_ => None,
+		})
+		.collect();
+	assert_eq!(segments, [("aé", segments[0].1), ("😀", 0xddcc_bbaa), ("b", segments[0].1)]);
+
+	let state = &mut instance.ds.ed[0];
+	assert!(edit::splice(state, 1, 1, "x"));
+	assert_eq!(state.field_styles[0].start..state.field_styles[0].end, 3..4);
+	assert!(edit::splice(state, 4, 4, "y"));
+	assert_eq!(state.field_styles[0].start..state.field_styles[0].end, 3..5);
+	assert!(edit::splice(state, 3, 4, ""));
+	assert_eq!(state.field_styles[0].start..state.field_styles[0].end, 3..4);
+	assert!(edit::splice(state, 0, 1, ""));
+	assert_eq!(state.field_styles[0].start..state.field_styles[0].end, 2..3);
+	assert_eq!(state.text.slice_cps(2, 3), [u32::from('y')]);
+}
+
+/// Re-highlighting a focused field between edits is edit-neutral.
+pub fn test_field_styles_between_keystrokes_preserve_edit_state() {
+	let mut instance = field();
+	assert!(frame::inst_set_field_text(&mut instance, "field-key", "ab"));
+	assert!(frame::inst_set_focus(&mut instance, "field-key", true));
+	assert_eq!(
+		frame::inst_get_caret(&instance, "field-key").map(|caret| (caret.caret, caret.anchor)),
+		Some((2, 2))
+	);
+
+	frame::inst_dispatch(
+		&mut instance,
+		&crate::test_edit::host_field_event(dispatch::E_TEXT, "", "c"),
+	);
+	assert_eq!(frame::inst_field_text(&instance, "field-key").as_deref(), Some("abc"));
+	assert_eq!(
+		frame::inst_get_caret(&instance, "field-key").map(|caret| (caret.caret, caret.anchor)),
+		Some((3, 3))
+	);
+
+	assert!(frame::inst_set_field_styles(&mut instance, "field-key", &[edit::FieldStyle {
+		start: 0,
+		end:   1,
+		rgba:  0xff00_00ff,
+		flags: 1,
+	}],));
+	assert_eq!(frame::inst_field_text(&instance, "field-key").as_deref(), Some("abc"));
+	assert_eq!(
+		frame::inst_get_caret(&instance, "field-key").map(|caret| (caret.caret, caret.anchor)),
+		Some((3, 3))
+	);
+
+	frame::inst_dispatch(
+		&mut instance,
+		&crate::test_edit::host_field_event(dispatch::E_TEXT, "", "d"),
+	);
+	assert_eq!(frame::inst_field_text(&instance, "field-key").as_deref(), Some("abcd"));
+	assert_eq!(
+		frame::inst_get_caret(&instance, "field-key").map(|caret| (caret.caret, caret.anchor)),
+		Some((4, 4))
+	);
+	assert!(frame::inst_set_caret(&mut instance, "field-key", 2, 2));
+	assert_eq!(
+		frame::inst_get_caret(&instance, "field-key").map(|caret| (caret.caret, caret.anchor)),
+		Some((2, 2))
+	);
+	assert_eq!(instance.ds.ed[0].field_styles[0].start..instance.ds.ed[0].field_styles[0].end, 0..1);
 }

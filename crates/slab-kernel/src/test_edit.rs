@@ -49,7 +49,7 @@ pub fn test_composition_update_then_commit() {
 	es.caret = 1;
 	es.anchor = 1;
 	edit::composition_update(&mut es, "か");
-	assert_eq!(edit::display_str(&es), "aかb", "inline compose");
+	assert_eq!(edit::display_text(&es), "aかb", "inline compose");
 	assert_eq!(edit::display_caret(&es), 2, "display caret after compose");
 	let changed = edit::composition_end(&mut es, "漢字");
 	assert!(changed, "commit changes text");
@@ -75,24 +75,25 @@ pub fn test_selection_and_words() {
 
 /// Verifies trailing and standalone punctuation editor word stops.
 pub fn test_unicode_word_punctuation_deletion() {
-	let punctuated = "hello, world";
-	assert_eq!(edit::word_prev(punctuated, 12), 7, "backward stop is the start of world");
+	let punctuated = crate::text::Text::from("hello, world");
+	assert_eq!(edit::word_prev(&punctuated, 12), 7, "backward stop is the start of world");
 	assert_eq!(
-		edit::word_prev(punctuated, 7),
+		edit::word_prev(&punctuated, 7),
 		0,
 		"comma and space are skipped before the preceding word"
 	);
-	assert_eq!(edit::word_next(punctuated, 0), 7, "forward stop skips comma and space");
-	assert_eq!(edit::word_next(punctuated, 7), 12, "the final fallback stop is text end");
+	assert_eq!(edit::word_next(&punctuated, 0), 7, "forward stop skips comma and space");
+	assert_eq!(edit::word_next(&punctuated, 7), 12, "the final fallback stop is text end");
 
 	let standalone = "hello !";
+	let standalone_text = crate::text::Text::from(standalone);
 	assert_eq!(
-		edit::word_next(standalone, 0),
+		edit::word_next(&standalone_text, 0),
 		6,
 		"whitespace-delimited punctuation is a forward stop"
 	);
 	assert_eq!(
-		edit::word_prev(standalone, 7),
+		edit::word_prev(&standalone_text, 7),
 		6,
 		"whitespace-delimited punctuation is a backward stop"
 	);
@@ -104,7 +105,7 @@ pub fn test_unicode_word_punctuation_deletion() {
 	assert!(edit::word_back(&mut backward), "backward deletion uses the punctuation stop");
 	assert_eq!(backward.text, "hello ", "backward deletion removes only punctuation");
 
-	let mut deleted = edit::es_new(1, punctuated);
+	let mut deleted = edit::es_new(1, "hello, world");
 	assert!(edit::word_back(&mut deleted), "first backward deletion changes text");
 	assert_eq!(deleted.text, "hello, ", "first deletion removes only world");
 	assert_eq!(deleted.caret, 7, "caret lands at the UAX word start");
@@ -137,7 +138,7 @@ pub fn test_unicode_word_japanese_motion() {
 pub fn test_word_forward_delete_at_end_is_noop() {
 	let mut at_end = edit::es_new(3, "done");
 	assert!(!edit::word_forward(&mut at_end), "forward deletion at text end is a no-op");
-	assert_eq!((at_end.text.as_str(), at_end.caret, at_end.anchor), ("done", 4, 4));
+	assert_eq!((edit::text_str(&at_end).as_str(), at_end.caret, at_end.anchor), ("done", 4, 4));
 	assert!(at_end.undo.is_empty(), "a no-op does not open an undo group");
 	assert_eq!(at_end.last_kind, edit::MUT_NONE, "a no-op does not alter coalescing");
 }
@@ -165,16 +166,16 @@ pub fn test_unicode_whitespace_breaks_undo_groups() {
 
 /// Verifies bidi word motion is panic-free and monotone in logical order.
 pub fn test_bidi_word_motion_is_logically_monotone() {
-	let bidi = "abc אבג, ده xyz";
-	let end = crate::rt::str_len(bidi);
+	let bidi = crate::text::Text::from("abc אבג, ده xyz");
+	let end = bidi.len();
 	let mut logical = 0;
 	while logical < end {
-		let next = edit::word_next(bidi, logical);
+		let next = edit::word_next(&bidi, logical);
 		assert!(next > logical && next <= end, "forward bidi motion is logically monotone");
 		logical = next;
 	}
 	while logical > 0 {
-		let previous = edit::word_prev(bidi, logical);
+		let previous = edit::word_prev(&bidi, logical);
 		assert!(previous >= 0 && previous < logical, "backward bidi motion is logically monotone");
 		logical = previous;
 	}
@@ -231,21 +232,21 @@ pub fn test_kills_and_word_deletes() {
 	let mut end_es = edit::es_new(1, "hello world\nnext");
 	end_es.caret = 2;
 	end_es.anchor = 2;
-	let end_tl = text_layout(&end_es.text, 1000.0);
+	let end_tl = text_layout(&edit::text_str(&end_es), 1000.0);
 	assert!(edit::kill_end(&mut end_es, &end_tl), "kill to visual line end changes");
 	assert_eq!(end_es.text, "he\nnext", "line-end kill preserves hard newline");
 
 	let mut wrapped = edit::es_new(1, "aaa bbb");
 	wrapped.caret = 1;
 	wrapped.anchor = 1;
-	let wrapped_tl = text_layout(&wrapped.text, 20.0);
+	let wrapped_tl = text_layout(&edit::text_str(&wrapped), 20.0);
 	assert!(edit::kill_end(&mut wrapped, &wrapped_tl), "kill uses wrapped visual line end");
 	assert_eq!(wrapped.text, "a bbb", "wrapped kill stops before break separator");
 
 	let mut start_es = edit::es_new(1, "hello\nnext");
 	start_es.caret = 9;
 	start_es.anchor = 9;
-	let start_tl = text_layout(&start_es.text, 1000.0);
+	let start_tl = text_layout(&edit::text_str(&start_es), 1000.0);
 	assert!(edit::kill_start(&mut start_es, &start_tl), "kill to visual line start changes");
 	assert_eq!(start_es.text, "hello\nt", "line-start kill uses source offsets");
 
@@ -426,7 +427,7 @@ pub fn paint_doc() -> Doc {
 pub fn test_field_scroll_offsets_text_and_forces_clip() {
 	let doc = paint_doc();
 	let mut st = style::st_new();
-	style::field_set(&mut st, 0, "abcdef");
+	style::field_set(&mut st, 0, &crate::text::Text::from("abcdef"));
 	style::field_scroll_set(&mut st, 0, 8.0);
 	style::begin_solve(&doc, &mut st);
 	let mut lay = layout::lay_new();
@@ -445,7 +446,7 @@ pub fn test_field_scroll_offsets_text_and_forces_clip() {
 pub fn test_overwide_field_stays_clipped_at_zero_scroll() {
 	let doc = paint_doc();
 	let mut st = style::st_new();
-	style::field_set(&mut st, 0, "abcdef");
+	style::field_set(&mut st, 0, &crate::text::Text::from("abcdef"));
 	style::begin_solve(&doc, &mut st);
 	let mut lay = layout::lay_new();
 	let root = layout::solve(&doc, &mut st, &mut lay, 100.0, 100.0, true);
@@ -462,7 +463,7 @@ pub fn test_selection_bands_for_wrapped_two_lines() {
 	doc.node_flags[0] = slir::F_MULTILINE;
 	let text = "ab cd";
 	let mut st = style::st_new();
-	style::field_set(&mut st, 0, text);
+	style::field_set(&mut st, 0, &crate::text::Text::from(text));
 	let mut ds = dispatch::dstate_new();
 	ds.fs.focus = 0;
 	ds.ed_node.push(0);
@@ -876,7 +877,7 @@ pub fn test_context_caret_preserves_selection_only_for_inside_hit() {
 	let doc = paint_doc();
 	let text = "abcdef";
 	let mut st = style::st_new();
-	style::field_set(&mut st, 0, text);
+	style::field_set(&mut st, 0, &crate::text::Text::from(text));
 	style::begin_solve(&doc, &mut st);
 	let mut lay = layout::lay_new();
 	let root = layout::solve(&doc, &mut st, &mut lay, 100.0, 100.0, true);

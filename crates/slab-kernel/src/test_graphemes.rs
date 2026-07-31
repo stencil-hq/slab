@@ -106,3 +106,34 @@ pub fn test_boundary_navigation() {
 	assert!(!graphemes::is_mark(97), "a is not a mark");
 	assert!(graphemes::is_ri(0x1f1e6) && !graphemes::is_ri(0x1f1e5), "RI range edges");
 }
+
+/// Checks windowed prev/next boundaries against the full-scan table at
+/// every caret position, across flags, CRLF, marks, ZWJ, and newlines.
+pub fn test_windowed_boundaries_match_full_scan() {
+	let samples = [
+		"",
+		"plain ascii\nsecond line",
+		"a\u{301}b\r\nc\u{0902}d",
+		"🇹🇷🇩🇪🇫🇷\nx🇺🇳",
+		"👨\u{200d}👩\u{200d}👧 mixed ❤\u{fe0f}\n\n\r\nend",
+		"\n\nしごと\nかん字",
+	];
+	for sample in samples {
+		let cps: Vec<u32> = sample.chars().map(u32::from).collect();
+		let mut bounds = Vec::new();
+		graphemes::boundaries(sample, &mut bounds);
+		let n = i32::try_from(cps.len()).expect("sample fits i32");
+		for at in 0..=n {
+			assert_eq!(
+				graphemes::prev_boundary_in(&cps, at),
+				graphemes::prev_boundary(&bounds, at),
+				"prev at {at} in {sample:?}"
+			);
+			assert_eq!(
+				graphemes::next_boundary_in(&cps, at),
+				graphemes::next_boundary(&bounds, at, n),
+				"next at {at} in {sample:?}"
+			);
+		}
+	}
+}

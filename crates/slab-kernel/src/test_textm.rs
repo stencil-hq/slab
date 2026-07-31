@@ -15,6 +15,9 @@ use crate::{
 /// Builds the synthetic font document used by the text measurement checks.
 pub fn font_doc() -> Doc {
 	let mut doc = slir::doc_new();
+	// Font 0's family id references the interned name; rich bold/code
+	// selection resolves through it.
+	doc.strs.push("Sans".to_owned());
 	doc.font_family.push(0);
 	doc.font_class.push(0);
 	doc.font_weight.push(400);
@@ -559,9 +562,10 @@ fn assert_splice_layout_eq(actual: &TextLayout, expected: &TextLayout, context: 
 	assert_eq!(actual.w.to_bits(), expected.w.to_bits(), "{context}: width");
 	assert_eq!(actual.h.to_bits(), expected.h.to_bits(), "{context}: height");
 	assert_eq!(actual.truncated, expected.truncated, "{context}: truncation");
+	assert_eq!(actual.spans, expected.spans, "{context}: spans");
 }
 
-fn splice_differential(wrap: bool) {
+fn splice_differential(wrap: bool, rich: bool) {
 	const EDITS: usize = 256;
 	let doc = font_doc();
 	let mut cache = textm::ShapeCache::default();
@@ -625,59 +629,258 @@ fn splice_differential(wrap: bool) {
 				(at, count, vec!['c', '\n', 'a'])
 			},
 		};
+		let spans_old = if rich {
+			rich_test_spans(&text)
+		} else {
+			crate::edit::InlineSpans::empty()
+		};
+		let text_cps: Vec<u32> = text.chars().map(u32::from).collect();
 		let full_prev = textm::measure_text_cached(
-			&doc,
-			0,
-			10.0,
-			1.4,
-			0.0,
-			&text,
-			max_w,
-			wrap,
-			false,
-			-1,
-			&crate::edit::InlineSpans::empty(),
-			&mut cache,
+			&doc, 0, 10.0, 1.4, 0.0, &text_cps, max_w, wrap, false, -1, &spans_old, &mut cache,
 		);
 		let mut new_chars = old_chars;
 		new_chars.splice(at..at + removed, inserted.iter().copied());
 		let new_text: String = new_chars.iter().collect();
+		let new_cps: Vec<u32> = new_text.chars().map(u32::from).collect();
 		let delta = textm::TextDelta {
 			at:       i32::try_from(at).expect("test text fits i32"),
 			removed:  i32::try_from(removed).expect("test edit fits i32"),
 			inserted: i32::try_from(inserted.len()).expect("test edit fits i32"),
 		};
-		let spliced = textm::measure_text_spliced(
-			&doc, 0, 10.0, 1.4, 0.0, &full_prev, &new_text, delta, max_w, wrap, &mut cache,
-		)
-		.unwrap_or_else(|| panic!("splice rejected valid edit {edit}, wrap={wrap}"));
-		let full_new = textm::measure_text_cached(
-			&doc,
-			0,
-			10.0,
-			1.4,
-			0.0,
-			&new_text,
-			max_w,
-			wrap,
-			false,
-			-1,
-			&crate::edit::InlineSpans::empty(),
-			&mut cache,
+		// The positional transform edits apply to spans; `follows_splice`
+		// must certify exactly this shape of change.
+		let mut spans_new = spans_old.clone();
+		for style in 0..=crate::edit::STYLE_CODE {
+			let ranges = spans_new.get_mut(style).expect("known style id");
+			ranges.delete(delta.at, delta.at.wrapping_add(delta.removed));
+			ranges.insert(delta.at, delta.inserted);
+		}
+		assert!(
+			spans_old.follows_splice(&spans_new, delta),
+			"positionally shifted spans certify edit {edit}"
 		);
-		assert_splice_layout_eq(&spliced, &full_new, &format!("edit {edit}, wrap={wrap}"));
+		let spliced = textm::measure_text_spliced(
+			&doc, 0, 10.0, 0.0, &full_prev, &new_cps, delta, max_w, wrap, &spans_new, &mut cache,
+		)
+		.unwrap_or_else(|| panic!("splice rejected valid edit {edit}, wrap={wrap}, rich={rich}"));
+		let full_new = textm::measure_text_cached(
+			&doc, 0, 10.0, 1.4, 0.0, &new_cps, max_w, wrap, false, -1, &spans_new, &mut cache,
+		);
+		assert_splice_layout_eq(
+			&spliced,
+			&full_new,
+			&format!("edit {edit}, wrap={wrap}, rich={rich}"),
+		);
 		text = new_text;
 	}
 }
 
 /// Differentially checks delta-spliced measurement against a full measure.
 pub fn test_splice_differential_wrapped() {
-	splice_differential(true);
+	splice_differential(true, false);
 }
 
 /// Differentially checks delta-spliced measurement without soft wrapping.
 pub fn test_splice_differential_nowrap() {
-	splice_differential(false);
+	splice_differential(false, false);
+}
+
+/// Differentially checks rich-span spliced measurement with soft wrapping.
+pub fn test_splice_differential_rich_wrapped() {
+	splice_differential(true, true);
+}
+
+/// Differentially checks rich-span spliced measurement without soft wrapping.
+pub fn test_splice_differential_rich_nowrap() {
+	splice_differential(false, true);
+}
+
+/// Builds deterministic spans over `text`: leading bold and inner code runs
+/// on a line cadence, plus periodic bold ranges crossing a hard boundary.
+fn rich_test_spans(text: &str) -> crate::edit::InlineSpans {
+	let mut spans = crate::edit::InlineSpans::empty();
+	let mut start = 0i32;
+	for (line, content) in text.split('\n').enumerate() {
+		let end = start.wrapping_add(i32::try_from(content.chars().count()).expect("line fits i32"));
+		if line % 3 == 0 {
+			spans
+				.get_mut(crate::edit::STYLE_BOLD)
+				.expect("bold style")
+				.0
+				.push((start, (start + 8).min(end)));
+		}
+		if line % 11 == 3 && start >= 4 {
+			// Crosses the hard boundary before this line.
+			spans
+				.get_mut(crate::edit::STYLE_BOLD)
+				.expect("bold style")
+				.0
+				.push((start - 4, (start + 5).min(end)));
+		}
+		if line % 5 == 0 {
+			spans
+				.get_mut(crate::edit::STYLE_CODE)
+				.expect("code style")
+				.0
+				.push(((start + 4).min(end), (start + 12).min(end)));
+		}
+		start = end + 1;
+	}
+	for style in 0..=crate::edit::STYLE_CODE {
+		spans.get_mut(style).expect("known style id").normalize();
+	}
+	spans
+}
+
+/// Checks that `follows_splice` certifies positional shifts and rejects
+/// non-positional span changes.
+pub fn test_spans_follows_splice() {
+	let mut old = crate::edit::InlineSpans::empty();
+	old.get_mut(crate::edit::STYLE_BOLD)
+		.expect("bold style")
+		.0
+		.push((2, 6));
+	let delta = textm::TextDelta { at: 3, removed: 0, inserted: 2 };
+	let mut positional = old.clone();
+	positional
+		.get_mut(crate::edit::STYLE_BOLD)
+		.expect("bold style")
+		.insert(3, 2);
+	assert!(old.follows_splice(&positional, delta), "positional shift certifies");
+	let mut toggled = positional.clone();
+	toggled
+		.get_mut(crate::edit::STYLE_CODE)
+		.expect("code style")
+		.0
+		.push((0, 1));
+	assert!(!old.follows_splice(&toggled, delta), "an extra span range forces a full measure");
+}
+
+/// Asserts pins and rich slots form a bijection: every queued pin indexes a
+/// distinct in-bounds `Rich` slot, and every `Rich` slot is queued.
+fn assert_rich_pins_consistent(layout: &TextLayout, context: &str) {
+	let store = layout.shaped.borrow();
+	let pins = layout.rich_pins.borrow();
+	let mut seen = vec![false; store.len()];
+	for &pin in pins.iter() {
+		assert!(pin < store.len(), "{context}: pin {pin} within {} lines", store.len());
+		assert!(!seen[pin], "{context}: pin {pin} queued once");
+		seen[pin] = true;
+		assert!(
+			matches!(store[pin], textm::LineShape::Rich(_)),
+			"{context}: pin {pin} points at a rich slot"
+		);
+	}
+	for (line, slot) in store.iter().enumerate() {
+		if matches!(slot, textm::LineShape::Rich(_)) {
+			assert!(seen[line], "{context}: rich line {line} is queued");
+		}
+	}
+}
+
+/// Splicing a rich layout rebases the pinned-line FIFO.
+///
+/// Window pins drop, suffix pins shift with the line delta, and eviction
+/// after newline insert/delete splices never unshapes a shifted line or
+/// indexes past a shrunk layout.
+pub fn test_rich_pins_rebase_across_splice() {
+	let doc = font_doc();
+	let cache = std::cell::RefCell::new(textm::ShapeCache::default());
+	let lines = textm::RICH_PIN_CAP + 40;
+	let text = vec!["abc cab"; lines].join("\n");
+	let cps: Vec<u32> = text.chars().map(u32::from).collect();
+	// Bold the first three codepoints of every 8-codepoint hard line so each
+	// line shapes through the rich pin path.
+	let mut spans = crate::edit::InlineSpans::empty();
+	for line in 0..lines {
+		let start = i32::try_from(line * 8).expect("test text fits i32");
+		spans
+			.get_mut(crate::edit::STYLE_BOLD)
+			.expect("bold style")
+			.0
+			.push((start, start + 3));
+	}
+	let mut layout = textm::measure_text_cached(
+		&doc,
+		0,
+		10.0,
+		1.4,
+		0.0,
+		&cps,
+		10_000.0,
+		false,
+		false,
+		-1,
+		&spans,
+		&mut cache.borrow_mut(),
+	);
+	// Pin to the cap; earlier lines evict as later ones shape.
+	for line in 0..lines {
+		assert!(textm::line_shaped(&doc, &cache, &layout, line).is_some(), "shape line {line}");
+	}
+	assert_rich_pins_consistent(&layout, "after initial sweep");
+
+	// Insert a newline inside hard line 0: one more line, suffix pins +1.
+	let mut grown: Vec<u32> = cps;
+	grown.insert(3, 10);
+	let grow = textm::TextDelta { at: 3, removed: 0, inserted: 1 };
+	let mut spans_grown = spans.clone();
+	for style in 0..=crate::edit::STYLE_CODE {
+		let ranges = spans_grown.get_mut(style).expect("known style id");
+		ranges.delete(grow.at, grow.at);
+		ranges.insert(grow.at, grow.inserted);
+	}
+	assert!(
+		textm::measure_text_spliced_into(
+			&doc,
+			0,
+			10.0,
+			0.0,
+			&mut layout,
+			&grown,
+			grow,
+			10_000.0,
+			false,
+			&spans_grown,
+			&mut cache.borrow_mut(),
+		),
+		"grow splice applies"
+	);
+	assert_rich_pins_consistent(&layout, "after newline insert");
+
+	// Delete across three hard boundaries: line count shrinks by three and
+	// every suffix pin shifts down past the merged window.
+	let mut shrunk: Vec<u32> = grown.clone();
+	shrunk.drain(2..20);
+	let shrink = textm::TextDelta { at: 2, removed: 18, inserted: 0 };
+	let mut spans_shrunk = spans_grown.clone();
+	for style in 0..=crate::edit::STYLE_CODE {
+		let ranges = spans_shrunk.get_mut(style).expect("known style id");
+		ranges.delete(shrink.at, shrink.at.wrapping_add(shrink.removed));
+		ranges.insert(shrink.at, 0);
+	}
+	assert!(
+		textm::measure_text_spliced_into(
+			&doc,
+			0,
+			10.0,
+			0.0,
+			&mut layout,
+			&shrunk,
+			shrink,
+			10_000.0,
+			false,
+			&spans_shrunk,
+			&mut cache.borrow_mut(),
+		),
+		"shrink splice applies"
+	);
+	assert_rich_pins_consistent(&layout, "after newline deletes");
+
+	// The respliced window line is unshaped; shaping it at a full FIFO forces
+	// an eviction against the rebased pins.
+	assert!(textm::line_shaped(&doc, &cache, &layout, 0).is_some(), "reshape window line");
+	assert_rich_pins_consistent(&layout, "after post-splice eviction");
 }
 
 /// Checks composition of contiguous edit deltas and rejection of disjoint
@@ -723,7 +926,7 @@ pub fn test_multifont_shaped_advance_contract() {
 		10.0,
 		1.4,
 		0.0,
-		"a✕b\n✕ ab✕",
+		&"a✕b\n✕ ab✕".chars().map(u32::from).collect::<Vec<u32>>(),
 		200.0,
 		false,
 		false,

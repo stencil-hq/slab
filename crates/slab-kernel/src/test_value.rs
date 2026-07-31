@@ -1,6 +1,8 @@
 //! AVAL decoding and `f64` bit decoding against hand-built document fixtures.
 
 use crate::{
+	frame,
+	params::ParamStore,
 	rt,
 	slir::{self, Doc},
 	style, value,
@@ -201,7 +203,7 @@ pub fn test_tuple_dyn_members_track_params() {
 
 	let mut st = style::st_new();
 	style::init_params(&doc, &mut st);
-	st.pv_num[0] = 30.0;
+	assert!(st.params.set_number(0, 30.0));
 
 	let v = value::decode(&doc, 0);
 	assert_eq!(v.tag, slir::T_TUPLE_DYN, "tuple-dyn tag survives decode");
@@ -209,7 +211,88 @@ pub fn test_tuple_dyn_members_track_params() {
 	assert!(style::is_tuple_v(v.tag), "tuple-dyn counts as a tuple");
 	assert_eq!(style::tup_at(&doc, &st, &v, 0), 5.0, "literal member");
 	assert_eq!(style::tup_at(&doc, &st, &v, 1), 30.0, "param member");
-	st.pv_num[0] = 42.0;
+	assert!(st.params.set_number(0, 42.0));
 	assert_eq!(style::tup_at(&doc, &st, &v, 1), 42.0, "param member tracks the current value");
 	assert_eq!(style::tup_at(&doc, &st, &v, 2), 0.0, "oob member -> 0");
+}
+
+/// Verifies packed Boolean parameters on both sides of a word boundary,
+/// including retained defaults, no-op writes, and isolation from numeric
+/// parameters.
+pub fn test_boolean_params_cross_word_boundary() {
+	let mut doc = slir::doc_new();
+	doc.ok = true;
+	doc.strs.push(String::new());
+
+	let false_default =
+		u32::try_from(doc.aval_tag.len()).expect("fixture attribute count fits in u32");
+	doc.aval_tag.push(slir::T_NUM);
+	doc.aval_lo.push(0);
+	doc.aval_hi.push(0);
+	doc.aval_num.push(0.0);
+	let true_default =
+		u32::try_from(doc.aval_tag.len()).expect("fixture attribute count fits in u32");
+	doc.aval_tag.push(slir::T_NUM);
+	doc.aval_lo.push(0);
+	doc.aval_hi.push(0);
+	doc.aval_num.push(1.0);
+	let number_default =
+		u32::try_from(doc.aval_tag.len()).expect("fixture attribute count fits in u32");
+	doc.aval_tag.push(slir::T_NUM);
+	doc.aval_lo.push(0);
+	doc.aval_hi.push(0);
+	doc.aval_num.push(12.5);
+
+	const NUMBER_PARAM: usize = 17;
+	for param in 0..66 {
+		let name = u32::try_from(doc.strs.len()).expect("fixture string count fits in u32");
+		doc.strs.push(if param == NUMBER_PARAM {
+			"scale".into()
+		} else {
+			format!("flag-{param}")
+		});
+		doc.parm_name.push(name);
+		doc.parm_type.push(if param == NUMBER_PARAM {
+			slir::PARAM_NUM
+		} else {
+			slir::PARAM_BOOL
+		});
+		doc.parm_default.push(if param == NUMBER_PARAM {
+			number_default
+		} else if param % 3 == 0 {
+			true_default
+		} else {
+			false_default
+		});
+		doc.parm_enum_off.push(0);
+		doc.parm_enum_len.push(0);
+		doc.parm_site_off.push(0);
+		doc.parm_site_len.push(0);
+	}
+
+	let mut params = ParamStore::default();
+	params.init(&doc);
+	for param in [0, 62, 63, 64, 65] {
+		assert_eq!(
+			frame::ParamValue::Bool(params.boolean(param)),
+			frame::ParamValue::Bool(param % 3 == 0),
+			"default for boundary-adjacent parameter {param}"
+		);
+	}
+	assert_eq!(frame::ParamValue::Num(params.number(NUMBER_PARAM)), frame::ParamValue::Num(12.5));
+
+	assert!(params.set_boolean(63, false), "bit 63 changes");
+	assert!(!params.set_boolean(63, false), "equal bit-63 write is a no-op");
+	assert!(params.set_boolean(64, true), "bit 64 changes");
+	assert!(!params.set_boolean(64, true), "equal bit-64 write is a no-op");
+	assert_eq!(frame::ParamValue::Bool(params.boolean(62)), frame::ParamValue::Bool(false));
+	assert_eq!(frame::ParamValue::Bool(params.boolean(63)), frame::ParamValue::Bool(false));
+	assert_eq!(frame::ParamValue::Bool(params.boolean(64)), frame::ParamValue::Bool(true));
+	assert_eq!(frame::ParamValue::Bool(params.boolean(65)), frame::ParamValue::Bool(false));
+	assert_eq!(
+		frame::ParamValue::Num(params.number(NUMBER_PARAM)),
+		frame::ParamValue::Num(12.5),
+		"Boolean writes do not disturb the numeric lane"
+	);
+	assert!(!params.set_number(NUMBER_PARAM, 12.5), "equal numeric write is a no-op");
 }

@@ -176,13 +176,14 @@ pub fn blocks_doc(blocks: usize) -> Instance {
 		);
 		let text = format!("block {index}: deterministic editable text");
 		assert!(
-			inst_set_list_field(&mut instance, BLOCKS_PARAM, "", index_i32, "text", &ParamValue {
-				kind: 0,
-				num:  0.0,
-				s:    text,
-				rgba: 0,
-				sym:  String::new(),
-			},),
+			inst_set_list_field(
+				&mut instance,
+				BLOCKS_PARAM,
+				"",
+				index_i32,
+				"text",
+				&ParamValue::Text(text),
+			),
 			"text property assignment failed for block {index}"
 		);
 	}

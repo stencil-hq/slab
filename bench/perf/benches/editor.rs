@@ -7,7 +7,7 @@ use slab_perf::{
 };
 
 /// Criterion sizes. 100k-line scenarios run through the `oneshot` binary
-/// (`cargo run -p slab-perf --release --bin oneshot`) instead: at tens of
+/// (`cargo run -p slab-perf --profile dist --bin oneshot`) instead: at tens of
 /// seconds per operation they starve Criterion's sampling model.
 const LINE_SIZES: [usize; 2] = [1_000, 10_000];
 const BLOCK_SIZES: [usize; 2] = [1_000, 10_000];

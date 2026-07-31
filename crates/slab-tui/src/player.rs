@@ -55,11 +55,15 @@ fn mmss(ms: f64) -> String {
 }
 
 fn pv_text(s: &str) -> kframe::ParamValue {
-	kframe::ParamValue { kind: 0, num: 0.0, s: s.to_string(), rgba: 0, sym: String::new() }
+	kframe::ParamValue::Text(s.to_string())
 }
 
 const fn pv_num(kind: u32, num: f64) -> kframe::ParamValue {
-	kframe::ParamValue { kind, num, s: String::new(), rgba: 0, sym: String::new() }
+	match kind {
+		slab_kernel::slir::PARAM_NUM => kframe::ParamValue::Num(num),
+		slab_kernel::slir::PARAM_PCT => kframe::ParamValue::Pct(num),
+		_ => panic!("numeric parameter kind must be num or pct"),
+	}
 }
 
 /// Set a declared param by name through the kernel's type check.
@@ -100,8 +104,15 @@ impl PlayerApp {
 		set(inst, "artist", &pv_text(ARTIST))?;
 		set(inst, "elapsed", &pv_text(&mmss(self.elapsed_ms)))?;
 		set(inst, "remain", &pv_text(&format!("-{}", mmss(remain))))?;
-		set(inst, "progress", &pv_num(2, (self.elapsed_ms / tr.len_ms * 100.0).clamp(0.0, 100.0)))?;
-		set(inst, "playing", &pv_num(4, f64::from(self.playing)))?;
+		set(
+			inst,
+			"progress",
+			&pv_num(
+				slab_kernel::slir::PARAM_PCT,
+				(self.elapsed_ms / tr.len_ms * 100.0).clamp(0.0, 100.0),
+			),
+		)?;
+		set(inst, "playing", &kframe::ParamValue::Bool(self.playing))?;
 		Ok(())
 	}
 

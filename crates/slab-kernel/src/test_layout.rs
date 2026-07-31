@@ -401,13 +401,7 @@ mod wave0_api {
 		assert!(frame::inst_set_list_len(&mut instance, 0, "", 1));
 		assert_eq!(frame::inst_list_len(&instance, 0, ""), 1);
 		instance.dirty = false;
-		let value = frame::ParamValue {
-			kind: slir::PARAM_TEXT,
-			num:  0.0,
-			s:    "x".into(),
-			rgba: 0,
-			sym:  String::new(),
-		};
+		let value = frame::ParamValue::Text("x".into());
 		assert_eq!(frame::inst_list_len(&instance, 0, "0.children"), -1);
 		assert!(!frame::inst_set_list_len(&mut instance, 0, "0.children", 2));
 		assert!(!frame::inst_set_list_field(&mut instance, 0, "0.children", 0, "label", &value));
@@ -819,13 +813,7 @@ mod runtime_image_resolution {
 	}
 
 	fn set_source(instance: &mut frame::Instance, source: &str) {
-		assert!(frame::inst_set_param(instance, 0, &frame::ParamValue {
-			kind: slir::PARAM_TEXT,
-			num:  0.0,
-			s:    source.to_string(),
-			rgba: 0,
-			sym:  String::new(),
-		},));
+		assert!(frame::inst_set_param(instance, 0, &frame::ParamValue::Text(source.to_string()),));
 	}
 
 	#[test]

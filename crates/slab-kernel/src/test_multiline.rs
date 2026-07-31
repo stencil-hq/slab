@@ -96,6 +96,30 @@ pub fn fill(f: &mut Fix, text: &str, multi: bool, submit: bool, width: f64) {
 	f.ds.ed_node.push(0);
 	f.ds.ed.push(edit::es_new(0, text));
 }
+fn set_tab_size(f: &mut Fix, size: f64) {
+	let value = u32::try_from(f.d.aval_tag.len()).expect("fixture value count");
+	f.d.aval_tag.push(slir::T_NUM);
+	f.d.aval_lo.push(0);
+	f.d.aval_hi.push(0);
+	f.d.aval_num.push(size);
+	f.d.attr_id.push(slir::A_TAB_SIZE);
+	f.d.attr_val.push(value);
+	f.d.attr_index[1] = i32::try_from(f.d.attr_id.len()).expect("fixture attr count");
+}
+
+fn add_focus_target(f: &mut Fix) {
+	f.d.node_kind.push(slir::K_TEXT);
+	f.d.node_flags.push(slir::F_FOCUSABLE);
+	f.d.node_parent.push(slir::NONE);
+	f.d.node_first.push(slir::NONE);
+	f.d.node_next.push(slir::NONE);
+	f.d.node_key.push(0);
+	f.d.node_id.push(0);
+	f.d.node_line.push(1);
+	f.d.attr_index
+		.push(i32::try_from(f.d.attr_id.len()).expect("fixture attr count"));
+	add_scene(&mut f.sc, 1, -1, 0.0, 50.0, 100.0, 20.0, slir::F_FOCUSABLE);
+}
 
 /// Constructs a keyboard or text event with neutral pointer fields.
 pub fn event(etype: u32, key: &str, text: &str, mods: u32) -> Event {
@@ -117,6 +141,68 @@ pub fn event(etype: u32, key: &str, text: &str, mods: u32) -> Event {
 /// Dispatches an event through a fixture and returns its effects.
 pub fn send(f: &mut Fix, ev: &Event) -> Effects {
 	dispatch::dispatch(&f.d, &mut f.st, &f.lay, &f.sc, &mut f.ds, ev)
+}
+fn pointer_at(f: &Fix, etype: u32, line: usize, at: i32) -> Event {
+	let text_layout = &f.lay.tls[0];
+	let mut ev = event(etype, "", "", 0);
+	ev.x = f.sc.entries[0].x
+		+ textm::caret_x(textm::Shaper { d: &f.d, cache: &f.lay.shape_cache }, text_layout, line, at);
+	ev.y = (line as f64 + 0.5).mul_add(text_layout.line_h, f.sc.entries[0].y);
+	ev.clicks = 1;
+	ev
+}
+
+fn drag(f: &mut Fix, from_line: usize, from: i32, to_line: usize, to: i32) {
+	let down = pointer_at(f, dispatch::E_POINTER_DOWN, from_line, from);
+	send(f, &down);
+	let moved = pointer_at(f, dispatch::E_POINTER_MOVE, to_line, to);
+	send(f, &moved);
+	let up = pointer_at(f, dispatch::E_POINTER_UP, to_line, to);
+	send(f, &up);
+}
+
+/// Verifies opt-in Tab insertion, history, Change delivery, and traversal
+/// fallbacks.
+pub fn test_tab_size_insertion_and_traversal() {
+	let mut opted_in = fix_new();
+	fill(&mut opted_in, "ab", true, false, 100.0);
+	set_tab_size(&mut opted_in, 3.0);
+	add_focus_target(&mut opted_in);
+	opted_in.ds.ed[0].caret = 1;
+	opted_in.ds.ed[0].anchor = 1;
+
+	let inserted = send(&mut opted_in, &event(dispatch::E_KEY_DOWN, "Tab", "", 0));
+	assert_eq!(edit::text_str(&opted_in.ds.ed[0]), "a   b", "Tab inserts exactly tab-size spaces");
+	assert_eq!(opted_in.ds.fs.focus, 0, "Tab insertion retains field focus");
+	assert_eq!(inserted.sig_name, vec![1], "Tab insertion emits Change");
+	assert_eq!(inserted.sig_text, vec!["a   b"], "Change carries the edited text");
+
+	let undone = send(&mut opted_in, &event(dispatch::E_KEY_DOWN, "z", "", dispatch::M_META));
+	assert_eq!(edit::text_str(&opted_in.ds.ed[0]), "ab", "one undo removes the Tab insertion");
+	assert_eq!(undone.sig_text, vec!["ab"], "undo emits Change with restored text");
+
+	let mut shifted = fix_new();
+	fill(&mut shifted, "ab", true, false, 100.0);
+	set_tab_size(&mut shifted, 3.0);
+	add_focus_target(&mut shifted);
+	send(&mut shifted, &event(dispatch::E_KEY_DOWN, "Tab", "", dispatch::M_SHIFT));
+	assert_eq!(shifted.ds.fs.focus, 1, "Shift+Tab keeps backward focus traversal");
+	assert_eq!(edit::text_str(&shifted.ds.ed[0]), "ab", "Shift+Tab does not edit");
+
+	let mut default_field = fix_new();
+	fill(&mut default_field, "ab", true, false, 100.0);
+	add_focus_target(&mut default_field);
+	send(&mut default_field, &event(dispatch::E_KEY_DOWN, "Tab", "", 0));
+	assert_eq!(default_field.ds.fs.focus, 1, "a field without tab-size keeps Tab traversal");
+	assert_eq!(edit::text_str(&default_field.ds.ed[0]), "ab", "default Tab does not edit");
+
+	let mut single_line = fix_new();
+	fill(&mut single_line, "ab", false, false, 100.0);
+	set_tab_size(&mut single_line, 3.0);
+	add_focus_target(&mut single_line);
+	send(&mut single_line, &event(dispatch::E_KEY_DOWN, "Tab", "", 0));
+	assert_eq!(single_line.ds.fs.focus, 1, "single-line tab-size keeps Tab traversal");
+	assert_eq!(edit::text_str(&single_line.ds.ed[0]), "ab", "single-line Tab does not edit");
 }
 
 /// Verifies the multiline, submit-bound, modified, and single-line Enter
@@ -298,7 +384,7 @@ pub fn test_fresh_wrapped_layout_scroll_follow_settles() {
 		14.0,
 		1.2,
 		0.0,
-		&edit::display_str(&f.ds.ed[0]),
+		&edit::display_text(&f.ds.ed[0]).to_utf8(),
 		10.0,
 		true,
 		false,
@@ -309,6 +395,146 @@ pub fn test_fresh_wrapped_layout_scroll_follow_settles() {
 		"fresh wrapped layout requests settle solve"
 	);
 	assert!(style::scroll_get(&f.st, 1) > 0.0, "fresh wrapped caret scrolls ancestor");
+}
+/// Primary field drags retain their down-caret anchor, replace the selected
+/// span on typing, and leave sub-threshold clicks collapsed.
+pub fn test_pointer_drag_selects_replaces_and_preserves_plain_click() {
+	let mut forward = fix_new();
+	fill(&mut forward, "abcdef", false, false, 120.0);
+	drag(&mut forward, 0, 1, 0, 4);
+	assert_eq!(
+		(forward.ds.ed[0].anchor, forward.ds.ed[0].caret),
+		(1, 4),
+		"forward drag selects from the press caret to the move caret"
+	);
+	let stray_move = pointer_at(&forward, dispatch::E_POINTER_MOVE, 0, 0);
+	send(&mut forward, &stray_move);
+	assert_eq!(
+		(forward.ds.ed[0].anchor, forward.ds.ed[0].caret),
+		(1, 4),
+		"pointer-up ends capture without collapsing the retained selection"
+	);
+	send(&mut forward, &event(dispatch::E_TEXT, "", "X", 0));
+	assert_eq!(edit::text_str(&forward.ds.ed[0]), "aXef", "typing replaces the dragged span");
+
+	let mut reverse = fix_new();
+	fill(&mut reverse, "abcdef", false, false, 120.0);
+	drag(&mut reverse, 0, 4, 0, 1);
+	assert_eq!(
+		(reverse.ds.ed[0].anchor, reverse.ds.ed[0].caret),
+		(4, 1),
+		"right-to-left drag mirrors the active and fixed endpoints"
+	);
+
+	let mut clicked = fix_new();
+	fill(&mut clicked, "abcdef", false, false, 120.0);
+	edit::set_selection(&mut clicked.ds.ed[0], 5, 0);
+	let down = pointer_at(&clicked, dispatch::E_POINTER_DOWN, 0, 2);
+	send(&mut clicked, &down);
+	let mut jitter = pointer_at(&clicked, dispatch::E_POINTER_MOVE, 0, 2);
+	jitter.x += 2.0;
+	send(&mut clicked, &jitter);
+	jitter.etype = dispatch::E_POINTER_UP;
+	send(&mut clicked, &jitter);
+	assert_eq!(
+		(clicked.ds.ed[0].anchor, clicked.ds.ed[0].caret),
+		(2, 2),
+		"a plain click with sub-threshold jitter remains collapsed"
+	);
+}
+
+/// Field drag hit-testing follows visual lines, clamps outside line extents,
+/// and reports codepoint offsets only at shaped emoji boundaries.
+pub fn test_pointer_drag_multiline_clamps_and_uses_emoji_boundaries() {
+	let mut multiline = fix_new();
+	fill(&mut multiline, "abc\ndef", true, false, 120.0);
+	multiline.sc.entries[0].h = multiline.lay.tls[0].line_h * 2.0;
+	drag(&mut multiline, 0, 1, 1, 6);
+	assert_eq!(
+		(multiline.ds.ed[0].anchor, multiline.ds.ed[0].caret),
+		(1, 6),
+		"dragging onto the second visual line selects across the hard break"
+	);
+
+	let mut left = fix_new();
+	fill(&mut left, "abc", false, false, 120.0);
+	let down = pointer_at(&left, dispatch::E_POINTER_DOWN, 0, 1);
+	send(&mut left, &down);
+	let mut moved = pointer_at(&left, dispatch::E_POINTER_MOVE, 0, 0);
+	moved.x = left.sc.entries[0].x - 100.0;
+	send(&mut left, &moved);
+	moved.etype = dispatch::E_POINTER_UP;
+	send(&mut left, &moved);
+	assert_eq!((left.ds.ed[0].anchor, left.ds.ed[0].caret), (1, 0));
+
+	let mut right = fix_new();
+	fill(&mut right, "abc", false, false, 120.0);
+	let down = pointer_at(&right, dispatch::E_POINTER_DOWN, 0, 1);
+	send(&mut right, &down);
+	let mut moved = pointer_at(&right, dispatch::E_POINTER_MOVE, 0, 3);
+	moved.x = right.sc.entries[0].x + 1000.0;
+	send(&mut right, &moved);
+	moved.etype = dispatch::E_POINTER_UP;
+	send(&mut right, &moved);
+	assert_eq!((right.ds.ed[0].anchor, right.ds.ed[0].caret), (1, 3));
+
+	let mut emoji = fix_new();
+	fill(&mut emoji, "a😀b", false, false, 120.0);
+	let down = pointer_at(&emoji, dispatch::E_POINTER_DOWN, 0, 0);
+	send(&mut emoji, &down);
+	let before = pointer_at(&emoji, dispatch::E_POINTER_MOVE, 0, 1).x;
+	let after = pointer_at(&emoji, dispatch::E_POINTER_MOVE, 0, 2).x;
+	let mut moved = pointer_at(&emoji, dispatch::E_POINTER_MOVE, 0, 2);
+	moved.x = f64::midpoint(before, after) + 0.1;
+	send(&mut emoji, &moved);
+	moved.etype = dispatch::E_POINTER_UP;
+	send(&mut emoji, &moved);
+	assert_eq!(
+		(emoji.ds.ed[0].anchor, emoji.ds.ed[0].caret),
+		(0, 2),
+		"emoji hit returns a grapheme-boundary codepoint offset rather than a UTF-8 byte offset"
+	);
+}
+
+/// Active IME preedit keeps ownership of the caret during a captured drag.
+pub fn test_pointer_drag_does_not_extend_active_composition() {
+	let mut f = fix_new();
+	fill(&mut f, "abcdef", false, false, 120.0);
+	send(&mut f, &event(dispatch::E_COMPOSITION_START, "", "", 0));
+	let down = pointer_at(&f, dispatch::E_POINTER_DOWN, 0, 1);
+	send(&mut f, &down);
+	let moved = pointer_at(&f, dispatch::E_POINTER_MOVE, 0, 5);
+	send(&mut f, &moved);
+	let up = pointer_at(&f, dispatch::E_POINTER_UP, 0, 5);
+	send(&mut f, &up);
+	assert!(f.ds.ed[0].composing);
+	assert_eq!(
+		(f.ds.ed[0].anchor, f.ds.ed[0].caret),
+		(1, 1),
+		"captured pointer movement cannot extend an active composition"
+	);
+}
+/// Escape, host blur, and close all cancel field-selection capture.
+pub fn test_pointer_drag_capture_clears_on_cancel_paths() {
+	for cancel in [dispatch::E_KEY_DOWN, dispatch::E_BLUR, dispatch::E_CLOSE] {
+		let mut f = fix_new();
+		fill(&mut f, "abcdef", false, false, 120.0);
+		let down = pointer_at(&f, dispatch::E_POINTER_DOWN, 0, 1);
+		send(&mut f, &down);
+		let canceled = if cancel == dispatch::E_KEY_DOWN {
+			event(cancel, "Escape", "", 0)
+		} else {
+			event(cancel, "", "", 0)
+		};
+		send(&mut f, &canceled);
+		let moved = pointer_at(&f, dispatch::E_POINTER_MOVE, 0, 5);
+		send(&mut f, &moved);
+		assert_eq!(
+			(f.ds.ed[0].anchor, f.ds.ed[0].caret),
+			(1, 1),
+			"cancel event {cancel} prevents later moves from extending selection"
+		);
+	}
 }
 
 /// Appends one string to the doc pool, returning its index.

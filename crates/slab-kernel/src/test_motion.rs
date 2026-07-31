@@ -684,7 +684,7 @@ pub fn test_value_transition_tweens_param_writes() {
 	assert_eq!(style::attr_num(&d, &st, 0, slir::A_W, 0.0), 40.0);
 
 	// A host write stamps the clock at the observing solve.
-	st.pv_num[0] = 120.0;
+	assert!(st.params.set_number(0, 120.0));
 	style::begin_solve(&d, &mut st);
 	assert!(motion::apply(&d, &mut st, &mut ms, 1000.0), "a changed value keeps motion active");
 	assert_eq!(
@@ -702,7 +702,7 @@ pub fn test_value_transition_tweens_param_writes() {
 	);
 
 	// A second write mid-flight chains from the painted value.
-	st.pv_num[0] = 80.0;
+	assert!(st.params.set_number(0, 80.0));
 	style::begin_solve(&d, &mut st);
 	assert!(motion::apply(&d, &mut st, &mut ms, 1100.0));
 	assert!(

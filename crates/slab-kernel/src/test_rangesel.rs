@@ -66,9 +66,9 @@ fn instance() -> frame::Instance {
 	instance.doc = range_doc();
 	frame::inst_init(&mut instance);
 	frame::inst_set_env(&mut instance, 200.0, 200.0, 0, false, false);
-	style::field_set(&mut instance.st, A, "alpha");
-	style::field_set(&mut instance.st, B, "bravo");
-	style::field_set(&mut instance.st, C, "charlie");
+	style::field_set(&mut instance.st, A, &crate::text::Text::from("alpha"));
+	style::field_set(&mut instance.st, B, &crate::text::Text::from("bravo"));
+	style::field_set(&mut instance.st, C, &crate::text::Text::from("charlie"));
 	frame::inst_frame(&mut instance, 0.0);
 	instance
 }
@@ -166,6 +166,37 @@ pub fn test_shift_click_cross_field_range_paints_endpoints_and_middle() {
 	assert!(a[0] < text_width(&painted, A), "source band is partial");
 	assert_eq!(b[0], text_width(&painted, B), "middle field is fully banded");
 	assert!(c[0] < text_width(&painted, C), "head band is partial");
+}
+/// A primary drag that enters another editable field constructs the same
+/// stable anchor/head range and local endpoint projections as shift-click.
+pub fn test_pointer_drag_cross_field_matches_shift_click_range() {
+	let mut dragged = instance();
+	let down = pointer(&dragged, A, 2, 0);
+	frame::inst_dispatch(&mut dragged, &down);
+	let mut moved = pointer(&dragged, C, 2, 0);
+	moved.etype = dispatch::E_POINTER_MOVE;
+	frame::inst_dispatch(&mut dragged, &moved);
+	moved.etype = dispatch::E_POINTER_UP;
+	frame::inst_dispatch(&mut dragged, &moved);
+
+	let (anchor, head) = frame::inst_get_range(&dragged).expect("drag retains a cross-field range");
+	assert_eq!((anchor.key.as_str(), anchor.offset), (KEY_A, 2));
+	assert_eq!((head.key.as_str(), head.offset), (KEY_C, 2));
+	let source = frame::inst_get_caret(&dragged, KEY_A).expect("source edit state");
+	let target = frame::inst_get_caret(&dragged, KEY_C).expect("target edit state");
+	assert_eq!((source.anchor, source.caret), (2, 5));
+	assert_eq!((target.anchor, target.caret), (0, 2));
+
+	let mut shifted = instance();
+	assert!(frame::inst_set_caret(&mut shifted, KEY_A, 2, 2));
+	let shifted_down = pointer(&shifted, C, 2, dispatch::M_SHIFT);
+	frame::inst_dispatch(&mut shifted, &shifted_down);
+	release(&mut shifted, &shifted_down);
+	assert_eq!(
+		frame::inst_get_range(&dragged),
+		frame::inst_get_range(&shifted),
+		"drag and shift-click publish identical CrossFieldRange endpoints"
+	);
 }
 
 /// Cross-field mutation requests stay byte-intact for host structural editing;
@@ -278,7 +309,7 @@ fn virtual_field_doc() -> slir::Doc {
 }
 
 fn text_value(text: &str) -> frame::ParamValue {
-	frame::ParamValue { kind: 0, num: 0.0, s: text.into(), rgba: 0, sym: String::new() }
+	frame::ParamValue::Text(text.into())
 }
 
 fn virtual_field_by_item(instance: &frame::Instance, item_key: &str) -> u32 {

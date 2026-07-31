@@ -71,7 +71,11 @@ fn player_frame(sets: &[(&str, slab_kernel::frame::ParamValue)]) -> slab_kernel:
 }
 
 const fn pv_num(kind: u32, num: f64) -> slab_kernel::frame::ParamValue {
-	slab_kernel::frame::ParamValue { kind, num, s: String::new(), rgba: 0, sym: String::new() }
+	match kind {
+		slab_kernel::slir::PARAM_NUM => slab_kernel::frame::ParamValue::Num(num),
+		slab_kernel::slir::PARAM_PCT => slab_kernel::frame::ParamValue::Pct(num),
+		_ => panic!("numeric parameter kind must be num or pct"),
+	}
 }
 
 /// Effective group opacity over each Text op, keyed by its string.
@@ -155,10 +159,10 @@ fn playing_swaps_glyph_opacity_in_frame_ops() {
 			.unwrap_or_else(|| panic!("glyph {glyph:?} not in frame"))
 			.1
 	};
-	let paused = player_frame(&[("playing", pv_num(4, 0.0))]);
+	let paused = player_frame(&[("playing", slab_kernel::frame::ParamValue::Bool(false))]);
 	assert_eq!(opacity_of(&paused, "|>"), 1.0, "paused: |> must be visible");
 	assert_eq!(opacity_of(&paused, "||"), 0.0, "paused: || must be hidden");
-	let playing = player_frame(&[("playing", pv_num(4, 1.0))]);
+	let playing = player_frame(&[("playing", slab_kernel::frame::ParamValue::Bool(true))]);
 	assert_eq!(opacity_of(&playing, "|>"), 0.0, "playing: |> must be hidden");
 	assert_eq!(opacity_of(&playing, "||"), 1.0, "playing: || must be visible");
 
@@ -181,8 +185,8 @@ fn playing_swaps_glyph_opacity_in_frame_ops() {
 /// sub-cell), so the assertion reads frame geometry through the kernel.
 #[test]
 fn progress_moves_the_playhead_knob() {
-	let x20 = knob_x(&player_frame(&[("progress", pv_num(2, 20.0))]));
-	let x80 = knob_x(&player_frame(&[("progress", pv_num(2, 80.0))]));
+	let x20 = knob_x(&player_frame(&[("progress", pv_num(slab_kernel::slir::PARAM_PCT, 20.0))]));
+	let x80 = knob_x(&player_frame(&[("progress", pv_num(slab_kernel::slir::PARAM_PCT, 80.0))]));
 	assert!(x80 > x20, "knob must move right: x20={x20} x80={x80}");
 	let delta = x80 - x20;
 	assert!((150.0..230.0).contains(&delta), "knob delta {delta} out of range for a 316u waveform");

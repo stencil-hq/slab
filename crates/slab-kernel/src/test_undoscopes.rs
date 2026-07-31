@@ -82,8 +82,8 @@ fn instance() -> frame::Instance {
 	instance.doc = transaction_doc();
 	frame::inst_init(&mut instance);
 	frame::inst_set_env(&mut instance, 200.0, 100.0, 0, false, false);
-	style::field_set(&mut instance.st, A, "");
-	style::field_set(&mut instance.st, B, "");
+	style::field_set(&mut instance.st, A, &crate::text::Text::default());
+	style::field_set(&mut instance.st, B, &crate::text::Text::default());
 	frame::inst_frame(&mut instance, 0.0);
 	instance
 }

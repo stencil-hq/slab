@@ -1,11 +1,12 @@
 //! One-shot large-buffer probe for scenarios too slow for Criterion sampling.
 //!
-//! Usage: `cargo run -p slab-perf --release --bin oneshot [-- LINES ...
-//! [cold|warm|rich|sweep]]` Defaults to 100000 lines. `cold` and `warm`
+//! Usage: `cargo run -p slab-perf --profile dist --bin oneshot [-- LINES ...
+//! [cold|warm|rich|sweep|type]]` Defaults to 100000 lines. `cold` and `warm`
 //! restrict the ordinary probe phases; `rich` times a rich-field keystroke;
-//! `sweep` scrolls page-by-page through the whole document. Sizes below 50k
-//! lines take 5 samples per ordinary operation (mutations restored outside the
-//! clock); larger sizes take exactly one sample per operation.
+//! `sweep` scrolls page-by-page through the whole document; `type` times a
+//! sustained 300-keystroke burst. Sizes below 50k lines take 5 samples per
+//! ordinary operation (mutations restored outside the clock); larger sizes
+//! take exactly one sample per operation.
 
 use std::time::{Duration, Instant};
 
@@ -41,6 +42,23 @@ fn rich_probe(lines: usize) {
 	stats("rich", lines, vec![elapsed]);
 }
 
+/// Sustained typing burst: 300 keystrokes with a frame each, timed
+/// per keystroke. Dense enough for a sampling profiler to attribute cost.
+fn type_probe(lines: usize) {
+	let mut instance = editor_field_doc(lines);
+	let mut time = 1.0;
+	let samples: Vec<Duration> = (0..300)
+		.map(|_| {
+			timed(|| {
+				type_char(&mut instance, "x");
+				time += 1.0;
+				inst_frame(&mut instance, time);
+			})
+		})
+		.collect();
+	stats("type_burst", lines, samples);
+}
+
 fn sweep_probe(lines: usize) {
 	let mut instance = editor_field_doc(lines);
 	assert!(inst_set_caret(&mut instance, "editor", 0, 0), "failed to reset editor caret");
@@ -71,6 +89,10 @@ fn sweep_probe(lines: usize) {
 fn probe(lines: usize, phase: Option<&str>) {
 	if phase == Some("rich") {
 		rich_probe(lines);
+		return;
+	}
+	if phase == Some("type") {
+		type_probe(lines);
 		return;
 	}
 	if phase == Some("sweep") {
@@ -152,11 +174,11 @@ fn main() {
 	let args: Vec<String> = std::env::args().skip(1).collect();
 	let phase = args
 		.iter()
-		.find(|arg| matches!(arg.as_str(), "cold" | "warm" | "rich" | "sweep"))
+		.find(|arg| matches!(arg.as_str(), "cold" | "warm" | "rich" | "sweep" | "type"))
 		.map(String::as_str);
 	let sizes: Vec<usize> = args
 		.iter()
-		.filter(|arg| !matches!(arg.as_str(), "cold" | "warm" | "rich" | "sweep"))
+		.filter(|arg| !matches!(arg.as_str(), "cold" | "warm" | "rich" | "sweep" | "type"))
 		.map(|arg| arg.parse().expect("line count must be an integer"))
 		.collect();
 	let sizes = if sizes.is_empty() {

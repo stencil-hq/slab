@@ -3,7 +3,9 @@
 //! and negation.
 
 use crate::{
-	dispatch, motion, scene,
+	dispatch, motion,
+	params::ParamStore,
+	scene,
 	slir::{self, Doc},
 	style,
 	when::{self, Env},
@@ -54,11 +56,18 @@ pub const fn ev(vw: f64, vh: f64, client: u32, dark: bool, coarse: bool) -> Env 
 	Env { vw, vh, client, dark, coarse, theme: String::new() }
 }
 
+/// Builds initialized retained parameter storage for a fixture document.
+fn param_store(doc: &Doc) -> ParamStore {
+	let mut params = ParamStore::default();
+	params.init(doc);
+	params
+}
+
 /// Verifies dark, orientation, and coarse-pointer environment conditions.
 pub fn test_env_conds() {
 	let doc = fixture();
 	let states = Vec::new();
-	let param_values = Vec::new();
+	let param_values = param_store(&doc);
 
 	let dark = ev(800.0, 600.0, 0, true, false);
 	assert!(when::eval_cond(&doc, 0, 0, &dark, &states, &param_values, 0.0, 0.0), "dark on");
@@ -96,7 +105,7 @@ pub fn test_state_conds() {
 	let doc = fixture();
 	let env = ev(800.0, 600.0, 0, false, false);
 	let no_states = Vec::new();
-	let param_values = Vec::new();
+	let param_values = param_store(&doc);
 	assert!(!when::eval_cond(&doc, 2, 0, &env, &no_states, &param_values, 0.0, 0.0), "hot inactive");
 	assert!(when::eval_cond(&doc, 6, 0, &env, &no_states, &param_values, 0.0, 0.0), "!hot active");
 
@@ -109,11 +118,16 @@ pub fn test_state_conds() {
 /// set.
 pub fn test_bool_param_override() {
 	let mut doc = fixture();
-	// Parameter "hot" (symbol 3), type Bool, current value 0: it overrides the
-	// global state set even when the state is present.
+	// Parameter "hot" (symbol 3), type Bool, current value false: it
+	// overrides the global state set even when the state is present.
 	doc.parm_name.push(3);
 	doc.parm_type.push(4);
-	doc.parm_default.push(0);
+	let default = u32::try_from(doc.aval_tag.len()).expect("fixture value index fits in u32");
+	doc.aval_tag.push(slir::T_NUM);
+	doc.aval_lo.push(0);
+	doc.aval_hi.push(0);
+	doc.aval_num.push(0.0);
+	doc.parm_default.push(default);
 	doc.parm_enum_off.push(0);
 	doc.parm_enum_len.push(0);
 	doc.parm_site_off.push(0);
@@ -121,17 +135,17 @@ pub fn test_bool_param_override() {
 
 	let env = ev(800.0, 600.0, 0, false, false);
 	let hot = vec![3];
-	let false_param = vec![0.0];
+	let mut param_values = param_store(&doc);
 	assert!(
-		!when::eval_cond(&doc, 2, 0, &env, &hot, &false_param, 0.0, 0.0),
-		"bool param 0 wins over state"
+		!when::eval_cond(&doc, 2, 0, &env, &hot, &param_values, 0.0, 0.0),
+		"false bool param wins over state"
 	);
 
-	let true_param = vec![1.0];
+	assert!(param_values.set_boolean(0, true));
 	let no_states = Vec::new();
 	assert!(
-		when::eval_cond(&doc, 2, 0, &env, &no_states, &true_param, 0.0, 0.0),
-		"bool param 1 activates"
+		when::eval_cond(&doc, 2, 0, &env, &no_states, &param_values, 0.0, 0.0),
+		"true bool param activates"
 	);
 }
 
@@ -139,7 +153,7 @@ pub fn test_bool_param_override() {
 pub fn test_client_cond() {
 	let doc = fixture();
 	let states = Vec::new();
-	let param_values = Vec::new();
+	let param_values = param_store(&doc);
 	assert!(
 		when::eval_cond(&doc, 3, 0, &ev(1.0, 1.0, 2, false, false), &states, &param_values, 0.0, 0.0),
 		"client tui matches 2"
@@ -163,7 +177,7 @@ pub fn test_client_cond() {
 pub fn test_theme_cond() {
 	let doc = fixture();
 	let states = Vec::new();
-	let param_values = Vec::new();
+	let param_values = param_store(&doc);
 	let mut env = ev(1.0, 1.0, 0, false, false);
 	assert!(
 		!when::eval_cond(&doc, 12, 0, &env, &states, &param_values, 0.0, 0.0),
@@ -179,7 +193,7 @@ pub fn test_wcmp_boundaries() {
 	let doc = fixture();
 	let env = ev(800.0, 600.0, 0, false, false);
 	let states = Vec::new();
-	let param_values = Vec::new();
+	let param_values = param_store(&doc);
 
 	// Condition 4 is `w < 600`, evaluated against the incoming constraint.
 	assert!(

@@ -402,6 +402,8 @@ pub fn test_split_double_click_evening_and_arrow_keys() {
 	assert_eq!(adjusted.sig_meta[0].key, "#root/#a~sash");
 	let shifted = frame::inst_dispatch(&mut instance, &key("ArrowLeft", dispatch::M_SHIFT));
 	assert_eq!(shifted.sig_text, ["107"]);
+	let unbound = frame::inst_dispatch(&mut instance, &key("j", dispatch::M_CTRL));
+	assert!(unbound.sig_name.is_empty(), "unbound shortcut from a synthetic sash is ignored");
 }
 
 pub fn test_split_sash_hover_cursor_and_paint() {

@@ -108,6 +108,7 @@ kernel_tests! {
 	 test_graphemes__test_variation_selector_attaches => slab_kernel::test_graphemes::test_variation_selector_attaches;
 	 test_graphemes__test_zwj_family_is_one_cluster => slab_kernel::test_graphemes::test_zwj_family_is_one_cluster;
 	 test_graphemes__test_zwj_between_non_pictographs_does_not_glue => slab_kernel::test_graphemes::test_zwj_between_non_pictographs_does_not_glue;
+	 test_graphemes__test_windowed_boundaries_match_full_scan => slab_kernel::test_graphemes::test_windowed_boundaries_match_full_scan;
 
 	 test_gesture__test_double_click_suppresses_activate => slab_kernel::test_gesture::test_double_click_suppresses_activate;
 	 test_gesture__test_blur_and_close_emit_cancelled_drag_end_once => slab_kernel::test_gesture::test_blur_and_close_emit_cancelled_drag_end_once;
@@ -158,8 +159,10 @@ kernel_tests! {
 	 test_layout__test_zero_maximum_is_a_real_clamp => slab_kernel::test_layout::test_zero_maximum_is_a_real_clamp;
 
 	 test_list__test_list_defaults_extend_truncate_and_atomic_rejection => slab_kernel::test_list::test_list_defaults_extend_truncate_and_atomic_rejection;
+	 test_list__test_list_boolean_word_boundary_and_swap_removal => slab_kernel::test_list::test_list_boolean_word_boundary_and_swap_removal;
 	 test_list__test_list_keyed_reorder_identity_prune_and_key_addressing => slab_kernel::test_list::test_list_keyed_reorder_identity_prune_and_key_addressing;
 	 test_list__test_list_prop_patch_state_isolation_focus_and_content => slab_kernel::test_list::test_list_prop_patch_state_isolation_focus_and_content;
+	 test_list__test_list_removed_scalar_slots_emit_schema_typed_json => slab_kernel::test_list::test_list_removed_scalar_slots_emit_schema_typed_json;
 	 test_list__test_list_transition_clock_and_overlay_are_per_item => slab_kernel::test_list::test_list_transition_clock_and_overlay_are_per_item;
 	 test_list__test_recursive_list_paths_materialization_and_pruning => slab_kernel::test_list::test_recursive_list_paths_materialization_and_pruning;
 	 test_list__test_recursive_list_defaults_and_reextension_are_clean => slab_kernel::test_list::test_recursive_list_defaults_and_reextension_are_clean;
@@ -196,11 +199,17 @@ kernel_tests! {
 	 test_multiline__test_kills_undo_and_redo => slab_kernel::test_multiline::test_kills_undo_and_redo;
 	 test_multiline__test_paste_undoes_in_one_step => slab_kernel::test_multiline::test_paste_undoes_in_one_step;
 	 test_multiline__test_single_line_text_prefilters_newlines => slab_kernel::test_multiline::test_single_line_text_prefilters_newlines;
+	 test_multiline__test_tab_size_insertion_and_traversal => slab_kernel::test_multiline::test_tab_size_insertion_and_traversal;
+	 test_multiline__test_pointer_drag_capture_clears_on_cancel_paths => slab_kernel::test_multiline::test_pointer_drag_capture_clears_on_cancel_paths;
+	 test_multiline__test_pointer_drag_does_not_extend_active_composition => slab_kernel::test_multiline::test_pointer_drag_does_not_extend_active_composition;
+	 test_multiline__test_pointer_drag_multiline_clamps_and_uses_emoji_boundaries => slab_kernel::test_multiline::test_pointer_drag_multiline_clamps_and_uses_emoji_boundaries;
+	 test_multiline__test_pointer_drag_selects_replaces_and_preserves_plain_click => slab_kernel::test_multiline::test_pointer_drag_selects_replaces_and_preserves_plain_click;
 	 test_multiline__test_visual_arrows_home_end_and_caret_geometry => slab_kernel::test_multiline::test_visual_arrows_home_end_and_caret_geometry;
 
 	 test_rangesel__test_host_composed_boundary_range_preserves_source_band => slab_kernel::test_rangesel::test_host_composed_boundary_range_preserves_source_band;
 	 test_rangesel__test_keyed_list_reorder_and_virtualization_keep_range_identity => slab_kernel::test_rangesel::test_keyed_list_reorder_and_virtualization_keep_range_identity;
 	 test_rangesel__test_shift_click_cross_field_range_paints_endpoints_and_middle => slab_kernel::test_rangesel::test_shift_click_cross_field_range_paints_endpoints_and_middle;
+	 test_rangesel__test_pointer_drag_cross_field_matches_shift_click_range => slab_kernel::test_rangesel::test_pointer_drag_cross_field_matches_shift_click_range;
 	 test_rangesel__test_range_edits_defer_to_host_and_plain_click_clears => slab_kernel::test_rangesel::test_range_edits_defer_to_host_and_plain_click_clears;
 
 	 test_textm__test_default_advance => slab_kernel::test_textm::test_default_advance;
@@ -219,6 +228,10 @@ kernel_tests! {
 	 test_textm__test_nowrap_ellipsis => slab_kernel::test_textm::test_nowrap_ellipsis;
 	 test_textm__test_splice_differential_nowrap => slab_kernel::test_textm::test_splice_differential_nowrap;
 	 test_textm__test_splice_differential_wrapped => slab_kernel::test_textm::test_splice_differential_wrapped;
+	 test_textm__test_splice_differential_rich_nowrap => slab_kernel::test_textm::test_splice_differential_rich_nowrap;
+	 test_textm__test_splice_differential_rich_wrapped => slab_kernel::test_textm::test_splice_differential_rich_wrapped;
+	 test_textm__test_spans_follows_splice => slab_kernel::test_textm::test_spans_follows_splice;
+	 test_textm__test_rich_pins_rebase_across_splice => slab_kernel::test_textm::test_rich_pins_rebase_across_splice;
 	 test_textm__test_text_delta_merge => slab_kernel::test_textm::test_text_delta_merge;
 	 test_textm__test_wrap_basic => slab_kernel::test_textm::test_wrap_basic;
 	 test_textm__test_wrap_cjk_kinsoku => slab_kernel::test_textm::test_wrap_cjk_kinsoku;
@@ -244,6 +257,10 @@ kernel_tests! {
 	 test_richfield__test_composition_clauses_paint_distinct_underlines => slab_kernel::test_richfield::test_composition_clauses_paint_distinct_underlines;
 	 test_richfield__test_composition_end_clears_clause_overlay => slab_kernel::test_richfield::test_composition_end_clears_clause_overlay;
 	 test_richfield__test_composition_commit_preserves_spans => slab_kernel::test_richfield::test_composition_commit_preserves_spans;
+	 test_richfield__test_field_styles_set_reject_overlap_and_clear_with_text => slab_kernel::test_richfield::test_field_styles_set_reject_overlap_and_clear_with_text;
+	 test_richfield__test_field_styles_split_two_line_paint_color_and_italic => slab_kernel::test_richfield::test_field_styles_split_two_line_paint_color_and_italic;
+	 test_richfield__test_field_styles_multibyte_splice_adjustment => slab_kernel::test_richfield::test_field_styles_multibyte_splice_adjustment;
+	 test_richfield__test_field_styles_between_keystrokes_preserve_edit_state => slab_kernel::test_richfield::test_field_styles_between_keystrokes_preserve_edit_state;
 
 	 test_undoscopes__test_enter_split_restore_is_exact_and_resets_local_history => slab_kernel::test_undoscopes::test_enter_split_restore_is_exact_and_resets_local_history;
 	 test_undoscopes__test_backspace_merge_restore_restores_both_fields => slab_kernel::test_undoscopes::test_backspace_merge_restore_restores_both_fields;
@@ -253,6 +270,7 @@ kernel_tests! {
 	 test_undoscopes__test_restore_clears_active_composition => slab_kernel::test_undoscopes::test_restore_clears_active_composition;
 
 	 test_value__test_active_theme_token_lookup => slab_kernel::test_value::test_active_theme_token_lookup;
+	 test_value__test_boolean_params_cross_word_boundary => slab_kernel::test_value::test_boolean_params_cross_word_boundary;
 	 test_value__test_f64_bits => slab_kernel::test_value::test_f64_bits;
 	 test_value__test_fmt_u32 => slab_kernel::test_value::test_fmt_u32;
 	 test_value__test_integer_power_of_two_arithmetic => slab_kernel::test_value::test_integer_power_of_two_arithmetic;
