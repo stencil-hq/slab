@@ -28,11 +28,19 @@ license = "MIT"
 homepage = "https://stencil.so/"
 repository = "https://github.com/stencil-hq/slab"
 
+# Fast optimized builds for interactive `cargo run --release`; packaging uses `dist`.
 [profile.release]
 opt-level = 3
+lto = false
+codegen-units = 16
+incremental = true
+strip = true
+
+[profile.dist]
+inherits = "release"
 lto = "fat"
 codegen-units = 1
-strip = true
+incremental = false
 
 [profile.bench]
 inherits = "release"
@@ -46,6 +54,7 @@ debug = "line-tables-only"
 inherits = "release"
 lto = "thin"
 codegen-units = 16
+incremental = false
 debug = false
 strip = "symbols"
 split-debuginfo = "off"
@@ -74,6 +83,8 @@ debug = false
 inherits = "release"
 opt-level = "z"
 lto = "fat"
+codegen-units = 1
+incremental = false
 
 [workspace.lints.rust]
 # ──────────────────────────────────────────────────────────────────────────────
@@ -218,6 +229,7 @@ crossterm = "0.29"
 logos = "0.16"
 etagere = "0.2"
 lyon = "1"
+libm = "0.2"
 png = "0.18"
 lru = { version = "0.16", default-features = false }
 pollster = "1.0"

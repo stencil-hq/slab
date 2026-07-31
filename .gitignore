@@ -1,6 +1,7 @@
 /target
 node_modules
 *.slir
+!crates/slab-native/src/gen_*.slir
 /out
 .DS_Store
 /clients/web/dist

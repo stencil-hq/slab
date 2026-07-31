@@ -4,21 +4,20 @@
 # by snapshotting each committed output before rebuilding it
 gen:
     cargo run -q -p xtask -- gen-caps
-    rustfmt --edition 2024 crates/slab-kernel/src/caps.rs
     cargo run -q -p xtask -- support-md
     cargo run -q -p xtask -- gen-proto
-    rustfmt --edition 2024 crates/slab-slir/src/pb.rs
     cd tree-sitter-slab && bun x tree-sitter generate
     # Kernel WASM bindings + bundled web runtime are untracked build outputs,
     # but slab-compile embeds slab-runtime.js via include_str!, so they must
     # exist before anything downstream of slab-compile (slab-cli, slab-abi)
     # can build.
     just web-runtime
-    # Checked-in typed native modules embed compiled SLIR. Keep their bytes in
-    # lockstep with the codec and compiler alongside every generated artifact.
+    # Checked-in typed native modules include external SLIR sidecars. Keep both
+    # in lockstep with the codec and compiler alongside every generated artifact.
     cargo run -q -p slab-cli -- gen rust examples/00-player.slab -o crates/slab-native/src/gen_player.rs
     cargo run -q -p slab-cli -- gen rust examples/10-settings.slab -o crates/slab-native/src/gen_settings.rs
-    rustfmt --edition 2024 crates/slab-native/src/gen_player.rs crates/slab-native/src/gen_settings.rs
+    cargo run -q -p slab-cli -- gen rust demos/vscode/vscode.slab -o crates/slab-native/src/gen_vscode.rs
+    bun demos/vscode/gen_fs.ts
 
     # The Go and Python clients embed the same C-ABI kernel+compiler module,
     # and `clients/go/gen` proves the Go generator against a real document.
@@ -31,7 +30,7 @@ gen:
 # cargo build of slab-compile needs this first
 web-runtime:
     cargo run -q -p xtask -- kernel-wasm
-    bun build clients/web/index.ts --outfile gen/web-runtime/slab-runtime.js --format=esm --target=browser --minify --conditions=bun
+    bun scripts/build-web-runtime.ts
 
 # C-ABI kernel+compiler module embedded by the Go and Python clients (untracked)
 abi-wasm: web-runtime
@@ -76,7 +75,12 @@ freshness:
     cp crates/slab-kernel/src/caps.rs "$snapshot/crates/slab-kernel/src/caps.rs"
     cp crates/slab-slir/src/pb.rs "$snapshot/crates/slab-slir/src/pb.rs"
     cp crates/slab-native/src/gen_player.rs "$snapshot/crates/slab-native/src/gen_player.rs"
+    cp crates/slab-native/src/gen_player.slir "$snapshot/crates/slab-native/src/gen_player.slir"
     cp crates/slab-native/src/gen_settings.rs "$snapshot/crates/slab-native/src/gen_settings.rs"
+    cp crates/slab-native/src/gen_settings.slir "$snapshot/crates/slab-native/src/gen_settings.slir"
+    cp crates/slab-native/src/gen_vscode.rs "$snapshot/crates/slab-native/src/gen_vscode.rs"
+    cp crates/slab-native/src/gen_vscode.slir "$snapshot/crates/slab-native/src/gen_vscode.slir"
+    cp crates/slab-native/src/vscode_fs.rs "$snapshot/crates/slab-native/src/vscode_fs.rs"
     cp spec/SPEC.md "$snapshot/spec/SPEC.md"
     cp -R tree-sitter-slab/src "$snapshot/tree-sitter-slab/src"
     cp -R clients/go/gen "$snapshot/clients/go/gen"
@@ -84,7 +88,12 @@ freshness:
     diff -u "$snapshot/crates/slab-kernel/src/caps.rs" crates/slab-kernel/src/caps.rs
     diff -u "$snapshot/crates/slab-slir/src/pb.rs" crates/slab-slir/src/pb.rs
     diff -u "$snapshot/crates/slab-native/src/gen_player.rs" crates/slab-native/src/gen_player.rs
+    cmp "$snapshot/crates/slab-native/src/gen_player.slir" crates/slab-native/src/gen_player.slir
     diff -u "$snapshot/crates/slab-native/src/gen_settings.rs" crates/slab-native/src/gen_settings.rs
+    cmp "$snapshot/crates/slab-native/src/gen_settings.slir" crates/slab-native/src/gen_settings.slir
+    diff -u "$snapshot/crates/slab-native/src/gen_vscode.rs" crates/slab-native/src/gen_vscode.rs
+    cmp "$snapshot/crates/slab-native/src/gen_vscode.slir" crates/slab-native/src/gen_vscode.slir
+    diff -u "$snapshot/crates/slab-native/src/vscode_fs.rs" crates/slab-native/src/vscode_fs.rs
     diff -u "$snapshot/spec/SPEC.md" spec/SPEC.md
     diff -ru "$snapshot/tree-sitter-slab/src" tree-sitter-slab/src
     diff -ru "$snapshot/clients/go/gen" clients/go/gen
